@@ -69,7 +69,7 @@ describe('MPA Pre-flight Classifier', () => {
   })
 
   test('rejects goals over max length', () => {
-    const result = classifyGoal('A'.repeat(2001))
+    const result = classifyGoal('A'.repeat(50001))
     assert.equal(result.isValid, false)
     assert.ok(result.rejectionReason?.includes('long'))
   })

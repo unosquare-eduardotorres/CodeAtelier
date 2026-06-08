@@ -10,12 +10,12 @@ import { summarizeToolInput } from '../agent-base.service'
 // ── summarizeToolInput ──────────────────────────────────────
 
 describe('summarizeToolInput', () => {
-  test('Bash — returns description when available', () => {
+  test('Bash — returns command (data-driven strategy ignores description)', () => {
     const result = summarizeToolInput('Bash', {
       command: 'ls -la',
       description: 'List files'
     })
-    assert.equal(result, 'List files')
+    assert.equal(result, 'ls -la')
   })
 
   test('Bash — falls back to command when no description', () => {

@@ -78,6 +78,28 @@ describe('Lean Mode Blocks', () => {
     )
   })
 
+  test('full plan forbids Write/Edit for authoring a plan', () => {
+    assert.ok(
+      /never\s+call\s+write\s+or\s+edit/i.test(PLAN_MODE_SECTION),
+      'Full plan should forbid Write/Edit for authoring a plan'
+    )
+    assert.ok(
+      PLAN_MODE_SECTION.includes('emit_plan'),
+      'Full plan should point to emit_plan as the only plan output path'
+    )
+  })
+
+  test('lean plan forbids Write/Edit for a plan', () => {
+    assert.ok(
+      /write\/edit/i.test(PLAN_MODE_SECTION_LEAN),
+      'Lean plan should mention Write/Edit are blocked for plans'
+    )
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN.includes('emit_plan'),
+      'Lean plan should point to emit_plan'
+    )
+  })
+
   test('lean plan preserves all plan types', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('bug'), 'Missing bug plan type')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('feature'), 'Missing feature plan type')

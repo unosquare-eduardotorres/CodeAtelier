@@ -235,7 +235,7 @@ describe('MPA Resume Phase Detection', () => {
 
 describe('Council Resume Phase Detection', () => {
   test('framing phase resumes from deliberation', () => {
-    const resumePhase = 'framing'
+    const resumePhase: string = 'framing'
     const stepsToRun: string[] = []
 
     switch (resumePhase) {
@@ -255,7 +255,7 @@ describe('Council Resume Phase Detection', () => {
   })
 
   test('peer-review phase skips deliberation', () => {
-    const resumePhase = 'peer-review'
+    const resumePhase: string = 'peer-review'
     const stepsToRun: string[] = []
 
     switch (resumePhase) {
@@ -275,7 +275,7 @@ describe('Council Resume Phase Detection', () => {
   })
 
   test('synthesizing phase only runs chairman', () => {
-    const resumePhase = 'synthesizing'
+    const resumePhase: string = 'synthesizing'
     const stepsToRun: string[] = []
 
     switch (resumePhase) {

@@ -18,7 +18,7 @@ export function registerCoreAgentPromptIpc(): void {
     if (agentRole !== 'da-vinci') {
       throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_GET}: agentRole must be "da-vinci"`)
     }
-    if (!['plan', 'build', 'danger'].includes(mode)) {
+    if (mode !== 'plan' && mode !== 'build' && mode !== 'danger') {
       throw new Error(
         `${IPC_CHANNELS.CORE_AGENT_PROMPT_GET}: mode must be "plan", "build", or "danger"`
       )
@@ -35,7 +35,7 @@ export function registerCoreAgentPromptIpc(): void {
     if (agentRole !== 'da-vinci') {
       throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT}: agentRole must be "da-vinci"`)
     }
-    if (!['plan', 'build', 'danger'].includes(mode)) {
+    if (mode !== 'plan' && mode !== 'build' && mode !== 'danger') {
       throw new Error(
         `${IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT}: mode must be "plan", "build", or "danger"`
       )
@@ -51,7 +51,7 @@ export function registerCoreAgentPromptIpc(): void {
     if (agentRole !== 'da-vinci') {
       throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_RESET}: agentRole must be "da-vinci"`)
     }
-    if (!['plan', 'build', 'danger'].includes(mode)) {
+    if (mode !== 'plan' && mode !== 'build' && mode !== 'danger') {
       throw new Error(
         `${IPC_CHANNELS.CORE_AGENT_PROMPT_RESET}: mode must be "plan", "build", or "danger"`
       )

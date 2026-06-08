@@ -8,6 +8,20 @@ import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { MermaidDiagram } from '@renderer/components/common'
 import { useAppTheme } from '@renderer/store'
 
+/** Recursively extract text content from a React node tree */
+function extractTextContent(node: React.ReactNode): string {
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (!node) return ''
+  if (Array.isArray(node)) return node.map(extractTextContent).join('')
+  if (React.isValidElement(node)) {
+    const props = node.props as Record<string, unknown>
+    if (typeof props.filePath === 'string') return String(props.filePath)
+    if (props.children != null) return extractTextContent(props.children as React.ReactNode)
+  }
+  return ''
+}
+
 /** Map app theme → Prism highlight theme */
 const PRISM_THEME_MAP: Record<string, PrismTheme> = {
   'code-atelier': themes.nightOwl,
@@ -29,10 +43,15 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
       React.isValidElement(child) && (child as React.ReactElement).type === 'code'
   )
 
-  const className = (codeChild?.props as { className?: string })?.className || ''
-  const language = className.replace('language-', '')
-  const codeText = String(
-    (codeChild?.props as { children?: React.ReactNode })?.children || ''
+  // Extract language only from valid language-* class prefixes
+  const rawClassName = (codeChild?.props as { className?: string })?.className || ''
+  const langMatch = rawClassName.match(/language-(\S+)/)
+  const language = langMatch ? langMatch[1] : ''
+
+  // Extract code text: <code> child first, fallback to recursive extraction
+  const rawChildren = (codeChild?.props as { children?: React.ReactNode })?.children
+  const codeText = (
+    rawChildren != null ? String(rawChildren) : extractTextContent(children)
   ).replace(/\n$/, '')
 
   const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])

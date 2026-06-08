@@ -174,6 +174,8 @@ export const IPC_CHANNELS = {
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
   TOKEN_GET_CONVERSATION_SUMMARY: 'token:getConversationSummary',
   TOKEN_GET_RECENT_SESSIONS: 'token:getRecentSessions',
+  TOKEN_GET_WORKSPACE_USAGE: 'token:getWorkspaceUsage',
+  TOKEN_GET_GLOBAL_USAGE: 'token:getGlobalUsage',
 
   // Agent retry events
   AGENT_TASK_RETRY: 'agent:taskRetry',
@@ -426,12 +428,17 @@ export const IPC_CHANNELS = {
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
   GRILL_STATUS_CHANGED: 'grill:statusChanged',
   GRILL_GENERATE_PLAN: 'grill:generatePlan',
+  GRILL_GENERATE_PLAN_FROM_DECISIONS: 'grill:generatePlanFromDecisions',
   GRILL_COMPLETE: 'grill:complete',
+  GRILL_SEED_PLAN_CARD: 'grill:seedPlanCard',
   GRILL_DISCARD: 'grill:discard',
   GRILL_LIST_PLANNED_IDEAS: 'grill:listPlannedIdeas',
 
   // Project Creation
   PROJECT_CREATE: 'project:create',
+  PROJECT_CREATE_SHELL: 'project:create-shell',
+  PROJECT_FINALIZE_BLUEPRINT: 'project:finalize-blueprint',
+  PROJECT_DISCARD_SHELL: 'project:discard-shell',
 
   // External MCP Integrations
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
@@ -442,12 +449,10 @@ export const IPC_CHANNELS = {
   CHAT_ASK_USER_RESPOND: 'chat:askUserRespond',
 
   // Multi-Phased Agent (MPA) Pipeline
-  MPA_START: 'mpa:start',
   MPA_CANCEL: 'mpa:cancel',
   MPA_GET_STATUS: 'mpa:getStatus',
   MPA_GET_RUN: 'mpa:getRun',
   MPA_GET_HISTORY: 'mpa:getHistory',
-  MPA_CLASSIFY_GOAL: 'mpa:classifyGoal',
   MPA_PHASE_START: 'mpa:phaseStart',
   MPA_PHASE_PROGRESS: 'mpa:phaseProgress',
   MPA_PHASE_COMPLETE: 'mpa:phaseComplete',
@@ -456,6 +461,18 @@ export const IPC_CHANNELS = {
   MPA_APPROVAL_RESPOND: 'mpa:approvalRespond',
   MPA_PIPELINE_COMPLETE: 'mpa:complete',
   MPA_RESUME: 'mpa:resume',
+  // MPA Campaigns (sequential measurable-goal runs)
+  MPA_DECOMPOSE_GOALS: 'mpa:decomposeGoals',
+  MPA_CAMPAIGN_START: 'mpa:campaignStart',
+  MPA_CAMPAIGN_RESPOND: 'mpa:campaignRespond',
+  MPA_CAMPAIGN_CANCEL: 'mpa:campaignCancel',
+  MPA_CAMPAIGN_GET_HISTORY: 'mpa:campaignGetHistory',
+  MPA_CAMPAIGN_GET_DETAIL: 'mpa:campaignGetDetail',
+  MPA_CAMPAIGN_STARTED: 'mpa:campaignStarted',
+  MPA_CAMPAIGN_GOAL_START: 'mpa:campaignGoalStart',
+  MPA_CAMPAIGN_GOAL_COMPLETE: 'mpa:campaignGoalComplete',
+  MPA_CAMPAIGN_PAUSED: 'mpa:campaignPaused',
+  MPA_CAMPAIGN_COMPLETE: 'mpa:campaignComplete',
 
   // Council (LLM Council — multi-advisor review)
   COUNCIL_START: 'council:start',
@@ -563,7 +580,8 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   grill: 'claude-opus-4-8',
   'council-member': 'claude-opus-4-8',
   'council-chairman': 'claude-opus-4-8',
-  'grill:plan': 'claude-opus-4-8'
+  'grill:plan': 'claude-opus-4-8',
+  'mpa:decompose': 'claude-opus-4-8'
 } as const
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────
@@ -707,6 +725,12 @@ export const MODEL_ACTIONS_META: Record<
     icon: '🔥',
     section: 'background'
   },
+  'grill:plan': {
+    label: 'Grill (Plan Mode)',
+    description: 'Plan generation for grilled ideas',
+    icon: '🔥',
+    section: 'background'
+  },
   'council-member': {
     label: 'Council Member',
     description: 'Council advisor for multi-perspective plan review',
@@ -717,6 +741,12 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Council Chairman',
     description: 'Council synthesis and final verdict',
     icon: '🏛️',
+    section: 'background'
+  },
+  'mpa:decompose': {
+    label: 'Goal Decomposer',
+    description: 'Breaks a plan into measurable goals for campaigns',
+    icon: '🎯',
     section: 'background'
   }
 } as const

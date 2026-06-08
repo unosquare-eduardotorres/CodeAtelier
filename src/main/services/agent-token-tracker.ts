@@ -1,6 +1,7 @@
 import type { ExecutorResult } from './executor-types'
 import { turnUsageRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
+import { usageTrackerService } from './usage-tracker.service'
 import { chatAgentLogger } from '../logger'
 
 /**
@@ -60,6 +61,14 @@ export class AgentTokenTracker {
       conversationId: string
       dbSessionId: string | null
       workspacePath: string
+      /** Unified usage_log feature bucket (chat|grill|council|mpa|audit). */
+      feature?: string
+      /** adapter.agentId for the session flow. */
+      agentType?: string
+      /** ACTUAL resolved model used for this turn. */
+      model?: string
+      /** Workspace id (nullable). */
+      workspaceId?: string | null
     }
   ): { totalTokens: number } {
     const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
@@ -116,7 +125,7 @@ export class AgentTokenTracker {
           outputTokens: meta.tokenUsage.output,
           cacheReadTokens: cacheReadInputTokens,
           cacheCreationTokens: cacheCreationInputTokens,
-          model: modelConfigService.getModel(opts.workspacePath, 'da-vinci')
+          model: opts.model ?? modelConfigService.getModel(opts.workspacePath, 'da-vinci')
         })
         // Token growth rate alert — warn if input tokens spiked >30%
         if (previousTurn && previousTurn.inputTokens > 0) {
@@ -132,6 +141,26 @@ export class AgentTokenTracker {
         this.log.error('Failed to record turn usage:', err)
       }
     }
+
+    // Unified usage_log sink — records EVERY session turn with correct attribution
+    // (real model + feature), independent of the turn_usage analytics write above.
+    // Note: no getModel() fallback here — that would hit the DB on every turn; the
+    // caller (stream processor) always supplies the resolved model.
+    usageTrackerService.recordUsage({
+      feature: opts.feature ?? 'chat',
+      agentType: opts.agentType ?? null,
+      model: opts.model ?? null,
+      workspaceId: opts.workspaceId ?? null,
+      conversationId: opts.conversationId,
+      sessionId: opts.dbSessionId,
+      turnNumber: opts.turnCount,
+      tokens: {
+        input: meta.tokenUsage.input,
+        output: meta.tokenUsage.output,
+        cacheRead: cacheReadInputTokens,
+        cacheCreation: cacheCreationInputTokens
+      }
+    })
 
     return { totalTokens }
   }

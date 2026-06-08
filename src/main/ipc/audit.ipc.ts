@@ -16,7 +16,8 @@ import type {
   AuditRun,
   AuditPlanRecord,
   AuditSelectedSkills,
-  LLMProvider
+  LLMProvider,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
 import { processToolChunk } from './tool-chunk-processor'
@@ -626,6 +627,17 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     'stream',
     (data) => {
       processAuditStreamChunk(router, workspaceId, workspacePath, data.trackId, data.chunk)
+    }
+  )
+
+  // ── status — forward live token/context counters to the renderer ──
+  auditCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
+    cleanups,
+    auditAgentService,
+    'status',
+    (data) => {
+      if (data.workspaceId && data.workspaceId !== workspaceId) return
+      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 

@@ -39,23 +39,31 @@ export function registerWorkspaceIpc(): void {
       throw new Error(`Path does not exist: ${normalizedPath}`)
     }
 
-    // Check if it's a git repository (no longer required)
+    // Check if this directory is the root of its own git repo (not just nested
+    // inside a parent repo). Uses rev-parse --show-toplevel for an exact match.
     let isGitRepo = false
     let gitRemoteUrl: string | undefined
     try {
       const git = simpleGit(normalizedPath)
-      isGitRepo = await git.checkIsRepo()
+      const top = (await git.revparse(['--show-toplevel'])).trim()
+      isGitRepo = resolve(top) === normalizedPath
       if (isGitRepo) {
-        try {
-          const remotes = await git.getRemotes(true)
-          const origin = remotes.find((r) => r.name === 'origin')
-          gitRemoteUrl = origin?.refs?.fetch
-        } catch {
-          // No remote is fine
-        }
+        const remotes = await git.getRemotes(true)
+        gitRemoteUrl = remotes.find((r) => r.name === 'origin')?.refs?.fetch
       }
     } catch {
-      // Not a repo — fine, we allow non-git directories
+      /* not a repo / not the root — auto-init below */
+    }
+
+    // Auto-init git repo BEFORE creating workspace so the DB row is born with isGitRepo=true
+    if (!isGitRepo) {
+      try {
+        await repoService.initRepo(normalizedPath)
+        isGitRepo = true
+        dbLogger.info(`Auto-initialized git repo at ${normalizedPath}`)
+      } catch (err) {
+        dbLogger.warn('Auto-init git failed (non-fatal):', err)
+      }
     }
 
     const workspace = workspaceRepository.create(
@@ -86,16 +94,6 @@ export function registerWorkspaceIpc(): void {
       dbLogger.warn('Failed to seed Project Specialist on workspace create:', err)
     }
 
-    // Auto-init git repo if not already a git repository
-    if (!isGitRepo) {
-      try {
-        await repoService.initRepo(normalizedPath)
-        dbLogger.info(`Auto-initialized git repo at ${normalizedPath}`)
-      } catch (err) {
-        dbLogger.warn('Auto-init git failed (non-fatal):', err)
-      }
-    }
-
     return workspace
   })
 
@@ -108,6 +106,13 @@ export function registerWorkspaceIpc(): void {
     const workspace = workspaceRepository.updateLastOpened(id)
     if (!workspace) {
       throw new Error(`Workspace not found: ${id}`)
+    }
+
+    // Ensure workspace has its own .git (self-heal parent-repo nesting)
+    try {
+      await repoService.ensureOwnRepo(workspace.repoPath)
+    } catch (e) {
+      dbLogger.warn('ensureOwnRepo on workspace open failed (non-fatal):', e)
     }
 
     // Auto-sync: import NEW agents/skills from workspace YAMLs into DB

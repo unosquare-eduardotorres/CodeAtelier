@@ -8,6 +8,7 @@
  */
 
 import log from 'electron-log'
+import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { auditPlanRepository } from '../db/repositories/audit-plan.repository'
 import type { AuditPlan, AuditPlanRecord, AuditFinding } from '../../shared/types'
@@ -84,7 +85,7 @@ class AuditPlanGeneratorService {
     const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
 
     // 3. Call Claude via CLI one-shot
-    const responseText = await this.callClaude(prompt, model)
+    const responseText = await this.callClaude(prompt, model, params.workspaceId)
 
     // 4. Parse the structured plan
     const plan = this.parsePlan(responseText, params.findings)
@@ -120,15 +121,13 @@ class AuditPlanGeneratorService {
   }
 
   /** Call Claude CLI in one-shot mode. */
-  private async callClaude(prompt: string, model: string): Promise<string> {
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const execFileAsync = promisify(execFile)
-
+  private async callClaude(prompt: string, model: string, workspaceId?: string): Promise<string> {
     try {
-      const { stdout } = await execFileAsync(
-        'claude',
-        [
+      const { text } = await runOneShotClaude({
+        feature: 'audit_plan',
+        model,
+        workspaceId: workspaceId || null,
+        args: [
           '-p',
           prompt,
           '--model',
@@ -138,17 +137,14 @@ class AuditPlanGeneratorService {
           '--permission-mode',
           'plan',
           '--max-turns',
-          '1',
-          '--output-format',
-          'text'
+          '1'
         ],
-        {
-          encoding: 'utf-8',
+        cli: {
           timeout: 180_000, // 3 minutes — plan generation is heavier
           maxBuffer: 1024 * 1024 * 10 // 10MB buffer for large plans
         }
-      )
-      return stdout
+      })
+      return text
     } catch (err) {
       planLog.error('[audit-plan] Claude CLI call failed:', err)
       throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`)

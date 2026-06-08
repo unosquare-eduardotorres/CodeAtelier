@@ -150,7 +150,6 @@ describe('SessionEventRouter', () => {
     }
 
     mockWindow.webContents.send('permission:request', {
-      workspaceId: permission.workspaceId,
       ...permission
     })
 
@@ -300,7 +299,7 @@ describe('Permission Flow Routing', () => {
 
   test('background permission detection works for non-active workspaces', () => {
     const activeWorkspaceId = 'ws-active'
-    const eventWorkspaceId = 'ws-background'
+    const eventWorkspaceId: string = 'ws-background'
 
     const isBackground = eventWorkspaceId !== activeWorkspaceId
     assert.equal(isBackground, true)

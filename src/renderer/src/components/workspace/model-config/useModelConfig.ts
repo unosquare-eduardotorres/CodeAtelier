@@ -14,11 +14,12 @@ import type {
   LocalLLMBackend,
   OllamaStatus,
   OmlxExtendedStatus,
-  PlatformInfo
+  PlatformInfo,
+  Workspace
 } from '../../../../../shared/types'
 
 export interface ModelConfigState {
-  activeWorkspace: ReturnType<typeof useWorkspaceStore>['activeWorkspace']
+  activeWorkspace: Workspace | null
   costPreference: CostPreference
   fastMode: boolean
   budgetCapUsd: number | undefined

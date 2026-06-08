@@ -315,7 +315,7 @@ export default function AppLayout(): React.JSX.Element {
 
       <TokenDetailsModal
         isOpen={tokenModalOpen}
-        conversationId={activeConversation?.id ?? null}
+        workspaceId={activeWorkspace?.id ?? null}
         contextWindowTokens={contextWindowTokens}
         liveOutputTokens={sessionOutputTokens}
         onClose={() => setTokenModalOpen(false)}

@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { ArrowLeft, Play, Target } from 'lucide-react'
+import { ArrowLeft, Play, Target, CheckCircle2 } from 'lucide-react'
 import { useState } from 'react'
 import GoalArtifactViewer from './GoalArtifactViewer'
 import { RUN_STATUS_CONFIG, formatGoalType } from './constants'
@@ -41,6 +41,13 @@ export default function GoalRunDetail({
   const verifyArtifact = artifacts.find((a) => a.artifactType === 'verify_report')
   const plan = planArtifact?.contentJson as MpaPlanArtifact | undefined
   const verifyReport = verifyArtifact?.contentJson as MpaVerifyReport | undefined
+
+  // Campaign goal spec carries the goal's own success criteria.
+  const goalSpecArtifact = artifacts.find((a) => a.artifactType === 'goal_spec')
+  const goalSpec = goalSpecArtifact?.contentJson as
+    | { outcome?: string; successCriteria?: string[] }
+    | undefined
+  const successCriteria = Array.isArray(goalSpec?.successCriteria) ? goalSpec.successCriteria : []
 
   return (
     <div className="space-y-4">
@@ -110,13 +117,30 @@ export default function GoalRunDetail({
         <p className="text-sm text-text-primary">{run.goal}</p>
       </div>
 
+      {/* Success criteria (campaign goals) */}
+      {successCriteria.length > 0 && (
+        <div className="bg-surface-base rounded-lg border border-border-subtle p-3">
+          <p className="text-xs font-medium text-text-secondary mb-2">Success Criteria</p>
+          <div className="space-y-1.5">
+            {successCriteria.map((criterion, i) => (
+              <div key={i} className="flex items-start gap-1.5 text-xs">
+                <CheckCircle2 size={12} className="text-cyan-400 shrink-0 mt-0.5" />
+                <span className="text-text-primary">{criterion}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Phase timeline summary */}
       {phases.length > 0 && (
         <div className="bg-surface-base rounded-lg border border-border-subtle p-3">
           <p className="text-xs font-medium text-text-secondary mb-2">Phases</p>
           <div className="space-y-1.5">
             {phases.map((phase) => {
-              const phaseStatus = RUN_STATUS_CONFIG[phase.status] ?? RUN_STATUS_CONFIG.running
+              const phaseStatus =
+                RUN_STATUS_CONFIG[phase.status as keyof typeof RUN_STATUS_CONFIG] ??
+                RUN_STATUS_CONFIG.running
               return (
                 <div key={phase.id} className="flex items-center gap-2 text-xs">
                   <span className={phaseStatus.color}>{phaseStatus.icon}</span>

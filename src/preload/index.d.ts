@@ -25,6 +25,7 @@ import type {
   MemoryFeedResult,
   WorkspaceFeedTimestamps,
   TokenSummary,
+  WorkspaceUsageSummary,
   AgentSessionRecord,
   Idea,
   DocFile,
@@ -79,6 +80,21 @@ interface Api {
     trackScores?: GrillTrackScore[]
     tempGrillSessionId?: string
   }) => Promise<Workspace>
+  createProjectShell: (args: {
+    name: string
+    parentFolder: string
+    description?: string
+    attachments?: string[]
+    tempGrillSessionId?: string
+  }) => Promise<Workspace>
+  finalizeProjectBlueprint: (args: {
+    workspaceId: string
+    projectName: string
+    description?: string
+    grillDecisions?: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+  }) => Promise<void>
+  discardProjectShell: (args: { workspaceId: string }) => Promise<void>
   selectDirectory: () => Promise<string | null>
   getWorkspaceSettings: (args: { workspaceId: string }) => Promise<Record<string, unknown>>
   updateWorkspaceSettings: (args: {
@@ -317,6 +333,8 @@ interface Api {
     workspaceId: string
     limit?: number
   }) => Promise<AgentSessionRecord[]>
+  getWorkspaceUsageSummary: (args: { workspaceId: string }) => Promise<WorkspaceUsageSummary>
+  getGlobalUsageSummary: () => Promise<WorkspaceUsageSummary>
 
   // Ideas
   listIdeas: (args: { workspaceId: string }) => Promise<Idea[]>
@@ -429,6 +447,7 @@ interface Api {
       tokenUsage: number
       inputTokens?: number
       outputTokens?: number
+      contextTokens?: number
       model?: 'haiku' | 'sonnet' | 'opus'
       complexityTier?: 'simple' | 'moderate' | 'complex'
       activeMcpTools?: string[]
@@ -949,6 +968,13 @@ interface Api {
     ideaId?: string
     workspaceId: string
   }) => Promise<GrillStructuredPlan>
+  grillGeneratePlanFromDecisions: (args: {
+    projectName: string
+    description: string
+    grillDecisions: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+    workspaceId: string
+  }) => Promise<GrillStructuredPlan>
   grillGetStatus: (args: { workspaceId: string }) => Promise<{
     status: string
     ideaId: string
@@ -958,6 +984,10 @@ interface Api {
   grillGetSession: (args: { ideaId: string }) => Promise<unknown | null>
   grillListPlannedIdeas: (args: { workspaceId: string }) => Promise<string[]>
   grillComplete: (args: { ideaId: string }) => Promise<void>
+  grillSeedPlanCard: (args: {
+    conversationId: string
+    plan: GrillStructuredPlan
+  }) => Promise<Message>
   grillDiscard: (args: { ideaId: string }) => Promise<void>
   grillSaveAnswers: (args: {
     sessionId: string
@@ -973,15 +1003,6 @@ interface Api {
   ) => () => void
 
   // MPA (Multi-Phased Agent Pipeline)
-  mpaStart: (args: {
-    workspaceId: string
-    goal: string
-    title: string
-    goalType: string
-    phases: string[]
-    grillSessionId?: string
-    grillDecisions?: Array<{ header: string; selectedOption: string; reason: string }>
-  }) => Promise<{ started: boolean }>
   mpaCancel: (args?: { workspaceId?: string }) => Promise<{ cancelled: boolean }>
   mpaGetStatus: (args: { workspaceId: string }) => Promise<{
     status: string
@@ -994,13 +1015,6 @@ interface Api {
   }>
   mpaGetRun: (args: { runId: string }) => Promise<unknown>
   mpaGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
-  mpaClassifyGoal: (args: { goal: string }) => Promise<{
-    goalType: string
-    phases: string[]
-    isValid: boolean
-    rejectionReason?: string
-    suggestedGoal?: string
-  }>
   mpaApprovalRespond: (args: {
     runId: string
     approved: boolean
@@ -1057,6 +1071,84 @@ interface Api {
   ) => () => void
   onMpaPipelineComplete: (
     cb: (data: { workspaceId: string; runId: string; status: string; totalTokens: number }) => void
+  ) => () => void
+
+  // MPA Campaigns (sequential measurable-goal runs)
+  mpaDecomposeGoals: (args: { workspaceId: string; input: string }) => Promise<{
+    goals: Array<{
+      id: string
+      title: string
+      outcome: string
+      successCriteria: string[]
+      goalType: string
+      phases: string[]
+    }>
+  }>
+  mpaCampaignStart: (args: {
+    workspaceId: string
+    title: string
+    originalPlanMd: string
+    goals: Array<{
+      id: string
+      title: string
+      outcome: string
+      successCriteria: string[]
+      goalType: string
+      phases: string[]
+    }>
+  }) => Promise<{ campaignId: string }>
+  mpaCampaignRespond: (args: {
+    workspaceId: string
+    action: 'retry' | 'skip' | 'stop'
+  }) => Promise<{ responded: boolean }>
+  mpaCampaignCancel: (args: { workspaceId: string }) => Promise<{ cancelled: boolean }>
+  mpaCampaignGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
+  mpaCampaignGetDetail: (args: { campaignId: string }) => Promise<unknown>
+  onMpaCampaignStarted: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      title: string
+      totalGoals: number
+    }) => void
+  ) => () => void
+  onMpaCampaignGoalStart: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      orderIndex: number
+      goalId: string
+      title: string
+    }) => void
+  ) => () => void
+  onMpaCampaignGoalComplete: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      orderIndex: number
+      goalId: string
+      status: string
+      runId: string | null
+    }) => void
+  ) => () => void
+  onMpaCampaignPaused: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      orderIndex: number
+      goalId: string
+      runId: string | null
+      reason: string
+    }) => void
+  ) => () => void
+  onMpaCampaignComplete: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      status: string
+      completedGoals: number
+      totalGoals: number
+    }) => void
   ) => () => void
 
   // Council (LLM Council — multi-advisor review)

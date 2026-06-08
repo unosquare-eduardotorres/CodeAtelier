@@ -115,6 +115,52 @@ describe('AgentTokenTracker — getCacheEfficiency (computed)', () => {
   })
 })
 
+describe('AgentTokenTracker — usage_log dual-write', () => {
+  let dbAvailable = false
+  let createTestDb: typeof import('../../db/test-helpers').createTestDb
+  let _setDatabaseForTesting: typeof import('../../db/index')._setDatabaseForTesting
+  let usageLogRepository: typeof import('../../db/repositories/usage-log.repository').usageLogRepository
+  try {
+    createTestDb = require('../../db/test-helpers').createTestDb
+    _setDatabaseForTesting = require('../../db/index')._setDatabaseForTesting
+    usageLogRepository = require('../../db/repositories/usage-log.repository').usageLogRepository
+    const probe = createTestDb()
+    probe.close()
+    dbAvailable = true
+  } catch {
+    dbAvailable = false
+  }
+
+  test(
+    'recordTurn writes usage_log with the real model + feature',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      tracker.recordTurn(mockMeta(1000, 500, 0, 0) as any, {
+        turnCount: 1,
+        conversationId: 'conv-dual',
+        dbSessionId: null,
+        workspacePath: '/test/workspace',
+        feature: 'grill',
+        agentType: 'grill-agent',
+        model: 'claude-opus-4-8',
+        workspaceId: 'ws-1'
+      })
+
+      const summary = usageLogRepository.getWorkspaceSummary('ws-1')
+      assert.equal(summary.byFeature.length, 1)
+      assert.equal(summary.byFeature[0].feature, 'grill', 'feature is recorded, not hardcoded chat')
+      assert.equal(summary.totalInput, 1000)
+      assert.equal(summary.totalOutput, 500)
+      // opus 4.8 = $5/1M in, $25/1M out → (1000/1e6*5 + 500/1e6*25)*100 = 1.75 → round 2 cents
+      assert.equal(summary.totalCostCents, 2)
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+})
+
 describe('AgentTokenTracker — reset & resetSession', () => {
   test('resetSession_clears_all_stats', () => {
     const { tracker } = createTokenTracker()

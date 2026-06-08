@@ -8,7 +8,7 @@
 
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
-import type { ToolActivity, ToolOperationType } from '../../shared/types'
+import type { ConversationMode, ToolActivity, ToolOperationType } from '../../shared/types'
 import { MCP_TOOLS } from '../../shared/constants'
 import { extractResultSummary } from './tool-result-summarizer'
 import { reportToolError } from './tool-error-reporter'
@@ -27,6 +27,30 @@ export interface ToolChunkOptions {
   agentId?: string
   /** Format tags to skip for error reporting. e.g. ['grill-evaluation'], ['audit-finding', 'audit-score'] */
   formatTagsToSkip?: string[]
+  /** Active conversation mode — used to suppress expected plan-mode permission blocks. */
+  mode?: ConversationMode
+}
+
+// ── Expected plan-mode permission blocks ──
+// In Plan mode, Write/Edit are intentionally not on the allow-list, so the SDK
+// returns "No such tool available: Write/Edit". This is expected behavior, not a
+// bug — we must not auto-report it to the bug tracker (it pollutes the tracker
+// with false positives every time a model reaches for Write to author a plan).
+const PLAN_BLOCKED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
+
+/**
+ * True when a tool_use_error is the expected "blocked in Plan mode" outcome of a
+ * Write/Edit attempt — i.e. a permission gate, not a real failure to report.
+ */
+export function isExpectedPlanModeBlock(
+  toolName: string | undefined,
+  content: string | undefined,
+  mode: ConversationMode | undefined
+): boolean {
+  if (mode !== 'plan') return false
+  if (!toolName || !PLAN_BLOCKED_TOOLS.has(toolName)) return false
+  if (!content) return false
+  return content.includes('No such tool available')
 }
 
 // ── Composable tools: input is composed into result so file/pattern is visible without expanding ──
@@ -137,9 +161,11 @@ export function processToolChunk(
     const isToolError =
       typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
 
-    // Auto-capture tool errors to the bug tracker (skip known format tags)
+    // Auto-capture tool errors to the bug tracker (skip known format tags and
+    // expected plan-mode Write/Edit permission blocks).
     const skipTags = new Set(options.formatTagsToSkip ?? [])
-    if (isToolError && chunk.content && !skipTags.has(chunk.toolName ?? '')) {
+    const isPlanModeBlock = isExpectedPlanModeBlock(chunk.toolName, chunk.content, options.mode)
+    if (isToolError && chunk.content && !skipTags.has(chunk.toolName ?? '') && !isPlanModeBlock) {
       reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
         agentType: options.agentType,
         workspaceId: options.workspaceId,

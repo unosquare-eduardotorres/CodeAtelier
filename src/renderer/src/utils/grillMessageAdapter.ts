@@ -10,7 +10,7 @@ let counter = 0
 export function grillAgentToMessage(
   content: string,
   toolActivities: ToolActivity[],
-  index?: number
+  index?: number | string
 ): Message {
   return {
     id: `grill-msg-${index ?? counter++}`,

@@ -63,7 +63,7 @@ export interface UseSlashCommandsResult {
   showCommands: boolean
   /** Currently selected index in the dropdown. */
   selectedCommandIndex: number
-  setSelectedCommandIndex: (index: number) => void
+  setSelectedCommandIndex: (value: number | ((prev: number) => number)) => void
   /** Full command list (for external use). */
   SLASH_COMMANDS: readonly SlashCommand[]
 }

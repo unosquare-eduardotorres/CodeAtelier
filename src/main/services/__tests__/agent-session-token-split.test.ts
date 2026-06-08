@@ -182,4 +182,6 @@ describe('AgentStore delta logic — input/output split', () => {
   })
 })
 
-summary()
+if (import.meta.url === `file://${process.argv[1]}`) {
+  summary()
+}

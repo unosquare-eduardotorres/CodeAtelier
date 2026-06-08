@@ -15,15 +15,15 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 100
+const CURRENT_SCHEMA_VERSION = 102
 
-interface Migration {
+export interface Migration {
   version: number
   name: string
   up: (db: Database.Database) => void
 }
 
-const migrations: Migration[] = [
+export const migrations: Migration[] = [
   {
     version: 1,
     name: 'add-mode-column-to-conversations',
@@ -2336,6 +2336,63 @@ const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_audit_plans_run ON audit_plans(audit_run_id);
       `)
       dbLogger.info('[migration-100] ✓ Created audit_plans table')
+    }
+  },
+  {
+    version: 101,
+    name: 'create-mpa-campaigns-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mpa_campaigns (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          original_plan_md TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'paused', 'completed', 'failed', 'cancelled')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT
+        );
+
+        ALTER TABLE mpa_runs ADD COLUMN campaign_id TEXT
+          REFERENCES mpa_campaigns(id) ON DELETE CASCADE;
+        ALTER TABLE mpa_runs ADD COLUMN order_index INTEGER;
+
+        CREATE INDEX IF NOT EXISTS idx_mpa_campaigns_workspace ON mpa_campaigns(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_mpa_runs_campaign ON mpa_runs(campaign_id);
+      `)
+      dbLogger.info(
+        '[migration-101] ✓ Created mpa_campaigns table + campaign_id/order_index on mpa_runs'
+      )
+    }
+  },
+  {
+    version: 102,
+    name: 'add-usage-log',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS usage_log (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          feature TEXT NOT NULL,
+          agent_type TEXT,
+          model TEXT,
+          workspace_id TEXT,
+          conversation_id TEXT,
+          session_id TEXT,
+          turn_number INTEGER,
+          input_tokens INTEGER DEFAULT 0,
+          output_tokens INTEGER DEFAULT 0,
+          cache_read_tokens INTEGER DEFAULT 0,
+          cache_creation_tokens INTEGER DEFAULT 0,
+          cost_cents INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_log_workspace ON usage_log(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_feature ON usage_log(feature);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_conversation ON usage_log(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
+      `)
+      dbLogger.info('[migration-102] ✓ Created usage_log table')
     }
   }
 ]

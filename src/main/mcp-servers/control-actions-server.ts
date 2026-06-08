@@ -23,6 +23,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { createConnection, type Socket } from 'node:net'
+import { createAskUserRegistry } from './ask-user-registry'
 
 // ── Environment ──
 const IPC_SOCKET_PATH = process.env.IPC_SOCKET_PATH
@@ -47,9 +48,14 @@ function connectIpc(): void {
     ipcSocket.on('error', (err) => {
       console.error(`[control-actions-server] IPC socket error: ${err.message}`)
       ipcSocket = null
+      // The bridge is gone — no response can ever arrive. Resolve any blocked
+      // ask_user promises so the turn unwinds cleanly instead of hanging forever.
+      askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
     })
     ipcSocket.on('close', () => {
       ipcSocket = null
+      // Same teardown on a clean close (e.g. Stop killed the CLI + this child).
+      askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
     })
   } catch (err) {
     console.error(`[control-actions-server] Failed to connect to IPC: ${(err as Error).message}`)
@@ -71,13 +77,13 @@ function emitEvent(type: string, payload: unknown, requestId?: string): void {
 }
 
 /**
- * Pending ask_user requests awaiting user response.
- * Maps requestId → resolve function.
+ * Registry of in-flight ask_user requests awaiting a user response.
+ * A socket close/error resolves every pending request via resolveAll().
  */
-const pendingAskUserRequests = new Map<string, (response: string) => void>()
+const askUserRegistry = createAskUserRegistry()
 
-/** Default timeout for ask_user responses (5 minutes). */
-const ASK_USER_TIMEOUT_MS = 5 * 60 * 1000
+const SOCKET_CLOSED_MESSAGE =
+  'Connection to the app closed before you answered — ask again or proceed.'
 
 /**
  * Listen for responses from the Electron main process on the IPC socket.
@@ -99,11 +105,7 @@ function setupResponseListener(): void {
       try {
         const event = JSON.parse(line)
         if (event.type === 'askUserResponse' && event.requestId) {
-          const resolver = pendingAskUserRequests.get(event.requestId)
-          if (resolver) {
-            resolver(event.payload?.response ?? 'User acknowledged')
-            pendingAskUserRequests.delete(event.requestId)
-          }
+          askUserRegistry.resolve(event.requestId, event.payload?.response ?? 'User acknowledged')
         }
       } catch {
         console.error(`[control-actions-server] Malformed response: ${line.slice(0, 120)}`)
@@ -114,23 +116,19 @@ function setupResponseListener(): void {
 
 /**
  * Send an ask_user event and wait for the user's response.
- * Returns the user's response string, or a timeout message.
+ *
+ * Resolves ONLY when a real `askUserResponse` arrives, or when the IPC socket
+ * tears down (close/error → registry.resolveAll). There is no auto-timeout: the
+ * turn waits as long as the user needs to answer. Stopping the turn kills the
+ * CLI and this child process, which closes the socket and unwinds the promise.
  */
 function askUserAndWaitForResponse(requestId: string, payload: unknown): Promise<string> {
   return new Promise<string>((resolve) => {
     // Register the pending request
-    pendingAskUserRequests.set(requestId, resolve)
+    askUserRegistry.register(requestId, resolve)
 
     // Send the event to Electron
     emitEvent('askUser', payload, requestId)
-
-    // Set timeout
-    setTimeout(() => {
-      if (pendingAskUserRequests.has(requestId)) {
-        pendingAskUserRequests.delete(requestId)
-        resolve('User did not respond within the timeout period.')
-      }
-    }, ASK_USER_TIMEOUT_MS)
   })
 }
 
@@ -264,7 +262,8 @@ server.tool(
       options: q.options ?? []
     }))
 
-    // Send questions and wait for user response (blocks until response or timeout)
+    // Send questions and wait for the user's response (blocks until they answer
+    // or the IPC socket tears down; no auto-timeout)
     const userResponse = await askUserAndWaitForResponse(requestId, {
       questions: enrichedQuestions,
       action

@@ -8,6 +8,7 @@ import {
 } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
 import type { Workspace } from '../../../../../shared/types'
+import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 
 /**
  * Consolidates workspace-scoped event listeners:
@@ -15,7 +16,7 @@ import type { Workspace } from '../../../../../shared/types'
  */
 export function useWorkspaceListeners(
   activeWorkspace: Workspace | null,
-  setWorkspaceSettingsTab: (tab: string) => void,
+  setWorkspaceSettingsTab: (tab: SettingsTab) => void,
   setSidebarView: (view: 'chat' | 'settings') => void
 ): void {
   // Audit listeners — keeps status bar in sync even when HealthPage is not mounted
@@ -49,6 +50,17 @@ export function useWorkspaceListeners(
       setSidebarView('settings')
     }
   }, [councilIsActive, setWorkspaceSettingsTab, setSidebarView])
+
+  // Auto-navigate to goals tab when a goal is preloaded (e.g. grill / wizard handoff).
+  // GoalPage then auto-opens the Start Goal modal pre-filled from the preloaded goal.
+  const preloadedGoal = useMpaStore((s) => s.preloadedGoal)
+
+  useEffect(() => {
+    if (preloadedGoal) {
+      setWorkspaceSettingsTab('goals')
+      setSidebarView('settings')
+    }
+  }, [preloadedGoal, setWorkspaceSettingsTab, setSidebarView])
 
   // Indexing listener
   const startIndexingListener = useIndexingStore((s) => s.startListening)

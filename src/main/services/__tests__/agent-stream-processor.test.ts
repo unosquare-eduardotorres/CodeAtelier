@@ -1,0 +1,184 @@
+/**
+ * Unit tests for agent-stream-processor.ts — stream chunk processing,
+ * compaction band classification, and threshold resolution.
+ *
+ * AgentStreamProcessor takes its session host as `unknown` and casts it, so a
+ * lightweight mock host (with spied emit/log) drives the testable surfaces:
+ *  - checkCompaction band classification + debounce state mutation.
+ *  - resolveCompactionThresholds delegation to compaction-policy.
+ *  - processContentChunk DB-free branches: text accumulation, control-tool skip,
+ *    budget-cap break, unexpected-abort break, session-recovery detection.
+ *
+ * processMetaChunk and the tool_use circuit-breaker path are intentionally not
+ * unit-tested here (token-tracker + DB + circuit-breaker coupling — better as
+ * integration tests).
+ */
+import assert from 'node:assert/strict'
+import { test, describe, summaryAsync, createSpy } from './test-harness'
+import { AgentStreamProcessor } from '../agent-stream-processor'
+import { MCP_TOOLS } from '../../../shared/constants'
+
+interface MockHost {
+  emit: ReturnType<typeof createSpy>
+  log: { info: () => void; warn: () => void; debug: () => void; error: () => void }
+  compactAutoThreshold: number
+  compactSuggestThreshold: number
+  llmProvider: string
+  compactSuggested: boolean
+  turnsSinceCompactSuggestion: number
+  accumulatedText: string
+  currentStatus: string
+  getStatus: () => Record<string, unknown>
+  clearSession: ReturnType<typeof createSpy>
+}
+
+function makeHost(over: Partial<MockHost> = {}): MockHost {
+  const noop = (): void => {}
+  return {
+    emit: createSpy(),
+    log: { info: noop, warn: noop, debug: noop, error: noop },
+    compactAutoThreshold: 800,
+    compactSuggestThreshold: 500,
+    llmProvider: 'claude',
+    compactSuggested: false,
+    turnsSinceCompactSuggestion: 0,
+    accumulatedText: '',
+    currentStatus: 'writing',
+    getStatus: () => ({ status: 'writing' }),
+    clearSession: createSpy(),
+    ...over
+  }
+}
+
+function lastCompactNeeded(host: MockHost): Record<string, unknown> | undefined {
+  const call = [...host.emit.calls].reverse().find((c) => c[0] === 'compactNeeded')
+  return call?.[1] as Record<string, unknown> | undefined
+}
+
+describe('AgentStreamProcessor.checkCompaction', () => {
+  test('no event below the warning band (resets debounce)', () => {
+    const host = makeHost({ compactSuggested: true, turnsSinceCompactSuggestion: 2 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(100) // warning starts at 0.8*500=400
+    assert.equal(host.emit.calls.some((c) => c[0] === 'compactNeeded'), false)
+    assert.equal(host.compactSuggested, false)
+    assert.equal(host.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('warning band emits warning with estimatedNextCost', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(450) // [400,500) → warning
+    const payload = lastCompactNeeded(host)
+    assert.equal(payload?.level, 'warning')
+    assert.equal(payload?.estimatedNextCost, Math.round(450 * 0.05))
+  })
+
+  test('suggest band emits suggest and sets debounce state', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(600) // [500,800) → suggest
+    assert.equal(lastCompactNeeded(host)?.level, 'suggest')
+    assert.equal(host.compactSuggested, true)
+    assert.equal(host.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('critical band when auto-compact disabled', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(900) // >= autoThreshold 800
+    assert.equal(lastCompactNeeded(host)?.level, 'critical')
+  })
+
+  test('auto-compact-pending when auto-compact enabled', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(900, { isAutoCompactEnabled: true } as never)
+    assert.equal(lastCompactNeeded(host)?.level, 'auto-compact-pending')
+  })
+
+  test('local provider flag is forwarded in the payload', () => {
+    const host = makeHost({ llmProvider: 'local-llm' })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(600)
+    assert.equal(lastCompactNeeded(host)?.isLocalProvider, true)
+  })
+})
+
+describe('AgentStreamProcessor.resolveCompactionThresholds', () => {
+  test('delegates to the policy (≤200K window → 0.6/0.75)', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    assert.deepEqual(proc.resolveCompactionThresholds(200_000), { suggest: 120_000, auto: 150_000 })
+  })
+
+  test('1M window uses the later 0.7/0.85 ratios', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    assert.deepEqual(proc.resolveCompactionThresholds(1_000_000), {
+      suggest: 700_000,
+      auto: 850_000
+    })
+  })
+})
+
+describe('AgentStreamProcessor.processContentChunk', () => {
+  const ctx = { conversationId: 'c1', isBuildMode: true, streamState: {} as never }
+
+  test('text chunk accumulates and returns next', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk({ type: 'text', content: 'hello' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.equal(r, 'next')
+    assert.equal(host.accumulatedText, 'hello')
+  })
+
+  test('control-action tool_use returns continue (skips accumulation)', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk(
+      { type: 'tool_use', toolName: MCP_TOOLS.CONTROL_ACTIONS._PREFIX + 'emit_plan' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(r, 'continue')
+  })
+
+  test('budget-cap error breaks and emits budgetCapReached', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk(
+      { type: 'error', error: 'budget cap exceeded for session' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(r, 'break')
+    assert.ok(host.emit.calls.some((c) => c[0] === 'budgetCapReached'))
+  })
+
+  test('unexpected abort (status not idle) breaks with a friendly error', () => {
+    const host = makeHost({ currentStatus: 'writing' })
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk(
+      { type: 'error', error: 'Claude Code process aborted by user' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(r, 'break')
+  })
+
+  test('stale-session error triggers recovery (break + flag + clearSession)', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { sessionRecoveryNeeded?: boolean }
+    const r = proc.processContentChunk(
+      { type: 'error', error: 'No conversation found with session ID abc' } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(r, 'break')
+    assert.equal(streamState.sessionRecoveryNeeded, true)
+    assert.equal(host.clearSession.callCount, 1)
+  })
+})
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

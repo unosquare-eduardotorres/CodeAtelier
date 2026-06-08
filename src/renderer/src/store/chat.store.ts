@@ -36,7 +36,7 @@ import type {
 
 // ChatStreamingInternals + internals singleton are in ./chat-streaming.actions.ts
 
-interface ChatState {
+export interface ChatState {
   conversations: Conversation[]
   activeConversation: Conversation | null
   messages: Message[]
@@ -126,6 +126,12 @@ interface ChatState {
   // Slash command actions
   clearDisplay: () => void
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
+  /**
+   * Toggle the chat thinking-indicator spinner for non-streaming background work
+   * (e.g. grill plan synthesis). Unlike a real SDK stream it never arms the
+   * streaming safety timer, so callers MUST clear it (use try/finally).
+   */
+  setStreamingIndicator: (active: boolean) => void
 
   // Compact suggestion
   setCompactSuggestion: (
@@ -403,9 +409,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSegments: [],
       compactSuggestion: null,
       budgetCapBanner: null,
-      pendingQuestions: null,
-      pendingQuestionAction: null,
-      pendingQuestionRequestId: null,
+      // Preserve any in-flight ask_user question when re-opening / re-rendering the
+      // SAME actively-streaming conversation. Hard-nulling here wiped the requestId,
+      // so submitQuestionAnswers could no longer route the answer and it looked like
+      // a timeout. Only clear when switching to a different / non-streaming convo.
+      ...(isConversationStillStreaming
+        ? {}
+        : {
+            pendingQuestions: null,
+            pendingQuestionAction: null,
+            pendingQuestionRequestId: null
+          }),
       activeRequestId: isConversationStillStreaming ? restoredRequestId : null,
       // Hydrate effort from persisted conversation state
       effortLevels: conversation.effort
@@ -785,6 +799,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
   },
 
+  setStreamingIndicator: (active: boolean) =>
+    set((state) => ({
+      isStreaming: active,
+      conversationState: active
+        ? {
+            phase: 'da-vinci-responding' as ConversationPhase,
+            from: null,
+            event: null,
+            conversationId: state.activeConversation?.id ?? null
+          }
+        : { phase: 'idle' as const, from: null, event: null, conversationId: null }
+    })),
+
   // ── Draft text per conversation ──
   setDraftText: (conversationId: string, text: string) =>
     set((state) => ({
@@ -887,6 +914,7 @@ export const useChatActions = (): Pick<
   | 'stopGeneration'
   | 'clearDisplay'
   | 'appendLocalMessage'
+  | 'setStreamingIndicator'
   | 'completeConversation'
   | 'closeConversation'
   | 'createConversation'
@@ -921,6 +949,7 @@ export const useChatActions = (): Pick<
       stopGeneration: s.stopGeneration,
       clearDisplay: s.clearDisplay,
       appendLocalMessage: s.appendLocalMessage,
+      setStreamingIndicator: s.setStreamingIndicator,
       completeConversation: s.completeConversation,
       closeConversation: s.closeConversation,
       createConversation: s.createConversation,

@@ -28,10 +28,10 @@ interface CodeChunkRow {
  * Repository for the `code_chunks` table.
  * Stores preprocessed code units for semantic search indexing.
  */
-export class CodeChunkRepository extends BaseRepository<CodeChunkRow, CodeChunk> {
+export class CodeChunkRepository extends BaseRepository<CodeChunkRow, ProcessedChunk> {
   protected readonly tableName = 'code_chunks'
-  protected mapRow(row: CodeChunkRow): CodeChunk {
-    return mapRow(row)
+  protected mapRow(row: CodeChunkRow): ProcessedChunk {
+    return mapRowToChunk(row)
   }
 
   /**

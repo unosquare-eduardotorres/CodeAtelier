@@ -49,6 +49,7 @@ import { modelConfigService } from './model-config.service'
 import type { ModelAction } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
 import type { ControlActionCallbacks } from './control-actions.tool'
+import { evaluateAskUserGuard } from './ask-user-guard'
 import { AgentTokenTracker } from './agent-token-tracker'
 import type { CacheEfficiencyReport } from './agent-token-tracker'
 import { AgentCircuitBreaker } from './agent-circuit-breaker'
@@ -137,7 +138,6 @@ export class AgentSessionService extends AgentBaseService {
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
   /** Extended timeout when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each. */
   private static readonly EXTERNAL_MCP_INTERACTION_TIMEOUT_MS = 30 * 60_000 // 30 minutes
-  private static readonly MAX_TURN_CONTINUATIONS = 3
 
   private workspacePath: string | null = null
   private workspaceId: string | null = null
@@ -170,7 +170,7 @@ export class AgentSessionService extends AgentBaseService {
 
   private readonly tokenTracker = new AgentTokenTracker()
   private readonly circuitBreaker = new AgentCircuitBreaker()
-  private readonly recoveryNudge = new RecoveryNudgeService()
+  readonly recoveryNudge = new RecoveryNudgeService()
   /** S8: Tracks tool activity for structured summaries, plan state, and compaction decisions */
   private readonly toolActivityAccumulator = new ToolActivityAccumulator()
 
@@ -179,15 +179,15 @@ export class AgentSessionService extends AgentBaseService {
   private readonly recoveryManager: AgentRecoveryManager
   private readonly executorFactory: AgentExecutorFactory
 
-  private compactSuggestThreshold = AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
-  private compactAutoThreshold = AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
-  private compactSuggested = false
+  compactSuggestThreshold = AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
+  compactAutoThreshold = AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
+  compactSuggested = false
   private compactCount = 0
   /** Turns elapsed since last compact suggestion — re-suggest every 3 turns if dismissed. */
-  private turnsSinceCompactSuggestion = 0
+  turnsSinceCompactSuggestion = 0
   private lastContextTokens: number | undefined
   /** Effective context window for the current session (model-aware: 200K for Opus, 1M for Sonnet). */
-  private effectiveContextWindow: number | undefined
+  effectiveContextWindow: number | undefined
 
   // F5: Per-conversation resume target — prevents cross-conversation races.
   // Previously instance-level, which meant switching conversations could
@@ -195,9 +195,9 @@ export class AgentSessionService extends AgentBaseService {
   private readonly pendingResumeAt = new Map<string, string>()
 
   /** Auto-continue on max_turns: how many times we've resumed so far this message. */
-  private maxTurnsContinuations = 0
+  maxTurnsContinuations = 0
   /** Stashed executeStream options for replay on max_turns auto-continue. */
-  private lastStreamOpts: ExecuteStreamOptions | null = null
+  lastStreamOpts: ExecuteStreamOptions | null = null
 
   private controlToolState: ControlToolState = {
     plan: false,
@@ -887,11 +887,13 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     const origAsk = cb.onAskUser
-    cb.onAskUser = (questions, action) => {
+    cb.onAskUser = (questions, action, requestId) => {
       this.controlToolState.askUser = true
-      this.controlToolState.askUserIntent = { type: 'askUser', questions, action }
-      this.emit('askQuestion', { questions, action })
-      origAsk(questions, action)
+      this.controlToolState.askUserIntent = { type: 'askUser', questions, action, requestId }
+      // Include requestId so the renderer can route the response back (mirrors
+      // the bridge.on('askUser') path used by the production CLI).
+      this.emit('askQuestion', { questions, action, requestId })
+      origAsk(questions, action, requestId)
     }
 
     const origMemory = cb.onMemory
@@ -972,8 +974,18 @@ export class AgentSessionService extends AgentBaseService {
       // ── Select executor backend ──
       const cliPromptInput = await this.extractPromptContent(sdkPrompt)
 
+      // Resolve effective executor backend per-send — respects per-conversation
+      // llmProvider override. The workspace-level this.executorBackend is only
+      // the default; if this conversation explicitly uses 'claude', use CLI.
+      const effectiveBackend: ExecutorBackend =
+        llmProvider === 'local-llm'
+          ? 'opencode'
+          : llmProvider === 'claude'
+            ? 'cli'
+            : this.executorBackend
+
       let executorStream: AsyncGenerator<StreamChunk>
-      switch (this.executorBackend) {
+      switch (effectiveBackend) {
         case 'opencode':
           executorStream = this.executeOpenCodeStream({
             prompt:
@@ -1072,6 +1084,11 @@ export class AgentSessionService extends AgentBaseService {
    */
   private resolveLocalContextWindow(): number {
     return this.executorFactory.resolveLocalContextWindow()
+  }
+
+  /** Host method: cached MCP config path for recovery turns needing control-actions/emit_plan. */
+  getCliMcpConfigPath(): string | undefined {
+    return this.executorFactory.getCachedMcpConfigPath()
   }
 
   // ── Feature flag helpers ────────────────────────────────────
@@ -1212,7 +1229,7 @@ export class AgentSessionService extends AgentBaseService {
     if (typeof sdkPrompt === 'string') return sdkPrompt
     try {
       for await (const msg of sdkPrompt) {
-        const message = msg.message as { content: Array<Record<string, unknown>> } | undefined
+        const message = (msg as { message?: { content: Array<Record<string, unknown>> } }).message
         if (message?.content) {
           return message.content
         }
@@ -1376,24 +1393,6 @@ export class AgentSessionService extends AgentBaseService {
     return this.executorFactory.buildCLIExecuteOptions(params)
   }
 
-  private buildCLIMcpConfigPath(_params: {
-    isBuildMode: boolean
-    mcpResult: AdapterMcpResult
-  }): string | undefined {
-    return this.executorFactory.buildCLIMcpConfigPath(_params)
-  }
-
-  private resolveHookPaths(): { pre?: string; post?: string } {
-    return this.executorFactory.resolveHookPaths()
-  }
-
-  /**
-   * Resolve external MCP activation flags from the current conversation's chat overrides.
-   */
-  private resolveExternalMcpFlags(): Record<string, boolean> {
-    return this.executorFactory.resolveExternalMcpFlags()
-  }
-
   /**
    * Ensure the IPC bridge is running and wired to session events.
    * The bridge provides a Unix domain socket that externalized MCP servers
@@ -1425,6 +1424,20 @@ export class AgentSessionService extends AgentBaseService {
     })
 
     bridge.on('askUser', (payload: unknown, requestId?: string) => {
+      // Structural guard: questions must come BEFORE the plan, never after. If a
+      // plan was already emitted this turn (controlToolState.plan, reset per-turn
+      // in resetForNewMessage), auto-resolve the blocked ask_user promise with a
+      // corrective message instead of stacking a question card under the plan.
+      // ask-then-plan is untouched; only plan-then-ask is intercepted.
+      const rejection = evaluateAskUserGuard(this.controlToolState.plan)
+      if (rejection && requestId) {
+        this.respondToAskUser(requestId, rejection)
+        this.log.info(
+          `[ipc-bridge] askUser intercepted (plan already emitted this turn) for ${this.currentConversationId} requestId=${requestId}`
+        )
+        return
+      }
+
       this.controlToolState.askUser = true
       const askPayload = payload as { questions: GrillQuestion[]; action?: string }
       this.controlToolState.askUserIntent = {
@@ -1454,16 +1467,6 @@ export class AgentSessionService extends AgentBaseService {
         '[ensureIpcBridge] Socket path is null — control-actions MCP server will run in log-only mode'
       )
     }
-  }
-
-  /**
-   * Resolve the USD budget cap for the current execution.
-   * - Local LLMs: no cap (free).
-   * - Claude without user override: no cap (subscription = flat rate).
-   * - Claude with user override: base × mode multiplier.
-   */
-  private resolveBudgetCap(isLocal: boolean, isBuildMode: boolean): number | undefined {
-    return this.executorFactory.resolveBudgetCap(isLocal, isBuildMode)
   }
 
   private async processMetaChunk(
@@ -1526,28 +1529,10 @@ export class AgentSessionService extends AgentBaseService {
     this.recoveryManager.saveCurrentPlanState(conversationId)
   }
 
-  private extractStructuredSummary(conversationId: string): string | null {
-    return this.recoveryManager.extractStructuredSummary(conversationId)
-  }
-
   // ── Compaction ────────────────────────────────────────────────────
 
   private applyCompactionThresholds(settings: Record<string, unknown>): void {
     this.streamProcessor.applyCompactionThresholds(settings)
-  }
-
-  private resolveCompactionThresholds(effectiveContextWindow: number): {
-    suggest: number
-    auto: number
-  } {
-    return this.streamProcessor.resolveCompactionThresholds(effectiveContextWindow)
-  }
-
-  private checkCompaction(
-    inputTokens: number,
-    breakdown?: import('../../shared/types').ContextUsageBreakdown
-  ): void {
-    this.streamProcessor.checkCompaction(inputTokens, breakdown)
   }
 
   /**

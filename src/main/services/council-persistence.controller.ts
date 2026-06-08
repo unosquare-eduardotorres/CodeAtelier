@@ -21,6 +21,7 @@ import type {
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
 import { processToolChunk } from '../ipc/tool-chunk-processor'
+import { TextDeltaBatcher } from '../ipc/text-delta-batcher'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
 import type { SessionEventRouter } from './session-event-router'
@@ -29,16 +30,21 @@ const ctrlLog = log.scope('council-persistence')
 
 export class CouncilPersistenceController {
   private activeSessionId: string | null = null
-  private activeWorkspaceId: string | null = null
   private activeWorkspacePath: string | null = null
   private transcriptParts: string[] = []
+  /** Batches renderer-bound text at ~30fps (per advisor) so council streams smoothly. */
+  private textBatcher = new TextDeltaBatcher()
+
+  /** Batch key — keeps each advisor's stream separate within a workspace. */
+  private batchKey(workspaceId: string, advisorRole: string): string {
+    return `${workspaceId}:${advisorRole}`
+  }
 
   // ── Public API ────────────────────────────────────────────────────────
 
   /** Start tracking a council session */
-  startTracking(sessionId: string, workspaceId: string, workspacePath: string): void {
+  startTracking(sessionId: string, _workspaceId: string, workspacePath: string): void {
     this.activeSessionId = sessionId
-    this.activeWorkspaceId = workspaceId
     this.activeWorkspacePath = workspacePath
     this.transcriptParts = []
     ctrlLog.info(`[council-persistence] Tracking session=${sessionId}`)
@@ -61,12 +67,16 @@ export class CouncilPersistenceController {
     router: SessionEventRouter
   ): void {
     const { chunk, advisorRole, workspaceId } = data
+    const key = this.batchKey(workspaceId, advisorRole)
 
     if (chunk.type === 'text' && chunk.content) {
-      router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, workspaceId, {
-        advisorRole,
-        type: 'text',
-        content: chunk.content
+      // Batch text at ~30fps (matching chat) per advisor.
+      this.textBatcher.push(key, chunk.content, (text) => {
+        router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, workspaceId, {
+          advisorRole,
+          type: 'text',
+          content: text
+        })
       })
     } else if (
       chunk.type === 'tool_use' ||
@@ -75,6 +85,8 @@ export class CouncilPersistenceController {
     ) {
       const result = processToolChunk(chunk, { workspacePath, agentType: 'council' })
       if (result) {
+        // Flush pending text before the tool block so ordering is preserved.
+        this.textBatcher.flush(key)
         router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, workspaceId, {
           advisorRole,
           ...result
@@ -88,6 +100,9 @@ export class CouncilPersistenceController {
     data: { workspaceId: string; advisorRole: CouncilAdvisorRole; review: CouncilReview | null },
     router: SessionEventRouter
   ): void {
+    // Flush trailing narration before completion, then forget the advisor flusher.
+    this.textBatcher.reset(this.batchKey(data.workspaceId, data.advisorRole))
+
     router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_COMPLETE, data.workspaceId, {
       advisorRole: data.advisorRole,
       review: data.review
@@ -153,8 +168,8 @@ export class CouncilPersistenceController {
 
   /** Internal state cleanup — no renderer events */
   private resetTrackingState(): void {
+    this.textBatcher.reset()
     this.activeSessionId = null
-    this.activeWorkspaceId = null
     this.activeWorkspacePath = null
     this.transcriptParts = []
   }

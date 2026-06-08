@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Landmark, Lightbulb } from 'lucide-react'
-import { useWorkspaceStore, useChatStore, useMpaStore } from '@renderer/store'
+import { useWorkspaceStore, useChatStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import EventLogPage from './EventLogPage'
@@ -151,11 +151,6 @@ export default function WorkspaceSettingsContent({
               // In standalone context: just reset, stay on council page
               // CouncilView already calls reset() before onDismiss
             }}
-            onSendToGoal={(goal, title) => {
-              const { setPreloadedGoal } = useMpaStore.getState()
-              setPreloadedGoal({ text: `${title}\n\n${goal}` })
-              onSettingsTabChange?.('goals')
-            }}
           />
         </div>
       )}
@@ -184,9 +179,9 @@ export default function WorkspaceSettingsContent({
               setActiveGrill(null)
               onNavigateToChat()
             }}
-            onNavigateToGoals={() => {
+            onNavigateToCouncil={() => {
               setActiveGrill(null)
-              onSettingsTabChange?.('goals')
+              onSettingsTabChange?.('council')
             }}
           />
         ) : (

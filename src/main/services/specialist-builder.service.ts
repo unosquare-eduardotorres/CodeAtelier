@@ -29,7 +29,7 @@ import { getDatabase } from '../db/index'
 import { detectTechStack } from './tech-stack-detector.service'
 import type { TechStackResult } from './tech-stack-detector.service'
 import { renderTemplate, type PromptSlotValues } from './project-specialist-prompt-template'
-import { buildEnvWithPath } from './env-utils'
+import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { skillEnrichmentService } from './skill-enrichment.service'
@@ -185,7 +185,8 @@ export class SpecialistBuilderService {
               workspace.repo_path,
               workspace.name,
               techResult.detectedTechs,
-              options.llmTimeoutMs ?? 60_000
+              options.llmTimeoutMs ?? 60_000,
+              workspace.id
             )
             if (tailored && tailored.trim().length > skeleton.length * 0.5) {
               newPrompt = tailored
@@ -538,10 +539,9 @@ export class SpecialistBuilderService {
     workspacePath: string,
     workspaceName: string,
     detectedTechs: string[],
-    timeoutMs: number
+    timeoutMs: number,
+    workspaceId?: string
   ): Promise<string> {
-    const { spawn } = await import('node:child_process')
-
     const claudeMdReference = this.readClaudeMd(workspacePath, 5_000)
     const resolvedModel = modelConfigService.getModel(workspacePath, 'project-specialist:plan')
     const verbosity = resolvePromptVerbosity(resolvedModel)
@@ -553,36 +553,17 @@ export class SpecialistBuilderService {
       verbosity
     })
 
-    return new Promise<string>((resolve, reject) => {
-      const env = buildEnvWithPath()
-      const args = ['-p', metaPrompt, '--model', resolvedModel]
-      const proc = spawn('claude', args, {
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
+    const { text } = await runOneShotClaude({
+      feature: 'specialist_build',
+      model: resolvedModel,
+      workspaceId: workspaceId ?? null,
+      args: ['-p', metaPrompt, '--model', resolvedModel],
+      cli: {
         timeout: timeoutMs,
         cwd: workspacePath
-      })
-
-      let stdout = ''
-      let stderr = ''
-
-      proc.stdout?.on('data', (d: Buffer) => {
-        stdout += d.toString()
-      })
-      proc.stderr?.on('data', (d: Buffer) => {
-        stderr += d.toString()
-      })
-
-      proc.on('close', (code) => {
-        if (code === 0 && stdout.trim().length > 100) {
-          resolve(stdout.trim())
-        } else {
-          reject(new Error(`claude -p failed (code ${code}): ${stderr.slice(0, 500)}`))
-        }
-      })
-
-      proc.on('error', reject)
+      }
     })
+    return text.trim()
   }
 }
 

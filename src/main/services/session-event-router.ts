@@ -39,7 +39,6 @@ export class SessionEventRouter {
   /** Send a permission/blocking event from a background workspace. */
   sendPermissionRequest(permission: PendingPermission): void {
     this.send(IPC_CHANNELS.PERMISSION_REQUEST, {
-      workspaceId: permission.workspaceId,
       ...permission
     })
   }

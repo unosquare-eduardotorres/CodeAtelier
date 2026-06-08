@@ -11,7 +11,7 @@
 import type { AgentSessionHost, StreamLoopState, StreamChunk } from './agent-session-host'
 import { SESSION_CONSTANTS } from './agent-session-host'
 import type { AgentIntent, LLMProvider, ModelAction } from '../../shared/types'
-import type { AdapterMcpResult } from './role-adapters/types'
+import type { AdapterMcpResult } from './agent-session.types'
 import { modelConfigService } from './model-config.service'
 import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
@@ -241,6 +241,38 @@ export class AgentRecoveryManager {
       } as StreamChunk)
     }
 
+    // ── Plan-mode tool-block recovery ───────────────────────────────────────
+    // The model tried a blocked Write/Edit in Plan mode (auto-flagged by the
+    // stream processor). Fire a deterministic emit_plan recovery so the user
+    // still gets a plan card. Skip the silent-completion nudge below if we do.
+    let planRecoveryAttempted = false
+    if (
+      streamState.planModeToolBlock &&
+      this.s.currentMode === 'plan' &&
+      !this.s.controlToolState.plan &&
+      !timedOut
+    ) {
+      const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
+        cliExecutor: this.s.cliExecutor,
+        systemPrompt,
+        workspacePath: this.s.workspacePath!,
+        model: modelConfigService.getModel(
+          this.s.workspacePath!,
+          this.s.adapter.role as ModelAction
+        ),
+        sessionId: this.s.sessionMap.get(conversationId),
+        conversationId,
+        workspaceId: this.s.workspaceId,
+        mcpConfigPath: this.s.getCliMcpConfigPath(),
+        onSessionCapture: (sid) => this.s.sessionMap.set(conversationId, sid),
+        onChunk: (chunk) => this.s.emit('chunk', chunk),
+        onTokens: (tokens) => {
+          this.s.tokenUsage += tokens
+        }
+      })
+      planRecoveryAttempted = result.attempted
+    }
+
     const skipNudgeReasons = new Set([
       'max_turns',
       'hook_stopped',
@@ -248,7 +280,8 @@ export class AgentRecoveryManager {
       'aborted_streaming'
     ])
     const shouldSkipNudge =
-      streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)
+      (streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)) ||
+      planRecoveryAttempted
     if (
       this.s.circuitBreaker.count > 0 &&
       !streamState.hasTextAfterLastTool &&
@@ -270,6 +303,7 @@ export class AgentRecoveryManager {
         isBuildMode,
         sessionId: this.s.sessionMap.get(conversationId),
         conversationId,
+        workspaceId: this.s.workspaceId,
         toolCallCount: this.s.circuitBreaker.count,
         onSessionCapture: (sid) => this.s.sessionMap.set(conversationId, sid),
         onChunk: (chunk) => this.s.emit('chunk', chunk),
@@ -309,7 +343,7 @@ export class AgentRecoveryManager {
       controlToolState: this.s.controlToolState,
       mode: this.s.currentMode,
       conversationId,
-      emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload)
+      emit: (evt: string, payload: unknown) => this.s.emitAdapterEvent(evt, payload)
     })
 
     // Mark plan state as completed when a plan intent was detected

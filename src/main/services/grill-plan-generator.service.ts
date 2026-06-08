@@ -7,9 +7,10 @@
  */
 
 import log from 'electron-log'
+import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { grillSessionRepository } from '../db/repositories/grill-session.repository'
-import type { GrillStructuredPlan } from '../../shared/types'
+import type { GrillStructuredPlan, GrillDecision, GrillTrackScore } from '../../shared/types'
 import type { GrillSession } from '../db/repositories/grill-session.repository'
 
 const planLog = log.scope('grill-plan-generator')
@@ -86,10 +87,10 @@ class GrillPlanGeneratorService {
     const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
 
     // 4. Call Opus via CLI one-shot
-    const responseText = await this.callClaude(prompt, model)
+    const responseText = await this.callClaude(prompt, model, params.workspaceId)
 
     // 5. Parse structured plan from response
-    const plan = this.parsePlan(responseText, session)
+    const plan = this.parsePlan(responseText, session.feedback ?? '')
     if (!plan) {
       throw new Error('Failed to parse structured plan from Opus response')
     }
@@ -101,6 +102,91 @@ class GrillPlanGeneratorService {
       `[plan-gen] ✓ Plan generated: ${plan.items.length} items, ${plan.risks.length} risks`
     )
     return plan
+  }
+
+  /**
+   * Generate a structured plan directly from grill decisions/scores, without a
+   * persisted grill session. Mirrors {@link generate} but skips the DB load and
+   * savePlan steps — used by the greenfield Create Project wizard, which runs
+   * session-less. Returns the synthesized GrillStructuredPlan for handoff.
+   */
+  async generateFromDecisions(params: {
+    projectName: string
+    description: string
+    grillDecisions: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+    workspaceId: string
+  }): Promise<GrillStructuredPlan> {
+    planLog.info(
+      `[plan-gen] Generating plan from decisions for project="${params.projectName}" (${params.grillDecisions.length} decisions)`
+    )
+
+    // 1. Build prompt from passed-in data
+    const prompt = this.buildPromptFromDecisions(params)
+
+    // 2. Resolve model (reuse the grill:plan model config)
+    const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
+
+    // 3. Call Claude via CLI one-shot
+    const responseText = await this.callClaude(prompt, model, params.workspaceId)
+
+    // 4. Parse structured plan from response
+    const plan = this.parsePlan(responseText, params.description.trim())
+    if (!plan) {
+      throw new Error('Failed to parse structured plan from Claude response')
+    }
+
+    planLog.info(
+      `[plan-gen] ✓ Plan generated from decisions: ${plan.items.length} items, ${plan.risks.length} risks`
+    )
+    return plan
+  }
+
+  /** Build the user prompt from passed-in grill decisions/scores (session-less) */
+  private buildPromptFromDecisions(params: {
+    projectName: string
+    description: string
+    grillDecisions: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+  }): string {
+    const sections: string[] = []
+
+    sections.push(`# Grill Session: Plan Generation\n`)
+
+    // Idea context
+    sections.push(`## Idea\n`)
+    sections.push(`- **Project Name**: ${params.projectName.trim() || 'Untitled'}`)
+    if (params.description.trim()) {
+      sections.push(`- **Description**: ${params.description.trim()}`)
+    }
+    sections.push('')
+
+    // Track scores
+    if (params.trackScores && params.trackScores.length > 0) {
+      sections.push(`## Track Scores\n`)
+      for (const track of params.trackScores) {
+        sections.push(
+          `- **${track.trackId}**: ${track.score}/10${track.scoreLabel ? ` (${track.scoreLabel})` : ''}`
+        )
+      }
+      sections.push('')
+    }
+
+    // Decisions
+    if (params.grillDecisions.length > 0) {
+      sections.push(`## Current Decisions\n`)
+      for (const d of params.grillDecisions) {
+        const answer = d.selectedOption + (d.otherText ? ` (${d.otherText})` : '')
+        sections.push(`- **${d.questionText}**: ${answer}`)
+      }
+      sections.push('')
+    }
+
+    sections.push(
+      `\n---\nGenerate a comprehensive GrillStructuredPlan based on the above grill decisions.`
+    )
+
+    return sections.join('\n')
   }
 
   /** Build the user prompt from grill session data */
@@ -207,15 +293,13 @@ class GrillPlanGeneratorService {
   }
 
   /** Call Claude CLI in one-shot mode */
-  private async callClaude(prompt: string, model: string): Promise<string> {
-    const { execFile } = await import('node:child_process')
-    const { promisify } = await import('node:util')
-    const execFileAsync = promisify(execFile)
-
+  private async callClaude(prompt: string, model: string, workspaceId?: string): Promise<string> {
     try {
-      const { stdout } = await execFileAsync(
-        'claude',
-        [
+      const { text } = await runOneShotClaude({
+        feature: 'grill_plan',
+        model,
+        workspaceId: workspaceId || null,
+        args: [
           '-p',
           prompt,
           '--model',
@@ -225,18 +309,14 @@ class GrillPlanGeneratorService {
           '--permission-mode',
           'plan',
           '--max-turns',
-          '1',
-          '--output-format',
-          'text'
+          '1'
         ],
-        {
-          encoding: 'utf-8',
+        cli: {
           timeout: 180_000, // 3 minutes — plan generation is heavier
           maxBuffer: 1024 * 1024 * 10 // 10MB buffer for large plans
         }
-      )
-
-      return stdout
+      })
+      return text
     } catch (err) {
       planLog.error('[plan-gen] Claude CLI call failed:', err)
       throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -244,7 +324,7 @@ class GrillPlanGeneratorService {
   }
 
   /** Parse the grill-plan JSON block from Claude's response */
-  private parsePlan(text: string, session: GrillSession): GrillStructuredPlan | null {
+  private parsePlan(text: string, fallbackDescription: string): GrillStructuredPlan | null {
     const regex = /```grill-plan\n([\s\S]*?)```/g
     let lastMatch: RegExpExecArray | null = null
     let match: RegExpExecArray | null
@@ -270,9 +350,9 @@ class GrillPlanGeneratorService {
       // Ensure version is set
       parsed.version = 1
 
-      // Ensure originalDescription is populated from session if missing
+      // Ensure originalDescription is populated from the fallback if missing
       if (!parsed.originalDescription) {
-        parsed.originalDescription = session.feedback ?? ''
+        parsed.originalDescription = fallbackDescription
       }
 
       return parsed

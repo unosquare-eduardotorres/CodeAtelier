@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { mainLogger } from '../logger'
 import { chatAgentService } from '../services'
+import { chatStreamService } from '../services/chat-stream.service'
 import { validateSender } from './validate-sender'
 import { workspaceRepository } from '../db/repositories'
 
@@ -54,6 +55,8 @@ export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
           workspaceId,
           '— re-sending ready (role=' + chatAgentService.getActiveRole() + ')'
         )
+        // Force-reset any stuck streaming state from the previous workspace
+        chatStreamService.forceResetIfStuck()
         chatAgentService.setActiveWorkspace(workspaceId)
         mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY, { workspaceId })
         return
@@ -61,6 +64,8 @@ export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
 
       startingWorkspace = workspacePath
       try {
+        // Force-reset any stuck streaming state before starting a new workspace session
+        chatStreamService.forceResetIfStuck()
         // Start a NEW session for this workspace (does NOT kill existing sessions)
         await chatAgentService.startForWorkspace(workspaceId, workspacePath)
         log.info(

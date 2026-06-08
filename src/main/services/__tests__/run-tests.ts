@@ -60,6 +60,8 @@ import './prompt-lean-mode.test'
 import './mpa-goal-conditions.test'
 import './mpa-preflight.test'
 import './mpa-orchestration.test'
+import './goal-decomposer.test'
+import './mpa-verify-criteria.test'
 import './multi-session.test'
 
 // ─── Run 13: Council (LLM Council) ───
@@ -67,6 +69,7 @@ import './council.service.test'
 
 // ─── Run 14: Grill Plan + Resume ───
 import './grill-plan-and-resume.test'
+import './grill-plan-from-decisions.test'
 import './grill-handoff-utils.test'
 
 // ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
@@ -82,6 +85,78 @@ import './auto-compact-options.test'
 
 // ─── Run 18: Llamafile embedding sidecar manager ───
 import './llamafile-embedding.test'
+
+// ─── Run 19: Previously-orphaned test files (registered for coverage) ───
+import './context-management.test'
+import './workspace-mcp-config-tiers.test'
+import './tag-to-chunk-adapter.test'
+import './skill-summary.test'
+import './prompt-assembler-turn-count.test'
+import './agent-session-token-split.test'
+
+// ─── Run 20: Coverage expansion — streaming / tools / hooks (pure logic) ───
+import './thinking-parser.test'
+import '../../ipc/__tests__/tool-result-summarizer.test'
+import './tool-input-summarizer.test'
+import './tool-activity-accumulator.test'
+import './opencode-event-normalizer.test'
+import './hook-engine.test'
+
+// ─── Run 21: Coverage expansion — chat / handlers / MCP ───
+import './sanitize-prompt-input.test'
+import './mode-permissions.test'
+import './system-prompt-cache.test'
+import './context-budget-auditor.test'
+import './structured-output-repair.test'
+import './session-event-router.test'
+import './agent-stream-processor.test'
+import './chat-agent.service.test'
+
+// ─── Run 22: Coverage expansion — health / grilling / embeddings ───
+import './indexing-diagnostics.test'
+import './quality-gate-runner.test'
+import './council-parser.test'
+import './mpa-artifact-parsers.test'
+import './ollama-manager.test'
+import './omlx-manager.test'
+import './grill-parsers.test'
+
+// ─── Run 23: Coverage expansion — parser / dispatch / resolver family ───
+import './audit-response-parser.test'
+import './mpa-campaign-retry.test'
+import '../../ipc/__tests__/text-delta-batcher.test'
+import './prompt-variant.test'
+import './env-utils.test'
+import './context-window-resolver.test'
+import './agent-recovery-nudge.test'
+import '../../ipc/__tests__/chunk-router.test'
+import './grill-plan-mapper.test'
+
+// ─── Run 24: stdin-safe one-shot Claude CLI runner ───
+import './claude-cli-oneshot.test'
+
+// ─── Run 25: Unified token usage logging (usage_log sink) ───
+import './usage-tracker.service.test'
+import './one-shot-claude.test'
+
+// ─── Run 26: Plan-mode UX — ask_user registry (no-timeout) + before-plan guard ───
+import '../../mcp-servers/__tests__/ask-user-registry.test'
+import './ask-user-guard.test'
+
+// ─── Run 27: Executor family + audit/parsing pipeline ───
+import './tool-tracker.test'
+import './token-accountant.test'
+import './heartbeat-monitor.test'
+import './stream-normalizer.test'
+import './ndjson-parser.test'
+import './output-cap.test'
+import './audit-coverage-tracker.test'
+import './audit-prompt-templates.test'
+import './claude-md-generator.test'
+import './workspace-deploy-parsing.test'
+
+// ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
+import './chat-stream-lifecycle.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls

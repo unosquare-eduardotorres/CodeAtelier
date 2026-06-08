@@ -207,12 +207,7 @@ export default function IdeaCard({
           <div className="flex items-start justify-between gap-3 mb-1">
             <div className="flex items-center gap-2 min-w-0">
               <GrillStatusIcon idea={idea} grillStatus={grillStatus} />
-              <span
-                className="text-base font-normal text-text-primary truncate"
-                style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
-              >
-                {idea.title}
-              </span>
+              <span className="text-base font-normal text-text-primary truncate">{idea.title}</span>
               {idea.status !== 'completed' && (
                 <button
                   onClick={startEditing}
@@ -229,10 +224,7 @@ export default function IdeaCard({
 
           {/* Description */}
           {idea.description && (
-            <p
-              className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2"
-              style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
-            >
+            <p className="text-xs text-text-secondary mb-3 ml-[22px] line-clamp-2">
               {idea.description}
             </p>
           )}

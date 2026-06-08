@@ -51,6 +51,31 @@ export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps):
         </div>
       </div>
 
+      {/* Per-criterion success criteria (campaign goals) */}
+      {report.criteriaResults && report.criteriaResults.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-xs font-medium text-text-secondary">Success Criteria</h4>
+          <div className="space-y-1.5">
+            {report.criteriaResults.map((c, i) => (
+              <div
+                key={i}
+                className="flex items-start gap-1.5 text-xs bg-surface-base rounded-lg border border-border-subtle p-2"
+              >
+                {c.status === 'pass' ? (
+                  <CheckCircle size={12} className="text-success shrink-0 mt-0.5" />
+                ) : (
+                  <XCircle size={12} className="text-danger shrink-0 mt-0.5" />
+                )}
+                <div className="min-w-0">
+                  <p className="text-text-primary">{c.criterion}</p>
+                  {c.detail && <p className="text-text-muted mt-0.5">{c.detail}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Cross-cutting checks */}
       <div className="space-y-1">
         <h4 className="text-xs font-medium text-text-secondary">Cross-Layer Checks</h4>

@@ -6,9 +6,10 @@
 import type { BrowserWindow } from 'electron'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationPhase, ToolActivity } from '../../shared/types'
+import type { ConversationMode, ConversationPhase, ToolActivity } from '../../shared/types'
 import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './chat-protocol'
 import { processToolChunk } from './tool-chunk-processor'
+import { TextDeltaBatcher } from './text-delta-batcher'
 import { chatIpcLogger } from '../logger'
 
 // ── Tool Activity Persistence Accumulator ──────────────────────────────
@@ -68,65 +69,29 @@ export interface ChunkRouterContext {
   specialistMeta?: { specialist: string; taskId?: string }
   phase?: ConversationPhase
   requestId?: string
+  /** Active conversation mode — forwarded to processToolChunk to suppress expected plan-mode blocks. */
+  mode?: ConversationMode
 }
 
 // ── Text delta batching (~30fps) ────────────────────────────────────
 // Reduces IPC calls from ~15/sec to ~3-5/sec during fast streaming.
 // Text deltas are buffered and flushed every 33ms (1 frame at 30fps).
-// Uses a Map keyed by conversationId to prevent cross-conversation text mixing
-// when concurrent streams are active (e.g. multi-session or parallel agents).
-
-const TEXT_BATCH_INTERVAL_MS = 33
-
-class TextDeltaBatcher {
-  private buffers = new Map<string, string>()
-  private timers = new Map<string, ReturnType<typeof setTimeout>>()
-  private contexts = new Map<string, ChunkRouterContext>()
-
-  push(ctx: ChunkRouterContext, text: string): void {
-    const key = ctx.conversationId
-    this.contexts.set(key, ctx)
-    this.buffers.set(key, (this.buffers.get(key) ?? '') + text)
-    if (!this.timers.has(key)) {
-      this.timers.set(
-        key,
-        setTimeout(() => this.flushKey(key), TEXT_BATCH_INTERVAL_MS)
-      )
-    }
-  }
-
-  flush(): void {
-    for (const key of [...this.buffers.keys()]) {
-      this.flushKey(key)
-    }
-  }
-
-  private flushKey(key: string): void {
-    const timer = this.timers.get(key)
-    if (timer) {
-      clearTimeout(timer)
-      this.timers.delete(key)
-    }
-    const buffer = this.buffers.get(key)
-    const ctx = this.contexts.get(key)
-    if (buffer && ctx) {
-      safeSend(
-        ctx,
-        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-        createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
-      )
-      this.buffers.delete(key)
-    }
-  }
-
-  /** Reset for a new stream (call on turn_boundary or stream end). */
-  reset(): void {
-    this.flush()
-    this.contexts.clear()
-  }
-}
+// Keyed by conversationId to prevent cross-conversation text mixing when
+// concurrent streams are active (e.g. multi-session or parallel agents).
+// The shared TextDeltaBatcher owns timing; the flush closure does the IPC send.
 
 const textBatcher = new TextDeltaBatcher()
+
+/** Queue text for batched delivery to the renderer for this conversation. */
+function pushText(ctx: ChunkRouterContext, text: string): void {
+  textBatcher.push(ctx.conversationId, text, (buffer) => {
+    safeSend(
+      ctx,
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
+    )
+  })
+}
 
 /**
  * Send an IPC message to the renderer, guarding against destroyed windows.
@@ -172,7 +137,7 @@ function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Accumulate immediately for backend consumers (prompt caching, etc.)
   ctx.contentAccumulator.value += chunk.content
   // Batch IPC sends at ~30fps to reduce renderer pressure during fast streaming
-  textBatcher.push(ctx, chunk.content)
+  pushText(ctx, chunk.content)
 }
 
 function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
@@ -194,7 +159,8 @@ function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
     workspacePath: ctx.workspacePath,
     agentType: ctx.specialistMeta?.specialist ?? ctx.role,
     workspaceId: ctx.conversationId,
-    agentId: ctx.specialistMeta?.taskId
+    agentId: ctx.specialistMeta?.taskId,
+    mode: ctx.mode
   })
   if (!result) return
 
@@ -478,7 +444,7 @@ function handleStructuredOutput(ctx: ChunkRouterContext, chunk: StreamChunk): vo
   ctx.contentAccumulator.value += chunk.content
   // Forward as text (batched) — the structured_output data rides along
   // in the chunk for renderers that support progressive schema rendering.
-  textBatcher.push(ctx, chunk.content)
+  pushText(ctx, chunk.content)
 }
 
 type ChunkHandler = (ctx: ChunkRouterContext, chunk: StreamChunk) => void

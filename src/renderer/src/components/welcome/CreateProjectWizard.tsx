@@ -5,15 +5,21 @@
  *   1. Setup — name, folder, description, attachments
  *   2. Focus Areas — multi-select greenfield grill tracks (≥1 required)
  *   3. Grill — auto-advances through selected tracks with context carry-over
- *   4. Create — review decisions summary, trigger project creation
+ *   4. Create — review decisions, finalize blueprint, choose a destination
  *
- * State is held here and passed down. The wizard overlay uses inline fixed
- * positioning for guaranteed full-viewport coverage (no createPortal needed).
+ * The workspace is created EARLY (at the end of Focus, before Grill) so the
+ * greenfield grill runs workspace-backed and can hand off to Chat / Goals /
+ * Council exactly like the regular Grill Me. CLAUDE.md generation is deferred
+ * to the final step (so grill decisions are folded in), and an abandoned shell
+ * is discarded (DB cascade + on-disk folder).
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { X, Circle, CheckCircle2 } from 'lucide-react'
 import { ConfirmDialog } from '@renderer/components/common'
+import { useMpaStore } from '@renderer/store/mpa.store'
+import { useCouncilStore } from '@renderer/store/council.store'
+import { useChatStore } from '@renderer/store/chat.store'
 import type { GrillDecision, GrillTrackId, GrillTrackScore } from '../../../../shared/types'
 import { GREENFIELD_DEFAULT_TRACKS } from '../../../../shared/constants'
 import WizardSetupStep from './wizard/WizardSetupStep'
@@ -23,9 +29,12 @@ import WizardSummaryStep from './wizard/WizardSummaryStep'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
+/** Where the user lands after the project is created. */
+export type ProjectDestination = 'chat' | 'goals' | 'council'
+
 interface CreateProjectWizardProps {
   onClose: () => void
-  onCreated: (workspaceId: string) => void
+  onCreated: (workspaceId: string, destination?: ProjectDestination) => void
 }
 
 type WizardStep = 'setup' | 'focus' | 'grill' | 'create'
@@ -41,14 +50,52 @@ const STEP_LABELS: Record<WizardStep, string> = {
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+/** Visible notice prepended to the requirement when LLM plan synthesis is
+ *  unavailable, so the degraded handoff is never mistaken for a real plan. */
+const DEGRADED_PLAN_NOTICE =
+  '> ⚠️ Couldn’t synthesize a full plan automatically — using your decisions as constraints below. Review and refine this before generating goals.'
+
+/** Build a plan-skeleton requirement document (Summary / Objectives /
+ *  Constraints) from the project + grill decisions. Used as the goal/plan
+ *  content when handing off to Goals or Council, and as the fallback when LLM
+ *  plan synthesis is unavailable — a skeleton plan reads far better than a bare
+ *  Q&A list. */
+function buildRequirementDoc(
+  name: string,
+  description: string,
+  decisions: GrillDecision[]
+): string {
+  const trimmedName = name.trim()
+  const lines: string[] = [`# ${trimmedName}`, '']
+
+  lines.push('## Summary', '')
+  lines.push(description.trim() || `Greenfield project “${trimmedName}”.`, '')
+
+  lines.push('## Objectives', '')
+  lines.push(`- Deliver ${trimmedName} as described, satisfying the constraints below.`, '')
+
+  if (decisions.length > 0) {
+    lines.push('## Constraints', '')
+    for (const d of decisions) {
+      const opt = d.selectedOption + (d.otherText ? ` (${d.otherText})` : '')
+      lines.push(`- **${d.questionText}**: ${opt}`)
+    }
+  }
+  return lines.join('\n').trim()
+}
+
 // ── Step indicator (rendered inside content area) ────────────────────────
 
 function WizardStepIndicator({
   currentStep,
-  onGoToStep
+  onGoToStep,
+  lockSetup
 }: {
   currentStep: WizardStep
   onGoToStep: (step: WizardStep) => void
+  lockSetup: boolean
 }): React.JSX.Element {
   const currentStepIndex = STEP_ORDER.indexOf(currentStep)
 
@@ -57,6 +104,9 @@ function WizardStepIndicator({
       {STEP_ORDER.map((step, idx) => {
         const isActive = step === currentStep
         const isDone = idx < currentStepIndex
+        // Once the workspace shell exists, name/folder are fixed on disk — lock Setup.
+        const isLocked = step === 'setup' && lockSetup
+        const canNavigate = idx < currentStepIndex && !isLocked
         return (
           <div key={step} className="flex items-center gap-1.5">
             {idx > 0 && (
@@ -65,13 +115,14 @@ function WizardStepIndicator({
             <button
               type="button"
               onClick={() => {
-                if (idx < currentStepIndex) onGoToStep(step)
+                if (canNavigate) onGoToStep(step)
               }}
-              disabled={idx >= currentStepIndex}
+              disabled={!canNavigate}
+              title={isLocked ? 'Name & folder are fixed once the project is created' : undefined}
               className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
                 isActive
                   ? 'text-primary-text bg-primary-muted'
-                  : isDone
+                  : canNavigate
                     ? 'text-text-primary hover:bg-surface-overlay cursor-pointer'
                     : 'text-text-muted cursor-default'
               }`}
@@ -109,6 +160,14 @@ export default function CreateProjectWizard({
   ])
   const [grillDecisions, setGrillDecisions] = useState<GrillDecision[]>([])
   const [trackScores, setTrackScores] = useState<GrillTrackScore[]>([])
+  const [grillSkipped, setGrillSkipped] = useState(false)
+
+  // ── Early-created workspace (shell) ──
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null)
+  const [shellError, setShellError] = useState<string | null>(null)
+  const shellPromiseRef = useRef<Promise<string | null> | null>(null)
+  // Once the project is committed to a destination, don't discard it on close.
+  const finalizedRef = useRef(false)
 
   // ── Close confirmation ──
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
@@ -117,7 +176,46 @@ export default function CreateProjectWizard({
     grillDecisions.length > 0 ||
     trackScores.length > 0 ||
     attachments.length > 0 ||
-    projectName.trim().length > 0
+    projectName.trim().length > 0 ||
+    workspaceId !== null
+
+  // ── Create the workspace shell (idempotent, concurrency-safe) ──
+  const ensureShell = useCallback(async (): Promise<string | null> => {
+    if (workspaceId) return workspaceId
+    if (shellPromiseRef.current) return shellPromiseRef.current
+
+    const promise = (async (): Promise<string | null> => {
+      try {
+        const ws = await window.api.createProjectShell({
+          name: projectName.trim(),
+          parentFolder,
+          description,
+          attachments: attachments.length > 0 ? attachments : undefined
+        })
+        setWorkspaceId(ws.id)
+        setShellError(null)
+        return ws.id
+      } catch (err) {
+        setShellError(err instanceof Error ? err.message : String(err))
+        return null
+      } finally {
+        shellPromiseRef.current = null
+      }
+    })()
+    shellPromiseRef.current = promise
+    return promise
+  }, [workspaceId, projectName, parentFolder, description, attachments])
+
+  // ── Discard an abandoned shell (DB cascade + on-disk folder) ──
+  const discardIfNeeded = useCallback(async (): Promise<void> => {
+    if (workspaceId && !finalizedRef.current) {
+      try {
+        await window.api.discardProjectShell({ workspaceId })
+      } catch (err) {
+        console.error('discardProjectShell failed:', err)
+      }
+    }
+  }, [workspaceId])
 
   // ── Navigation ──
   const handleClose = useCallback(() => {
@@ -128,6 +226,12 @@ export default function CreateProjectWizard({
     }
   }, [hasData, onClose])
 
+  const confirmClose = useCallback(async () => {
+    setShowCloseConfirm(false)
+    await discardIfNeeded()
+    onClose()
+  }, [discardIfNeeded, onClose])
+
   const goToStep = useCallback((step: WizardStep) => {
     setCurrentStep(step)
   }, [])
@@ -137,10 +241,23 @@ export default function CreateProjectWizard({
     goToStep('focus')
   }, [goToStep])
 
-  // Focus → Grill
-  const handleFocusNext = useCallback(() => {
+  // Focus → Grill (create the workspace shell first)
+  const handleFocusNext = useCallback(async () => {
+    const id = await ensureShell()
+    if (!id) return // shell creation failed — error surfaced, stay on Focus
+    setGrillSkipped(false)
     goToStep('grill')
-  }, [goToStep])
+  }, [ensureShell, goToStep])
+
+  // Focus → Create (skip the grill, blank project — still needs a workspace)
+  const handleFocusSkip = useCallback(async () => {
+    const id = await ensureShell()
+    if (!id) return
+    setGrillSkipped(true)
+    setGrillDecisions([])
+    setTrackScores([])
+    goToStep('create')
+  }, [ensureShell, goToStep])
 
   // Focus ← Setup
   const handleFocusBack = useCallback(() => {
@@ -157,24 +274,107 @@ export default function CreateProjectWizard({
     goToStep('create')
   }, [goToStep])
 
-  // Create ← Grill
+  // Create ← Grill (or ← Focus if the grill was skipped)
   const handleCreateBack = useCallback(() => {
-    goToStep('grill')
-  }, [goToStep])
+    goToStep(grillSkipped ? 'focus' : 'grill')
+  }, [goToStep, grillSkipped])
 
-  // ── Create Project ──
-  const handleCreateProject = useCallback(async () => {
-    const workspace = await window.api.createProject({
-      name: projectName.trim(),
-      parentFolder,
-      description,
-      attachments: attachments.length > 0 ? attachments : undefined,
-      grillDecisions: grillDecisions.length > 0 ? grillDecisions : undefined,
-      trackScores: trackScores.length > 0 ? trackScores : undefined
-    })
+  // ── Finalize blueprint + route to the chosen destination ──
+  const handleFinalize = useCallback(
+    async (destination: ProjectDestination) => {
+      const id = await ensureShell()
+      if (!id) return
 
-    onCreated(workspace.id)
-  }, [projectName, parentFolder, description, attachments, grillDecisions, trackScores, onCreated])
+      await window.api.finalizeProjectBlueprint({
+        workspaceId: id,
+        projectName: projectName.trim(),
+        description,
+        grillDecisions: grillDecisions.length > 0 ? grillDecisions : undefined,
+        trackScores: trackScores.length > 0 ? trackScores : undefined
+      })
+      finalizedRef.current = true
+
+      // Synthesize a coherent plan (requirement document) from the grill
+      // decisions, mirroring the regular Grill handoff. On synthesis failure /
+      // empty result it degrades to a plan-skeleton doc — but flags `degraded`
+      // so the degraded path stays visible and never auto-advances silently.
+      const synthesizeRequirement = async (): Promise<{ text: string; degraded: boolean }> => {
+        try {
+          const plan = await window.api.grillGeneratePlanFromDecisions({
+            projectName: projectName.trim(),
+            description,
+            grillDecisions,
+            trackScores: trackScores.length > 0 ? trackScores : undefined,
+            workspaceId: id
+          })
+          if (plan.requirementDocument?.trim()) {
+            return { text: plan.requirementDocument, degraded: false }
+          }
+          console.warn('grillGeneratePlanFromDecisions returned an empty plan; using skeleton')
+        } catch (err) {
+          console.warn('grillGeneratePlanFromDecisions failed; using plan skeleton:', err)
+        }
+        const skeleton = buildRequirementDoc(projectName, description, grillDecisions)
+        return { text: `${DEGRADED_PLAN_NOTICE}\n\n${skeleton}`, degraded: true }
+      }
+
+      // Prime the destination store BEFORE navigating; auto-nav listeners then
+      // land the new workspace on the right tab (goals via preloadedGoal,
+      // council via isActive). Chat is the default landing.
+      if (destination === 'goals') {
+        const { text, degraded } = await synthesizeRequirement()
+        useMpaStore.getState().setPreloadedGoal({
+          text,
+          // Happy path: auto-decompose so the user lands on editable goals. On a
+          // degraded handoff, keep the user on the describe step so they see the
+          // notice and refine before generating.
+          autoDecompose: !degraded,
+          grillDecisions: grillDecisions.map((d) => ({
+            header: d.questionText,
+            selectedOption: d.selectedOption + (d.otherText ? ` (${d.otherText})` : ''),
+            reason: ''
+          }))
+        })
+      } else if (destination === 'council') {
+        const { text: requirement } = await synthesizeRequirement()
+        const councilStore = useCouncilStore.getState()
+        councilStore.startCouncil()
+        try {
+          const { sessionId } = await window.api.councilStart({
+            workspaceId: id,
+            inputType: 'plan',
+            planContent: requirement,
+            originalUserRequest: projectName.trim()
+          })
+          councilStore.setSessionIdentity(sessionId, id)
+        } catch (err) {
+          console.error('councilStart failed:', err)
+        }
+      } else if (destination === 'chat') {
+        // Seed the already-generated grill plan as a plan card so the new chat
+        // lands on the same interactive plan as the regular Grill handoff.
+        try {
+          const plan = await window.api.grillGeneratePlanFromDecisions({
+            projectName: projectName.trim(),
+            description,
+            grillDecisions,
+            trackScores: trackScores.length > 0 ? trackScores : undefined,
+            workspaceId: id
+          })
+          await useChatStore.getState().createConversation(id, 'plan', projectName.trim())
+          const conv = useChatStore.getState().activeConversation
+          if (conv) {
+            await window.api.grillSeedPlanCard({ conversationId: conv.id, plan })
+          }
+        } catch (err) {
+          console.warn('Greenfield plan seeding failed; landing on empty chat:', err)
+        }
+      }
+
+      onCreated(id, destination)
+    },
+    [ensureShell, projectName, description, grillDecisions, trackScores, onCreated]
+  )
 
   return (
     <div
@@ -200,11 +400,22 @@ export default function CreateProjectWizard({
         </div>
       </div>
 
+      {/* Shell creation error banner */}
+      {shellError && (
+        <div className="flex-shrink-0 px-6 py-2 bg-danger-muted border-b border-danger/30">
+          <p className="text-xs text-danger text-center">❌ {shellError}</p>
+        </div>
+      )}
+
       {/* Step content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {currentStep === 'setup' && (
           <div className="flex-1 flex flex-col items-center justify-center p-8">
-            <WizardStepIndicator currentStep={currentStep} onGoToStep={goToStep} />
+            <WizardStepIndicator
+              currentStep={currentStep}
+              onGoToStep={goToStep}
+              lockSetup={workspaceId !== null}
+            />
             <WizardSetupStep
               projectName={projectName}
               parentFolder={parentFolder}
@@ -221,18 +432,24 @@ export default function CreateProjectWizard({
 
         {currentStep === 'focus' && (
           <div className="flex-1 flex flex-col items-center justify-center p-8">
-            <WizardStepIndicator currentStep={currentStep} onGoToStep={goToStep} />
+            <WizardStepIndicator
+              currentStep={currentStep}
+              onGoToStep={goToStep}
+              lockSetup={workspaceId !== null}
+            />
             <WizardFocusStep
               selectedTracks={selectedTracks}
               onSelectedTracksChange={setSelectedTracks}
               onNext={handleFocusNext}
               onBack={handleFocusBack}
+              onSkip={handleFocusSkip}
             />
           </div>
         )}
 
-        {currentStep === 'grill' && (
+        {currentStep === 'grill' && workspaceId && (
           <WizardGrillStep
+            workspaceId={workspaceId}
             projectName={projectName}
             projectDescription={description}
             selectedTracks={selectedTracks}
@@ -247,7 +464,11 @@ export default function CreateProjectWizard({
 
         {currentStep === 'create' && (
           <div className="flex-1 flex flex-col items-center justify-center p-8">
-            <WizardStepIndicator currentStep={currentStep} onGoToStep={goToStep} />
+            <WizardStepIndicator
+              currentStep={currentStep}
+              onGoToStep={goToStep}
+              lockSetup={workspaceId !== null}
+            />
             <WizardSummaryStep
               projectName={projectName}
               parentFolder={parentFolder}
@@ -256,7 +477,7 @@ export default function CreateProjectWizard({
               grillDecisions={grillDecisions}
               trackScores={trackScores}
               onBack={handleCreateBack}
-              onCreateProject={handleCreateProject}
+              onFinalize={handleFinalize}
             />
           </div>
         )}
@@ -266,14 +487,15 @@ export default function CreateProjectWizard({
       <ConfirmDialog
         isOpen={showCloseConfirm}
         title="Discard Project Setup?"
-        message="You have unsaved project setup data. Are you sure you want to close the wizard?"
+        message={
+          workspaceId
+            ? 'This will delete the project that was created (folder and workspace). Are you sure?'
+            : 'You have unsaved project setup data. Are you sure you want to close the wizard?'
+        }
         confirmLabel="Discard"
         cancelLabel="Keep Editing"
         variant="danger"
-        onConfirm={() => {
-          setShowCloseConfirm(false)
-          onClose()
-        }}
+        onConfirm={confirmClose}
         onCancel={() => setShowCloseConfirm(false)}
       />
     </div>

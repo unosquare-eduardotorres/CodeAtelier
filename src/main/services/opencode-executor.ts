@@ -18,6 +18,7 @@
 
 import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult, ExecutorTokenUsage } from './executor-types'
+import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
 import { normalizeOpenCodeEvent } from './opencode-event-normalizer'
 import log from 'electron-log/main'
 
@@ -123,10 +124,7 @@ const BASE_RETRY_DELAY_MS = 2000
 
 export class OpenCodeExecutor {
   // Store dynamic imports to handle ESM-only package
-  private client: ReturnType<
-    Awaited<ReturnType<typeof this.importSdk>>['createOpencodeClient']
-  > | null = null
-  private serverInstance: unknown | null = null
+  private client: OpencodeClient | null = null
   private isStarted = false
   /** Map of conversationId → OpenCode session ID for multi-turn reuse */
   private readonly sessionMap = new Map<string, string>()
@@ -202,13 +200,11 @@ export class OpenCodeExecutor {
       const startupTimeout = config?.isLocal ? 30_000 : 10_000
 
       const result = await createOpencode({
-        cwd,
         timeout: startupTimeout,
         signal: this.startupAbortController.signal
       })
 
-      this.client = result.client as typeof this.client
-      this.serverInstance = result
+      this.client = result.client
       this.isStarted = true
 
       // C-4: Set up serverReady promise — resolved when server.connected event fires.
@@ -442,7 +438,6 @@ export class OpenCodeExecutor {
     this.stopHealthCheck()
     openCodeLog.info('[opencode] Stopping server')
     this.client = null
-    this.serverInstance = null
     this.isStarted = false
     this.sessionMap.clear()
     this.consecutiveErrors = 0
@@ -450,21 +445,16 @@ export class OpenCodeExecutor {
 
   /**
    * MISS-14: Check if the OpenCode server is healthy.
-   * Calls global.health() and returns version info or null if unhealthy.
+   * The SDK exposes no dedicated health endpoint, so we issue a lightweight,
+   * non-destructive session.list() call — success implies the server responds.
    */
   async checkHealth(): Promise<{ healthy: boolean; version?: string }> {
     if (!this.client || !this.isStarted) {
       return { healthy: false }
     }
     try {
-      const result = await (
-        this.client as Record<string, unknown> & typeof this.client
-      ).global?.health?.()
-      const data = (result as Record<string, unknown>)?.data as Record<string, unknown> | undefined
-      return {
-        healthy: true,
-        version: data?.version as string | undefined
-      }
+      await this.client.session.list()
+      return { healthy: true }
     } catch (err) {
       openCodeLog.warn(`[opencode] Health check failed: ${(err as Error).message}`)
       return { healthy: false }
@@ -544,7 +534,7 @@ export class OpenCodeExecutor {
   async fetchChildSessions(sessionId: string): Promise<Array<{ id: string; status?: string }>> {
     if (!this.client) return []
     try {
-      const result = await (this.client.session as Record<string, unknown>)['children']?.({
+      const result = await this.client.session.children({
         path: { id: sessionId }
       })
       const children =
@@ -662,12 +652,11 @@ export class OpenCodeExecutor {
 
   /**
    * 6E-2/B-4: Enrich git context in priming parts via dual-fallback.
-   * Tries file.status() first for structured uncommitted changes,
-   * falls back to session.shell() git diff if unavailable.
+   * Uses file.status() for structured uncommitted changes.
    * Mutates the matching contextParts entry in place.
    */
   private async enrichGitContext(
-    sessionId: string,
+    _sessionId: string,
     contextParts: Array<{ type: 'text'; text: string }>
   ): Promise<void> {
     if (!this.client) return
@@ -691,23 +680,9 @@ export class OpenCodeExecutor {
         return
       }
     } catch {
-      // file.status() not available — fall through to shell
-    }
-
-    // B-4: Fall back to session.shell() for git diff context
-    try {
-      const gitResult = await this.client.session.shell({
-        path: { id: sessionId },
-        body: { command: 'git diff --stat HEAD~3 2>/dev/null || echo "(no recent commits)"' }
-      })
-      if (gitResult.data?.stdout && gitResult.data.stdout.trim().length > 10) {
-        contextParts[gitIdx] = {
-          type: 'text',
-          text: `[Workspace Context: Recent Changes (live)]\n${gitResult.data.stdout.trim()}`
-        }
-      }
-    } catch {
-      // session.shell() not available or failed — keep static context parts
+      // file.status() not available — keep the static context parts.
+      // (A session.shell() git-diff fallback was removed: the SDK's shell
+      // response is an AssistantMessage with no stdout field to read.)
     }
   }
 
@@ -778,9 +753,9 @@ export class OpenCodeExecutor {
   ): Promise<{ success: boolean; data?: unknown; error?: string }> {
     if (!this.client) return { success: false, error: 'OpenCode server not started' }
     try {
-      const result = await (this.client.session as Record<string, unknown>)['command']?.({
+      const result = await this.client.session.command({
         path: { id: sessionId },
-        body: { command, args }
+        body: { command, arguments: args ?? '' }
       })
       openCodeLog.info(`[opencode] Command /${command} executed on session ${sessionId}`)
       return { success: true, data: (result as Record<string, unknown>)?.data }
@@ -879,17 +854,11 @@ export class OpenCodeExecutor {
    */
   async pinSession(sessionId: string): Promise<{ success: boolean; error?: string }> {
     if (!this.client) return { success: false, error: 'OpenCode server not started' }
-    try {
-      await this.client.session.update({
-        path: { id: sessionId },
-        body: { pinned: true }
-      })
-      openCodeLog.info(`[opencode] Session ${sessionId} pinned`)
-      return { success: true }
-    } catch (err) {
-      openCodeLog.warn(`[opencode] Failed to pin session: ${(err as Error).message}`)
-      return { success: false, error: (err as Error).message }
-    }
+    // The OpenCode SDK exposes no session-pin API (session.update only accepts
+    // `title`). Pinning is a local-only UI affordance, so this is a no-op stub
+    // that reports success without a server round-trip.
+    openCodeLog.info(`[opencode] pinSession is a local-only no-op for session ${sessionId}`)
+    return { success: true }
   }
 
   /**
@@ -923,7 +892,7 @@ export class OpenCodeExecutor {
   ): Promise<Array<{ id: string; role: string; content?: string }>> {
     if (!this.client) return []
     try {
-      const result = await (this.client.session as Record<string, unknown>)['messages']?.({
+      const result = await this.client.session.messages({
         path: { id: sessionId }
       })
       const messages =
@@ -950,27 +919,16 @@ export class OpenCodeExecutor {
   ): Promise<void> {
     if (!this.client) throw new Error('OpenCode server not started')
     try {
-      await (this.client as Record<string, unknown> & typeof this.client).session[
-        'postSessionByIdPermissionsByPermissionId'
-      ]?.({
-        path: { id: sessionId, permissionId },
-        body: { allowed }
+      await this.client.postSessionIdPermissionsPermissionId({
+        path: { id: sessionId, permissionID: permissionId },
+        body: { response: allowed ? 'always' : 'reject' }
       })
       openCodeLog.info(
         `[opencode] Permission ${allowed ? 'granted' : 'denied'} for ${permissionId}`
       )
     } catch (err) {
       openCodeLog.error(`[opencode] Failed to respond to permission ${permissionId}:`, err)
-      // Fallback: try the generic permission endpoint
-      try {
-        await (this.client.session as Record<string, unknown>)['permission']?.({
-          path: { id: sessionId },
-          body: { permissionId, allowed }
-        })
-      } catch (fallbackErr) {
-        openCodeLog.error('[opencode] Permission fallback also failed:', fallbackErr)
-        throw fallbackErr
-      }
+      throw err
     }
   }
 
@@ -1061,7 +1019,7 @@ export class OpenCodeExecutor {
   /**
    * Re-send a prompt to the OpenCode session (fire-and-forget for retries).
    */
-  private resendPrompt(sessionId: string, promptBody: Record<string, unknown>): void {
+  private resendPrompt(sessionId: string, promptBody: SessionPromptData['body']): void {
     this.client!.session.prompt({
       path: { id: sessionId },
       body: promptBody
@@ -1117,7 +1075,7 @@ export class OpenCodeExecutor {
     systemPrompt: string,
     provider: OpenCodeProviderConfig,
     outputSchema?: Record<string, unknown>
-  ): Record<string, unknown> {
+  ): SessionPromptData['body'] {
     const body: Record<string, unknown> = {
       parts: this.buildPromptParts(prompt, systemPrompt),
       model: {
@@ -1131,7 +1089,7 @@ export class OpenCodeExecutor {
       body.format = { type: 'json_schema', schema: outputSchema, retries: 2 }
     }
 
-    return body
+    return body as SessionPromptData['body']
   }
 
   /**

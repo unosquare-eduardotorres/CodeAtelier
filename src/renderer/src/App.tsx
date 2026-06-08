@@ -284,6 +284,7 @@ function App(): React.JSX.Element {
         tokenUsage: data.tokenUsage,
         inputTokens: data.inputTokens,
         outputTokens: data.outputTokens,
+        contextTokens: data.contextTokens,
         model: data.model,
         complexityTier: data.complexityTier,
         activeMcpTools: data.activeMcpTools

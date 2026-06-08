@@ -506,6 +506,7 @@ export type ModelAction =
   | 'council-member'
   | 'council-chairman'
   | 'grill:plan'
+  | 'mpa:decompose'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -803,6 +804,25 @@ export interface TokenSummary {
   /** Number of recorded turns from turn_usage table */
   totalTurns: number
   byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
+}
+
+/** Per-feature usage row in the unified usage_log breakdown. */
+export interface FeatureUsageSummary {
+  feature: string
+  tokens: number
+  costCents: number
+  calls: number
+}
+
+/** Unified usage_log summary (all token consumption, broken down by feature). */
+export interface WorkspaceUsageSummary {
+  totalTokens: number
+  totalInput: number
+  totalOutput: number
+  totalCacheRead: number
+  totalCacheCreation: number
+  totalCostCents: number
+  byFeature: FeatureUsageSummary[]
 }
 
 // ── Auto Memory System ──

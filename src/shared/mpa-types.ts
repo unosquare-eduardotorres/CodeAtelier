@@ -57,6 +57,13 @@ export interface MpaVerifyCrossCutting {
   testsPass: boolean
 }
 
+/** Per-success-criterion verification result (campaign goals). */
+export interface MpaCriterionResult {
+  criterion: string
+  status: 'pass' | 'fail'
+  detail: string
+}
+
 export interface MpaVerifyReport {
   allComplete: boolean
   totalItems: number
@@ -66,6 +73,8 @@ export interface MpaVerifyReport {
   issues: MpaVerifyItem[]
   crossCutting: MpaVerifyCrossCutting
   testOutput: string
+  /** Per-criterion pass/fail when the run was given explicit success criteria. */
+  criteriaResults?: MpaCriterionResult[]
 }
 
 // ── DB Models ──
@@ -84,6 +93,20 @@ export interface MpaRun {
   createdAt: string
   completedAt: string | null
   totalTokens: number
+  /** Campaign linkage (null for standalone/legacy runs). */
+  campaignId: string | null
+  orderIndex: number | null
+}
+
+/** Persisted campaign record (sequential measurable-goal run group). */
+export interface MpaCampaign {
+  id: string
+  workspaceId: string
+  title: string
+  originalPlanMd: string
+  status: MpaCampaignStatus
+  createdAt: string
+  completedAt: string | null
 }
 
 export interface MpaPhase {
@@ -132,6 +155,10 @@ export interface MpaOrchestrateParams {
   phases: MpaPhaseType[]
   grillSessionId?: string
   grillDecisions?: GrillDecision[]
+  /** Campaign linkage + per-goal success criteria (campaign runs only). */
+  campaignId?: string
+  orderIndex?: number
+  successCriteria?: string[]
 }
 
 // ── Pre-flight Classification Result ──
@@ -210,4 +237,94 @@ export interface MpaPreloadedGoal {
   text: string
   grillSessionId?: string
   grillDecisions?: GrillDecision[]
+  /** When true, the campaign panel auto-decomposes the text into goals on mount
+   *  (set on a successful greenfield handoff so the user lands on editable
+   *  goals rather than a raw text box). Left false on a degraded handoff so the
+   *  user reviews the fallback notice first. */
+  autoDecompose?: boolean
+}
+
+// ── Measurable Goals (decomposer → campaign) ──
+
+/** A single measurable goal produced by the goal decomposer. Each goal becomes
+ *  its own sequential MPA run within a campaign. */
+export interface MeasurableGoal {
+  id: string
+  title: string
+  /** The concrete outcome this goal achieves. */
+  outcome: string
+  /** Checkable, independently-verifiable success criteria. */
+  successCriteria: string[]
+  goalType: MpaGoalType
+  /** Phases derived locally from goalType (PHASE_TEMPLATES). */
+  phases: MpaPhaseType[]
+}
+
+/** Result of decomposing a plan / typed input into measurable goals. */
+export interface GoalDecomposeResult {
+  goals: MeasurableGoal[]
+}
+
+// ── Campaign (sequential measurable-goal runs) ──
+
+export type MpaCampaignStatus = 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
+
+export type MpaCampaignGoalStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+
+/** How the user resolves a paused campaign (verify/run failure on a goal). */
+export type MpaCampaignPauseAction = 'retry' | 'skip' | 'stop'
+
+export interface MpaCampaignStartParams {
+  workspaceId: string
+  title: string
+  /** Original plan / typed input the goals were decomposed from. */
+  originalPlanMd: string
+  goals: MeasurableGoal[]
+}
+
+/** Per-goal state tracked by the in-memory campaign supervisor. */
+export interface MpaCampaignGoalState {
+  goal: MeasurableGoal
+  orderIndex: number
+  status: MpaCampaignGoalStatus
+  runId: string | null
+}
+
+// ── Campaign IPC Event Payloads ──
+
+export interface MpaCampaignStartedPayload {
+  campaignId: string
+  workspaceId: string
+  title: string
+  totalGoals: number
+}
+
+export interface MpaCampaignGoalStartPayload {
+  campaignId: string
+  orderIndex: number
+  goalId: string
+  title: string
+}
+
+export interface MpaCampaignGoalCompletePayload {
+  campaignId: string
+  orderIndex: number
+  goalId: string
+  status: MpaCampaignGoalStatus
+  runId: string | null
+}
+
+export interface MpaCampaignPausedPayload {
+  campaignId: string
+  orderIndex: number
+  goalId: string
+  runId: string | null
+  reason: string
+}
+
+export interface MpaCampaignCompletePayload {
+  campaignId: string
+  status: MpaCampaignStatus
+  completedGoals: number
+  totalGoals: number
 }

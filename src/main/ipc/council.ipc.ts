@@ -16,7 +16,8 @@ import type {
   CouncilVerdict,
   CouncilPhase,
   LLMProvider,
-  StructuredPlan
+  StructuredPlan,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
 import { createTimedCleanupMap } from './listener-cleanup'
@@ -224,6 +225,17 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     'phase-changed',
     (data) => {
       councilPersistenceController.handlePhaseChanged(data, router)
+    }
+  )
+
+  // ── status — forward live token/context counters to the renderer ──
+  councilCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
+    cleanups,
+    councilService,
+    'status',
+    (data) => {
+      if (data.workspaceId && data.workspaceId !== workspaceId) return
+      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 

@@ -13,10 +13,8 @@
  * GrillAgentService and AuditAgentService.
  */
 
-import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import os from 'node:os'
-import { promisify } from 'node:util'
 import log from 'electron-log'
 import type {
   CouncilAdvisorRole,
@@ -28,9 +26,11 @@ import type {
   CouncilMemberStatus,
   CouncilInputType,
   LLMProvider,
-  StructuredPlan
+  StructuredPlan,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
+import { runOneShotClaude } from './one-shot-claude'
 import { AgentSessionService } from './agent-session.service'
 import { CouncilMemberRoleAdapter } from './role-adapters/council-member.adapter'
 import { CouncilChairmanRoleAdapter } from './role-adapters/council-chairman.adapter'
@@ -39,7 +39,6 @@ import { parseCouncilReview, parsePeerReview, parseCouncilVerdict } from './coun
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
 
 const councilLog = log.scope('council')
-const execFileAsync = promisify(execFile)
 
 /** Collect non-null fulfilled values from Promise.allSettled results. */
 function collectSettled<T>(results: PromiseSettledResult<T | null>[]): T[] {
@@ -323,6 +322,9 @@ export class CouncilService extends EventEmitter {
             chunk
           })
         })
+        session.on('statusUpdate', (status: AgentStatus) => {
+          this.emit('status', { workspaceId: entry.workspaceId, status })
+        })
 
         // Start session in plan mode (read-only)
         await session.start(entry.workspacePath, 'plan')
@@ -429,9 +431,11 @@ Respond ONLY with a JSON block:
 
     const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
       try {
-        const { stdout } = await execFileAsync(
-          'claude',
-          [
+        const { text: stdout } = await runOneShotClaude({
+          feature: 'council_peer_review',
+          model: 'claude-haiku-4-5-20251001',
+          workspaceId: entry.workspaceId,
+          args: [
             '-p',
             `Review these advisor responses:\n\n${anonymizedText}`,
             '--model',
@@ -441,15 +445,12 @@ Respond ONLY with a JSON block:
             '--permission-mode',
             'plan',
             '--max-turns',
-            '1',
-            '--output-format',
-            'text'
+            '1'
           ],
-          {
-            encoding: 'utf-8',
+          cli: {
             timeout: 120_000 // 2 min timeout
           }
-        )
+        })
 
         const parsed = parsePeerReview(stdout, role)
         if (parsed) {
@@ -501,6 +502,9 @@ Respond ONLY with a JSON block:
           advisorRole: 'chairman' as string,
           chunk
         })
+      })
+      session.on('statusUpdate', (status: AgentStatus) => {
+        this.emit('status', { workspaceId: entry.workspaceId, status })
       })
 
       // Use OS temp dir as working directory (chairman has no tools)
@@ -769,6 +773,9 @@ Respond ONLY with a JSON block:
             advisorRole: role,
             chunk
           })
+        })
+        session.on('statusUpdate', (status: AgentStatus) => {
+          this.emit('status', { workspaceId: entry.workspaceId, status })
         })
 
         await session.start(entry.workspacePath, 'plan')

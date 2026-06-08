@@ -23,6 +23,7 @@ import type {
   MemoryFeedResult,
   WorkspaceFeedTimestamps,
   TokenSummary,
+  WorkspaceUsageSummary,
   AgentSessionRecord,
   GrillQuestion,
   Idea,
@@ -83,6 +84,25 @@ const api = {
     trackScores?: GrillTrackScore[]
     tempGrillSessionId?: string
   }): Promise<Workspace> => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, args),
+
+  createProjectShell: (args: {
+    name: string
+    parentFolder: string
+    description?: string
+    attachments?: string[]
+    tempGrillSessionId?: string
+  }): Promise<Workspace> => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE_SHELL, args),
+
+  finalizeProjectBlueprint: (args: {
+    workspaceId: string
+    projectName: string
+    description?: string
+    grillDecisions?: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_FINALIZE_BLUEPRINT, args),
+
+  discardProjectShell: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DISCARD_SHELL, args),
 
   selectDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_DIRECTORY),
@@ -501,6 +521,12 @@ const api = {
   }): Promise<AgentSessionRecord[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_RECENT_SESSIONS, args),
 
+  getWorkspaceUsageSummary: (args: { workspaceId: string }): Promise<WorkspaceUsageSummary> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_WORKSPACE_USAGE, args),
+
+  getGlobalUsageSummary: (): Promise<WorkspaceUsageSummary> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TOKEN_GET_GLOBAL_USAGE),
+
   // ── Ideas ──
   listIdeas: (args: { workspaceId: string }): Promise<Idea[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.IDEA_LIST, args),
@@ -751,6 +777,7 @@ const api = {
       tokenUsage: number
       inputTokens?: number
       outputTokens?: number
+      contextTokens?: number
       activeMcpTools?: string[]
     }) => void
   ): (() => void) => {
@@ -764,6 +791,7 @@ const api = {
         tokenUsage: number
         inputTokens?: number
         outputTokens?: number
+        contextTokens?: number
         activeMcpTools?: string[]
       }
     ): void => callback(data)
@@ -1803,6 +1831,15 @@ const api = {
     workspaceId: string
   }): Promise<GrillStructuredPlan> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_GENERATE_PLAN, args),
 
+  grillGeneratePlanFromDecisions: (args: {
+    projectName: string
+    description: string
+    grillDecisions: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+    workspaceId: string
+  }): Promise<GrillStructuredPlan> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GRILL_GENERATE_PLAN_FROM_DECISIONS, args),
+
   grillGetStatus: (args: {
     workspaceId: string
   }): Promise<{
@@ -1820,6 +1857,11 @@ const api = {
 
   grillComplete: (args: { ideaId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_COMPLETE, args),
+
+  grillSeedPlanCard: (args: {
+    conversationId: string
+    plan: GrillStructuredPlan
+  }): Promise<Message> => ipcRenderer.invoke(IPC_CHANNELS.GRILL_SEED_PLAN_CARD, args),
 
   grillDiscard: (args: { ideaId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_DISCARD, args),
@@ -1847,16 +1889,6 @@ const api = {
 
   // ── MPA (Multi-Phased Agent Pipeline) ──
 
-  mpaStart: (args: {
-    workspaceId: string
-    goal: string
-    title: string
-    goalType: string
-    phases: string[]
-    grillSessionId?: string
-    grillDecisions?: Array<{ header: string; selectedOption: string; reason: string }>
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.MPA_START, args),
-
   mpaCancel: (args?: { workspaceId?: string }): Promise<{ cancelled: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MPA_CANCEL, args),
 
@@ -1877,16 +1909,6 @@ const api = {
 
   mpaGetHistory: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.MPA_GET_HISTORY, args),
-
-  mpaClassifyGoal: (args: {
-    goal: string
-  }): Promise<{
-    goalType: string
-    phases: string[]
-    isValid: boolean
-    rejectionReason?: string
-    suggestedGoal?: string
-  }> => ipcRenderer.invoke(IPC_CHANNELS.MPA_CLASSIFY_GOAL, args),
 
   mpaApprovalRespond: (args: {
     runId: string
@@ -2028,6 +2050,163 @@ const api = {
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.MPA_PIPELINE_COMPLETE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_PIPELINE_COMPLETE, handler)
+  },
+
+  // ── MPA Campaigns (sequential measurable-goal runs) ──
+
+  mpaDecomposeGoals: (args: {
+    workspaceId: string
+    input: string
+  }): Promise<{
+    goals: Array<{
+      id: string
+      title: string
+      outcome: string
+      successCriteria: string[]
+      goalType: string
+      phases: string[]
+    }>
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MPA_DECOMPOSE_GOALS, args),
+
+  mpaCampaignStart: (args: {
+    workspaceId: string
+    title: string
+    originalPlanMd: string
+    goals: Array<{
+      id: string
+      title: string
+      outcome: string
+      successCriteria: string[]
+      goalType: string
+      phases: string[]
+    }>
+  }): Promise<{ campaignId: string }> => ipcRenderer.invoke(IPC_CHANNELS.MPA_CAMPAIGN_START, args),
+
+  mpaCampaignRespond: (args: {
+    workspaceId: string
+    action: 'retry' | 'skip' | 'stop'
+  }): Promise<{ responded: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MPA_CAMPAIGN_RESPOND, args),
+
+  mpaCampaignCancel: (args: { workspaceId: string }): Promise<{ cancelled: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MPA_CAMPAIGN_CANCEL, args),
+
+  mpaCampaignGetHistory: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MPA_CAMPAIGN_GET_HISTORY, args),
+
+  mpaCampaignGetDetail: (args: { campaignId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MPA_CAMPAIGN_GET_DETAIL, args),
+
+  onMpaCampaignStarted: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      title: string
+      totalGoals: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { workspaceId: string; campaignId: string; title: string; totalGoals: number }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.MPA_CAMPAIGN_STARTED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_CAMPAIGN_STARTED, handler)
+  },
+
+  onMpaCampaignGoalStart: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      orderIndex: number
+      goalId: string
+      title: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        campaignId: string
+        orderIndex: number
+        goalId: string
+        title: string
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.MPA_CAMPAIGN_GOAL_START, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_CAMPAIGN_GOAL_START, handler)
+  },
+
+  onMpaCampaignGoalComplete: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      orderIndex: number
+      goalId: string
+      status: string
+      runId: string | null
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        campaignId: string
+        orderIndex: number
+        goalId: string
+        status: string
+        runId: string | null
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.MPA_CAMPAIGN_GOAL_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_CAMPAIGN_GOAL_COMPLETE, handler)
+  },
+
+  onMpaCampaignPaused: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      orderIndex: number
+      goalId: string
+      runId: string | null
+      reason: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        campaignId: string
+        orderIndex: number
+        goalId: string
+        runId: string | null
+        reason: string
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.MPA_CAMPAIGN_PAUSED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_CAMPAIGN_PAUSED, handler)
+  },
+
+  onMpaCampaignComplete: (
+    cb: (data: {
+      workspaceId: string
+      campaignId: string
+      status: string
+      completedGoals: number
+      totalGoals: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        workspaceId: string
+        campaignId: string
+        status: string
+        completedGoals: number
+        totalGoals: number
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.MPA_CAMPAIGN_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.MPA_CAMPAIGN_COMPLETE, handler)
   },
 
   // ── Multi-Workspace Session Management ──

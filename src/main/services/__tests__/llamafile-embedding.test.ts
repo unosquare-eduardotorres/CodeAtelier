@@ -13,7 +13,7 @@
  * SINGLE test that owns the global for its whole duration.
  */
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync } from './test-harness'
+import { test, describe, summaryAsync, runExclusive } from './test-harness'
 import { llamafileEmbeddingProvider } from '../llamafile-embedding.service'
 import { LLAMAFILE_EMBEDDING } from '../../../shared/constants'
 
@@ -37,7 +37,8 @@ function parseInput(init?: RequestInit): string[] {
 }
 
 describe('LlamafileEmbeddingManager', () => {
-  test('embed contract: guard, port, mapping, halving, empty-input', async () => {
+  test('embed contract: guard, port, mapping, halving, empty-input', () =>
+    runExclusive(async () => {
     const originalFetch = global.fetch
     try {
       // ── not-ready guard: no silent fallback ──────────────────────────────
@@ -125,7 +126,7 @@ describe('LlamafileEmbeddingManager', () => {
       internals._isReady = false
       internals.baseUrl = null
     }
-  })
+    }))
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

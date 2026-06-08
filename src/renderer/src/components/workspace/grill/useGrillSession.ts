@@ -84,7 +84,8 @@ export function useGrillSession(opts: {
     onComplete,
     onRestorePlan
   } = opts
-  const { loadConversations, selectConversation, sendMessage } = useChatActions()
+  const { loadConversations, selectConversation, appendLocalMessage, setStreamingIndicator } =
+    useChatActions()
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const { completeFromGrill, convertDirect } = useIdeaStore()
 
@@ -400,7 +401,8 @@ export function useGrillSession(opts: {
     convertDirect,
     loadConversations,
     selectConversation,
-    sendMessage,
+    appendLocalMessage,
+    setStreamingIndicator,
     onBack,
     onComplete
   })

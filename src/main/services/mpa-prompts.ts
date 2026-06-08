@@ -171,6 +171,7 @@ export function buildVerifierSystemPrompt(params: {
   goal: string
   plan: MpaPlanArtifact
   workspaceName: string
+  successCriteria?: string[]
   model?: string
 }): string {
   const isLean = resolvePromptVerbosity(params.model ?? '') === 'lean'
@@ -181,6 +182,14 @@ export function buildVerifierSystemPrompt(params: {
         `- **${item.id}: ${item.title}** — files: ${item.files.join(', ')} (scope: ${item.scope}${item.includesTests ? ', has tests' : ''})`
     )
     .join('\n')
+
+  const criteria = (params.successCriteria ?? []).filter((c) => c.trim().length > 0)
+  const hasCriteria = criteria.length > 0
+  const criteriaList = criteria.map((c, i) => `${i + 1}. ${sanitizePromptInput(c)}`).join('\n')
+  // Section appended to the system prompt when explicit success criteria exist.
+  const criteriaSection = hasCriteria
+    ? `\n## Success Criteria (must ALL pass)\n${criteriaList}\n\nIn addition to verifying plan items, judge each success criterion above against the actual codebase. Include a \`criteriaResults\` array in the final report with one entry per criterion: {"criterion": "<exact text>", "status": "pass" | "fail", "detail": "evidence"}. Set allComplete to false if ANY criterion fails.`
+    : ''
 
   let prompt: string
 
@@ -195,9 +204,10 @@ ${planItems}
 
 ## Instructions
 For each item: verify files exist, functionality present, integration complete, tests exist. Check cross-layer connections. Run tests.
+${criteriaSection}
 
 Emit per-item \`goal-verify-item\` blocks: {planItemId, status: "implemented"|"partial"|"missing", detail, filesChecked}
-Then one \`goal-verify-report\`: {allComplete, totalItems: ${params.plan.items.length}, implemented, partial, missing, issues, crossCutting: {frontendBackendConnected, backendDatabaseConnected, routesRegistered, testsPass}, testOutput}
+Then one \`goal-verify-report\`: {allComplete, totalItems: ${params.plan.items.length}, implemented, partial, missing, issues, crossCutting: {frontendBackendConnected, backendDatabaseConnected, routesRegistered, testsPass}, testOutput${hasCriteria ? ', criteriaResults' : ''}}
 
 ## Rules
 Read-only. Verify every item. Read files before marking implemented. Run actual tests.`
@@ -212,6 +222,7 @@ ${planItems}
 
 ## What to Do
 For each plan item, verify: files exist, functionality is present (read the code), pieces are integrated (routes registered, services imported), and tests exist where expected. Also check cross-layer connections: frontend calls correct APIs, backend uses correct models, routes are accessible. Run the project test command and report results.
+${criteriaSection}
 
 ## Output Format
 For each plan item, emit a verification block:
@@ -238,7 +249,11 @@ After all items, emit the final report:
     "routesRegistered": true | false,
     "testsPass": true | false
   },
-  "testOutput": "summary of test results"
+  "testOutput": "summary of test results"${
+    hasCriteria
+      ? ',\n  "criteriaResults": [\n    {"criterion": "<exact criterion text>", "status": "pass" | "fail", "detail": "evidence from the codebase"}\n  ]'
+      : ''
+  }
 }
 \`\`\`
 

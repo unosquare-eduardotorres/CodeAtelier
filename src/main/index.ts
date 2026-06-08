@@ -16,6 +16,12 @@ import os from 'node:os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
+import {
+  agentSessionRepository,
+  grillSessionRepository,
+  usageLogRepository,
+  turnUsageRepository
+} from './db/repositories'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
 import { memoryFeedService } from './services/memory-feed.service'
@@ -228,14 +234,15 @@ function createWindow(): void {
     )
   }
 
-  // Clean up stale "running" sessions left over from a previous app crash/quit
+  // Clean up stale sessions left over from a previous app crash/quit
   try {
-    const { agentSessionRepository } =
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('./db/repositories') as typeof import('./db/repositories')
-    const staleCount = agentSessionRepository.terminateStale()
-    if (staleCount > 0) {
-      log.info(`[Startup] Terminated ${staleCount} stale agent session(s) from previous run`)
+    const staleAgents = agentSessionRepository.terminateStale()
+    if (staleAgents > 0) {
+      log.info(`[Startup] Terminated ${staleAgents} stale agent session(s) from previous run`)
+    }
+    const staleGrills = grillSessionRepository.terminateStale()
+    if (staleGrills > 0) {
+      log.info(`[Startup] Recovered ${staleGrills} stale grill session(s) from previous run`)
     }
   } catch (error) {
     log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
@@ -246,6 +253,14 @@ function createWindow(): void {
     eventLoggerService.prune(30)
   } catch (error) {
     dbLogger.debug('Event pruning on startup failed (non-critical):', error)
+  }
+
+  // Prune old token usage to prevent unbounded DB growth (90-day cost history)
+  try {
+    usageLogRepository.pruneOlderThan(90)
+    turnUsageRepository.pruneOlderThan(90)
+  } catch (error) {
+    dbLogger.debug('Token usage pruning on startup failed (non-critical):', error)
   }
 
   // Register IPC handlers

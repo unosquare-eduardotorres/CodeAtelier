@@ -231,7 +231,7 @@ export default function ChatPanel({
         )}
 
         {/* Rate limit warning banner */}
-        {rateLimitState && rateLimitState.status !== 'allowed' && (
+        {rateLimitState && (
           <div className="px-6 py-2 border-b border-border-subtle">
             <RateLimitBadge
               utilization={rateLimitState.utilization ?? 0}

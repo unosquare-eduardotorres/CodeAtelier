@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import type { StreamChunk } from '../services'
-import type { ConversationPhase } from '../../shared/types'
+import type { ConversationMode, ConversationPhase } from '../../shared/types'
 import { routeChunk } from './chunk-router'
 
 /**
@@ -16,7 +16,8 @@ export function forwardChunkToRenderer(
   workspacePath?: string,
   specialistMeta?: { specialist: string; taskId?: string },
   phase?: ConversationPhase,
-  requestId?: string
+  requestId?: string,
+  mode?: ConversationMode
 ): void {
   routeChunk(
     {
@@ -27,7 +28,8 @@ export function forwardChunkToRenderer(
       workspacePath,
       specialistMeta,
       phase,
-      requestId
+      requestId,
+      mode
     },
     chunk
   )

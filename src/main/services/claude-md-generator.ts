@@ -8,6 +8,7 @@
 
 import log from 'electron-log'
 import type { GrillDecision, GrillTrackScore } from '../../shared/types'
+import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 
 const genLog = log.scope('claude-md-gen')
@@ -34,8 +35,6 @@ export async function generateClaudeMd(params: {
   }
 
   try {
-    const { execFileSync } = await import('node:child_process')
-
     const decisionsText = formatDecisions(grillDecisions)
     const scoresText = formatTrackScores(trackScores)
 
@@ -90,9 +89,11 @@ Generate a well-structured markdown document with the following sections:
     // and avoids hardcoding a specific model version.
     const resolvedModel = modelConfigService.getModel(undefined, 'activation')
 
-    const content = execFileSync(
-      'claude',
-      [
+    const { text: content } = await runOneShotClaude({
+      feature: 'claude_md',
+      model: resolvedModel,
+      workspaceId: null, // greenfield — no workspace yet
+      args: [
         '-p',
         prompt,
         '--model',
@@ -102,15 +103,12 @@ Generate a well-structured markdown document with the following sections:
         '--permission-mode',
         'plan',
         '--max-turns',
-        '1',
-        '--output-format',
-        'text'
+        '1'
       ],
-      {
-        encoding: 'utf-8',
+      cli: {
         timeout: 60_000
       }
-    )
+    })
 
     const trimmed = content.trim()
     if (trimmed.length < 50) {

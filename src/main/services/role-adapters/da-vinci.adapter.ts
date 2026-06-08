@@ -81,13 +81,15 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
     // sentinel into the user message — DaVinci's prompt instructs it to
     // respond with an ask_user swap proposal.
     try {
-      const readySpecialist = specialistRepository.findReadyByWorkspace(ctx.workspaceId)
-      if (readySpecialist && readySpecialist.id !== this.lastAnnouncedSpecialistId) {
-        this.promptAssembler.setPendingSpecialistReadySignal(readySpecialist.displayName)
-        this.lastAnnouncedSpecialistId = readySpecialist.id
-        this.log.info(
-          `[adapter:specialist-ready] Armed swap proposal for workspace=${ctx.workspaceId} specialist=${readySpecialist.displayName}`
-        )
+      if (ctx.workspaceId) {
+        const readySpecialist = specialistRepository.findReadyByWorkspace(ctx.workspaceId)
+        if (readySpecialist && readySpecialist.id !== this.lastAnnouncedSpecialistId) {
+          this.promptAssembler.setPendingSpecialistReadySignal(readySpecialist.displayName)
+          this.lastAnnouncedSpecialistId = readySpecialist.id
+          this.log.info(
+            `[adapter:specialist-ready] Armed swap proposal for workspace=${ctx.workspaceId} specialist=${readySpecialist.displayName}`
+          )
+        }
       }
     } catch {
       /* non-fatal — detection is best-effort */

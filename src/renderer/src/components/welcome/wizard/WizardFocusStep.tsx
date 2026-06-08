@@ -35,6 +35,7 @@ interface WizardFocusStepProps {
   onSelectedTracksChange: (tracks: GrillTrackId[]) => void
   onNext: () => void
   onBack: () => void
+  onSkip: () => void
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -43,7 +44,8 @@ export default function WizardFocusStep({
   selectedTracks,
   onSelectedTracksChange,
   onNext,
-  onBack
+  onBack,
+  onSkip
 }: WizardFocusStepProps): React.JSX.Element {
   const toggleTrack = (trackId: GrillTrackId): void => {
     if (selectedTracks.includes(trackId)) {
@@ -137,18 +139,29 @@ export default function WizardFocusStep({
         >
           Back
         </button>
-        <button
-          type="button"
-          onClick={onNext}
-          disabled={!isValid}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium
-                     bg-primary hover:bg-primary-hover text-white
-                     transition-colors disabled:opacity-40 disabled:cursor-not-allowed
-                     focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
-        >
-          Start Grilling
-          <ArrowRight size={14} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onSkip}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
+                       text-text-secondary hover:text-text-primary hover:bg-surface-overlay
+                       transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50"
+          >
+            Skip — create blank project
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            disabled={!isValid}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium
+                       bg-primary hover:bg-primary-hover text-white
+                       transition-colors disabled:opacity-40 disabled:cursor-not-allowed
+                       focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
+          >
+            Start Grilling
+            <ArrowRight size={14} />
+          </button>
+        </div>
       </div>
     </div>
   )

@@ -44,6 +44,8 @@ import { GRILL_TRACKS } from '../../../../../shared/constants'
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface WizardGrillStepProps {
+  /** Real workspace id — created early (end of Focus step) so the grill is workspace-backed. */
+  workspaceId: string
   projectName: string
   projectDescription: string
   selectedTracks: GrillTrackId[]
@@ -69,6 +71,7 @@ type TrackStatus = 'pending' | 'active' | 'completed' | 'skipped'
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function WizardGrillStep({
+  workspaceId,
   projectName,
   projectDescription,
   selectedTracks,
@@ -158,7 +161,7 @@ export default function WizardGrillStep({
 
       try {
         await window.api.grillEvaluate({
-          workspaceId: 'greenfield',
+          workspaceId,
           trackId,
           ideaTitle: projectName,
           ideaDescription: projectDescription,
@@ -179,7 +182,7 @@ export default function WizardGrillStep({
         setPhase('paused')
       }
     },
-    [projectName, projectDescription, trackScores, grillDecisions]
+    [workspaceId, projectName, projectDescription, trackScores, grillDecisions]
   )
 
   // ── Auto-start first track on mount ──
@@ -454,7 +457,7 @@ export default function WizardGrillStep({
 
     window.api
       .grillEvaluate({
-        workspaceId: 'greenfield',
+        workspaceId,
         trackId: activeTrack,
         ideaTitle: projectName,
         ideaDescription: projectDescription,
@@ -468,6 +471,7 @@ export default function WizardGrillStep({
         setPhase('answering')
       })
   }, [
+    workspaceId,
     currentIteration,
     activeTrack,
     questionStates,
@@ -493,7 +497,7 @@ export default function WizardGrillStep({
         {/* Main content — Chat view */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Chat view */}
-          <div className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <GrillChatView
               messages={chatMessages}
               phase={phase}
@@ -506,6 +510,7 @@ export default function WizardGrillStep({
               onQuestionChange={(id, state) =>
                 setQuestionStates((prev) => ({ ...prev, [id]: state }))
               }
+              round={iterationCount + 1}
             />
           </div>
 
@@ -548,7 +553,7 @@ export default function WizardGrillStep({
                              transition-colors press-scale"
                 >
                   <RefreshCw size={14} />
-                  Submit & Re-evaluate
+                  Accept & Re-evaluate
                 </button>
               )}
 
@@ -562,8 +567,8 @@ export default function WizardGrillStep({
                              transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
                 >
                   {getNextTrack()
-                    ? `Submit & Next: ${GRILL_TRACKS[getNextTrack()!].name}`
-                    : 'Submit & Finish'}
+                    ? `Accept & Next: ${GRILL_TRACKS[getNextTrack()!].name}`
+                    : 'Accept & Finish'}
                   <ArrowRight size={14} />
                 </button>
               )}

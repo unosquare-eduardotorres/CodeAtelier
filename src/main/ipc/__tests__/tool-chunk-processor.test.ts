@@ -8,8 +8,8 @@
  */
 
 import assert from 'node:assert/strict'
-import { test, describe } from '../../services/__tests__/test-harness'
-import { processToolChunk } from '../tool-chunk-processor'
+import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
+import { processToolChunk, isExpectedPlanModeBlock } from '../tool-chunk-processor'
 import type { StreamChunk } from '../../services/agent-base.service'
 
 const BASE_OPTIONS = { agentType: 'test' } as const
@@ -233,6 +233,80 @@ describe('processToolChunk — tool_result', () => {
   })
 })
 
+// ── Layer 3: expected plan-mode Write/Edit blocks are NOT reported as bugs ──
+
+describe('isExpectedPlanModeBlock', () => {
+  const blocked = '<tool_use_error>: No such tool available: Write</tool_use_error>'
+
+  test('true for Write block in plan mode', () => {
+    assert.equal(isExpectedPlanModeBlock('Write', blocked, 'plan'), true)
+  })
+
+  test('true for Edit block in plan mode', () => {
+    assert.equal(
+      isExpectedPlanModeBlock('Edit', '<tool_use_error>No such tool available: Edit', 'plan'),
+      true
+    )
+  })
+
+  test('false in build mode (Write is allowed there)', () => {
+    assert.equal(isExpectedPlanModeBlock('Write', blocked, 'build'), false)
+  })
+
+  test('false when mode is undefined', () => {
+    assert.equal(isExpectedPlanModeBlock('Write', blocked, undefined), false)
+  })
+
+  test('false for a non-write tool in plan mode', () => {
+    assert.equal(
+      isExpectedPlanModeBlock('Bash', '<tool_use_error>No such tool available: Bash', 'plan'),
+      false
+    )
+  })
+
+  test('false for a genuine Write error (not a permission block)', () => {
+    assert.equal(
+      isExpectedPlanModeBlock('Write', '<tool_use_error>EACCES: permission denied</tool_use_error>', 'plan'),
+      false
+    )
+  })
+})
+
+describe('processToolChunk — plan-mode Write block suppression', () => {
+  test('plan-mode Write block still renders as error but does not call reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Write',
+      toolId: 'plan-blk-1',
+      content: '<tool_use_error>: No such tool available: Write</tool_use_error>'
+    }
+    // No formatTagsToSkip here: if reportToolError were called it would attempt
+    // app.getVersion() and throw in the test env. isExpectedPlanModeBlock must
+    // short-circuit the reporter, so this must NOT throw.
+    const result = processToolChunk(chunk, { agentType: 'specialist', mode: 'plan' })
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+
+  test('genuine tool error in plan mode still reports (skipped here via format tag)', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Bash',
+      toolId: 'plan-real-1',
+      content: '<tool_use_error>command failed</tool_use_error>'
+    }
+    // Bash error in plan mode is NOT an expected block — reporter would fire, so
+    // we suppress via formatTagsToSkip to keep the unit test hermetic.
+    const result = processToolChunk(chunk, {
+      agentType: 'specialist',
+      mode: 'plan',
+      formatTagsToSkip: ['Bash']
+    })
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+})
+
 // ── tool_progress ──
 
 describe('processToolChunk — tool_progress', () => {
@@ -281,3 +355,7 @@ describe('processToolChunk — options', () => {
     assert.ok(result.toolActivity.input)
   })
 })
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

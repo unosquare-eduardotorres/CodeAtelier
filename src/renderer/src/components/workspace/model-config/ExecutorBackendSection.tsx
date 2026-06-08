@@ -5,7 +5,7 @@ import type { ExecutorBackend } from '../../../../../shared/types'
 interface ExecutorBackendSectionProps {
   executorBackend: ExecutorBackend
   isLocalLLM?: boolean
-  activeWorkspaceId: number
+  activeWorkspaceId: string
   onBackendChange: (backend: ExecutorBackend) => void
 }
 

@@ -23,7 +23,7 @@ import type { AgentTokenTracker } from './agent-token-tracker'
 import type { AgentCircuitBreaker } from './agent-circuit-breaker'
 import type { RecoveryNudgeService } from './agent-recovery-nudge'
 import type { ToolActivityAccumulator } from './tool-activity-accumulator'
-import type { AgentRoleAdapter, AdapterMcpResult } from './role-adapters/types'
+import type { AgentRoleAdapter, AdapterMcpResult } from './agent-session.types'
 import type { CLIExecutor, CLIExecuteOptions } from './cli-executor'
 import type { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import type { IpcBridge } from './ipc-bridge'
@@ -51,6 +51,12 @@ export interface StreamLoopState {
   hasTextAfterLastTool: boolean
   lastTerminalReason?: string
   sessionRecoveryNeeded: boolean
+  /**
+   * Set when, in Plan mode, the model attempted a blocked Write/Edit and the SDK
+   * returned "No such tool available". Triggers a deterministic emit_plan recovery
+   * in finalizeStream so the user still gets a plan card.
+   */
+  planModeToolBlock?: boolean
 }
 
 /**
@@ -111,6 +117,8 @@ export interface AgentSessionHost {
   // ── Methods ──
   emit(event: string | symbol, ...args: unknown[]): boolean
   resolveLocalContextWindow(): number
+  /** Cached MCP config path from the most recent CLI spawn (for recovery turns that need control-actions/emit_plan). */
+  getCliMcpConfigPath(): string | undefined
   executeStream(opts: ExecuteStreamOptions): Promise<void>
   flushTokenUsage(): void
   emitAdapterEvent(evt: string, payload: unknown): void

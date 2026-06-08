@@ -422,6 +422,31 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
 
+-- ── Unified Token Usage Log ────────────────────────────────────────────────
+
+-- Single sink for ALL LLM token consumption (chat, grill, council, mpa, audit,
+-- and background one-shot claude calls) — powers the by-feature usage breakdown.
+CREATE TABLE IF NOT EXISTS usage_log (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  feature TEXT NOT NULL,
+  agent_type TEXT,
+  model TEXT,
+  workspace_id TEXT,
+  conversation_id TEXT,
+  session_id TEXT,
+  turn_number INTEGER,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0,
+  cache_creation_tokens INTEGER DEFAULT 0,
+  cost_cents INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_usage_log_workspace ON usage_log(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_usage_log_feature ON usage_log(feature);
+CREATE INDEX IF NOT EXISTS idx_usage_log_conversation ON usage_log(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
+
 -- ── Workspace Health: Audit Runs & Results ────────────────────────────────────
 
 -- Audit runs (multiple per workspace — history of up to 10 kept by repository)

@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useChatStore, useWorkspaceStore, useIdeaStore } from '@renderer/store'
 import type { Workspace, Conversation } from '../../../../../shared/types'
+import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 
 interface NavigationHandlers {
   handleGoHome: () => void
@@ -21,7 +22,7 @@ export function useNavigationHandlers(
   activeConversation: Conversation | null,
   setView: (view: 'chat' | 'app-settings' | 'help' | 'bugs') => void,
   setSidebarView: (view: 'chat' | 'settings') => void,
-  setWorkspaceSettingsTab: (tab: string) => void,
+  setWorkspaceSettingsTab: (tab: SettingsTab) => void,
   setShowNewChat: (show: boolean) => void,
   setPendingGrill: (
     grill: {

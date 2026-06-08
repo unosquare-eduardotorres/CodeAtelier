@@ -86,7 +86,10 @@ export class SentenceBuffer {
   }
 
   private findSentenceBoundary(text: string): number {
-    // Track code block state
+    // Use local copy to avoid corrupting state when no boundary is found
+    // (the same unflushed text is re-scanned on the next append() call)
+    let localInCodeBlock = this.inCodeBlock
+    let stateAtBoundary = this.inCodeBlock
     const lines = text.split('\n')
     let lastBoundary = 0
     let pos = 0
@@ -96,7 +99,7 @@ export class SentenceBuffer {
 
       // Toggle code block state on ``` lines
       if (line.trimStart().startsWith('```')) {
-        this.inCodeBlock = !this.inCodeBlock
+        localInCodeBlock = !localInCodeBlock
       }
 
       const lineStart = pos
@@ -105,13 +108,14 @@ export class SentenceBuffer {
       if (i < lines.length - 1) pos += 1
 
       // Double newline = paragraph boundary (always flush)
-      if (line === '' && lineStart > 0 && !this.inCodeBlock) {
+      if (line === '' && lineStart > 0 && !localInCodeBlock) {
         lastBoundary = pos
+        stateAtBoundary = localInCodeBlock
         continue
       }
 
       // Inside code blocks, only flush on blank lines
-      if (this.inCodeBlock) continue
+      if (localInCodeBlock) continue
 
       // Sentence-ending punctuation followed by space or end-of-chunk
       // Look for `. `, `? `, `! `, `.\n`, `?\n`, `!\n`
@@ -125,8 +129,15 @@ export class SentenceBuffer {
         if (line.slice(Math.max(0, match.index - 10), match.index).includes('://')) continue
 
         lastBoundary = lineStart + match.index + match[0].length
+        stateAtBoundary = localInCodeBlock
       }
     }
+
+    // Only commit state change when text is actually being flushed
+    if (lastBoundary > 0) {
+      this.inCodeBlock = stateAtBoundary
+    }
+    // If no boundary found → don't update state; the same text will be re-scanned
 
     return lastBoundary
   }

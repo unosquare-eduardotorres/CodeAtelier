@@ -33,7 +33,7 @@ const AgentManagementSection = forwardRef<AgentManagementHandle, AgentManagement
     { workspacePath, activeAgents, inactiveAgents, agents, onSkillClick },
     ref
   ) {
-    const { loadAgents, deployAll } = useSettingsStore()
+    const { loadAgents } = useSettingsStore()
     const { specialists } = useSpecialistStore()
 
     // Agent interaction state
@@ -42,7 +42,6 @@ const AgentManagementSection = forwardRef<AgentManagementHandle, AgentManagement
     const [deleteAgentTarget, setDeleteAgentTarget] = useState<DiscoveredAgent | null>(null)
     const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
     const [togglingId, setTogglingId] = useState<string | null>(null)
-    const [_isDeploying, setIsDeploying] = useState(false)
     const [showInactive, setShowInactive] = useState(false)
 
     // YAML editor state
@@ -159,15 +158,6 @@ const AgentManagementSection = forwardRef<AgentManagementHandle, AgentManagement
     const handleEditorChange = (value: string): void => {
       setEditorContent(value)
       setHasEditorChanges(value !== initialContent)
-    }
-
-    const _handleAutoActivate = async (): Promise<void> => {
-      setIsDeploying(true)
-      try {
-        await deployAll(workspacePath)
-      } finally {
-        setIsDeploying(false)
-      }
     }
 
     /** Navigate to a specific agent (used by SkillManagementSection cross-nav) */

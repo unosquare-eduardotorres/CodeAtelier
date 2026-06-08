@@ -9,11 +9,12 @@
  */
 
 import log from 'electron-log'
-import type { GrillTrackId, GrillEvaluation } from '../../shared/types'
+import type { GrillTrackId, GrillEvaluation, ToolActivity } from '../../shared/types'
 import type { GrillSession, GrillSessionStatus } from '../db/repositories/grill-session.repository'
 import { grillSessionRepository } from '../db/repositories'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { getSessionEventRouter, type SessionEventRouter } from './session-event-router'
+import { TextDeltaBatcher } from '../ipc/text-delta-batcher'
 
 const ctrlLog = log.scope('grill-persistence')
 
@@ -44,6 +45,15 @@ export class GrillPersistenceController {
   private activeTrackId: GrillTrackId | null = null
   private messageBuffer: PersistableMessage[] = []
   private flushTimer: NodeJS.Timeout | null = null
+  /** Batches renderer-bound text at ~30fps so grill streams as smoothly as chat. */
+  private textBatcher = new TextDeltaBatcher()
+  /**
+   * Tracks whether an evaluation result was handled during the current run.
+   * Reset when a run starts (startTracking / markEvaluating); set true in
+   * handleEvaluationResult. Used by handleComplete to detect the
+   * empty-evaluation dead-end and avoid leaving a session pinned at 'evaluating'.
+   */
+  private evaluationHandledThisRun = false
 
   /** Buffer flush interval in ms */
   private static readonly FLUSH_INTERVAL_MS = 2000
@@ -68,6 +78,7 @@ export class GrillPersistenceController {
     this.activeSessionId = session.id
     this.activeIdeaId = ideaId
     this.activeTrackId = trackId
+    this.evaluationHandledThisRun = false
 
     // Emit status change so the bottom status bar shows the active "Grilling…"
     // pill immediately. Mirrors the markEvaluating / clearTracking pattern.
@@ -86,12 +97,26 @@ export class GrillPersistenceController {
 
   /** Handle stream chunk — buffer and forward to renderer */
   handleStreamChunk(
-    chunkData: { type: string; content?: string; toolActivity?: Record<string, unknown> },
+    chunkData: { type: string; content?: string; toolActivity?: ToolActivity },
     workspaceId: string,
     router: SessionEventRouter
   ): void {
-    // Forward to renderer immediately via router
-    router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_CHUNK, workspaceId, chunkData)
+    // Forward to renderer — text is batched at ~30fps (matching chat), tool
+    // activities flush pending text first then forward immediately so ordering
+    // is preserved. DB buffering below still accumulates per-chunk.
+    if (chunkData.type === 'text' && chunkData.content) {
+      this.textBatcher.push(workspaceId, chunkData.content, (text) => {
+        router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_CHUNK, workspaceId, {
+          type: 'text',
+          content: text
+        })
+      })
+    } else if (chunkData.type === 'tool_activity' && chunkData.toolActivity) {
+      this.textBatcher.flush(workspaceId)
+      router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_CHUNK, workspaceId, chunkData)
+    } else {
+      router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_CHUNK, workspaceId, chunkData)
+    }
 
     // Buffer agent content for DB persistence
     if (chunkData.type === 'text' && chunkData.content) {
@@ -110,8 +135,7 @@ export class GrillPersistenceController {
         // Merge tool_use → tool_result by ID
         const existingIdx = lastMsg.toolActivities.findIndex(
           (ta: unknown) =>
-            (ta as Record<string, unknown>).id ===
-            (chunkData.toolActivity as Record<string, unknown>).id
+            (ta as Record<string, unknown>).id === chunkData.toolActivity!.id
         )
         if (existingIdx >= 0) {
           lastMsg.toolActivities[existingIdx] = {
@@ -140,6 +164,10 @@ export class GrillPersistenceController {
     workspaceId: string,
     router: SessionEventRouter
   ): void {
+    // Flush any buffered narration before the evaluation result so text ordering
+    // is preserved on the renderer.
+    this.textBatcher.flush(workspaceId)
+
     // Forward to renderer via router
     router.sendWorkspaceEvent(
       IPC_CHANNELS.GRILL_EVALUATION_RESULT,
@@ -148,6 +176,8 @@ export class GrillPersistenceController {
     )
 
     if (!this.activeSessionId) return
+
+    this.evaluationHandledThisRun = true
 
     // Flush any pending text/tool messages first
     this.flushToDb()
@@ -180,11 +210,31 @@ export class GrillPersistenceController {
 
   /** Handle stream complete — flush buffer, finalize */
   handleComplete(workspaceId: string, router: SessionEventRouter): void {
+    // Flush trailing narration before the complete event, then forget the flusher.
+    this.textBatcher.reset(workspaceId)
+
     // Forward to renderer via router
     router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_COMPLETE, workspaceId, {})
 
     // Flush any remaining buffered messages
     this.flushToDb()
+
+    // Guard against the empty-evaluation dead-end: if the stream ended without
+    // a parseable evaluation block (handleEvaluationResult never fired), the
+    // session is still pinned at 'evaluating' and nothing will ever move it.
+    // Revert it to a recoverable state so the UI doesn't get stuck "Grilling…".
+    if (this.activeSessionId && !this.evaluationHandledThisRun) {
+      const session = grillSessionRepository.findById(this.activeSessionId)
+      if (session && session.status === 'evaluating') {
+        const recovered: GrillSessionStatus =
+          session.currentScore !== null ? 'awaiting_answers' : 'failed'
+        grillSessionRepository.updateStatus(this.activeSessionId, recovered)
+        this.emitStatusChange(workspaceId, router, recovered)
+        ctrlLog.warn(
+          `[grill-persistence] Stream ended with no evaluation — reverting session=${this.activeSessionId} evaluating→${recovered}`
+        )
+      }
+    }
 
     ctrlLog.info(`[grill-persistence] Stream complete — session=${this.activeSessionId}`)
   }
@@ -201,6 +251,7 @@ export class GrillPersistenceController {
   markEvaluating(sessionId: string, workspaceId: string): void {
     grillSessionRepository.updateStatus(sessionId, 'evaluating')
     this.activeSessionId = sessionId
+    this.evaluationHandledThisRun = false
 
     const session = grillSessionRepository.findById(sessionId)
     if (session) {
@@ -236,8 +287,32 @@ export class GrillPersistenceController {
     return this.activeSessionId
   }
 
+  /**
+   * Emit a terminal status event (completed/cancelled) so the renderer badge
+   * clears immediately. Called from GRILL_COMPLETE and GRILL_DISCARD handlers.
+   */
+  notifyTerminal(workspaceId: string, ideaId: string, status: GrillSessionStatus): void {
+    try {
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.GRILL_STATUS_CHANGED, workspaceId, {
+        status,
+        ideaId,
+        trackId: null,
+        score: null
+      })
+    } catch {
+      /* router may not be initialized */
+    }
+    if (this.activeIdeaId === ideaId) {
+      this.flushToDb()
+      this.activeSessionId = null
+      this.activeIdeaId = null
+      this.activeTrackId = null
+    }
+  }
+
   /** Clear active tracking (on cancel) */
   clearTracking(): void {
+    this.textBatcher.reset()
     if (this.activeSessionId) {
       grillSessionRepository.updateStatus(this.activeSessionId, 'cancelled')
       try {

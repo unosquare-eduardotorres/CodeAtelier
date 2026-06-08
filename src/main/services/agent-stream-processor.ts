@@ -28,6 +28,7 @@ import {
   resolveAppliedThresholds
 } from './compaction-policy'
 import { modelConfigService } from './model-config.service'
+import { featureForAgentRole } from './usage-tracker.service'
 import { supportsContext1M } from '../../shared/constants'
 import { conversationRepository, turnUsageRepository } from '../db/repositories'
 
@@ -78,11 +79,18 @@ export class AgentStreamProcessor {
       this.s.log.info(`[PIPELINE:terminal-reason] ${meta.terminalReason} for ${conversationId}`)
     }
 
+    const isBuild = this.s.currentMode !== 'plan'
+    const modelAction = `${this.s.adapter.role}:${isBuild ? 'build' : 'plan'}` as ModelAction
+    const resolvedModel = modelConfigService.getModel(this.s.workspacePath!, modelAction)
     const { totalTokens } = this.s.tokenTracker.recordTurn(meta, {
       turnCount,
       conversationId,
       dbSessionId: this.s.dbSessionId,
-      workspacePath: this.s.workspacePath!
+      workspacePath: this.s.workspacePath!,
+      feature: featureForAgentRole(this.s.adapter.role),
+      agentType: this.s.adapter.agentId,
+      model: resolvedModel,
+      workspaceId: this.s.workspaceId
     })
     this.s.tokenUsage += totalTokens
     this.s.inputTokens += meta.tokenUsage.input
@@ -237,6 +245,25 @@ export class AgentStreamProcessor {
     if (chunk.type === 'text' && chunk.content) {
       this.s.accumulatedText += chunk.content
       streamState.hasTextAfterLastTool = true
+    }
+
+    // Detect a blocked Write/Edit attempt in Plan mode. Write/Edit aren't on the
+    // plan-mode allow-list, so the SDK returns "No such tool available". This is
+    // expected (not a bug — see tool-chunk-processor.isExpectedPlanModeBlock), but
+    // it means the model tried to author a plan as a file. Flag it so finalizeStream
+    // can fire a deterministic emit_plan recovery and the user still gets a plan card.
+    if (
+      chunk.type === 'tool_result' &&
+      this.s.currentMode === 'plan' &&
+      typeof chunk.content === 'string' &&
+      chunk.content.includes('<tool_use_error>') &&
+      chunk.content.includes('No such tool available') &&
+      /\b(Write|Edit|MultiEdit)\b/.test(`${chunk.toolName ?? ''} ${chunk.content}`)
+    ) {
+      streamState.planModeToolBlock = true
+      this.s.log.warn(
+        `[PIPELINE:plan-mode-tool-block] Blocked Write/Edit in plan mode for conversationId=${conversationId} — will attempt emit_plan recovery`
+      )
     }
 
     if (chunk.type === 'tool_use') {

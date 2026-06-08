@@ -85,17 +85,39 @@ interface PushStatusResult {
 
 export class RepoService {
   /**
+   * Check whether dirPath is the *root* of its own git repo (not just nested
+   * inside a parent repo). Uses `git rev-parse --show-toplevel` which returns
+   * the repo root — if that doesn't match dirPath, we're inside a parent.
+   */
+  private async isGitRoot(dirPath: string): Promise<boolean> {
+    try {
+      const top = (await simpleGit(dirPath).revparse(['--show-toplevel'])).trim()
+      return resolve(top) === resolve(dirPath)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Guarantee dirPath has its own `.git`. If it's already the root, no-op.
+   * Otherwise `git init` inside dirPath — works even when nested in a parent repo.
+   */
+  async ensureOwnRepo(dirPath: string): Promise<void> {
+    if (await this.isGitRoot(dirPath)) return
+    await simpleGit(dirPath).init()
+    logger.info(`Initialized dedicated git repo at ${dirPath}`)
+  }
+
+  /**
    * Initialize a git repository at the given path.
    */
   async initRepo(dirPath: string): Promise<{ repoPath: string }> {
-    const git = simpleGit(dirPath)
-    const isRepo = await git.checkIsRepo()
-    if (isRepo) {
-      logger.info(`Directory is already a git repo: ${dirPath}`)
+    if (await this.isGitRoot(dirPath)) {
+      logger.info(`Directory is already a git repo root: ${dirPath}`)
       return { repoPath: dirPath }
     }
 
-    await git.init()
+    await simpleGit(dirPath).init()
     logger.info(`Initialized git repo at ${dirPath}`)
     return { repoPath: dirPath }
   }
@@ -162,6 +184,7 @@ export class RepoService {
     repoPath: string
   ): Promise<{ hasChanges: boolean; fileCount: number; files: string[] }> {
     try {
+      await this.ensureOwnRepo(repoPath)
       const git = simpleGit(repoPath)
       const status = await git.status()
       const files = [
@@ -184,6 +207,7 @@ export class RepoService {
    */
   async getUncommittedFileDetails(repoPath: string): Promise<FileDetailEntry[]> {
     try {
+      await this.ensureOwnRepo(repoPath)
       const git = simpleGit(repoPath)
       const status = await git.status()
 

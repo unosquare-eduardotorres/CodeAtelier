@@ -15,7 +15,7 @@ interface AppKeyboardShortcutsDeps {
   updateMode: (mode: ConversationMode) => void
   navigateBack: () => void
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>
-  setView: React.Dispatch<React.SetStateAction<string>>
+  setView: React.Dispatch<React.SetStateAction<'chat' | 'app-settings' | 'help' | 'bugs'>>
   setShowNewChat: React.Dispatch<React.SetStateAction<boolean>>
 }
 

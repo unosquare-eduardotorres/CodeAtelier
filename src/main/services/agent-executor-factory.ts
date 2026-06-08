@@ -10,7 +10,7 @@
  */
 
 import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
-import type { AdapterMcpResult } from './role-adapters/types'
+import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 
 import type { ConversationMode, ModelAction } from '../../shared/types'
@@ -45,6 +45,11 @@ export class AgentExecutorFactory {
   // Called on mode switch to ensure permission changes take effect immediately.
   invalidateMcpConfigCache(): void {
     this.cachedMcpConfigPath = undefined
+  }
+
+  /** Expose the cached MCP config path so recovery turns can re-mount control-actions/emit_plan. */
+  getCachedMcpConfigPath(): string | undefined {
+    return this.cachedMcpConfigPath
   }
 
   // ── resolveLocalContextWindow ─────────────────────────────────────────
@@ -82,7 +87,7 @@ export class AgentExecutorFactory {
         semanticSearchEnabled: settings.semanticSearchEnabled !== false,
         githubConfigured: !!settings.githubToken,
         externalMcpActive: this.resolveExternalMcpFlags(),
-        localMcpActive: settings.localMcpActive ?? {}
+        localMcpActive: {}
       }
     } catch {
       return defaults
@@ -255,6 +260,8 @@ export class AgentExecutorFactory {
     if (canContinue) {
       return {
         prompt,
+        systemPrompt,
+        permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
         model: resolvedModel,
         cwd: this.s.workspacePath!,
         abortController,
@@ -343,7 +350,7 @@ export class AgentExecutorFactory {
 
       const controlCallbacks = this.s.adapter.buildControlCallbacks({
         conversationId: this.s.currentConversationId ?? '',
-        emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload),
+        emit: (evt: string, payload: unknown) => this.s.emitAdapterEvent(evt, payload),
         getAccumulatedText: () => this.s.accumulatedText
       })
 

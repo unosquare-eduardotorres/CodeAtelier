@@ -658,7 +658,7 @@ export class OpenCodeConfigWriter {
       if (externalActive[integration.id]) {
         // Build env from the integration's envKeys
         const env: Record<string, string> = {}
-        for (const key of integration.envKeys) {
+        for (const key of integration.envKeys ?? []) {
           if (process.env[key]) {
             env[key] = process.env[key]!
           }

@@ -12,12 +12,14 @@ import {
   FileText,
   Database,
   Loader2,
-  CheckCircle2,
   AlertCircle,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  MessageSquare,
+  Landmark
 } from 'lucide-react'
 import type { GrillDecision, GrillTrackScore } from '../../../../../shared/types'
+import type { ProjectDestination } from '../CreateProjectWizard'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
 
 interface WizardSummaryStepProps {
@@ -28,24 +30,8 @@ interface WizardSummaryStepProps {
   grillDecisions: GrillDecision[]
   trackScores: GrillTrackScore[]
   onBack: () => void
-  onCreateProject: () => Promise<void>
-}
-
-type CreationPhase =
-  | 'idle'
-  | 'creating-folder'
-  | 'generating-claudemd'
-  | 'registering'
-  | 'done'
-  | 'error'
-
-const PHASE_LABELS: Record<CreationPhase, string> = {
-  idle: '',
-  'creating-folder': 'Creating folder…',
-  'generating-claudemd': 'Generating CLAUDE.md…',
-  registering: 'Registering workspace…',
-  done: 'Project created!',
-  error: 'Creation failed'
+  /** Finalize the blueprint then route into the new workspace at the chosen destination. */
+  onFinalize: (destination: ProjectDestination) => Promise<void>
 }
 
 export default function WizardSummaryStep({
@@ -56,9 +42,9 @@ export default function WizardSummaryStep({
   grillDecisions,
   trackScores,
   onBack,
-  onCreateProject
+  onFinalize
 }: WizardSummaryStepProps): React.JSX.Element {
-  const [creationPhase, setCreationPhase] = useState<CreationPhase>('idle')
+  const [finalizing, setFinalizing] = useState<ProjectDestination | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expandedTracks, setExpandedTracks] = useState<Set<string>>(new Set())
 
@@ -70,8 +56,7 @@ export default function WizardSummaryStep({
     return Math.round(sum / trackScores.length)
   }, [trackScores])
 
-  const isCreating =
-    creationPhase !== 'idle' && creationPhase !== 'done' && creationPhase !== 'error'
+  const isCreating = finalizing !== null
 
   // Group decisions by track
   const decisionsByTrack = useMemo(() => {
@@ -96,23 +81,23 @@ export default function WizardSummaryStep({
     })
   }
 
-  const handleCreate = async (): Promise<void> => {
+  const handleFinalize = async (destination: ProjectDestination): Promise<void> => {
+    if (finalizing) return
     setError(null)
+    setFinalizing(destination)
     try {
-      setCreationPhase('creating-folder')
-      await new Promise((r) => setTimeout(r, 300))
-
-      setCreationPhase('generating-claudemd')
-      await new Promise((r) => setTimeout(r, 200))
-
-      setCreationPhase('registering')
-      await onCreateProject()
-
-      setCreationPhase('done')
+      await onFinalize(destination)
+      // On success the wizard unmounts as the app routes into the new workspace.
     } catch (err) {
-      setCreationPhase('error')
       setError(err instanceof Error ? err.message : String(err))
+      setFinalizing(null)
     }
+  }
+
+  const FINALIZE_LABELS: Record<ProjectDestination, string> = {
+    chat: 'Opening project…',
+    goals: 'Starting goal…',
+    council: 'Convening council…'
   }
 
   return (
@@ -279,14 +264,14 @@ export default function WizardSummaryStep({
       )}
 
       {/* Creation progress */}
-      {isCreating && (
+      {isCreating && finalizing && (
         <div className="flex items-center justify-center gap-2 py-2">
           <Loader2 size={16} className="animate-spin text-primary-text" />
-          <span className="text-sm text-text-secondary">{PHASE_LABELS[creationPhase]}</span>
+          <span className="text-sm text-text-secondary">{FINALIZE_LABELS[finalizing]}</span>
         </div>
       )}
 
-      {/* Buttons */}
+      {/* Buttons — create the project then route to the chosen destination */}
       <div className="flex items-center justify-between pt-4 border-t border-border-subtle">
         <button
           type="button"
@@ -301,27 +286,33 @@ export default function WizardSummaryStep({
           Back
         </button>
 
-        <button
-          type="button"
-          onClick={handleCreate}
-          disabled={isCreating || creationPhase === 'done'}
-          className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium
-                     bg-primary hover:bg-primary-hover text-white
-                     transition-colors disabled:opacity-40 disabled:cursor-not-allowed
-                     focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
-        >
-          {creationPhase === 'done' ? (
-            <>
-              <CheckCircle2 size={14} />
-              Created!
-            </>
-          ) : (
-            <>
-              <FolderPlus size={14} />
-              Create Project
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleFinalize('council')}
+            disabled={isCreating}
+            aria-label="Create project and convene the council"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium
+                       border border-purple-500 text-purple-400 hover:bg-purple-500/10
+                       transition-colors disabled:opacity-40 disabled:cursor-not-allowed press-scale"
+          >
+            <Landmark size={14} />
+            Council Sweep
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFinalize('chat')}
+            disabled={isCreating}
+            aria-label="Create project and continue in chat"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium
+                       bg-primary hover:bg-primary-hover text-white
+                       transition-colors disabled:opacity-40 disabled:cursor-not-allowed
+                       focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
+          >
+            <MessageSquare size={14} />
+            Continue in Chat
+          </button>
+        </div>
       </div>
     </div>
   )

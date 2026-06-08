@@ -19,8 +19,6 @@ import {
   GrillPageFooter,
   RequirementDocumentPanel
 } from './grill'
-import { deriveGrillDecisions } from './grill/handoff-utils'
-import { useMpaStore } from '@renderer/store/mpa.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import { useCouncilStore } from '@renderer/store/council.store'
 
@@ -116,7 +114,6 @@ interface GrillPageProps {
   reviewMode?: boolean
   onBack: () => void
   onComplete: () => void
-  onNavigateToGoals?: () => void
   onNavigateToCouncil?: () => void
 }
 
@@ -129,7 +126,6 @@ export default function GrillPage({
   reviewMode,
   onBack,
   onComplete,
-  onNavigateToGoals,
   onNavigateToCouncil
 }: GrillPageProps): React.JSX.Element {
   const [structuredPlan, setStructuredPlan] = useState<GrillStructuredPlan | null>(null)
@@ -173,40 +169,6 @@ export default function GrillPage({
       return null
     }
   }, [activeWorkspace, conversationId, ideaId, session])
-
-  // Complete the grilling, generate the plan, then hand off into the goal preload
-  const handleStartGoal = useCallback(async () => {
-    // 1 + 2. Reuse the already-restored/generated plan; only generate when none exists.
-    const plan = structuredPlan ?? (await handleGeneratePlan())
-    if (!plan) return // generation failed — error already surfaced, stay on grill
-
-    // 3. Hand off the generated plan into the goal preload
-    const grillDecisions = deriveGrillDecisions(plan, session.decisions)
-    useMpaStore.getState().setPreloadedGoal({
-      text: plan.requirementDocument?.trim()
-        ? plan.requirementDocument
-        : `${ideaTitle}${ideaDescription ? ': ' + ideaDescription : ''}`,
-      grillSessionId: conversationId,
-      grillDecisions
-    })
-    onNavigateToGoals?.()
-
-    // Final handoff — strip transient chat/decisions, keep the plan-only view.
-    try {
-      await window.api.grillComplete({ ideaId })
-    } catch (err) {
-      console.error('grillComplete failed:', err)
-    }
-  }, [
-    handleGeneratePlan,
-    structuredPlan,
-    session.decisions,
-    ideaTitle,
-    ideaDescription,
-    conversationId,
-    ideaId,
-    onNavigateToGoals
-  ])
 
   // Discard the entire grill — delete the session row + snapshot, then leave.
   const handleDiscard = useCallback(async () => {
@@ -433,6 +395,7 @@ export default function GrillPage({
             onQuestionChange={(id, state) =>
               session.setQuestionStates((prev) => ({ ...prev, [id]: state }))
             }
+            round={session.iterationCount + 1}
           />
           <GrillSidebar
             selectedTrack={session.selectedTrack}
@@ -466,7 +429,6 @@ export default function GrillPage({
         onSubmit={session.handleSubmit}
         onGeneratePlan={handleGeneratePlan}
         onBackToGrill={reviewMode ? undefined : handleBackToGrill}
-        onStartGoal={handleStartGoal}
         onCouncilSweep={
           structuredPlan
             ? async () => {

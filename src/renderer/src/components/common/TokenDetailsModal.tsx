@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Zap, X, ArrowUp, ArrowDown } from 'lucide-react'
-import type { TokenSummary } from '../../../../shared/types'
+import type { WorkspaceUsageSummary } from '../../../../shared/types'
 import Skeleton from './Skeleton'
 
 interface TokenDetailsModalProps {
   isOpen: boolean
-  conversationId: string | null
+  /** Workspace whose unified usage is shown (null when none active). */
+  workspaceId: string | null
   /** Current context window size (point-in-time, from SDK getContextUsage) */
   contextWindowTokens: number
   /** Live output token count from agent.store */
@@ -19,31 +20,61 @@ function fmtTokens(n: number): string {
   return String(n)
 }
 
+function fmtCost(cents: number): string {
+  if (cents === 0) return '$0.00'
+  return `$${(cents / 100).toFixed(2)}`
+}
+
+/** Human-friendly labels for the usage_log feature buckets. */
+const FEATURE_LABELS: Record<string, string> = {
+  chat: 'Chat',
+  grill: 'Grill',
+  grill_plan: 'Grill — plan',
+  council: 'Council',
+  council_peer_review: 'Council — peer review',
+  mpa: 'Goals (MPA)',
+  audit: 'Audit',
+  audit_plan: 'Audit — plan',
+  audit_recovery: 'Audit — recovery',
+  condense: 'Condense',
+  goal_decompose: 'Goal decomposition',
+  claude_md: 'CLAUDE.md generation',
+  specialist_build: 'Specialist build',
+  skill_enrich: 'Skill enrichment',
+  skill_recommend: 'Skill recommendations',
+  commit_message: 'Commit message',
+  recovery_nudge: 'Recovery nudge',
+  plan_recovery: 'Plan recovery'
+}
+
+function featureLabel(feature: string): string {
+  return FEATURE_LABELS[feature] ?? feature.replace(/_/g, ' ')
+}
+
 export default function TokenDetailsModal({
   isOpen,
-  conversationId,
+  workspaceId,
   contextWindowTokens,
   liveOutputTokens,
   onClose
 }: TokenDetailsModalProps): React.JSX.Element | null {
-  const [summary, setSummary] = useState<TokenSummary | null>(null)
+  const [summary, setSummary] = useState<WorkspaceUsageSummary | null>(null)
+  const [globalSummary, setGlobalSummary] = useState<WorkspaceUsageSummary | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // Load persisted breakdown when opened
+  // Load unified workspace usage breakdown when opened. The render path gates on
+  // `workspaceId`, so stale summary from a previous workspace is never shown.
   useEffect(() => {
-    if (!isOpen || !conversationId) {
-      setSummary(null)
-      return
-    }
+    if (!isOpen || !workspaceId) return
     let cancelled = false
     setLoading(true)
     window.api
-      .getConversationTokenSummary({ conversationId })
+      .getWorkspaceUsageSummary({ workspaceId })
       .then((data) => {
         if (!cancelled) setSummary(data)
       })
       .catch((err) => {
-        console.warn('[TokenDetailsModal] Non-fatal: token summary load failed:', err)
+        console.warn('[TokenDetailsModal] Non-fatal: usage summary load failed:', err)
         if (!cancelled) setSummary(null)
       })
       .finally(() => {
@@ -52,7 +83,25 @@ export default function TokenDetailsModal({
     return () => {
       cancelled = true
     }
-  }, [isOpen, conversationId])
+  }, [isOpen, workspaceId])
+
+  // Load global (all-workspaces) usage breakdown when opened.
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    window.api
+      .getGlobalUsageSummary()
+      .then((data) => {
+        if (!cancelled) setGlobalSummary(data)
+      })
+      .catch((err) => {
+        console.warn('[TokenDetailsModal] Non-fatal: global usage summary load failed:', err)
+        if (!cancelled) setGlobalSummary(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen])
 
   // Esc to close
   useEffect(() => {
@@ -65,14 +114,13 @@ export default function TokenDetailsModal({
   }, [isOpen, onClose])
 
   // Claude API token fields are non-overlapping:
-  // input_tokens = uncached input, cache_read = served from cache, cache_creation = written to cache.
-  // Total context = input + cacheRead + cacheCreation. Cache hit % = cacheRead / total.
+  // input = uncached input, cacheRead = served from cache, cacheCreation = written to cache.
+  // Cache hit % = cacheRead / (input + cacheRead + cacheCreation).
   const cacheHitPercent = useMemo(() => {
     if (!summary) return null
-    const totalInput =
-      summary.totalInputTokens + summary.totalCacheReadTokens + summary.totalCacheCreationTokens
+    const totalInput = summary.totalInput + summary.totalCacheRead + summary.totalCacheCreation
     if (totalInput === 0) return null
-    return Math.round((summary.totalCacheReadTokens / totalInput) * 100)
+    return Math.round((summary.totalCacheRead / totalInput) * 100)
   }, [summary])
 
   if (!isOpen) return null
@@ -100,10 +148,10 @@ export default function TokenDetailsModal({
             </div>
             <div>
               <h3 id="token-dialog-title" className="text-base font-semibold text-text-primary">
-                Session Token Usage
+                Workspace Token Usage
               </h3>
               <p className="text-xs text-text-secondary mt-0.5">
-                Input / output breakdown for this session
+                Token consumption across this workspace, by feature
               </p>
             </div>
           </div>
@@ -144,24 +192,30 @@ export default function TokenDetailsModal({
             </div>
             <div className="border-t border-border-subtle pt-2 flex justify-between items-center text-xs text-text-secondary">
               <span>
-                {summary && summary.totalTurns > 0 && <>Turns: {summary.totalTurns} · </>}
                 {cacheHitPercent !== null && (
-                  <span className="ml-2 px-1 py-0.5 rounded bg-success/10 text-success text-[10px]">
+                  <span className="px-1 py-0.5 rounded bg-success/10 text-success text-[10px]">
                     Cache: {cacheHitPercent}% hit
                   </span>
                 )}
               </span>
               <span className="font-mono tabular-nums text-text-muted text-[10px]">
-                Claude Max — no per-token billing
+                Updates live across all features
               </span>
             </div>
           </div>
         </div>
 
-        {/* Persisted breakdown */}
+        {/* Workspace usage by feature */}
         <div className="px-5 pb-4">
-          <div className="text-[10px] uppercase tracking-wide text-text-muted mb-2 font-semibold">
-            Persisted conversation breakdown
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] uppercase tracking-wide text-text-muted font-semibold">
+              Workspace usage by feature
+            </div>
+            {summary && (
+              <div className="text-[10px] text-text-muted font-mono tabular-nums">
+                {fmtTokens(summary.totalTokens)} · {fmtCost(summary.totalCostCents)}
+              </div>
+            )}
           </div>
 
           {loading && (
@@ -172,84 +226,56 @@ export default function TokenDetailsModal({
             </div>
           )}
 
-          {!loading && summary && (
+          {!loading && workspaceId && summary && summary.byFeature.length > 0 && (
             <div className="text-[11px] text-text-secondary space-y-1.5">
-              {/* Context tokens — total context processed across all turns */}
-              {summary.totalContextTokens > 0 && (
-                <div className="flex justify-between">
-                  <span>Total context processed</span>
+              {summary.byFeature.map((f) => (
+                <div key={f.feature} className="flex justify-between items-center py-0.5">
+                  <span>
+                    {featureLabel(f.feature)}
+                    <span className="text-text-muted ml-1">
+                      ({f.calls} call{f.calls !== 1 ? 's' : ''})
+                    </span>
+                  </span>
                   <span className="font-mono tabular-nums">
-                    {fmtTokens(summary.totalContextTokens)}
+                    {fmtTokens(f.tokens)}
+                    <span className="text-text-muted ml-1">{fmtCost(f.costCents)}</span>
                   </span>
                 </div>
-              )}
-              <div className="flex justify-between">
-                <span className={summary.totalContextTokens > 0 ? 'pl-3' : ''}>Uncached input</span>
+              ))}
+
+              {/* Estimated total cost */}
+              <div className="mt-3 pt-2 border-t border-border-subtle flex justify-between items-center text-text-primary font-medium">
+                <span>Estimated total</span>
                 <span className="font-mono tabular-nums">
-                  {fmtTokens(summary.totalInputTokens)}
+                  {fmtTokens(summary.totalTokens)}
+                  <span className="text-text-secondary ml-1">
+                    {fmtCost(summary.totalCostCents)}
+                  </span>
                 </span>
-              </div>
-              <div className="flex justify-between">
-                <span className={summary.totalContextTokens > 0 ? 'pl-3' : ''}>
-                  Cache read
-                  {cacheHitPercent !== null && (
-                    <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-success/10 text-success">
-                      {cacheHitPercent}% hit
-                    </span>
-                  )}
-                </span>
-                <span className="font-mono tabular-nums">
-                  {fmtTokens(summary.totalCacheReadTokens)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className={summary.totalContextTokens > 0 ? 'pl-3' : ''}>Cache creation</span>
-                <span className="font-mono tabular-nums">
-                  {fmtTokens(summary.totalCacheCreationTokens)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Total output</span>
-                <span className="font-mono tabular-nums">
-                  {fmtTokens(summary.totalOutputTokens)}
-                </span>
-              </div>
-              <div className="flex justify-between text-text-muted">
-                <span>Turns</span>
-                <span className="font-mono tabular-nums">{summary.totalTurns}</span>
               </div>
 
-              {/* Per-agent breakdown */}
-              {summary.byAgent && summary.byAgent.length > 0 && (
-                <div className="mt-3 pt-2 border-t border-border-subtle">
-                  <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5 font-semibold">
-                    By agent
-                  </div>
-                  {summary.byAgent.map((agent) => (
-                    <div key={agent.agentType} className="flex justify-between items-center py-0.5">
-                      <span className="capitalize">{agent.agentType.replace('-', ' ')}</span>
-                      <span className="font-mono tabular-nums">
-                        {fmtTokens(agent.totalTokens)}
-                        <span className="text-text-muted ml-1">
-                          ({agent.sessionCount} turn{agent.sessionCount !== 1 ? 's' : ''})
-                        </span>
-                      </span>
-                    </div>
-                  ))}
+              {/* Global (all workspaces) */}
+              {globalSummary && (
+                <div className="flex justify-between items-center text-[11px] text-text-muted">
+                  <span>Global (all workspaces)</span>
+                  <span className="font-mono tabular-nums">
+                    {fmtTokens(globalSummary.totalTokens)}
+                    <span className="ml-1">{fmtCost(globalSummary.totalCostCents)}</span>
+                  </span>
                 </div>
               )}
             </div>
           )}
 
-          {!loading && !summary && conversationId && (
+          {!loading && workspaceId && summary && summary.byFeature.length === 0 && (
             <p className="text-[11px] text-text-muted">
-              No token data available for this conversation.
+              No token usage recorded for this workspace yet.
             </p>
           )}
 
-          {!conversationId && (
+          {!loading && !workspaceId && (
             <p className="text-[11px] text-text-muted">
-              No active conversation — start a chat to see token breakdown.
+              No active workspace — open one to see token usage.
             </p>
           )}
         </div>
@@ -257,8 +283,9 @@ export default function TokenDetailsModal({
         {/* Explanation footnote */}
         <div className="px-5 pb-4">
           <p className="text-[10px] text-text-muted leading-snug">
-            Context window shows the current model context size. Cached input tokens are served from
-            prompt cache at ~90% discount. Persisted breakdown shows per-turn API-reported values.
+            Context window shows the current model context size. The breakdown aggregates every
+            feature in this workspace (chat, grill, council, goals, audit, and background ops).
+            Costs are estimated from token counts and model pricing.
           </p>
         </div>
 

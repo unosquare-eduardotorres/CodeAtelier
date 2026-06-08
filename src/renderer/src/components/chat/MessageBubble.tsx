@@ -129,12 +129,21 @@ const REHYPE_PLUGINS = [rehypeRaw]
 const markdownComponents = {
   pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-    const isBlock = className?.includes('language-')
-    if (isBlock) {
-      return <code className={`${className} text-sm`}>{children}</code>
+    // Block code with language class — pass through for CodeBlock
+    if (className?.includes('language-')) {
+      return <code className={className}>{children}</code>
     }
 
     const text = String(children).replace(/`/g, '').trim()
+
+    // Multi-line content is block code (inside a <pre>) — return a plain <code>
+    // so CodeBlock can find it. Don't apply inline URL/filePath detection.
+    if (text.includes('\n')) {
+      return <code>{children}</code>
+    }
+
+    // ── Single-line inline code: URL / file-path / default ──
+
     const isUrl = /^https?:\/\/\S+$/.test(text)
     if (isUrl) {
       return (

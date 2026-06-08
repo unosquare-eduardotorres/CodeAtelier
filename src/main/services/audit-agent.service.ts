@@ -21,11 +21,13 @@ import type {
   AuditTrack,
   AuditApplicability,
   AuditCoverageStats,
-  LLMProvider
+  LLMProvider,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
 import { AUDIT_TRACKS } from '../../shared/constants'
 import { AgentSessionService } from './agent-session.service'
+import { runOneShotClaude } from './one-shot-claude'
 import { AuditRoleAdapter } from './role-adapters/audit.adapter'
 import {
   parseAuditResponse,
@@ -578,6 +580,11 @@ export class AuditAgentService extends EventEmitter {
       this.emit('stream', { trackId: params.trackId, chunk })
     })
 
+    // Re-emit inner-session status so the live token usage modal reflects audit activity.
+    session.on('statusUpdate', (status: AgentStatus) => {
+      this.emit('status', { workspaceId: params.workspaceId, status })
+    })
+
     try {
       await session.start(params.workspacePath, 'plan')
 
@@ -651,7 +658,7 @@ export class AuditAgentService extends EventEmitter {
   // ── Private: tool-free recovery nudge ─────────────────────────────────
 
   private async attemptToolFreeRecovery(
-    params: { trackId: AuditTrackId; workspacePath: string },
+    params: { trackId: AuditTrackId; workspacePath: string; workspaceId?: string },
     responseText: string
   ): Promise<{ findings: AuditFinding[]; score: number | null; summary: string }> {
     auditLog.warn(
@@ -659,8 +666,6 @@ export class AuditAgentService extends EventEmitter {
     )
 
     try {
-      const { execFileSync } = await import('node:child_process')
-
       const nudgePrompt =
         `Your previous audit analysis is below. You investigated the codebase but did not emit any finding blocks.\n\n` +
         `--- ANALYSIS ---\n${responseText.slice(0, 8000)}\n--- END ---\n\n` +
@@ -668,28 +673,28 @@ export class AuditAgentService extends EventEmitter {
         '```json\n{"score": <0-100>, "summary": "<2-3 sentences>", "findings": [{"severity": "...", "title": "...", "description": "...", "filePath": "...", "recommendation": "..."}]}\n```\n\n' +
         `Score conservatively. Include findings for what you DID inspect. Output ONLY the JSON block.`
 
-      const nudgeText = execFileSync(
-        'claude',
-        [
+      const recoveryModel = modelConfigService.getModel(params.workspacePath, 'da-vinci:plan')
+      const { text: nudgeText } = await runOneShotClaude({
+        feature: 'audit_recovery',
+        model: recoveryModel,
+        workspaceId: params.workspaceId ?? null,
+        args: [
           '-p',
           nudgePrompt,
           '--model',
-          modelConfigService.getModel(params.workspacePath, 'da-vinci:plan'),
+          recoveryModel,
           '--system-prompt',
           'You are an audit result formatter. Output only the requested JSON block.',
           '--permission-mode',
           'plan',
           '--max-turns',
-          '1',
-          '--output-format',
-          'text'
+          '1'
         ],
-        {
-          encoding: 'utf-8',
+        cli: {
           timeout: 60_000,
           cwd: params.workspacePath
         }
-      )
+      })
 
       const nudgeParsed = parseAuditResponse(nudgeText)
 

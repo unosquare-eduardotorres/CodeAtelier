@@ -13,8 +13,8 @@
 
 import { createHash } from 'node:crypto'
 import log from 'electron-log'
-import { buildEnvWithPath } from './env-utils'
 import { modelConfigService } from './model-config.service'
+import { runOneShotClaude } from './one-shot-claude'
 
 const enrichLog = log.scope('skill-enrichment')
 
@@ -63,7 +63,7 @@ class SkillEnrichmentService {
       'JSON only, no fences, no commentary.'
     ].join('\n')
 
-    const raw = await this.invokeHaiku(prompt)
+    const raw = await this.invokeHaiku(prompt, 'skill_enrich')
     return this.parseEnrichment(raw)
   }
 
@@ -113,7 +113,7 @@ class SkillEnrichmentService {
       'JSON only, no fences, no commentary.'
     ].join('\n')
 
-    const raw = await this.invokeHaiku(prompt)
+    const raw = await this.invokeHaiku(prompt, 'skill_recommend')
     const parsed = this.parseRecommendations(raw)
 
     return {
@@ -140,40 +140,18 @@ class SkillEnrichmentService {
 
   // ── Private ──────────────────────────────────────────────────────────────
 
-  private async invokeHaiku(prompt: string): Promise<string> {
-    const { spawn } = await import('node:child_process')
-
+  private async invokeHaiku(prompt: string, feature: string): Promise<string> {
     const resolvedModel = modelConfigService.getModel(undefined, 'haiku')
 
-    return new Promise<string>((resolve, reject) => {
-      const env = buildEnvWithPath()
-      const args = ['-p', prompt, '--model', resolvedModel]
-      const proc = spawn('claude', args, {
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
+    const { text } = await runOneShotClaude({
+      feature,
+      model: resolvedModel,
+      args: ['-p', prompt, '--model', resolvedModel],
+      cli: {
         timeout: 30_000
-      })
-
-      let stdout = ''
-      let stderr = ''
-
-      proc.stdout?.on('data', (d: Buffer) => {
-        stdout += d.toString()
-      })
-      proc.stderr?.on('data', (d: Buffer) => {
-        stderr += d.toString()
-      })
-
-      proc.on('close', (code) => {
-        if (code === 0 && stdout.trim().length > 5) {
-          resolve(stdout.trim())
-        } else {
-          reject(new Error(`claude -p (haiku) failed (code ${code}): ${stderr.slice(0, 500)}`))
-        }
-      })
-
-      proc.on('error', reject)
+      }
     })
+    return text.trim()
   }
 
   private parseEnrichment(raw: string): SkillEnrichment {

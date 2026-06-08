@@ -240,6 +240,24 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
     return rows.map((r) => r.idea_id)
   }
 
+  /**
+   * Recover sessions left 'evaluating' by a previous crash/quit (no live
+   * process can still be running them). Called on app startup. Sessions with a
+   * prior score revert to 'awaiting_answers' (user can continue); otherwise
+   * they are marked 'failed'.
+   */
+  terminateStale(): number {
+    const result = this.db()
+      .prepare(
+        `UPDATE grill_sessions
+           SET status = CASE WHEN current_score IS NOT NULL THEN 'awaiting_answers' ELSE 'failed' END,
+               updated_at = datetime('now')
+         WHERE status = 'evaluating'`
+      )
+      .run()
+    return result.changes
+  }
+
   /** Get active sessions for a workspace (evaluating or awaiting_answers) */
   getActiveForWorkspace(workspaceId: string): GrillSession[] {
     const rows = this.db()

@@ -27,7 +27,7 @@ interface LocalLLMConfigSectionProps {
   isRemoteServer: boolean
   showOllamaSetup: boolean
   provider: LLMProvider
-  activeWorkspaceId: number
+  activeWorkspaceId: string
   onBackendChange: (backend: LocalLLMBackend) => void
   onLocalModelSelect: (modelId: string) => void
   onLoadOmlxModel: (modelId: string) => void

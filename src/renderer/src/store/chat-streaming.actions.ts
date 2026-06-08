@@ -17,6 +17,7 @@ import {
 } from '@renderer/utils/stream-segment-accumulator'
 import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
+import type { ChatState } from './chat.store'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,10 +44,11 @@ export interface ChatStreamingState {
 }
 
 type GetFn = () => ChatStreamingState
+// SetFn mirrors zustand's `set` for the full ChatState — the streaming actions
+// only touch the ChatStreamingState slice, but the callback receives the full
+// store state, so the param/return must be typed against ChatState.
 type SetFn = (
-  partial:
-    | Partial<ChatStreamingState>
-    | ((state: ChatStreamingState) => Partial<ChatStreamingState>)
+  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
 ) => void
 
 // ── ChatStreamingInternals ──────────────────────────────────────────────────

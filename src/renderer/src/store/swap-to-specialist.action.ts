@@ -11,6 +11,7 @@ import { rendererLog } from '@renderer/utils/logger'
 import { useWorkspaceStore } from './workspace.store'
 import { useProjectSpecialistStore } from './project-specialist.store'
 import type { Message } from '../../../shared/types'
+import type { ChatState } from './chat.store'
 
 /** Minimal interface for the chat state slice this action needs */
 interface SwapActionState {
@@ -22,8 +23,11 @@ interface SwapActionState {
 }
 
 type GetState = () => SwapActionState
+// SetState mirrors zustand's `set` for the full ChatState — this action only
+// touches the SwapActionState slice, but the callback receives the full store
+// state, so the param/return must be typed against ChatState.
 type SetState = (
-  partial: Partial<SwapActionState> | ((state: SwapActionState) => Partial<SwapActionState>)
+  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
 ) => void
 
 /**

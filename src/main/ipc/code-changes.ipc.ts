@@ -1,22 +1,14 @@
-import { spawn } from 'node:child_process'
 import { ipcMain } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { repoService } from '../services/repo.service'
 import { githubService } from '../services/github.service'
 import { workspaceRepository, conversationRepository, messageRepository } from '../db/repositories'
+import { runOneShotClaude } from '../services/one-shot-claude'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
-
-/** Build env with PATH so spawned processes can find `claude` CLI */
-function buildEnvWithPath(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PATH: `${process.env.PATH ?? ''}:/usr/local/bin:/opt/homebrew/bin`
-  }
-}
 
 /** Resolve workspace repoPath from conversationId */
 function resolveRepoPath(conversationId: string): { repoPath: string; workspaceId: string } {
@@ -121,41 +113,24 @@ ${filePaths.map((fp) => `- ${fp}`).join('\n')}
 Respond with ONLY the commit message, no preamble or explanation.`
 
     try {
-      const env = buildEnvWithPath()
-      const result = await new Promise<string>((resolve, reject) => {
-        const child = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env
-        })
+      let workspaceId: string | null = null
+      try {
+        workspaceId = resolveRepoPath(conversationId).workspaceId
+      } catch {
+        /* best-effort attribution */
+      }
 
-        let stdout = ''
-        child.stdout?.on('data', (data: Buffer) => {
-          stdout += data.toString()
-        })
-
-        let stderr = ''
-        child.stderr?.on('data', (data: Buffer) => {
-          stderr += data.toString()
-        })
-
-        child.on('close', (code) => {
-          if (code === 0) {
-            resolve(stdout.trim())
-          } else {
-            reject(new Error(`claude exited with code ${code}: ${stderr}`))
-          }
-        })
-
-        child.on('error', reject)
-
-        // Timeout after 30 seconds
-        setTimeout(() => {
-          child.kill('SIGTERM')
-          reject(new Error('Commit message generation timed out'))
-        }, 30_000)
+      const { text: result } = await runOneShotClaude({
+        feature: 'commit_message',
+        workspaceId,
+        conversationId,
+        args: ['-p', prompt],
+        cli: {
+          timeout: 30_000
+        }
       })
 
-      return { message: result }
+      return { message: result.trim() }
     } catch (e) {
       logger.warn('AI commit message generation failed, falling back to simple message:', e)
       // Fallback: generate a simple message from file paths

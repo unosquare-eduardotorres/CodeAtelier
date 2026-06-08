@@ -21,7 +21,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkStripStrayBackticks } from '../remark-plugins'
-import type { StructuredPlan } from '../../../../../shared/types'
+import type { StructuredPlan, PlanRootCause, PlanPhase } from '../../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
 import { RootCausesList, PhasesList, SectionCard } from './PlanHelpers'
 
@@ -62,9 +62,9 @@ export interface TaskPlanSectionsProps {
   visibleDeferredItems: string[]
   visibleDiagrams: Array<{ title: string; mermaid: string }>
   visibleSections: Array<{ heading: string; content: string; icon?: string; mermaid?: string }>
-  visibleRootCauses: Array<{ title: string; description: string }>
+  visibleRootCauses: PlanRootCause[]
   visibleVerification: string[]
-  visiblePhases: Array<{ id: number; title: string; risk?: string; complexity: number }>
+  visiblePhases: PlanPhase[]
   visibleDecisions: Array<{ what: string; why: string }>
   isSimplePlan: boolean
 }
