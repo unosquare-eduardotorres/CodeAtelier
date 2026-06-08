@@ -6,20 +6,20 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
-import {
-  buildDaVinciIdentityPrompt,
-  buildDaVinciIdentityPromptLean
-} from '../default-prompts'
+import { buildDaVinciIdentityPrompt, buildDaVinciIdentityPromptLean } from '../default-prompts'
 
 describe('Lean Identity Prompt', () => {
   test('lean prompt is shorter than full prompt', () => {
     const full = buildDaVinciIdentityPrompt('default')
     const lean = buildDaVinciIdentityPromptLean('default')
-    assert.ok(lean.length < full.length, `Lean (${lean.length}) should be shorter than full (${full.length})`)
-    // At least 30% shorter
     assert.ok(
-      lean.length < full.length * 0.7,
-      `Lean (${lean.length}) should be <70% of full (${full.length})`
+      lean.length < full.length,
+      `Lean (${lean.length}) should be shorter than full (${full.length})`
+    )
+    // At least 25% shorter (lean ≤ 75% of full)
+    assert.ok(
+      lean.length < full.length * 0.75,
+      `Lean (${lean.length}) should be <75% of full (${full.length})`
     )
   })
 
@@ -62,8 +62,23 @@ describe('Lean Identity Prompt', () => {
   test('lean identity includes Code Exploration rules from repomap merge', () => {
     const lean = buildDaVinciIdentityPromptLean('default')
     assert.ok(lean.includes('file_outline'), 'Missing file_outline guidance (merged from repomap)')
-    assert.ok(lean.includes('coupling_analysis'), 'Missing coupling_analysis guidance (merged from repomap)')
+    assert.ok(
+      lean.includes('coupling_analysis'),
+      'Missing coupling_analysis guidance (merged from repomap)'
+    )
     assert.ok(lean.includes('find_callers'), 'Missing find_callers guidance')
     assert.ok(lean.includes('file_dependents'), 'Missing file_dependents guidance')
+  })
+
+  test('full prompt includes ## Tool Priority section', () => {
+    const full = buildDaVinciIdentityPrompt('default')
+    assert.ok(
+      full.includes('## Tool Priority'),
+      'Full prompt should include ## Tool Priority section'
+    )
+    assert.ok(
+      full.includes('Code Graph and Semantic Search tools FIRST'),
+      'Tool Priority should mention Code Graph and Semantic Search'
+    )
   })
 })

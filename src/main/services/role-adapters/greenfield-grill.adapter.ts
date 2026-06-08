@@ -8,21 +8,15 @@
  *   - Same scoring scale, same grill-evaluation JSON output format.
  */
 
-import type { GrillTrackId, CostPreference, AgentIntent } from '../../../shared/types'
+import type { GrillTrackId } from '../../../shared/types'
 import type {
-  AdapterIntentContext,
   AdapterMcpContext,
   AdapterMcpResult,
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx,
-  AgentRoleAdapter,
-  AgentSessionEventName
+  AdapterSessionLifecycleCtx
 } from '../agent-session.types'
-import type { ControlActionCallbacks } from '../control-actions.tool'
 import { GRILL_TRACKS } from '../../../shared/constants'
-import { intentDetector } from '../intent-detector'
-import { chatAgentLogger } from '../../logger'
 import {
   buildReEvalBlock,
   buildGrillEvaluationSchema,
@@ -34,15 +28,14 @@ import {
   GRILL_SCORING_RULES_LEAN,
   isGrillLean
 } from './grill-prompt-blocks'
-import { modelConfigService } from '../model-config.service'
 import { sanitizePromptInput } from '../sanitize-prompt-input'
+import { BaseRoleAdapter } from './base.adapter'
 
-export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
+export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
   readonly role = 'grill' as const
   readonly agentId: string
   interactionTimeoutMs = 10 * 60_000 // 10 min per evaluation
 
-  private readonly log = chatAgentLogger
   private readonly trackId: GrillTrackId
   private readonly projectName: string
   private readonly projectDescription: string
@@ -60,6 +53,7 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
     previousScore?: number
     llmProvider?: import('../../../shared/types').LLMProvider
   }) {
+    super()
     this.trackId = params.trackId
     this.projectName = params.projectName
     this.projectDescription = params.projectDescription
@@ -69,30 +63,18 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
     this.agentId = `greenfield-grill-${params.trackId}-${Date.now()}`
   }
 
-  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
-    // Increase timeout for local LLMs
-    if (this.llmProvider === 'local-llm') {
-      this.interactionTimeoutMs = 45 * 60_000
-      this.log.info(`[greenfield-grill-adapter] Using extended timeout (45 min) for local LLM`)
-    }
+  override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
+    // Pattern 3: Centralized local LLM timeout
+    this.applyLocalLlmTimeout(this.llmProvider)
 
     const track = GRILL_TRACKS[this.trackId]
-    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed guidance)
-    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
-    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, 'grill')
+    // Pattern 1: Centralized model resolution
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill')
     this.systemPrompt = this.buildSystemPrompt(track, resolvedModel)
 
     this.log.info(
       `[greenfield-grill-adapter] ${this.trackId} grill started for project="${this.projectName}"`
     )
-  }
-
-  refreshFeatureFlags(_ctx: AdapterSessionLifecycleCtx): void {
-    // No-op — single-shot, no feature flags to refresh
-  }
-
-  onConversationSwitch(_conversationId: string): void {
-    // No-op — grill evaluators don't switch conversations
   }
 
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
@@ -115,8 +97,8 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
     }
   }
 
-  buildMcpConfig(_ctx: AdapterMcpContext): AdapterMcpResult {
-    // No MCP tools — greenfield evaluation is purely conversational
+  /** Custom MCP: greenfield only gets WebSearch + WebFetch (no codebase). */
+  override buildMcpConfig(_ctx: AdapterMcpContext): AdapterMcpResult {
     return {
       allowedTools: ['WebSearch', 'WebFetch'],
       disallowedTools: [
@@ -130,57 +112,18 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
         'ToolSearch',
         'ExitPlanMode',
         'AskUserQuestion',
-        'TodoWrite', // deprecated — kept for backward compat
-        'TaskCreate', // new Task tools (SDK 0.2.136+)
+        'TodoWrite',
+        'TaskCreate',
         'TaskUpdate'
       ]
     }
   }
 
-  buildControlCallbacks(_params: {
-    conversationId: string | null
-    emit: (event: AgentSessionEventName, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    // No-op — greenfield grill doesn't use control tools
-    return {
-      onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
-    }
+  protected override persistMemory(): void {
+    /* no-op */
   }
 
-  emitDetectedIntents(ctx: AdapterIntentContext): void {
-    // Use intentDetector to find grill-evaluation blocks
-    const detectedIntents = intentDetector.detectAll(
-      ctx.accumulatedText,
-      ctx.controlToolState,
-      ctx.mode
-    )
-
-    for (const intent of detectedIntents) {
-      ctx.emit('intent', intent)
-    }
-
-    if (detectedIntents.length === 0) {
-      ctx.emit('intent', {
-        type: 'response',
-        content: ctx.accumulatedText
-      } as AgentIntent)
-    }
-  }
-
-  getCompactionThresholds(
-    _costPreference: CostPreference
-  ): { suggest: number; auto: number } | null {
-    return null
-  }
-
-  getPersonaId(): string | null {
-    return null
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.systemPrompt = null
   }
 
@@ -198,9 +141,7 @@ export class GreenfieldGrillRoleAdapter implements AgentRoleAdapter {
       ? GRILL_QUESTION_QUALITY_RULES_LEAN
       : `${GRILL_QUESTION_QUALITY_RULES}\n${GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA}`
 
-    const scoringRules = lean
-      ? GRILL_SCORING_RULES_LEAN
-      : GRILL_SCORING_RULES
+    const scoringRules = lean ? GRILL_SCORING_RULES_LEAN : GRILL_SCORING_RULES
 
     // Lean: compressed instructions — Opus narrates naturally
     const instructions = lean

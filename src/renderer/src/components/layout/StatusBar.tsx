@@ -10,15 +10,15 @@ import {
   GitBranch
 } from 'lucide-react'
 import type { ContextUsage } from '../../../../shared/types'
+import { StatusIndicator } from './status-bar/StatusIndicator'
 import {
-  StatusIndicator,
   computeAuditIndicator,
   computeGrillIndicator,
   computeGoalIndicator,
   computeCouncilIndicator,
   computeIndexingIndicator
-} from './status-bar/StatusIndicator'
-import type { MpaStatusInfo, IndexingStateInfo } from './status-bar/StatusIndicator'
+} from './status-bar/status-indicator-helpers'
+import type { MpaStatusInfo, IndexingStateInfo } from './status-bar/status-indicator-helpers'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -212,11 +212,25 @@ export default function StatusBar({
         </span>
 
         {/* Workflow indicators — computed via shared StatusIndicator pattern */}
-        <StatusIndicator {...computeAuditIndicator(isAuditActive, isAuditPaused, lastAuditScore, () => onNavigateToSettings('health'))} />
-        <StatusIndicator {...computeGrillIndicator(grillStatus, onNavigateToGrill, onNavigateToSettings)} />
-        <StatusIndicator {...computeGoalIndicator(mpaStatus, () => onNavigateToSettings('goals'))} />
-        <StatusIndicator {...computeCouncilIndicator(councilPhase ?? null, () => onNavigateToSettings('council'))} />
-        <StatusIndicator {...computeIndexingIndicator(indexingState, () => onNavigateToSettings('code-intelligence'))} />
+        <StatusIndicator
+          {...computeAuditIndicator(isAuditActive, isAuditPaused, lastAuditScore, () =>
+            onNavigateToSettings('health')
+          )}
+        />
+        <StatusIndicator
+          {...computeGrillIndicator(grillStatus, onNavigateToGrill, onNavigateToSettings)}
+        />
+        <StatusIndicator
+          {...computeGoalIndicator(mpaStatus, () => onNavigateToSettings('goals'))}
+        />
+        <StatusIndicator
+          {...computeCouncilIndicator(councilPhase ?? null, () => onNavigateToSettings('council'))}
+        />
+        <StatusIndicator
+          {...computeIndexingIndicator(indexingState, () =>
+            onNavigateToSettings('code-intelligence')
+          )}
+        />
 
         {/* Zoom controls */}
         <div className="flex items-center gap-0.5 border-l border-border-subtle pl-3 ml-1">

@@ -1,12 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useEffect } from 'react'
 import { Loader2, Pause, Play, X, Check } from 'lucide-react'
-import type { IndexingState } from '../../../../shared/types'
-
-/** Format seconds into a human-readable ETA string. */
-function formatEta(seconds: number): string {
-  if (seconds > 60) return `~${Math.ceil(seconds / 60)} min remaining`
-  return `~${Math.ceil(seconds)}s remaining`
-}
+import { useIndexingStore } from '@renderer/store'
 
 interface IndexingProgressPanelProps {
   workspaceId: string
@@ -15,72 +9,42 @@ interface IndexingProgressPanelProps {
 export default function IndexingProgressPanel({
   workspaceId
 }: IndexingProgressPanelProps): React.JSX.Element {
-  const [state, setState] = useState<IndexingState | null>(null)
-  const preprocessStartRef = useRef<number | null>(null)
+  // Single source of truth: the globally-mounted indexing store already
+  // subscribes to INDEXING_PROGRESS. Reading it here (instead of opening a
+  // second onIndexingProgress listener) avoids a redundant subscription and
+  // duplicate commit per progress event.
+  const state = useIndexingStore((s) => s.indexingState)
+  const refreshStatus = useIndexingStore((s) => s.refreshStatus)
+  const pauseIndexing = useIndexingStore((s) => s.pauseIndexing)
+  const resumeIndexing = useIndexingStore((s) => s.resumeIndexing)
+  const cancelIndexing = useIndexingStore((s) => s.cancelIndexing)
 
-  const fetchStatus = useCallback(async () => {
-    try {
-      const status = await window.api.indexingGetStatus({ workspaceId })
-      setState(status)
-    } catch {
-      // Ignore — workspace may not have indexing yet
-    }
-  }, [workspaceId])
-
+  // One-time status refresh on mount so the panel reflects current state even
+  // if no progress event has fired since it opened.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetchStatus sets state from async IPC result
-    fetchStatus()
-    const unsub = window.api.onIndexingProgress((progress) => {
-      if (!progress.workspaceId || progress.workspaceId === workspaceId) {
-        setState(progress)
-      }
-    })
-    return unsub
-  }, [fetchStatus, workspaceId])
+    refreshStatus(workspaceId)
+  }, [workspaceId, refreshStatus])
 
   const handlePause = (): void => {
-    window.api.indexingPause({ workspaceId })
+    pauseIndexing(workspaceId)
   }
 
   const handleResume = (): void => {
-    window.api.indexingResume({ workspaceId })
+    resumeIndexing(workspaceId)
   }
 
   const handleCancel = (): void => {
-    window.api.indexingCancel({ workspaceId })
+    cancelIndexing(workspaceId)
   }
 
-  // Track when preprocessing starts for ETA calculation (side-effect in useEffect, not render)
-  const [etaLabel, setEtaLabel] = useState('')
-
-  useEffect(() => {
-    if (state?.status === 'preprocessing' && !preprocessStartRef.current) {
-      preprocessStartRef.current = Date.now()
-    } else if (state?.status !== 'preprocessing') {
-      preprocessStartRef.current = null
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset ETA label when leaving preprocessing
-      setEtaLabel('')
-      return
-    }
-
-    // Recalculate ETA when description progress changes
-    if (state?.status === 'preprocessing' && state.descriptionsTotal > 0) {
-      const descDone = state.descriptionsProcessed
-      const descTotal = state.descriptionsTotal
-      if (preprocessStartRef.current && descDone > 0) {
-        const elapsed = (Date.now() - preprocessStartRef.current) / 1000
-        const rate = descDone / elapsed
-        if (rate > 0) {
-          const remaining = (descTotal - descDone) / rate
-          setEtaLabel(` (${formatEta(remaining)})`)
-          return
-        }
-      }
-    }
-    setEtaLabel('')
-  }, [state])
-
   if (!state || state.status === 'idle') return <div />
+
+  // ETA is a pure read of the main-process estimate (set for both the
+  // embedding and AI-description phases) — no timing/refs in render.
+  const etaLabel =
+    state.status === 'preprocessing' && state.estimatedRemaining
+      ? ` (${state.estimatedRemaining})`
+      : ''
 
   const isActive =
     state.status === 'scanning' ||

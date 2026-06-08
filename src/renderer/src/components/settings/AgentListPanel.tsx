@@ -1,4 +1,4 @@
-import { Bot, RefreshCw, Trash2, Loader2, Power, PowerOff } from 'lucide-react'
+import { RefreshCw, Trash2, Loader2, Power, PowerOff } from 'lucide-react'
 import { useSpecialistStore } from '@renderer/store'
 import { getAgentMeta } from '@renderer/utils/agentMeta'
 import type { DiscoveredAgent } from '../../../../shared/types'
@@ -70,9 +70,7 @@ export default function AgentListPanel({
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span
-                      className={`text-xs ${
-                        agent.isDeployed ? 'text-success' : 'text-text-muted'
-                      }`}
+                      className={`text-xs ${agent.isDeployed ? 'text-success' : 'text-text-muted'}`}
                     >
                       {agent.isDeployed ? 'Deployed' : 'Not deployed'}
                     </span>

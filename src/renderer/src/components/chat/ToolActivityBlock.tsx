@@ -6,73 +6,59 @@ import {
   Terminal,
   FileText,
   Search,
-  GitBranch,
   Cpu,
-  Bot,
-  Puzzle
+  Puzzle,
+  PenLine,
+  FileOutput,
+  Copy,
+  Check
 } from 'lucide-react'
-import type { ToolActivity } from '../../../../shared/types'
-import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
+import type { ToolActivity, ToolOperationType } from '../../../../shared/types'
+import { copyTextToClipboard } from '../../utils/clipboard'
+import { shortenInput, getToolDisplayName } from './tool-activity-utils'
 
-/**
- * Shortens long absolute paths to show `…/parentFolder/file.ext`.
- * Handles paths with spaces, command strings containing paths, and Grep summaries.
- */
-export function shortenInput(input: string): string {
-  // If already short enough, return as-is
-  if (input.length <= 45) return input
+// ── Copy button helper ──
 
-  // For Grep-style inputs like `/pattern/ in /some/long/path`, shorten the path part
-  const grepMatch = input.match(/^(\/.*?\/)\s+in\s+(.+)$/)
-  if (grepMatch) {
-    const pattern = grepMatch[1]
-    const pathPart = shortenPath(grepMatch[2])
-    return `${pattern} in ${pathPart}`
+function CopyButton({ text }: { text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async (): Promise<void> => {
+    if (await copyTextToClipboard(text)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
-  // For command strings, try to extract and shorten any embedded absolute path
-  // e.g., "find /Users/foo/bar -name *.ts" or "ls -la /Users/foo/bar"
-  const cmdPathMatch = input.match(/^(.+?\s)(\/\S.*?)(\s+.*)?$/)
-  if (cmdPathMatch) {
-    const prefix = cmdPathMatch[1] // e.g. "find " or "ls -la "
-    const rawPath = cmdPathMatch[2] // e.g. "/Users/foo/bar"
-    const suffix = cmdPathMatch[3] || '' // e.g. " -name *.ts"
-    // For commands, show just the command + shortened path + suffix
-    const shortened = shortenPath(rawPath)
-    const result = prefix + shortened + suffix
-    return result.length <= 60 ? result : prefix + shortened
-  }
-
-  // For pure paths (starts with /)
-  if (input.startsWith('/')) {
-    return shortenPath(input)
-  }
-
-  return input
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="ml-auto p-0.5 rounded text-text-muted hover:text-text-primary transition-colors"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+    </button>
+  )
 }
 
-/**
- * Shortens an absolute path to its last 2 meaningful segments.
- * e.g., "/Users/eduardo/Downloads/COE Operation Nexus/src/App.tsx" → "…/src/App.tsx"
- */
-function shortenPath(fullPath: string): string {
-  const segments = fullPath.split('/').filter(Boolean)
-  if (segments.length <= 2) return fullPath
-  return '…/' + segments.slice(-2).join('/')
+// ── Operation type styling ──
+
+interface OpConfig {
+  icon: typeof Terminal
+  label: string
 }
 
-/** Maps raw MCP tool names (mcp__server__tool) to human-readable display names. */
-export function getToolDisplayName(toolName: string): string {
-  if (MCP_DISPLAY_NAMES[toolName]) return MCP_DISPLAY_NAMES[toolName]
-  // Generic MCP fallback — e.g. "mcp__server__tool" → "server · tool"
-  if (toolName.startsWith('mcp__')) {
-    const parts = toolName.split('__')
-    return parts.length >= 3 ? `${parts[1]} · ${parts[2]}` : toolName
-  }
-  return toolName
+const OP_TYPE_CONFIG: Record<ToolOperationType, OpConfig> = {
+  read: { icon: FileText, label: 'Read' },
+  write: { icon: FileOutput, label: 'Write' },
+  edit: { icon: PenLine, label: 'Edit' },
+  search: { icon: Search, label: 'Search' },
+  shell: { icon: Terminal, label: 'Shell' },
+  codegraph: { icon: Cpu, label: 'CodeGraph' },
+  other: { icon: Puzzle, label: 'Tool' }
 }
 
-// ── Tool category system ──
+// ── Legacy category system (fallback when operationType not set) ──
 
 type ToolCategory = 'shell' | 'file' | 'search' | 'codegraph' | 'git' | 'agent' | 'other'
 
@@ -100,52 +86,23 @@ function getToolCategory(toolName: string): ToolCategory {
   return 'other'
 }
 
-const CATEGORY_CONFIG: Record<
-  ToolCategory,
-  { icon: typeof Terminal; badgeBg: string; badgeText: string; dotColor: string }
-> = {
-  shell: {
-    icon: Terminal,
-    badgeBg: 'bg-emerald-500/15',
-    badgeText: 'text-emerald-400',
-    dotColor: 'bg-emerald-400'
-  },
-  file: {
-    icon: FileText,
-    badgeBg: 'bg-blue-500/15',
-    badgeText: 'text-blue-400',
-    dotColor: 'bg-blue-400'
-  },
-  search: {
-    icon: Search,
-    badgeBg: 'bg-amber-500/15',
-    badgeText: 'text-amber-400',
-    dotColor: 'bg-amber-400'
-  },
-  codegraph: {
-    icon: Cpu,
-    badgeBg: 'bg-purple-500/15',
-    badgeText: 'text-purple-400',
-    dotColor: 'bg-purple-400'
-  },
-  git: {
-    icon: GitBranch,
-    badgeBg: 'bg-orange-500/15',
-    badgeText: 'text-orange-400',
-    dotColor: 'bg-orange-400'
-  },
-  agent: {
-    icon: Bot,
-    badgeBg: 'bg-cyan-500/15',
-    badgeText: 'text-cyan-400',
-    dotColor: 'bg-cyan-400'
-  },
-  other: {
-    icon: Puzzle,
-    badgeBg: 'bg-slate-500/15',
-    badgeText: 'text-slate-400',
-    dotColor: 'bg-slate-400'
+const CATEGORY_TO_OP: Record<ToolCategory, ToolOperationType> = {
+  shell: 'shell',
+  file: 'read',
+  search: 'search',
+  codegraph: 'codegraph',
+  git: 'other',
+  agent: 'other',
+  other: 'other'
+}
+
+/** Resolve the op config, preferring structured operationType but falling back to category-based. */
+function resolveOpConfig(activity: ToolActivity): OpConfig {
+  if (activity.operationType) {
+    return OP_TYPE_CONFIG[activity.operationType]
   }
+  const category = getToolCategory(activity.toolName)
+  return OP_TYPE_CONFIG[CATEGORY_TO_OP[category]]
 }
 
 // ── Component ──
@@ -184,135 +141,133 @@ export default function ToolActivityBlock({
 
   /** Determine if a tool row has content worth expanding */
   const hasExpandableContent = (activity: ToolActivity): boolean => {
-    // Any tool with a long input, any result, or resultDetail can be expanded
     if (activity.resultDetail) return true
     if (activity.result && activity.result.length > 40) return true
     if (activity.input && activity.input.length > 60) return true
     return false
   }
 
-  /** Render a single tool activity as a timeline node */
-  const renderTimelineNode = (
-    activity: ToolActivity,
-    index: number,
-    list: ToolActivity[]
-  ): React.JSX.Element => {
+  /** Render a single tool activity as a compact row with left-border accent */
+  const renderToolRow = (activity: ToolActivity): React.JSX.Element => {
     const isActivityExpanded = expandedIds.has(activity.id)
     const expandable = hasExpandableContent(activity)
-    const isLast = index === list.length - 1
-    const category = getToolCategory(activity.toolName)
-    const config = CATEGORY_CONFIG[category]
-    const CategoryIcon = config.icon
+    const opConfig = resolveOpConfig(activity)
+    const CategoryIcon = opConfig.icon
     const isRunning = activity.status === 'running'
     const isError = activity.status === 'error'
 
+    // Icon color driven by status, not tool type
+    const iconColor = isRunning
+      ? 'text-purple-400 animate-pulse'
+      : isError
+        ? 'text-danger'
+        : 'text-emerald-400'
+
     return (
-      <div key={activity.id} className="relative flex gap-3 min-w-0">
-        {/* Timeline spine — vertical line + status dot */}
-        <div className="flex flex-col items-center flex-shrink-0 w-4">
-          {/* Dot */}
-          <div className="relative flex-shrink-0">
-            {isRunning ? (
-              <>
-                <div className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse" />
-                <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-purple-400/40 animate-ping" />
-              </>
-            ) : isError ? (
-              <div className="w-2.5 h-2.5 rounded-full bg-danger" />
-            ) : (
-              <div className={`w-2.5 h-2.5 rounded-full ${config.dotColor}`} />
+      <div key={activity.id} className="min-w-0">
+        {/* Clickable row with subtle left-border */}
+        <button
+          type="button"
+          onClick={() => expandable && toggleActivityExpand(activity.id)}
+          className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 border-l-border-subtle ${
+            expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'
+          } ${isActivityExpanded ? 'bg-surface-overlay/40' : ''}`}
+          aria-expanded={expandable ? isActivityExpanded : undefined}
+        >
+          {/* Category icon — color = status */}
+          <span className={`flex items-center flex-shrink-0 mt-0.5 ${iconColor}`}>
+            <CategoryIcon size={13} />
+          </span>
+
+          {/* Main content */}
+          <span className="flex-1 min-w-0">
+            {/* Line 1: tool name + file path + line range */}
+            <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
+              <span className="text-[13px] font-medium flex-shrink-0 text-text-secondary">
+                {getToolDisplayName(activity.toolName)}
+              </span>
+              {activity.filePath && (
+                <span className="font-mono text-[12px] truncate max-w-[240px] text-text-muted">
+                  {activity.filePath}
+                </span>
+              )}
+              {activity.lineRange && (
+                <span className="text-[10px] text-text-muted bg-surface-overlay px-1 py-px rounded flex-shrink-0">
+                  L{activity.lineRange}
+                </span>
+              )}
+            </span>
+
+            {/* Line 2: input summary (when no file path) OR result summary */}
+            {!activity.filePath && activity.input && (
+              <span className="block text-[12px] text-text-secondary min-w-0 truncate mt-0.5">
+                {shortenInput(activity.input)}
+              </span>
             )}
-          </div>
-          {/* Connecting line */}
-          {!isLast && (
-            <div className="w-px flex-1 min-h-[12px] bg-border-subtle" />
-          )}
-        </div>
+            {activity.status !== 'running' && activity.result && (
+              <span
+                className={`block text-[11px] mt-0.5 truncate ${
+                  isError ? 'text-danger/80' : 'text-text-muted italic'
+                }`}
+              >
+                → {activity.result}
+              </span>
+            )}
+          </span>
 
-        {/* Content */}
-        <div className={`flex-1 min-w-0 ${isLast ? '' : 'pb-1.5'}`}>
-          {/* Clickable row — entire row is the click target */}
-          <button
-            type="button"
-            onClick={() => expandable && toggleActivityExpand(activity.id)}
-            className={`w-full text-left flex items-center gap-2 min-w-0 rounded-md px-2 py-1 -ml-2 transition-colors group ${
-              expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'
-            } ${isActivityExpanded ? 'bg-surface-overlay/40' : ''}`}
-            aria-expanded={expandable ? isActivityExpanded : undefined}
-          >
-            {/* Tool badge — colored pill with category icon */}
-            <span
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium flex-shrink-0 ${config.badgeBg} ${config.badgeText}`}
-            >
-              <CategoryIcon size={10} />
-              {getToolDisplayName(activity.toolName)}
-            </span>
+          {/* Right side — elapsed time + expand chevron */}
+          <span className="flex items-center gap-1.5 flex-shrink-0 ml-auto mt-0.5">
+            {isRunning && activity.elapsedSeconds !== undefined && (
+              <span className="text-[11px] text-purple-400 tabular-nums">
+                {activity.elapsedSeconds}s
+              </span>
+            )}
+            {expandable && !isRunning && (
+              <span
+                className={`text-text-muted transition-transform duration-150 ${
+                  isActivityExpanded ? 'rotate-90' : ''
+                } opacity-0 group-hover:opacity-100 ${isActivityExpanded ? '!opacity-100' : ''}`}
+              >
+                <ChevronRight size={12} />
+              </span>
+            )}
+          </span>
+        </button>
 
-            {/* Summary text — input or result, truncated */}
-            <span className="text-xs text-text-muted min-w-0 flex-1 truncate">
-              {activity.input && shortenInput(activity.input)}
-              {activity.status === 'completed' && activity.result && (
-                <span className="text-text-secondary"> — {activity.result}</span>
-              )}
-              {isError && activity.result && (
-                <span className="text-danger"> — {activity.result}</span>
-              )}
-            </span>
-
-            {/* Right side — elapsed time or expand chevron */}
-            <span className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
-              {isRunning && activity.elapsedSeconds !== undefined && (
-                <span className="text-[11px] text-purple-400 tabular-nums">
-                  {activity.elapsedSeconds}s
-                </span>
-              )}
-              {isRunning && (
-                <Loader2 size={12} className="text-purple-400 animate-spin" />
-              )}
-              {expandable && !isRunning && (
-                <span
-                  className={`text-text-muted transition-transform duration-150 ${
-                    isActivityExpanded ? 'rotate-90' : ''
-                  } opacity-0 group-hover:opacity-100 ${isActivityExpanded ? '!opacity-100' : ''}`}
-                >
-                  <ChevronRight size={12} />
-                </span>
-              )}
-            </span>
-          </button>
-
-          {/* Expand panel — shows input AND output with clear labels */}
-          {isActivityExpanded && (
-            <div className="mt-1 ml-0 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
-              {/* Input section */}
-              {activity.input && activity.input.length > 30 && (
+        {/* Expand panel — shows input AND output with clear labels */}
+        {isActivityExpanded && (
+          <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
+            {/* Input/Command section — always show for shell, length-gated for others */}
+            {activity.input &&
+              (activity.operationType === 'shell' || activity.input.length > 30) && (
                 <div className="px-3 py-2 border-b border-border-subtle/50">
-                  <span className="text-[10px] uppercase tracking-wider text-text-secondary font-medium">
-                    Input
+                  <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+                    {activity.operationType === 'shell' ? 'Command' : 'Input'}
+                    <CopyButton text={activity.input} />
                   </span>
                   <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
                     {activity.input}
                   </pre>
                 </div>
               )}
-              {/* Output section */}
-              {(activity.resultDetail || activity.result) && (
-                <div className="px-3 py-2 max-h-64 overflow-y-auto">
-                  <span className="text-[10px] uppercase tracking-wider text-text-secondary font-medium">
-                    {isError ? 'Error' : 'Output'}
-                  </span>
-                  <pre
-                    className={`mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${
-                      isError ? 'text-danger' : 'text-text-muted'
-                    }`}
-                  >
-                    {activity.resultDetail || activity.result}
-                  </pre>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+            {/* Output section */}
+            {(activity.resultDetail || activity.result) && (
+              <div className="px-3 py-2 max-h-64 overflow-y-auto">
+                <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+                  {isError ? 'Error' : 'Output'}
+                  <CopyButton text={activity.resultDetail || activity.result || ''} />
+                </span>
+                <pre
+                  className={`mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${
+                    isError ? 'text-danger' : 'text-text-muted'
+                  }`}
+                >
+                  {activity.resultDetail || activity.result}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -341,9 +296,7 @@ export default function ToolActivityBlock({
           </span>
         )}
         {runningCount === 0 && (
-          <span className="text-text-muted">
-            ({summaryParts.join(' · ')})
-          </span>
+          <span className="text-text-muted">({summaryParts.join(' · ')})</span>
         )}
         <ChevronRight
           size={12}
@@ -351,18 +304,16 @@ export default function ToolActivityBlock({
         />
       </button>
 
-      {/* Collapsed — show running tools only as mini timeline */}
+      {/* Collapsed — show running tools only as compact rows */}
       {!isExpanded && runningActivities.length > 0 && (
-        <div className="mt-2 ml-3">
-          {runningActivities.map((a, i) => renderTimelineNode(a, i, runningActivities))}
+        <div className="mt-1.5 ml-1 space-y-0.5">
+          {runningActivities.map((a) => renderToolRow(a))}
         </div>
       )}
 
-      {/* Expanded — full timeline of all activities */}
+      {/* Expanded — all activities as compact rows */}
       {isExpanded && (
-        <div className="mt-2 ml-3">
-          {activities.map((a, i) => renderTimelineNode(a, i, activities))}
-        </div>
+        <div className="mt-1.5 ml-1 space-y-0.5">{activities.map((a) => renderToolRow(a))}</div>
       )}
     </div>
   )

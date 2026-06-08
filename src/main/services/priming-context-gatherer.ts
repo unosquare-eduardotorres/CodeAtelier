@@ -8,11 +8,8 @@
  * Extracted from AgentSessionService.buildPrimingContext.
  */
 
-import { chatAgentLogger } from '../logger'
 import { workspaceRepository, memoryRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
-
-const log = chatAgentLogger
 
 type PrimingPart = { type: 'text'; text: string }
 
@@ -59,9 +56,7 @@ export class PrimingContextGatherer {
   /**
    * 1. Recent git changes (last 3 commits diff stat).
    */
-  private async gatherRecentGitChanges(
-    workspacePath: string | null
-  ): Promise<PrimingPart | null> {
+  private async gatherRecentGitChanges(workspacePath: string | null): Promise<PrimingPart | null> {
     if (!workspacePath) return null
     try {
       const { execSync } = await import('node:child_process')
@@ -87,9 +82,7 @@ export class PrimingContextGatherer {
   /**
    * 2. Active plan state (if any conversation has a plan in progress).
    */
-  private async gatherActivePlanState(
-    conversationId: string | null
-  ): Promise<PrimingPart | null> {
+  private async gatherActivePlanState(conversationId: string | null): Promise<PrimingPart | null> {
     if (!conversationId) return null
     try {
       const planState = localPlanStateService.getForConversation(conversationId)
@@ -117,15 +110,10 @@ export class PrimingContextGatherer {
   ): Promise<PrimingPart | null> {
     if (!workspaceId) return null
     try {
-      const memories = memoryRepository.search(
-        workspaceId,
-        userPrompt.slice(0, 100)
-      )
+      const memories = memoryRepository.search(workspaceId, userPrompt.slice(0, 100))
       const topMemories = memories.slice(0, 5)
       if (topMemories.length > 0) {
-        const memoryText = topMemories
-          .map((m) => `- [${m.type}] ${m.content}`)
-          .join('\n')
+        const memoryText = topMemories.map((m) => `- [${m.type}] ${m.content}`).join('\n')
         return {
           type: 'text',
           text: `[Workspace Context: Relevant Memories]\n${memoryText}`

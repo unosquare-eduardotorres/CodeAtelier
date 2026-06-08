@@ -1,9 +1,8 @@
 /**
- * WizardSummaryStep — Step 3 of the Create New Project wizard.
+ * WizardSummaryStep — Step 4 (Create) of the Create New Project wizard.
  *
- * Read-only confirmation screen showing project info, grill results
- * (if a grill session was run), and what will be created. Triggers
- * the actual project creation via IPC.
+ * Read-only confirmation screen showing project info, grill decisions
+ * summary per track, and what will be created. Triggers project creation.
  */
 
 import { useState, useMemo } from 'react'
@@ -13,51 +12,41 @@ import {
   FileText,
   Database,
   Loader2,
-  CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  MessageSquare,
+  Landmark
 } from 'lucide-react'
 import type { GrillDecision, GrillTrackScore } from '../../../../../shared/types'
+import type { ProjectDestination } from '../CreateProjectWizard'
+import { GRILL_TRACKS } from '../../../../../shared/constants'
 
 interface WizardSummaryStepProps {
   projectName: string
   parentFolder: string
   description: string
+  attachments: string[]
   grillDecisions: GrillDecision[]
   trackScores: GrillTrackScore[]
-  skippedGrill: boolean
   onBack: () => void
-  onCreateProject: () => Promise<void>
-}
-
-type CreationPhase =
-  | 'idle'
-  | 'creating-folder'
-  | 'generating-claudemd'
-  | 'registering'
-  | 'done'
-  | 'error'
-
-const PHASE_LABELS: Record<CreationPhase, string> = {
-  idle: '',
-  'creating-folder': 'Creating folder…',
-  'generating-claudemd': 'Generating CLAUDE.md…',
-  registering: 'Registering workspace…',
-  done: 'Project created!',
-  error: 'Creation failed'
+  /** Finalize the blueprint then route into the new workspace at the chosen destination. */
+  onFinalize: (destination: ProjectDestination) => Promise<void>
 }
 
 export default function WizardSummaryStep({
   projectName,
   parentFolder,
   description,
+  attachments,
   grillDecisions,
   trackScores,
-  skippedGrill,
   onBack,
-  onCreateProject
+  onFinalize
 }: WizardSummaryStepProps): React.JSX.Element {
-  const [creationPhase, setCreationPhase] = useState<CreationPhase>('idle')
+  const [finalizing, setFinalizing] = useState<ProjectDestination | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [expandedTracks, setExpandedTracks] = useState<Set<string>>(new Set())
 
   const resolvedPath = `${parentFolder}/${projectName.trim()}`
 
@@ -67,30 +56,9 @@ export default function WizardSummaryStep({
     return Math.round(sum / trackScores.length)
   }, [trackScores])
 
-  const isCreating =
-    creationPhase !== 'idle' && creationPhase !== 'done' && creationPhase !== 'error'
+  const isCreating = finalizing !== null
 
-  const handleCreate = async (): Promise<void> => {
-    setError(null)
-    try {
-      setCreationPhase('creating-folder')
-      // Small delay to show progress
-      await new Promise((r) => setTimeout(r, 300))
-
-      setCreationPhase('generating-claudemd')
-      await new Promise((r) => setTimeout(r, 200))
-
-      setCreationPhase('registering')
-      await onCreateProject()
-
-      setCreationPhase('done')
-    } catch (err) {
-      setCreationPhase('error')
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  // Group decisions by track for display
+  // Group decisions by track
   const decisionsByTrack = useMemo(() => {
     const map = new Map<string, GrillDecision[]>()
     for (const d of grillDecisions) {
@@ -100,6 +68,37 @@ export default function WizardSummaryStep({
     }
     return map
   }, [grillDecisions])
+
+  const toggleTrackExpand = (trackId: string): void => {
+    setExpandedTracks((prev) => {
+      const next = new Set(prev)
+      if (next.has(trackId)) {
+        next.delete(trackId)
+      } else {
+        next.add(trackId)
+      }
+      return next
+    })
+  }
+
+  const handleFinalize = async (destination: ProjectDestination): Promise<void> => {
+    if (finalizing) return
+    setError(null)
+    setFinalizing(destination)
+    try {
+      await onFinalize(destination)
+      // On success the wizard unmounts as the app routes into the new workspace.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setFinalizing(null)
+    }
+  }
+
+  const FINALIZE_LABELS: Record<ProjectDestination, string> = {
+    chat: 'Opening project…',
+    goals: 'Starting goal…',
+    council: 'Convening council…'
+  }
 
   return (
     <div className="flex flex-col gap-6 max-w-2xl mx-auto w-full">
@@ -139,14 +138,24 @@ export default function WizardSummaryStep({
               </p>
             </div>
           )}
+          {attachments.length > 0 && (
+            <div className="flex items-start gap-2">
+              <span className="text-xs font-medium text-text-muted w-20 flex-shrink-0 pt-0.5">
+                Attachments
+              </span>
+              <span className="text-sm text-text-secondary">
+                {attachments.length} file{attachments.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Grill Results Card */}
-      {!skippedGrill && trackScores.length > 0 && (
+      {/* Decisions Summary Card */}
+      {trackScores.length > 0 && (
         <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-text-primary">Grill Results</h3>
+            <h3 className="text-sm font-semibold text-text-primary">Decisions Summary</h3>
             {overallScore !== null && (
               <span
                 className={`text-sm font-semibold px-2 py-0.5 rounded-full ${
@@ -162,61 +171,68 @@ export default function WizardSummaryStep({
             )}
           </div>
 
-          {/* Per-track scores */}
-          <div className="space-y-1.5 mb-4">
-            {trackScores.map((ts) => (
-              <div key={ts.trackId} className="flex items-center gap-2">
-                <span className="text-xs text-text-muted w-28 flex-shrink-0 capitalize">
-                  {ts.trackId.replace('-', ' ')}
-                </span>
-                <div className="flex-1 h-1.5 rounded-full bg-surface-base overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      ts.score >= 61 ? 'bg-success' : ts.score >= 41 ? 'bg-warning' : 'bg-danger'
-                    }`}
-                    style={{ width: `${ts.score}%` }}
-                  />
-                </div>
-                <span className="text-xs text-text-secondary w-10 text-right">{ts.score}</span>
-              </div>
-            ))}
-          </div>
+          {/* Per-track expandable sections */}
+          <div className="space-y-1.5">
+            {trackScores.map((ts) => {
+              const trackDecisions = decisionsByTrack.get(ts.trackId) ?? []
+              const isExpanded = expandedTracks.has(ts.trackId)
+              const trackName = GRILL_TRACKS[ts.trackId]?.name ?? ts.trackId
 
-          {/* Key decisions */}
-          {grillDecisions.length > 0 && (
-            <div>
-              <h4 className="text-xs font-medium text-text-muted mb-2 uppercase tracking-wider">
-                Key Decisions ({grillDecisions.length})
-              </h4>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {Array.from(decisionsByTrack.entries()).map(([trackId, decisions]) => (
-                  <div key={trackId}>
-                    <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
-                      {trackId}
+              return (
+                <div key={ts.trackId}>
+                  <button
+                    type="button"
+                    onClick={() => toggleTrackExpand(ts.trackId)}
+                    className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-surface-base transition-colors"
+                  >
+                    {isExpanded ? (
+                      <ChevronDown size={12} className="text-text-muted flex-shrink-0" />
+                    ) : (
+                      <ChevronRight size={12} className="text-text-muted flex-shrink-0" />
+                    )}
+                    <span className="text-xs font-medium text-text-primary flex-1 text-left">
+                      {trackName}
                     </span>
-                    {decisions.map((d) => (
-                      <div key={d.questionId} className="flex items-start gap-1.5 ml-2 mt-0.5">
-                        <span className="text-text-muted mt-1">•</span>
-                        <span className="text-xs text-text-secondary">
-                          <span className="font-medium text-text-primary">{d.questionText}</span>:{' '}
-                          {d.selectedOption}
-                          {d.otherText && <span className="text-text-muted"> ({d.otherText})</span>}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+                    <span className="text-xs text-text-muted">
+                      {trackDecisions.length} decision{trackDecisions.length !== 1 ? 's' : ''}
+                    </span>
+                    <div className="w-16 h-1.5 rounded-full bg-surface-base overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${
+                          ts.score >= 61
+                            ? 'bg-success'
+                            : ts.score >= 41
+                              ? 'bg-warning'
+                              : 'bg-danger'
+                        }`}
+                        style={{ width: `${ts.score}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-text-secondary w-8 text-right">
+                      {ts.score}
+                    </span>
+                  </button>
 
-      {skippedGrill && (
-        <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
-          <p className="text-sm text-text-muted text-center">
-            Grill session was skipped — a basic CLAUDE.md will be generated from your description.
-          </p>
+                  {isExpanded && trackDecisions.length > 0 && (
+                    <div className="ml-6 pl-2 border-l border-border-subtle space-y-1 py-1.5">
+                      {trackDecisions.map((d) => (
+                        <div key={d.questionId} className="flex items-start gap-1.5">
+                          <span className="text-text-muted mt-0.5 flex-shrink-0">•</span>
+                          <span className="text-xs text-text-secondary">
+                            <span className="font-medium text-text-primary">{d.questionText}</span>:{' '}
+                            {d.selectedOption}
+                            {d.otherText && (
+                              <span className="text-text-muted"> ({d.otherText})</span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -248,14 +264,14 @@ export default function WizardSummaryStep({
       )}
 
       {/* Creation progress */}
-      {isCreating && (
+      {isCreating && finalizing && (
         <div className="flex items-center justify-center gap-2 py-2">
           <Loader2 size={16} className="animate-spin text-primary-text" />
-          <span className="text-sm text-text-secondary">{PHASE_LABELS[creationPhase]}</span>
+          <span className="text-sm text-text-secondary">{FINALIZE_LABELS[finalizing]}</span>
         </div>
       )}
 
-      {/* Buttons */}
+      {/* Buttons — create the project then route to the chosen destination */}
       <div className="flex items-center justify-between pt-4 border-t border-border-subtle">
         <button
           type="button"
@@ -270,27 +286,33 @@ export default function WizardSummaryStep({
           Back
         </button>
 
-        <button
-          type="button"
-          onClick={handleCreate}
-          disabled={isCreating || creationPhase === 'done'}
-          className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium
-                     bg-primary hover:bg-primary-hover text-white
-                     transition-colors disabled:opacity-40 disabled:cursor-not-allowed
-                     focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
-        >
-          {creationPhase === 'done' ? (
-            <>
-              <CheckCircle2 size={14} />
-              Created!
-            </>
-          ) : (
-            <>
-              <FolderPlus size={14} />
-              Create Project
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleFinalize('council')}
+            disabled={isCreating}
+            aria-label="Create project and convene the council"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium
+                       border border-purple-500 text-purple-400 hover:bg-purple-500/10
+                       transition-colors disabled:opacity-40 disabled:cursor-not-allowed press-scale"
+          >
+            <Landmark size={14} />
+            Council Sweep
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFinalize('chat')}
+            disabled={isCreating}
+            aria-label="Create project and continue in chat"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium
+                       bg-primary hover:bg-primary-hover text-white
+                       transition-colors disabled:opacity-40 disabled:cursor-not-allowed
+                       focus:outline-none focus:ring-2 focus:ring-primary/50 press-scale"
+          >
+            <MessageSquare size={14} />
+            Continue in Chat
+          </button>
+        </div>
       </div>
     </div>
   )

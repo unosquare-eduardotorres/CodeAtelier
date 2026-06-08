@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type JSX } from 'react'
 import { Terminal } from 'lucide-react'
 import { PHASE_CONFIG } from './constants'
 import type { MpaPhaseType } from '../../../../../shared/mpa-types'
@@ -28,9 +28,7 @@ export default function GoalPhaseStream({
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle">
         <Terminal size={14} className="text-text-muted" />
-        <span className="text-xs font-medium text-text-secondary">
-          {phaseLabel} Output
-        </span>
+        <span className="text-xs font-medium text-text-secondary">{phaseLabel} Output</span>
       </div>
 
       <div

@@ -1,0 +1,205 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Glass — "Midnight Glass": Dark slate-blue depth with purple shimmer.
+   Translucent surfaces with backdrop blur, frosted borders, and
+   blue-violet/lavender accents. Sophisticated, no neon.
+   ═══════════════════════════════════════════════════════════════════════════ */
+[data-theme="glass"] {
+  /* ── Surface layers (darker slate-navy, translucent raised) ── */
+  --color-surface-base: #0c0e1a;
+  --color-surface-raised: rgba(16, 20, 36, 0.72);
+  --color-surface-overlay: rgba(22, 28, 48, 0.78);
+  --color-surface-float: rgba(30, 36, 58, 0.85);
+
+  /* ── Border layers (frosted white) ── */
+  --color-border-subtle: rgba(255, 255, 255, 0.07);
+  --color-border-default: rgba(255, 255, 255, 0.13);
+  --color-border-strong: rgba(255, 255, 255, 0.24);
+
+  /* ── Text hierarchy (cooler, gray-blue tinted) ── */
+  --color-text-primary: #e2e4f0;
+  --color-text-body: #c4c8dc;
+  --color-text-secondary: #8a8ea6;
+  --color-text-muted: #5e6280;
+
+  /* ── Code text ── */
+  --color-code-text: #d0d4e8;
+  --color-code-inline: #b4befe;
+  --color-text-emphasis: #eceef6;
+
+  /* ── Primary accent (Blue-violet — blend of blue and purple) ── */
+  --color-primary: #7c8cf7;
+  --color-primary-hover: #96a4fa;
+  --color-primary-muted: rgba(124, 140, 247, 0.15);
+  --color-primary-text: #b4befe;
+
+  /* ── Accent (Lavender purple — replaces cyan) ── */
+  --color-accent: #a78bfa;
+  --color-accent-muted: rgba(167, 139, 250, 0.12);
+
+  /* ── Teal / Forest (muted steel-blue support colors) ── */
+  --color-teal: #5b7db5;
+  --color-teal-light: #7c9fd4;
+  --color-teal-muted: rgba(91, 125, 181, 0.18);
+  --color-teal-text: #7c9fd4;
+  --color-forest: #141830;
+  --color-forest-light: #6366f1;
+
+  /* ── Semantic status ── */
+  --color-success: #4ade80;
+  --color-success-muted: rgba(74, 222, 128, 0.15);
+  --color-warning: #fbbf24;
+  --color-warning-muted: rgba(251, 191, 36, 0.15);
+  --color-danger: #f87171;
+  --color-danger-muted: rgba(248, 113, 113, 0.15);
+  --color-info: #60a5fa;
+  --color-info-muted: rgba(96, 165, 250, 0.15);
+
+  /* ── Mode tokens (Plan / Build / Danger) ── */
+  --color-mode-plan: #141830;
+  --color-mode-plan-muted: rgba(20, 24, 48, 0.3);
+  --color-mode-plan-text: #b4befe;
+  --color-mode-plan-border: rgba(20, 24, 48, 0.3);
+
+  --color-mode-build: #6366f1;
+  --color-mode-build-muted: rgba(99, 102, 241, 0.3);
+  --color-mode-build-text: #a78bfa;
+  --color-mode-build-border: rgba(99, 102, 241, 0.3);
+
+  --color-mode-danger: #991b1b;
+  --color-mode-danger-muted: rgba(153, 27, 27, 0.3);
+  --color-mode-danger-text: #f87171;
+  --color-mode-danger-border: rgba(153, 27, 27, 0.4);
+
+  /* ── Plan Card ── */
+  --color-plan-card: #7c8cf7;
+  --color-plan-card-muted: rgba(124, 140, 247, 0.12);
+  --color-plan-card-border: rgba(124, 140, 247, 0.3);
+  --color-plan-card-text: #b4befe;
+  --color-plan-card-section-bg: rgba(124, 140, 247, 0.06);
+  --color-plan-card-accent: #a78bfa;
+  --color-plan-card-phase-bg: rgba(167, 139, 250, 0.12);
+  --color-plan-card-phase-border: rgba(167, 139, 250, 0.25);
+
+  /* ── Panel colors ── */
+  --color-panel-olive: #141830;
+  --color-panel-terracotta: #2e1655;
+  --color-panel-teal: #142840;
+  --color-panel-navy: #0c0a20;
+
+  /* ── Agent-specific colors (blue-violet-shifted palette) ── */
+  --color-agent-react: #60a5fa;
+  --color-agent-dotnet: #a78bfa;
+  --color-agent-agentic: #fbbf24;
+  --color-agent-postgres: #60a5fa;
+  --color-agent-ux: #e879f9;
+  --color-agent-git: #94a3b8;
+  --color-agent-requirements: #4ade80;
+  --color-agent-codeplanner: #a3e635;
+  --color-agent-execution: #fb923c;
+  --color-agent-cicd: #f87171;
+  --color-agent-cloud: #5b7db5;
+
+  /* ── Special-purpose tokens ── */
+  --color-user-bubble: rgba(124, 140, 247, 0.08);
+  --color-grill: #a78bfa;
+  --color-grill-muted: rgba(167, 139, 250, 0.15);
+  --color-gold-glow: rgba(124, 140, 247, 0.15);
+  --color-gold-muted: #312e81;
+
+  /* ── Component tokens ── */
+  --color-button-primary-bg: var(--color-primary);
+  --color-button-primary-hover: var(--color-primary-hover);
+  --color-button-danger-bg: var(--color-danger);
+
+  --color-card-bg: rgba(124, 140, 247, 0.02);
+  --color-card-border: var(--color-border-subtle);
+
+  --color-input-bg: #080a16;
+  --color-input-border: var(--color-border-default);
+  --color-input-focus: var(--color-primary);
+
+  --color-modal-bg: var(--color-surface-float);
+  --color-modal-border: var(--color-border-default);
+
+  --color-sidebar-bg: var(--color-surface-raised);
+  --color-sidebar-active: var(--color-primary-muted);
+
+  /* ── Zebra stripe for tables ── */
+  --color-table-zebra: rgba(124, 140, 247, 0.02);
+
+  /* ── Scrollbar ── */
+  --color-scrollbar-thumb: rgba(124, 140, 247, 0.2);
+  --color-scrollbar-thumb-hover: rgba(124, 140, 247, 0.35);
+
+  /* ── Selection ── */
+  --color-selection-bg: rgba(124, 140, 247, 0.3);
+  --color-selection-text: #b4befe;
+
+  /* ── Hover lift shadow ── */
+  --color-hover-shadow: rgba(124, 140, 247, 0.12);
+
+  /* ── Specialist radial gradient ── */
+  --color-specialist-glow: rgba(124, 140, 247, 0.08);
+  --color-specialist-mid: rgba(22, 28, 48, 0.4);
+
+  /* ── Glass-specific: subtle grain for frosted texture ── */
+  --grain-opacity: 0.02;
+
+  /* ── Glass-specific: chat-icon pulse (blue-violet) ── */
+  --color-chat-icon-pulse: rgba(124, 140, 247, 0.40);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Glass structural rules — backdrop-filter, blue-violet shadows, frosted scrollbar
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Glass backdrop-filter on structural surfaces ── */
+[data-theme="glass"] .bg-sidebar-bg,
+[data-theme="glass"] .bg-surface-raised {
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+}
+
+[data-theme="glass"] .bg-surface-overlay {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+[data-theme="glass"] .bg-surface-float,
+[data-theme="glass"] .bg-modal-bg {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* ── Glass shadow elevation — blue-violet-tinted depth ── */
+[data-theme="glass"] .shadow-sm {
+  --tw-shadow: 0 2px 8px rgba(0, 0, 0, 0.30), 0 0 1px rgba(124, 140, 247, 0.10);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="glass"] .shadow-lg {
+  --tw-shadow: 0 4px 20px rgba(0, 0, 0, 0.40), 0 0 1px rgba(124, 140, 247, 0.12);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="glass"] .shadow-xl {
+  --tw-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 0 1px rgba(124, 140, 247, 0.15);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+
+[data-theme="glass"] .hover-lift:hover {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.40), 0 0 20px rgba(124, 140, 247, 0.12);
+}
+
+/* ── Glass scrollbar ── */
+[data-theme="glass"] ::-webkit-scrollbar-track {
+  background: rgba(12, 14, 26, 0.5);
+}
+
+[data-theme="glass"] ::-webkit-scrollbar-thumb {
+  background: rgba(124, 140, 247, 0.25);
+}
+
+[data-theme="glass"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 140, 247, 0.40);
+}

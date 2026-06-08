@@ -74,5 +74,85 @@ if (!env) {
       const found = messageRepository.findById('nonexistent-id')
       assert.equal(found, undefined)
     })
+
+    // ── Tool Activities Persistence ──
+
+    test('updateToolActivities() persists and mapRow() returns toolActivities', () => {
+      const convId3 = seedConversation(db, wsId, 'ToolActivity Test')
+      const msg = messageRepository.create(convId3, 'da-vinci', 'Response with tools')
+      assert.equal(msg.toolActivities, undefined, 'should be undefined before update')
+
+      const activities = [
+        {
+          id: 'tool-1',
+          toolName: 'mcp__file-tools__Read',
+          status: 'completed' as const,
+          input: 'src/main/app.ts',
+          result: '42 lines read',
+          startedAt: 1000,
+          completedAt: 2000,
+          filePath: 'src/main/app.ts',
+          operationType: 'read' as const
+        },
+        {
+          id: 'tool-2',
+          toolName: 'mcp__file-tools__Edit',
+          status: 'completed' as const,
+          input: 'src/main/app.ts',
+          result: '1 replacement',
+          startedAt: 3000,
+          completedAt: 4000,
+          filePath: 'src/main/app.ts',
+          operationType: 'write' as const
+        }
+      ]
+
+      messageRepository.updateToolActivities(msg.id, activities)
+
+      const loaded = messageRepository.findById(msg.id)
+      assert.ok(loaded)
+      assert.ok(loaded.toolActivities, 'should have toolActivities after update')
+      assert.equal(loaded.toolActivities!.length, 2)
+      assert.equal(loaded.toolActivities![0].toolName, 'mcp__file-tools__Read')
+      assert.equal(loaded.toolActivities![0].status, 'completed')
+      assert.equal(loaded.toolActivities![0].filePath, 'src/main/app.ts')
+      assert.equal(loaded.toolActivities![1].toolName, 'mcp__file-tools__Edit')
+    })
+
+    test('findByConversation() includes toolActivities', () => {
+      const convId4 = seedConversation(db, wsId, 'ToolActivity List Test')
+      const msg = messageRepository.create(convId4, 'da-vinci', 'Response')
+      const activities = [
+        {
+          id: 'tool-3',
+          toolName: 'Bash',
+          status: 'completed' as const,
+          startedAt: 5000,
+          completedAt: 6000
+        }
+      ]
+      messageRepository.updateToolActivities(msg.id, activities)
+
+      const messages = messageRepository.findByConversation(convId4)
+      assert.equal(messages.length, 1)
+      assert.ok(messages[0].toolActivities)
+      assert.equal(messages[0].toolActivities![0].toolName, 'Bash')
+    })
+
+    test('updateToolActivities() is no-op for empty array', () => {
+      const convId5 = seedConversation(db, wsId, 'Empty ToolActivity Test')
+      const msg = messageRepository.create(convId5, 'da-vinci', 'No tools used')
+      messageRepository.updateToolActivities(msg.id, [])
+
+      const loaded = messageRepository.findById(msg.id)
+      assert.ok(loaded)
+      assert.equal(loaded.toolActivities, undefined, 'should remain undefined for empty array')
+    })
+
+    test('messages without tool_activities_json return undefined toolActivities', () => {
+      const convId6 = seedConversation(db, wsId, 'No ToolActivity Test')
+      const msg = messageRepository.create(convId6, 'user', 'Just text')
+      assert.equal(msg.toolActivities, undefined)
+    })
   })
 }

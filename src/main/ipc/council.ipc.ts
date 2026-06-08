@@ -16,19 +16,22 @@ import type {
   CouncilVerdict,
   CouncilPhase,
   LLMProvider,
-  StructuredPlan
+  StructuredPlan,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
+import { createTimedCleanupMap } from './listener-cleanup'
 import { workspaceRepository } from '../db/repositories'
 import { councilService } from '../services/council.service'
 import { councilPersistenceController } from '../services/council-persistence.controller'
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
+import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
 
 const councilLog = log.scope('council-ipc')
 
-export function registerCouncilIpc(mainWindow: BrowserWindow): void {
+export function registerCouncilIpc(_mainWindow: BrowserWindow): void {
   // ── council:start — start a council evaluation ────────────────────
 
   ipcMain.handle(
@@ -45,8 +48,9 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
         filesInScope?: string[]
         conversationId?: string
         llmProvider?: LLMProvider
+        grillSessionId?: string
       }
-    ): Promise<void> => {
+    ): Promise<{ sessionId: string }> => {
       validateSender(event)
 
       councilLog.info('[council:start] Handler invoked', {
@@ -63,7 +67,8 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
         workspaceContext,
         filesInScope,
         conversationId,
-        llmProvider: explicitProvider
+        llmProvider: explicitProvider,
+        grillSessionId
       } = args
 
       if (councilService.isRunningForWorkspace(workspaceId)) {
@@ -79,12 +84,22 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
       const settings = workspaceRepository.getSettings(workspace.id)
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
-      // Start persistence tracking
-      const sessionId = `council-${Date.now()}`
+      // Create DB session upfront so the renderer gets the real DB UUID
+      const dbSession = councilSessionRepository.createSession({
+        workspaceId,
+        inputType,
+        inputContent: planContent,
+        grillSessionId,
+        structuredPlanJson: structuredPlan ? JSON.stringify(structuredPlan) : undefined,
+        conversationId
+      })
+      const sessionId = dbSession.id
+
+      // Start persistence tracking with the DB session ID
       councilPersistenceController.startTracking(sessionId, workspaceId, workspace.repoPath)
 
       // Wire event forwarding
-      wireCouncilEvents(mainWindow, workspace.repoPath)
+      wireCouncilEvents(workspaceId, workspace.repoPath)
 
       // Start the council evaluation (non-blocking — runs in background)
       councilService
@@ -98,11 +113,15 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
           workspaceContext: workspaceContext ?? '',
           filesInScope: filesInScope ?? [],
           conversationId,
-          llmProvider
+          grillSessionId,
+          llmProvider,
+          dbSessionId: sessionId
         })
         .catch((err) => {
           councilLog.error('[council:start] evaluate failed:', err)
         })
+
+      return { sessionId }
     }
   )
 
@@ -111,18 +130,15 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.COUNCIL_CANCEL, (event, args?: { workspaceId?: string }): void => {
     validateSender(event)
     councilService.cancel(args?.workspaceId)
-    councilPersistenceController.clearTracking(mainWindow)
+    councilPersistenceController.clearTracking()
   })
 
   // ── council:getSession — current council status for a workspace ───
 
-  ipcMain.handle(
-    IPC_CHANNELS.COUNCIL_GET_SESSION,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      return councilService.getSessionState(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.COUNCIL_GET_SESSION, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    return councilService.getSessionState(args.workspaceId)
+  })
 
   // ── council:resume — resume a failed/stale session ───
 
@@ -140,20 +156,26 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
       const llmProvider = settings.llmProvider ?? 'claude'
 
       // Wire event forwarding
-      wireCouncilEvents(mainWindow, workspace.repoPath)
+      wireCouncilEvents(args.workspaceId, workspace.repoPath)
 
       // Start persistence tracking
-      councilPersistenceController.startTracking(args.sessionId, args.workspaceId, workspace.repoPath)
+      councilPersistenceController.startTracking(
+        args.sessionId,
+        args.workspaceId,
+        workspace.repoPath
+      )
 
       // Resume (non-blocking)
-      councilService.resumeSession({
-        sessionId: args.sessionId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath,
-        llmProvider
-      }).catch((err) => {
-        councilLog.error('[council:resume] Resume failed:', err)
-      })
+      councilService
+        .resumeSession({
+          sessionId: args.sessionId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath,
+          llmProvider
+        })
+        .catch((err) => {
+          councilLog.error('[council:resume] Resume failed:', err)
+        })
 
       return { resumed: true }
     }
@@ -169,69 +191,106 @@ export function registerCouncilIpc(mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── council:deleteSession — delete a council session by ID ───
+
+  ipcMain.handle(
+    IPC_CHANNELS.COUNCIL_DELETE_SESSION,
+    (event, args: { sessionId: string }): { deleted: boolean } => {
+      validateSender(event)
+      const deleted = councilSessionRepository.deleteSession(args.sessionId)
+      return { deleted }
+    }
+  )
+
   // ── Stale session detection on registration ───
   councilService.reconcileStaleRuns()
 }
 
 // ── Event forwarding ─────────────────────────────────────────────────────
 
-/** Whether global listeners have been wired (only once). */
-let councilListenersWired = false
+const councilCleanup = createTimedCleanupMap('council')
 
 /**
- * Wire persistent event listeners for council evaluations.
- * Called once — listeners persist across evaluations.
+ * Wire per-workspace event listeners for council evaluations.
+ * Routes all events through SessionEventRouter via the persistence controller.
  */
-function wireCouncilEvents(mainWindow: BrowserWindow, workspacePath: string): void {
-  if (councilListenersWired) return
-  councilListenersWired = true
+function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
+  const cleanups = councilCleanup.prepareCleanups(workspaceId)
+  const router = getSessionEventRouter()
 
   // ── phase-changed — forward to renderer ──
-  councilService.on(
+  councilCleanup.addListener<{ workspaceId: string; phase: CouncilPhase }>(
+    cleanups,
+    councilService,
     'phase-changed',
-    (data: { workspaceId: string; phase: CouncilPhase }) => {
-      councilPersistenceController.handlePhaseChanged(data, mainWindow)
+    (data) => {
+      councilPersistenceController.handlePhaseChanged(data, router)
+    }
+  )
+
+  // ── status — forward live token/context counters to the renderer ──
+  councilCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
+    cleanups,
+    councilService,
+    'status',
+    (data) => {
+      if (data.workspaceId && data.workspaceId !== workspaceId) return
+      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
   // ── member-stream — transform chunk + forward to renderer ──
-  councilService.on(
+  councilCleanup.addListener<{ workspaceId: string; advisorRole: string; chunk: StreamChunk }>(
+    cleanups,
+    councilService,
     'member-stream',
-    (data: { workspaceId: string; advisorRole: string; chunk: StreamChunk }) => {
-      councilPersistenceController.handleMemberStream(data, mainWindow, workspacePath)
+    (data) => {
+      councilPersistenceController.handleMemberStream(data, workspacePath, router)
     }
   )
 
   // ── member-complete — forward parsed review ──
-  councilService.on(
-    'member-complete',
-    (data: { workspaceId: string; advisorRole: CouncilAdvisorRole; review: CouncilReview | null }) => {
-      councilPersistenceController.handleMemberComplete(data, mainWindow)
-    }
-  )
+  councilCleanup.addListener<{
+    workspaceId: string
+    advisorRole: CouncilAdvisorRole
+    review: CouncilReview | null
+  }>(cleanups, councilService, 'member-complete', (data) => {
+    councilPersistenceController.handleMemberComplete(data, router)
+  })
 
   // ── peer-review-complete — forward rankings ──
-  councilService.on(
+  councilCleanup.addListener<{ workspaceId: string; peerReviews: CouncilPeerReview[] }>(
+    cleanups,
+    councilService,
     'peer-review-complete',
-    (data: { workspaceId: string; peerReviews: CouncilPeerReview[] }) => {
-      councilPersistenceController.handlePeerReviewComplete(data, mainWindow)
+    (data) => {
+      councilPersistenceController.handlePeerReviewComplete(data, router)
     }
   )
 
   // ── verdict — forward chairman verdict ──
-  councilService.on(
+  councilCleanup.addListener<{ workspaceId: string; verdict: CouncilVerdict }>(
+    cleanups,
+    councilService,
     'verdict',
-    (data: { workspaceId: string; verdict: CouncilVerdict }) => {
-      councilPersistenceController.handleVerdict(data, mainWindow)
+    (data) => {
+      councilPersistenceController.handleVerdict(data, router)
     }
   )
 
-  // ── complete — save transcript ──
-  councilService.on('complete', (data: { workspaceId: string }) => {
-    councilPersistenceController
-      .handleComplete(data, mainWindow)
-      .catch((err) => {
-        councilLog.error('[council:complete] handleComplete failed:', err)
+  // ── session-ended — save transcript + cleanup (no renderer events) ──
+  councilCleanup.addListener<{ workspaceId: string }>(
+    cleanups,
+    councilService,
+    'session-ended',
+    (data) => {
+      councilPersistenceController.handleSessionEnded(data, router).catch((err) => {
+        councilLog.error('[council:session-ended] handleSessionEnded failed:', err)
       })
-  })
+      councilCleanup.runCleanup(workspaceId)
+    }
+  )
+
+  // Safety net: auto-clean listeners after 90 min
+  councilCleanup.scheduleAutoCleanup(workspaceId, cleanups, 90 * 60_000)
 }

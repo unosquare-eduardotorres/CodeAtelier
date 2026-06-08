@@ -33,18 +33,19 @@ export function registerSkillIpc(): void {
     return skillService.importSkill(filePath)
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.SKILL_UPDATE,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.SKILL_UPDATE
-      const args = requireObject(rawArgs, ch)
-      const id = requireString(args, 'id', ch)
+  ipcMain.handle(IPC_CHANNELS.SKILL_UPDATE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.SKILL_UPDATE
+    const args = requireObject(rawArgs, ch)
+    const id = requireString(args, 'id', ch)
 
-      const { id: _, ...data } = args as unknown as { id: string; name?: string; description?: string }
-      return skillRepository.update(id, data)
+    const { id: _, ...data } = args as unknown as {
+      id: string
+      name?: string
+      description?: string
     }
-  )
+    return skillRepository.update(id, data)
+  })
 
   ipcMain.handle(IPC_CHANNELS.SKILL_DELETE, async (event, rawArgs: unknown) => {
     validateSender(event)

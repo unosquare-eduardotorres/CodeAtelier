@@ -21,7 +21,9 @@ function mapRow(row: UserProfileRow): UserProfile {
 
 export class UserProfileRepository extends BaseRepository<UserProfileRow, UserProfile> {
   protected readonly tableName = 'user_profile'
-  protected mapRow(row: UserProfileRow): UserProfile { return mapRow(row) }
+  protected mapRow(row: UserProfileRow): UserProfile {
+    return mapRow(row)
+  }
 
   getProfile(): UserProfile | null {
     const db = this.db()

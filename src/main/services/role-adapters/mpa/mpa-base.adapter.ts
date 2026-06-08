@@ -1,5 +1,4 @@
 import type {
-  AgentRoleAdapter,
   AdapterSessionLifecycleCtx,
   AdapterPromptContext,
   AdapterPromptResult,
@@ -7,12 +6,11 @@ import type {
   AdapterMcpResult,
   AdapterIntentContext
 } from '../../agent-session.types'
-import type { AgentRole, CostPreference } from '../../../../shared/types'
-import type { ControlActionCallbacks } from '../../control-actions.tool'
+import type { AgentRole } from '../../../../shared/types'
 import { workspaceRepository } from '../../../db/repositories'
 import { detectTechStack } from '../../tech-stack-detector.service'
 import { MCP_TOOLS } from '../../../../shared/constants'
-import { modelConfigService } from '../../model-config.service'
+import { BaseRoleAdapter } from '../base.adapter'
 
 /**
  * Base adapter for MPA (Multi-Phased Agent) pipeline phases.
@@ -22,7 +20,7 @@ import { modelConfigService } from '../../model-config.service'
  * - Single-shot lifecycle (no conversation switching, no persona)
  * - Goal condition support for /goal-based completion
  */
-export abstract class MpaBaseAdapter implements AgentRoleAdapter {
+export abstract class MpaBaseAdapter extends BaseRoleAdapter {
   abstract readonly role: AgentRole
   abstract readonly agentId: string
   interactionTimeoutMs = 30 * 60_000 // 30 min hard cap per phase
@@ -32,12 +30,11 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
   protected goalCondition: string | null = null
   protected workspaceName = ''
   protected detectedTechs: string[] = []
-  protected repomapEnabled = true
-  protected semanticSearchEnabled = true
   /** Resolved model ID for lean prompt gating (undefined for local LLMs) */
   protected resolvedModel: string | undefined
 
   constructor(params: { workspaceId: string }) {
+    super()
     this.workspaceId = params.workspaceId
   }
 
@@ -51,8 +48,8 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
     return this.goalCondition
   }
 
-  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
-    // Resolve workspace name + settings
+  override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
+    // Resolve workspace name
     try {
       const ws = workspaceRepository.findById(this.workspaceId)
       this.workspaceName = ws?.name ?? 'Unknown'
@@ -60,27 +57,20 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
       this.workspaceName = 'Unknown'
     }
 
-    try {
-      const settings = workspaceRepository.getSettings(this.workspaceId)
-      this.repomapEnabled = settings.repomapEnabled !== false
-      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
-    } catch {
-      /* non-fatal */
-    }
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(this.workspaceId)
 
     // Detect tech stack
-    this.detectedTechs = ctx.workspacePath
-      ? detectTechStack(ctx.workspacePath).detectedTechs
-      : []
+    this.detectedTechs = ctx.workspacePath ? detectTechStack(ctx.workspacePath).detectedTechs : []
 
-    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed prompts).
-    // MPA doesn't have its own ModelAction — planner/verifier reuse 'da-vinci:plan',
-    // builder reuses 'da-vinci:build'.
-    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
-    this.resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, this.getModelAction())
+    // Pattern 1: Centralized model resolution
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, this.getModelAction())
 
     // Build the phase-specific system prompt
     this.systemPrompt = this.buildPhaseSystemPrompt()
+
+    // Append tool guidance (Tool Priority + MCP guidance) — centralized in base class
+    this.systemPrompt = this.appendToolGuidance(this.systemPrompt, 1, this.resolvedModel)
   }
 
   /** Return the ModelAction to use for model resolution (overridden by builder). */
@@ -94,14 +84,6 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
   /** Subclasses provide the initial message for the phase. */
   protected abstract getPhaseMessage(): string
 
-  refreshFeatureFlags(_ctx: AdapterSessionLifecycleCtx): void {
-    // Single-shot — no mid-phase refresh needed
-  }
-
-  onConversationSwitch(_conversationId: string): void {
-    // MPA phases don't switch conversations
-  }
-
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
     if (!this.systemPrompt) {
       throw new Error(`${this.role} adapter: buildPrompts() called before onSessionStart()`)
@@ -113,7 +95,7 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
   }
 
   /** Read-only MCP config for plan/verify phases. Builder overrides this. */
-  buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+  override buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
     return {
       allowedTools: [
         'Read',
@@ -121,17 +103,11 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
         'Grep',
         'WebSearch',
         'WebFetch',
-        // Code graph tools
-        ...(this.repomapEnabled && ctx.workspaceId
-          ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-          : []),
-        // Semantic search
+        ...(this.repomapEnabled && ctx.workspaceId ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES : []),
         ...(this.semanticSearchEnabled && ctx.workspaceId
           ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
           : []),
-        // Git context
         ...MCP_TOOLS.GIT_CONTEXT._ALL_NAMES,
-        // Code analysis
         ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
       ],
       disallowedTools: [
@@ -150,34 +126,16 @@ export abstract class MpaBaseAdapter implements AgentRoleAdapter {
     }
   }
 
-  buildControlCallbacks(_params: {
-    conversationId: string | null
-    emit: (event: string, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    // MPA phases don't use control tools
-    return {
-      onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
-    }
+  /** MPA phases don't emit conversational intents. */
+  override emitDetectedIntents(_ctx: AdapterIntentContext): void {
+    /* no-op */
   }
 
-  emitDetectedIntents(_ctx: AdapterIntentContext): void {
-    // MPA phases don't emit conversational intents
+  protected override persistMemory(): void {
+    /* no-op */
   }
 
-  getCompactionThresholds(
-    _costPreference: CostPreference
-  ): { suggest: number; auto: number } | null {
-    return null
-  }
-
-  getPersonaId(): string | null {
-    return null
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.systemPrompt = null
     this.goalCondition = null
   }

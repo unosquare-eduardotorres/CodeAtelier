@@ -15,8 +15,13 @@ export interface ControlActionCallbacks {
    * `action` is an optional programmatic tag emitted by the ask_user tool
    * (e.g. "swap-to-specialist"). The renderer maps known action tags to IPC
    * calls when the user accepts the proposal. Undefined for plain Q&A.
+   *
+   * `requestId` correlates the question with the user's response over the IPC
+   * bridge. The production CLI path supplies it via `bridge.on('askUser')`;
+   * the in-process callback path forwards it here so the answer can route back
+   * to the waiting ask_user promise. Undefined when no round-trip is wired.
    */
-  onAskUser: (questions: GrillQuestion[], action?: string) => void
+  onAskUser: (questions: GrillQuestion[], action?: string, requestId?: string) => void
   onMemory: (memory: { type: MemoryType; title: string; content: string }) => void
 }
 

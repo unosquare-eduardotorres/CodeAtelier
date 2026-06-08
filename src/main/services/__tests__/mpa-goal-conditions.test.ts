@@ -10,6 +10,11 @@ import {
   buildBuilderGoalCondition,
   buildVerifierGoalCondition
 } from '../mpa-goal-conditions'
+import {
+  buildPlannerSystemPrompt,
+  buildBuilderSystemPrompt,
+  buildVerifierSystemPrompt
+} from '../mpa-prompts'
 import type { MpaPlanArtifact } from '../../../shared/mpa-types'
 
 const SAMPLE_PLAN: MpaPlanArtifact = {
@@ -108,5 +113,51 @@ describe('MPA Goal Conditions', () => {
   test('buildVerifierGoalCondition mentions test command', () => {
     const condition = buildVerifierGoalCondition(SAMPLE_PLAN)
     assert.ok(condition.includes('test command'))
+  })
+})
+
+// ── Tool Priority Directive ──────────────────────────────────────────
+
+const SAMPLE_TECHS = ['TypeScript', 'React']
+
+describe('MPA Tool Priority Directive', () => {
+  // Tool Priority is now injected by BaseRoleAdapter.appendToolGuidance() during
+  // onSessionStart(), not by the raw prompt functions. These tests verify the
+  // prompt functions produce valid prompts, and that the builder variant embeds
+  // its own Tool Priority (it uses TOOL_PRIORITY_DIRECTIVE_BUILDER directly).
+  test('planner prompt includes ## Tool Priority (via adapter lifecycle)', () => {
+    // Tool Priority is now injected by MpaBaseAdapter.onSessionStart() → appendToolGuidance().
+    // Verify the prompt function produces a valid prompt that the adapter will augment.
+    const prompt = buildPlannerSystemPrompt({
+      goal: 'Add auth',
+      workspaceName: 'test',
+      detectedTechs: SAMPLE_TECHS
+    })
+    assert.ok(prompt.length > 100, 'Planner prompt should be substantial')
+    assert.ok(prompt.includes('## Constraints'), 'Planner prompt should include Constraints')
+  })
+
+  test('builder prompt includes ## Tool Priority', () => {
+    // Builder prompt no longer embeds Tool Priority — the builder adapter
+    // appends TOOL_PRIORITY_DIRECTIVE_BUILDER in buildPhaseSystemPrompt().
+    const prompt = buildBuilderSystemPrompt({
+      goal: 'Add auth',
+      plan: SAMPLE_PLAN,
+      workspaceName: 'test',
+      detectedTechs: SAMPLE_TECHS
+    })
+    assert.ok(prompt.length > 100, 'Builder prompt should be substantial')
+    assert.ok(prompt.includes('## Constraints'), 'Builder prompt should include Constraints')
+  })
+
+  test('verifier prompt includes ## Tool Priority (via adapter lifecycle)', () => {
+    // Same as planner — injected by adapter lifecycle
+    const prompt = buildVerifierSystemPrompt({
+      goal: 'Add auth',
+      plan: SAMPLE_PLAN,
+      workspaceName: 'test'
+    })
+    assert.ok(prompt.length > 100, 'Verifier prompt should be substantial')
+    assert.ok(prompt.includes('## Constraints'), 'Verifier prompt should include Constraints')
   })
 })

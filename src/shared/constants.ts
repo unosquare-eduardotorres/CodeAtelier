@@ -4,6 +4,9 @@ import type {
   GrillTrack,
   AuditTrackId,
   AuditTrack,
+  AuditSkill,
+  AuditApplicability,
+  AuditResult,
   ModelAction
 } from './types'
 
@@ -171,6 +174,8 @@ export const IPC_CHANNELS = {
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
   TOKEN_GET_CONVERSATION_SUMMARY: 'token:getConversationSummary',
   TOKEN_GET_RECENT_SESSIONS: 'token:getRecentSessions',
+  TOKEN_GET_WORKSPACE_USAGE: 'token:getWorkspaceUsage',
+  TOKEN_GET_GLOBAL_USAGE: 'token:getGlobalUsage',
 
   // Agent retry events
   AGENT_TASK_RETRY: 'agent:taskRetry',
@@ -286,7 +291,7 @@ export const IPC_CHANNELS = {
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
-  // Embedding provider (replaces Ollama for semantic search)
+  // Embedding provider (llamafile sidecar — replaces Ollama/WASM for semantic search)
   EMBEDDING_CHECK_STATUS: 'embedding:checkStatus',
   EMBEDDING_INITIALIZE: 'embedding:initialize',
   EMBEDDING_MODEL_PROGRESS: 'embedding:modelProgress',
@@ -407,6 +412,9 @@ export const IPC_CHANNELS = {
   AUDIT_RESUME: 'audit:resume',
   AUDIT_INTERMEDIATE: 'audit:intermediate',
   AUDIT_GET_HISTORY: 'audit:getHistory',
+  AUDIT_DELETE_RUN: 'audit:deleteRun',
+  AUDIT_GENERATE_PLAN: 'audit:generatePlan',
+  AUDIT_GET_PLANS: 'audit:getPlans',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
@@ -420,9 +428,17 @@ export const IPC_CHANNELS = {
   GRILL_SAVE_ANSWERS: 'grill:saveAnswers',
   GRILL_STATUS_CHANGED: 'grill:statusChanged',
   GRILL_GENERATE_PLAN: 'grill:generatePlan',
+  GRILL_GENERATE_PLAN_FROM_DECISIONS: 'grill:generatePlanFromDecisions',
+  GRILL_COMPLETE: 'grill:complete',
+  GRILL_SEED_PLAN_CARD: 'grill:seedPlanCard',
+  GRILL_DISCARD: 'grill:discard',
+  GRILL_LIST_PLANNED_IDEAS: 'grill:listPlannedIdeas',
 
   // Project Creation
   PROJECT_CREATE: 'project:create',
+  PROJECT_CREATE_SHELL: 'project:create-shell',
+  PROJECT_FINALIZE_BLUEPRINT: 'project:finalize-blueprint',
+  PROJECT_DISCARD_SHELL: 'project:discard-shell',
 
   // External MCP Integrations
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
@@ -433,12 +449,10 @@ export const IPC_CHANNELS = {
   CHAT_ASK_USER_RESPOND: 'chat:askUserRespond',
 
   // Multi-Phased Agent (MPA) Pipeline
-  MPA_START: 'mpa:start',
   MPA_CANCEL: 'mpa:cancel',
   MPA_GET_STATUS: 'mpa:getStatus',
   MPA_GET_RUN: 'mpa:getRun',
   MPA_GET_HISTORY: 'mpa:getHistory',
-  MPA_CLASSIFY_GOAL: 'mpa:classifyGoal',
   MPA_PHASE_START: 'mpa:phaseStart',
   MPA_PHASE_PROGRESS: 'mpa:phaseProgress',
   MPA_PHASE_COMPLETE: 'mpa:phaseComplete',
@@ -447,6 +461,18 @@ export const IPC_CHANNELS = {
   MPA_APPROVAL_RESPOND: 'mpa:approvalRespond',
   MPA_PIPELINE_COMPLETE: 'mpa:complete',
   MPA_RESUME: 'mpa:resume',
+  // MPA Campaigns (sequential measurable-goal runs)
+  MPA_DECOMPOSE_GOALS: 'mpa:decomposeGoals',
+  MPA_CAMPAIGN_START: 'mpa:campaignStart',
+  MPA_CAMPAIGN_RESPOND: 'mpa:campaignRespond',
+  MPA_CAMPAIGN_CANCEL: 'mpa:campaignCancel',
+  MPA_CAMPAIGN_GET_HISTORY: 'mpa:campaignGetHistory',
+  MPA_CAMPAIGN_GET_DETAIL: 'mpa:campaignGetDetail',
+  MPA_CAMPAIGN_STARTED: 'mpa:campaignStarted',
+  MPA_CAMPAIGN_GOAL_START: 'mpa:campaignGoalStart',
+  MPA_CAMPAIGN_GOAL_COMPLETE: 'mpa:campaignGoalComplete',
+  MPA_CAMPAIGN_PAUSED: 'mpa:campaignPaused',
+  MPA_CAMPAIGN_COMPLETE: 'mpa:campaignComplete',
 
   // Council (LLM Council — multi-advisor review)
   COUNCIL_START: 'council:start',
@@ -459,7 +485,8 @@ export const IPC_CHANNELS = {
   COUNCIL_PHASE_CHANGED: 'council:phaseChanged',
   COUNCIL_COMPLETE: 'council:complete',
   COUNCIL_RESUME: 'council:resume',
-  COUNCIL_GET_HISTORY: 'council:getHistory'
+  COUNCIL_GET_HISTORY: 'council:getHistory',
+  COUNCIL_DELETE_SESSION: 'council:deleteSession'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -553,7 +580,8 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   grill: 'claude-opus-4-8',
   'council-member': 'claude-opus-4-8',
   'council-chairman': 'claude-opus-4-8',
-  'grill:plan': 'claude-opus-4-8'
+  'grill:plan': 'claude-opus-4-8',
+  'mpa:decompose': 'claude-opus-4-8'
 } as const
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────
@@ -697,6 +725,12 @@ export const MODEL_ACTIONS_META: Record<
     icon: '🔥',
     section: 'background'
   },
+  'grill:plan': {
+    label: 'Grill (Plan Mode)',
+    description: 'Plan generation for grilled ideas',
+    icon: '🔥',
+    section: 'background'
+  },
   'council-member': {
     label: 'Council Member',
     description: 'Council advisor for multi-perspective plan review',
@@ -707,6 +741,12 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Council Chairman',
     description: 'Council synthesis and final verdict',
     icon: '🏛️',
+    section: 'background'
+  },
+  'mpa:decompose': {
+    label: 'Goal Decomposer',
+    description: 'Breaks a plan into measurable goals for campaigns',
+    icon: '🎯',
     section: 'background'
   }
 } as const
@@ -745,7 +785,6 @@ export const SPECIALIST_BUDGET_CAPS = {
   complex: 2.0
 } as const satisfies Record<string, number>
 
-
 /**
  * Mode-aware budget cap multipliers for users who opt into custom caps.
  * Applied to the base `budgetCapUsd` from workspace settings.
@@ -766,7 +805,10 @@ export const BUDGET_CAP_MODE_MULTIPLIERS = {
  * without knowing about the legacy labels. Project Specialists use the
  * `'project-specialist:*'` keys that were added for the Phase 2 refactor.
  */
-export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build' | 'danger'): ModelAction {
+export function getModelActionForRole(
+  role: AgentRole,
+  mode: 'plan' | 'build' | 'danger'
+): ModelAction {
   if (role === 'da-vinci') {
     // Danger mode uses the same model tier as build
     return mode === 'build' || mode === 'danger' ? 'da-vinci:build' : 'da-vinci:plan'
@@ -774,7 +816,9 @@ export function getModelActionForRole(role: AgentRole, mode: 'plan' | 'build' | 
   if (role === 'audit') {
     return 'da-vinci:plan' // Audits always use plan-tier model
   }
-  return mode === 'build' || mode === 'danger' ? 'project-specialist:build' : 'project-specialist:plan'
+  return mode === 'build' || mode === 'danger'
+    ? 'project-specialist:build'
+    : 'project-specialist:plan'
 }
 
 /** Maximum skill file size in bytes (500 KB) */
@@ -889,6 +933,18 @@ export const GRILL_TRACKS: Record<GrillTrackId, GrillTrack> = {
   }
 } as const
 
+/** Greenfield-relevant tracks for the Create Project wizard (5 of 8) */
+export const GREENFIELD_TRACKS: GrillTrackId[] = [
+  'requirements',
+  'architecture',
+  'ux-ui',
+  'security',
+  'data'
+] as const
+
+/** Pre-selected tracks when the Focus Areas step mounts */
+export const GREENFIELD_DEFAULT_TRACKS: GrillTrackId[] = ['requirements', 'architecture'] as const
+
 // ── Audit Tracks (Workspace Health) ──────────────────────────────────────────
 
 export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
@@ -992,6 +1048,257 @@ export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
   }
 } as const
 
+/**
+ * Resolve whether a track result should count toward the overall score.
+ *
+ * Prefers the service-derived `applicability` when present (live runs); falls
+ * back to deriving from coverage data when reading a persisted run (the field
+ * is not stored in the DB). A track with no inspected files is treated as
+ * not-applicable; a track that failed the coverage gate is insufficient.
+ */
+export function deriveApplicability(
+  result: Pick<AuditResult, 'applicability' | 'coverageSufficient' | 'coverageStats' | 'status'>
+): AuditApplicability {
+  if (result.applicability) return result.applicability
+  if (result.status !== 'completed') return 'ok'
+  const fileCount = result.coverageStats?.fileCount ?? 0
+  if (fileCount === 0) return 'not-applicable'
+  if (result.coverageSufficient === false) return 'insufficient'
+  return 'ok'
+}
+
+/**
+ * Curated, selectable skills per auditor track (Deep mode). Selection is
+ * persisted with the run and shown on revisit; skill *execution* in the audit
+ * prompt/tools is deferred.
+ */
+export const AUDIT_TRACK_SKILLS: Record<AuditTrackId, AuditSkill[]> = {
+  database: [
+    {
+      id: 'schema-design',
+      name: 'Schema Design',
+      description: 'Normalization, table structure, and relationships',
+      icon: 'Table2'
+    },
+    {
+      id: 'fk-integrity',
+      name: 'FK & Integrity',
+      description: 'Foreign keys, constraints, and referential integrity',
+      icon: 'Link2'
+    },
+    {
+      id: 'query-performance',
+      name: 'Query Performance',
+      description: 'N+1 queries, slow patterns, and query shape',
+      icon: 'Gauge'
+    },
+    {
+      id: 'indexing',
+      name: 'Indexing',
+      description: 'Index coverage and missing/duplicate indexes',
+      icon: 'ListTree'
+    },
+    {
+      id: 'migration-safety',
+      name: 'Migration Safety',
+      description: 'Reversibility and destructive-change detection',
+      icon: 'GitBranch'
+    }
+  ],
+  code: [
+    {
+      id: 'solid',
+      name: 'SOLID Principles',
+      description: 'Single-responsibility, coupling, and cohesion',
+      icon: 'Boxes'
+    },
+    {
+      id: 'complexity',
+      name: 'Complexity',
+      description: 'Cyclomatic complexity and deeply nested logic',
+      icon: 'Workflow'
+    },
+    {
+      id: 'error-handling',
+      name: 'Error Handling',
+      description: 'Swallowed errors and missing failure paths',
+      icon: 'OctagonAlert'
+    },
+    {
+      id: 'dead-code',
+      name: 'Dead Code',
+      description: 'Unused exports, unreachable code, and duplication',
+      icon: 'Trash2'
+    },
+    {
+      id: 'naming',
+      name: 'Naming & Consistency',
+      description: 'Naming conventions and stylistic consistency',
+      icon: 'CaseSensitive'
+    }
+  ],
+  testing: [
+    {
+      id: 'pyramid',
+      name: 'Test Pyramid',
+      description: 'Unit/integration/E2E balance',
+      icon: 'Pyramid'
+    },
+    {
+      id: 'critical-path',
+      name: 'Critical Path Coverage',
+      description: 'Coverage of high-risk flows',
+      icon: 'Target'
+    },
+    {
+      id: 'assertion-quality',
+      name: 'Assertion Quality',
+      description: 'Specific, meaningful assertions',
+      icon: 'CheckCheck'
+    },
+    {
+      id: 'fixtures',
+      name: 'Fixtures & Mocks',
+      description: 'Fixture quality and over-mocking',
+      icon: 'Package'
+    },
+    {
+      id: 'ci-integration',
+      name: 'CI Integration',
+      description: 'Tests wired into CI gates',
+      icon: 'GitPullRequestArrow'
+    }
+  ],
+  architecture: [
+    {
+      id: 'boundaries',
+      name: 'Module Boundaries',
+      description: 'Layering and boundary leakage',
+      icon: 'LayoutGrid'
+    },
+    {
+      id: 'dependency-direction',
+      name: 'Dependency Direction',
+      description: 'Circular and inverted dependencies',
+      icon: 'ArrowLeftRight'
+    },
+    {
+      id: 'separation',
+      name: 'Separation of Concerns',
+      description: 'Mixed responsibilities across layers',
+      icon: 'SplitSquareHorizontal'
+    },
+    {
+      id: 'contracts',
+      name: 'API/IPC Contracts',
+      description: 'Contract design and versioning',
+      icon: 'FileCode2'
+    },
+    {
+      id: 'scalability',
+      name: 'Scalability Patterns',
+      description: 'Bottlenecks and scaling concerns',
+      icon: 'TrendingUp'
+    }
+  ],
+  security: [
+    {
+      id: 'authn-authz',
+      name: 'AuthN / AuthZ',
+      description: 'Authentication and authorization gaps',
+      icon: 'KeyRound'
+    },
+    {
+      id: 'secret-scanning',
+      name: 'Secret Scanning',
+      description: 'Hardcoded secrets and credential leaks',
+      icon: 'EyeOff'
+    },
+    {
+      id: 'input-validation',
+      name: 'Input Validation',
+      description: 'Sanitization and injection surfaces',
+      icon: 'ShieldAlert'
+    },
+    {
+      id: 'context-isolation',
+      name: 'Context Isolation',
+      description: 'Electron CSP and context isolation',
+      icon: 'Lock'
+    },
+    {
+      id: 'dependency-vulns',
+      name: 'Dependency Vulns',
+      description: 'Vulnerable or outdated dependencies',
+      icon: 'PackageX'
+    }
+  ],
+  documentation: [
+    {
+      id: 'readme',
+      name: 'README Quality',
+      description: 'Setup, usage, and completeness',
+      icon: 'BookOpen'
+    },
+    {
+      id: 'inline-docs',
+      name: 'Inline Docs',
+      description: 'JSDoc/TSDoc coverage on public APIs',
+      icon: 'MessageSquareText'
+    },
+    {
+      id: 'api-docs',
+      name: 'API Documentation',
+      description: 'Endpoint/IPC documentation',
+      icon: 'FileText'
+    },
+    {
+      id: 'project-guide',
+      name: 'Project Guide',
+      description: 'CLAUDE.md / contributor guide quality',
+      icon: 'Compass'
+    },
+    {
+      id: 'decision-records',
+      name: 'Decision Records',
+      description: 'Changelogs and architectural decisions',
+      icon: 'History'
+    }
+  ],
+  'ui-ux': [
+    {
+      id: 'accessibility',
+      name: 'Accessibility',
+      description: 'WCAG compliance and ARIA usage',
+      icon: 'Accessibility'
+    },
+    {
+      id: 'states',
+      name: 'Empty & Error States',
+      description: 'Loading, empty, and error handling',
+      icon: 'LoaderCircle'
+    },
+    {
+      id: 'responsiveness',
+      name: 'Responsiveness',
+      description: 'Layout across viewport sizes',
+      icon: 'MonitorSmartphone'
+    },
+    {
+      id: 'consistency',
+      name: 'Component Consistency',
+      description: 'Reuse and visual consistency',
+      icon: 'Component'
+    },
+    {
+      id: 'keyboard-nav',
+      name: 'Keyboard Navigation',
+      description: 'Focus order and keyboard access',
+      icon: 'Keyboard'
+    }
+  ]
+}
+
 // ── Council Advisors (LLM Council) ────────────────────────────────────────────
 
 import type { CouncilAdvisorRole } from './types'
@@ -999,7 +1306,7 @@ import type { CouncilAdvisorRole } from './types'
 export interface CouncilAdvisorDefinition {
   id: CouncilAdvisorRole
   name: string
-  emoji: string
+  icon: string
   thinkingStyle: string
   toolAccess: 'full' | 'none'
   toolGuidance: string
@@ -1009,29 +1316,29 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   contrarian: {
     id: 'contrarian',
     name: 'The Contrarian',
-    emoji: '😈',
+    icon: 'ShieldAlert',
     thinkingStyle:
-      'Actively looks for what\'s wrong, what\'s missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.',
+      "Actively looks for what's wrong, what's missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.",
     toolAccess: 'full',
     toolGuidance:
-      'Use `find_references` on every file in scope to find hidden callers the plan doesn\'t account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `todo_scanner` to find existing technical debt in affected areas.'
+      "Use `find_references` on every file in scope to find hidden callers the plan doesn't account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `todo_scanner` to find existing technical debt in affected areas."
   },
   'first-principles': {
     id: 'first-principles',
     name: 'The First Principles Thinker',
-    emoji: '🔬',
+    icon: 'Microscope',
     thinkingStyle:
       'Ignores the surface-level plan and asks "what are we actually trying to solve?" Strips assumptions. Rebuilds the problem from ground up. Sometimes the most valuable output is "you\'re solving the wrong problem."',
     toolAccess: 'full',
     toolGuidance:
-      'Use `semantic_search` to find if the codebase already has a simpler solution to the underlying problem. Use `codebase_concepts` to understand existing patterns. Use `file_dependencies` to check if the plan\'s module decomposition aligns with existing architecture.'
+      "Use `semantic_search` to find if the codebase already has a simpler solution to the underlying problem. Use `codebase_concepts` to understand existing patterns. Use `file_dependencies` to check if the plan's module decomposition aligns with existing architecture."
   },
   expansionist: {
     id: 'expansionist',
     name: 'The Expansionist',
-    emoji: '🚀',
+    icon: 'Rocket',
     thinkingStyle:
-      'Looks for upside everyone else is missing. What could be bigger? What adjacent opportunity is hiding? Doesn\'t care about risk (that\'s the Contrarian\'s job).',
+      "Looks for upside everyone else is missing. What could be bigger? What adjacent opportunity is hiding? Doesn't care about risk (that's the Contrarian's job).",
     toolAccess: 'full',
     toolGuidance:
       'Use `similar_code` to find related patterns that could benefit from the same changes. Use `file_outline` on adjacent files to spot opportunities the plan misses. Use `codebase_concepts` to find related features that could be enhanced while making these changes.'
@@ -1039,19 +1346,19 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
   outsider: {
     id: 'outsider',
     name: 'The Outsider',
-    emoji: '👀',
+    icon: 'Eye',
     thinkingStyle:
-      'Has zero context about the codebase, project, or history. Responds purely to what\'s in front of them. Catches the curse of knowledge: things obvious to the team but confusing to everyone else.',
+      "Has zero context about the codebase, project, or history. Responds purely to what's in front of them. Catches the curse of knowledge: things obvious to the team but confusing to everyone else.",
     toolAccess: 'none',
     toolGuidance:
-      'You have NO access to the codebase. You evaluate the plan purely as written. If something is unclear without context, flag it. If the plan uses jargon without explanation, flag it. If a new team member couldn\'t follow this plan, that\'s a problem.'
+      "You have NO access to the codebase. You evaluate the plan purely as written. If something is unclear without context, flag it. If the plan uses jargon without explanation, flag it. If a new team member couldn't follow this plan, that's a problem."
   },
   executor: {
     id: 'executor',
     name: 'The Executor',
-    emoji: '⚡',
+    icon: 'Zap',
     thinkingStyle:
-      'Only cares about one thing: can this actually be done, and what\'s the fastest path? If the plan sounds brilliant but has no clear first step, says so.',
+      "Only cares about one thing: can this actually be done, and what's the fastest path? If the plan sounds brilliant but has no clear first step, says so.",
     toolAccess: 'full',
     toolGuidance:
       'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `test_coverage_map` to verify test claims.'
@@ -1265,7 +1572,6 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   }
 ] as const
 
-
 // ── Local LLM Provider ──
 
 /** Default Ollama connection */
@@ -1466,7 +1772,6 @@ export function findRecommendedModel(
   return RECOMMENDED_LOCAL_MODELS.find((m) => m.ollamaId === modelId || m.omlxId === modelId)
 }
 
-
 /** Full name → display name map — for renderer ToolActivityBlock */
 export const MCP_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
   Object.values(MCP_TOOLS).flatMap((server) =>
@@ -1647,3 +1952,55 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     ]
   }
 ] as const
+
+// ── Llamafile Embedding Sidecar ──────────────────────────────────────────────
+//
+// Code-search embeddings run through a downloaded llamafile server (native,
+// multi-threaded, GPU-capable) instead of in-process WASM. Both the engine
+// binary and the GGUF model are downloaded on first use (not bundled) and
+// pinned by SHA-256.
+//
+// Pins verified 2026-06-01 against the GitHub release + Hugging Face APIs.
+// To upgrade: bump the version/file, then update `sha256` + `sizeBytes` from
+//   - GitHub:  https://api.github.com/repos/mozilla-ai/llamafile/releases/latest (asset.digest)
+//   - HF:      https://huggingface.co/api/models/<repo>?blobs=true (siblings[].lfs.sha256)
+export const LLAMAFILE_EMBEDDING = {
+  /** Downloaded llamafile engine binary (Actually-Portable-Executable). */
+  engine: {
+    version: '0.10.2',
+    /** `-thin` build: ~44MB, no prebuilt GPU dylibs (CPU/Metal is plenty for embeddings). */
+    asset: 'llamafile-0.10.2-thin',
+    url: 'https://github.com/mozilla-ai/llamafile/releases/download/0.10.2/llamafile-0.10.2-thin',
+    sha256: '53c638390ba9b49b034615a7e9e3bfa00995f576e7730506d7f7e434ab8684e9',
+    sizeBytes: 44118372
+  },
+  /** Downloaded GGUF embedding model (nomic-embed-text-v1.5, 768-dim). */
+  model: {
+    file: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
+    url: 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf',
+    sha256: 'd4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac',
+    sizeBytes: 84106624,
+    /**
+     * Provenance string stored in indexing_state.embedding_model. Changing this
+     * triggers the existing model-change re-index in vector-search.service.ts.
+     */
+    modelName: 'nomic-embed-text-v1.5'
+  },
+  /** llamafile server launch + request defaults. */
+  server: {
+    host: '127.0.0.1',
+    /** mean pooling + L2 normalize matches the prior WASM pipeline's output shape. */
+    pooling: 'mean',
+    embdNormalize: '2',
+    /** Max seconds to wait for the spawned server to report healthy. */
+    healthTimeoutSec: 60,
+    /**
+     * Defensive per-input character cap. nomic-embed-text-v1.5's context is
+     * 2048 tokens and llama.cpp `/v1/embeddings` ERRORS (not truncates) on
+     * over-length input. ~8000 chars ≈ ~2000 tokens, restoring the prior
+     * "never hard-fail on a big chunk" behavior. A char cap is sufficient here
+     * — no tokenizer needed.
+     */
+    maxInputChars: 8000
+  }
+} as const

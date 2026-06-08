@@ -15,16 +15,14 @@ import {
 import {
   appendMcpToolGuidance,
   buildConditionalPrefix,
+  buildModeContextPrefix,
   type PromptFeatureFlags
 } from './prompt-assembly-helpers'
 import { resolveContextTier } from './context-management'
 import { modelConfigService } from './model-config.service'
 import { RECOMMENDED_LOCAL_MODELS } from '../../shared/constants'
-import {
-  MODE_CONTEXT_SECTIONS,
-  MODE_CONTEXT_SECTIONS_LEAN
-} from './default-prompts'
-import { resolvePromptVerbosity } from '../../shared/constants'
+import { TOOL_PRIORITY_DIRECTIVE } from './default-prompts'
+import { SystemPromptCache } from './system-prompt-cache'
 
 export type { PromptFeatureFlags }
 
@@ -77,21 +75,11 @@ export class DaVinciPromptAssembler {
   private memoryContext: string | undefined
 
   /**
-   * Strategy ζ: Cached system prompt snapshot. Rebuilt only when mode changes,
-   * conversation changes, tone changes, or model changes. Eliminates redundant
-   * DB queries + disk I/O (stat calls) on every turn.
-   *
-   * NOTE: Feature flags (repomapEnabled, semanticSearchEnabled, githubConfigured)
-   * are intentionally NOT part of the cache key. MCP tool availability is static
-   * per session start (set in onSessionStart / refreshFeatureFlags) and does not
-   * toggle between turns. Adding feature flag invalidation would cause unnecessary
-   * cache misses.
+   * Pattern 7: Extracted system-prompt snapshot cache.
+   * Rebuilt only when mode, conversation, tone, or model changes.
+   * Feature flags are intentionally NOT part of the cache key (static per session).
    */
-  private systemPromptSnapshot: string | null = null
-  private systemPromptSnapshotMode: ConversationMode | null = null
-  private systemPromptSnapshotConversationId: string | null = null
-  private systemPromptSnapshotTone: CommunicationTone | null = null
-  private systemPromptSnapshotModel: string | null = null
+  private readonly promptCache = new SystemPromptCache()
 
   /** Cached communication tone to avoid DB queries on every turn */
   private cachedTone: CommunicationTone | null = null
@@ -241,21 +229,19 @@ export class DaVinciPromptAssembler {
       }
     }
 
-    // Strategy ζ: System prompt snapshot — reuse cached prompt when mode + conversation
-    // haven't changed. Eliminates DB queries + disk I/O on every turn.
-    // Also bust the cache when communication tone changes mid-session.
-    const canReuseSnapshot =
-      this.systemPromptSnapshot &&
-      this.systemPromptSnapshotMode === opts.mode &&
-      this.systemPromptSnapshotConversationId === opts.conversationId &&
-      this.systemPromptSnapshotTone === communicationTone &&
-      this.systemPromptSnapshotModel === (opts.model ?? null) &&
-      opts.turnCount > 1 // Always rebuild on turn 1 to pick up latest settings
+    // Pattern 7: SystemPromptCache for snapshot reuse
+    const cacheKeys = {
+      mode: opts.mode,
+      conversationId: opts.conversationId,
+      tone: communicationTone,
+      model: opts.model ?? null
+    }
+    const canReuseSnapshot = this.promptCache.isValid(cacheKeys, opts.turnCount)
 
     const budgetTier = promptBuilder.getGeneralistBudgetTierForTurn(opts.turnCount)
     let promptWithMcpGuidance: string
     if (canReuseSnapshot) {
-      promptWithMcpGuidance = this.systemPromptSnapshot!
+      promptWithMcpGuidance = this.promptCache.get()!
       this.log.info(
         `[PIPELINE:prompt-snapshot] Reusing cached system prompt (turn ${opts.turnCount}, mode=${opts.mode}, tone=${communicationTone})`
       )
@@ -279,23 +265,27 @@ export class DaVinciPromptAssembler {
       })
 
       // Strategy δ: MCP tool guidance sections on turn 1 only.
-      promptWithMcpGuidance = appendMcpToolGuidance(basePrompt, opts.turnCount, opts.featureFlags, opts.model)
+      promptWithMcpGuidance = appendMcpToolGuidance(
+        basePrompt,
+        opts.turnCount,
+        opts.featureFlags,
+        opts.model
+      )
+
+      // Ensure Tool Priority directive is present (appendMcpToolGuidance only adds Code Graph guidance)
+      if (!promptWithMcpGuidance.includes('## Tool Priority')) {
+        promptWithMcpGuidance += '\n' + TOOL_PRIORITY_DIRECTIVE
+      }
 
       // Cache the snapshot for reuse on subsequent turns
-      this.systemPromptSnapshot = promptWithMcpGuidance
-      this.systemPromptSnapshotMode = opts.mode
-      this.systemPromptSnapshotConversationId = opts.conversationId
-      this.systemPromptSnapshotTone = communicationTone
-      this.systemPromptSnapshotModel = opts.model ?? null
+      this.promptCache.set(promptWithMcpGuidance, cacheKeys)
     }
 
     // Diagnostic: hash the system prompt on cache misses to verify stability.
     // If the hash differs between turns, prompt caching will miss.
     if (!canReuseSnapshot) {
       const promptHash = Buffer.from(promptWithMcpGuidance).toString('base64').slice(0, 12)
-      this.log.info(
-        `[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=false`
-      )
+      this.log.info(`[PIPELINE:prompt-hash] turn=${opts.turnCount} hash=${promptHash} reused=false`)
     }
 
     this.log.info(
@@ -340,13 +330,8 @@ export class DaVinciPromptAssembler {
   buildEffectiveMessage(opts: BuildEffectiveMessageOptions): string {
     let effectiveMessage = opts.message
 
-    // Inject <mode-context> block at the top of every user message.
-    // This ensures the model always has current mode instructions even after
-    // mid-session mode switches (zero-restart mode switching).
-    const verbosity = resolvePromptVerbosity(opts.model ?? '')
-    const modeSections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
-    const modeBlock = modeSections[opts.mode] ?? modeSections.plan
-    effectiveMessage = `<mode-context>\n${modeBlock.trim()}\n</mode-context>\n\n${effectiveMessage}`
+    // Pattern 8: Centralized mode-context prefix
+    effectiveMessage = `${buildModeContextPrefix(opts.mode, opts.model)}\n\n${effectiveMessage}`
 
     // Strategy A: Prepend any pending context injection.
     const pendingContext = this.pendingContextInjection.get(opts.conversationId)
@@ -474,11 +459,7 @@ export class DaVinciPromptAssembler {
 
   /** Invalidate system prompt snapshot (on mode switch or settings change) */
   invalidateSnapshot(): void {
-    this.systemPromptSnapshot = null
-    this.systemPromptSnapshotMode = null
-    this.systemPromptSnapshotConversationId = null
-    this.systemPromptSnapshotTone = null
-    this.systemPromptSnapshotModel = null
+    this.promptCache.invalidate()
     // Also invalidate tone cache so next turn re-reads from DB
     this.cachedTone = null
     this.cachedToneConversationId = null
@@ -511,11 +492,7 @@ export class DaVinciPromptAssembler {
   /** Reset all state for a new session */
   resetSession(): void {
     this.memoryContext = undefined
-    this.systemPromptSnapshot = null
-    this.systemPromptSnapshotMode = null
-    this.systemPromptSnapshotConversationId = null
-    this.systemPromptSnapshotTone = null
-    this.systemPromptSnapshotModel = null
+    this.promptCache.invalidate()
     this.cachedTone = null
     this.cachedToneConversationId = null
     this.turnCountMap.clear()
@@ -543,14 +520,15 @@ export class DaVinciPromptAssembler {
    * Index = clamped turnCount. Last value is the floor for all subsequent turns.
    */
   private static readonly MEMORY_BUDGET_TIERS = {
-    economy:  [2000, 2000, 1200, 800, 500, 300] as const,
+    economy: [2000, 2000, 1200, 800, 500, 300] as const,
     standard: [3000, 3000, 2000, 1500, 1000, 700, 500] as const
   } as const
 
   private getMemoryBudgetForTurn(turnCount: number, costPreference: CostPreference): number {
-    const tiers = costPreference === 'economy'
-      ? DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.economy
-      : DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.standard
+    const tiers =
+      costPreference === 'economy'
+        ? DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.economy
+        : DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.standard
     const idx = Math.min(turnCount, tiers.length - 1)
     return tiers[idx]
   }

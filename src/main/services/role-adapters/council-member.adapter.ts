@@ -9,43 +9,30 @@
  *   - Output is a ```council-review fenced JSON block.
  */
 
-import type { CostPreference, AgentIntent, CouncilAdvisorRole, LLMProvider } from '../../../shared/types'
+import type { CouncilAdvisorRole, LLMProvider } from '../../../shared/types'
 import type { CouncilFramedInput } from '../../../shared/types'
 import type {
-  AdapterIntentContext,
   AdapterMcpContext,
-  AdapterMcpResult,
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx,
-  AgentRoleAdapter,
-  AgentSessionEventName
+  AdapterSessionLifecycleCtx
 } from '../agent-session.types'
-import type { ControlActionCallbacks } from '../control-actions.tool'
+import type { AdapterMcpResult } from '../agent-session.types'
 import { COUNCIL_ADVISORS, resolvePromptVerbosity } from '../../../shared/constants'
-import { workspaceRepository } from '../../db/repositories'
-import { intentDetector } from '../intent-detector'
-import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
-import { modelConfigService } from '../model-config.service'
-import { chatAgentLogger } from '../../logger'
-import { buildReadOnlyToolConfig, buildNoToolsConfig } from './evaluation-mcp-config'
+import { buildNoToolsConfig } from './evaluation-mcp-config'
+import { BaseRoleAdapter, type McpStrategy } from './base.adapter'
 
-export class CouncilMemberRoleAdapter implements AgentRoleAdapter {
+export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
   readonly role = 'council-member' as const
   readonly agentId: string
   interactionTimeoutMs = 5 * 60_000 // 5 min per advisor (same as plan in audit)
 
-  private readonly log = chatAgentLogger
   private readonly workspaceId: string
   private readonly advisorRole: CouncilAdvisorRole
   private readonly framedInput: CouncilFramedInput
   private readonly llmProvider: LLMProvider
 
   private systemPrompt: string | null = null
-
-  // Feature flags read on session start
-  private repomapEnabled = true
-  private semanticSearchEnabled = true
   private resolvedModel: string | undefined
 
   constructor(params: {
@@ -54,6 +41,7 @@ export class CouncilMemberRoleAdapter implements AgentRoleAdapter {
     framedInput: CouncilFramedInput
     llmProvider?: LLMProvider
   }) {
+    super()
     this.workspaceId = params.workspaceId
     this.advisorRole = params.advisorRole
     this.framedInput = params.framedInput
@@ -61,54 +49,27 @@ export class CouncilMemberRoleAdapter implements AgentRoleAdapter {
     this.agentId = `council-${params.advisorRole}-${params.workspaceId}`
   }
 
-  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
-    // Read workspace settings for MCP flags
-    try {
-      const settings = workspaceRepository.getSettings(this.workspaceId)
-      this.repomapEnabled = settings.repomapEnabled !== false
-      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
-    } catch {
-      /* non-fatal */
-    }
+  override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(this.workspaceId)
 
-    // Increase timeout for local LLMs
-    if (this.llmProvider === 'local-llm') {
-      this.interactionTimeoutMs = 45 * 60_000
-      this.log.info(`[council-member:${this.advisorRole}] Using extended timeout (45 min) for local LLM`)
-    }
+    // Pattern 3: Centralized local LLM timeout
+    this.applyLocalLlmTimeout(this.llmProvider)
 
-    // Resolve model for lean prompt gating
-    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
-    this.resolvedModel = isLocal
-      ? undefined
-      : modelConfigService.getModel(ctx.workspacePath, 'council-member')
+    // Pattern 1: Centralized model resolution
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-member')
 
     this.systemPrompt = this.buildSystemPrompt()
 
     // Append MCP tool guidance for roles with tool access (not Outsider)
     const advisor = COUNCIL_ADVISORS[this.advisorRole]
     if (advisor.toolAccess !== 'none') {
-      const featureFlags: PromptFeatureFlags = {
-        repomapEnabled: this.repomapEnabled,
-        semanticSearchEnabled: this.semanticSearchEnabled,
-        githubConfigured: false,
-        includeGitContext: this.llmProvider !== 'local-llm', // matches buildMcpConfig: Claude gets git tools
-        includeCheckpoint: false  // council members don't mount checkpoint tools
-      }
-      this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, this.resolvedModel)
+      this.systemPrompt = this.appendToolGuidance(this.systemPrompt, 1, this.resolvedModel)
     }
 
     this.log.info(
       `[council-member:${this.advisorRole}] session started for workspace=${this.workspaceId}`
     )
-  }
-
-  refreshFeatureFlags(_ctx: AdapterSessionLifecycleCtx): void {
-    // No-op — single-shot, no need to refresh mid-evaluation
-  }
-
-  onConversationSwitch(_conversationId: string): void {
-    // No-op — council members don't switch conversations
   }
 
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
@@ -124,66 +85,26 @@ export class CouncilMemberRoleAdapter implements AgentRoleAdapter {
     }
   }
 
-  buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+  protected override getMcpStrategy(_ctx?: AdapterMcpContext): McpStrategy {
     const advisor = COUNCIL_ADVISORS[this.advisorRole]
-
-    // Outsider: NO tools at all — pure text evaluation
-    if (advisor.toolAccess === 'none') {
-      return buildNoToolsConfig()
-    }
-
-    // All other roles: read-only suite (same as GrillRoleAdapter)
-    return buildReadOnlyToolConfig({
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      hasWorkspace: !!ctx.workspaceId,
-      includeGitContext: this.llmProvider !== 'local-llm'
-    })
+    return advisor.toolAccess === 'none' ? 'none' : 'readonly'
   }
 
-  buildControlCallbacks(_params: {
-    conversationId: string | null
-    emit: (event: AgentSessionEventName, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    // No-op — council members don't use control tools
-    return {
-      onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
-    }
+  override buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+    // Outsider role has no tools; other roles get read-only
+    const advisor = COUNCIL_ADVISORS[this.advisorRole]
+    if (advisor.toolAccess === 'none') return buildNoToolsConfig()
+    return super.buildMcpConfig(ctx)
   }
 
-  emitDetectedIntents(ctx: AdapterIntentContext): void {
-    const detectedIntents = intentDetector.detectAll(
-      ctx.accumulatedText,
-      ctx.controlToolState,
-      ctx.mode
-    )
-
-    for (const intent of detectedIntents) {
-      ctx.emit('intent', intent)
-    }
-
-    if (detectedIntents.length === 0) {
-      ctx.emit('intent', {
-        type: 'response',
-        content: ctx.accumulatedText
-      } as AgentIntent)
-    }
+  protected override getIncludeGitContext(): boolean {
+    return this.llmProvider !== 'local-llm'
+  }
+  protected override persistMemory(): void {
+    /* no-op */
   }
 
-  getCompactionThresholds(
-    _costPreference: CostPreference
-  ): { suggest: number; auto: number } | null {
-    return null
-  }
-
-  getPersonaId(): string | null {
-    return null
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.systemPrompt = null
     this.repomapEnabled = true
     this.semanticSearchEnabled = true
@@ -217,8 +138,10 @@ ${framedInput.planContent}`
       ? `\n## Workspace Context\n${framedInput.workspaceContext}`
       : ''
 
+    let prompt: string
+
     if (isLean) {
-      return `You are a Council Advisor — ${advisor.emoji} ${advisor.name}.
+      prompt = `You are a Council Advisor — ${advisor.name}.
 
 ## Thinking Style
 ${advisor.thinkingStyle}
@@ -242,9 +165,8 @@ Narrate findings, then emit ONE \`\`\`council-review block:
 
 Scoring: 80-100 excellent, 60-79 good, 40-59 concerning, 1-39 problematic.
 Verdict: proceed-with-changes = sound approach, needs-revision = material issues, rethink = fundamental problems.`
-    }
-
-    return `You are a Council Advisor — ${advisor.emoji} ${advisor.name}.
+    } else {
+      prompt = `You are a Council Advisor — ${advisor.name}.
 
 ## Your Thinking Style
 ${advisor.thinkingStyle}
@@ -289,5 +211,8 @@ After your analysis, narrate your thought process and findings, then emit EXACTL
 - **proceed-with-changes**: The approach is sound; listed changes improve it but aren't blocking
 - **needs-revision**: Material issues that should be fixed before proceeding
 - **rethink**: Fundamental problems with the approach itself`
+    }
+
+    return prompt
   }
 }

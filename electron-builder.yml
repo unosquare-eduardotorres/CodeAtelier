@@ -62,7 +62,7 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
-electronVersion: 40.10.0
+electronVersion: 41.7.0
 publish:
   provider: github
   owner: anthropics

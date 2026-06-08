@@ -23,6 +23,7 @@ import MessageCardRenderer from './MessageCardRenderer'
 import AttachmentList from './AttachmentList'
 import { useMessageContent } from './useMessageContent'
 import { useMessageIdentity } from './useMessageIdentity'
+import type { MessageIdentity } from './useMessageIdentity'
 import { useChatBubbleSize, useWorkspaceStore } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
 import type { ChatBubbleSize } from '../../../../shared/types'
@@ -45,6 +46,8 @@ interface MessageBubbleProps {
   toolActivities?: ToolActivity[]
   /** Chat actions passed from parent to avoid per-bubble store subscriptions */
   actions?: MessageBubbleActions
+  /** Override the auto-resolved identity (name, avatar, color). Used by Grill. */
+  identityOverride?: MessageIdentity
 }
 
 function formatTime(dateStr: string): string {
@@ -103,6 +106,14 @@ const BUBBLE_SIZE_CLASSES: Record<
   xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[92%]' }
 }
 
+/** Avatar portrait size — scales with the user's bubble-size preference */
+const AVATAR_SIZE_MAP: Record<ChatBubbleSize, 'md' | 'lg' | 'xl'> = {
+  small: 'md', // 48px
+  medium: 'lg', // 64px
+  large: 'xl', // 80px
+  xl: 'xl' // 80px
+}
+
 // Module-level constants — stable references, never recreated on render
 const REMARK_PLUGINS_BASE = [
   remarkGfm,
@@ -118,12 +129,21 @@ const REHYPE_PLUGINS = [rehypeRaw]
 const markdownComponents = {
   pre: ({ children }: { children?: React.ReactNode }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
-    const isBlock = className?.includes('language-')
-    if (isBlock) {
-      return <code className={`${className} text-sm`}>{children}</code>
+    // Block code with language class — pass through for CodeBlock
+    if (className?.includes('language-')) {
+      return <code className={className}>{children}</code>
     }
 
     const text = String(children).replace(/`/g, '').trim()
+
+    // Multi-line content is block code (inside a <pre>) — return a plain <code>
+    // so CodeBlock can find it. Don't apply inline URL/filePath detection.
+    if (text.includes('\n')) {
+      return <code>{children}</code>
+    }
+
+    // ── Single-line inline code: URL / file-path / default ──
+
     const isUrl = /^https?:\/\/\S+$/.test(text)
     if (isUrl) {
       return (
@@ -146,7 +166,7 @@ const markdownComponents = {
       /^[/~][\w.\-/@ ]+\.\w{1,10}$/.test(text) ||
       /^[A-Z]:\\/.test(text) ||
       /^[\w@][\w.\-/@ ]*\/[\w.\-/@ ]*\.\w{1,10}$/.test(text) ||
-      /^[\w][\w.\-]*\.\w{2,10}$/.test(text)
+      /^[\w][\w.-]*\.\w{2,10}$/.test(text)
     if (isFilePath) {
       return <FilePathLink filePath={text} />
     }
@@ -178,13 +198,16 @@ function MessageBubbleInner({
   message,
   isStreaming,
   toolActivities,
-  actions
+  actions,
+  identityOverride
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
-  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } = actions!
-  const identity = useMessageIdentity(message)
+  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } =
+    actions ?? ({} as MessageBubbleActions)
+  const autoIdentity = useMessageIdentity(message)
+  const identity = identityOverride ?? autoIdentity
 
   // Extracted hook: parses message content to detect structured blocks
   const content = useMessageContent(message.contentMd, message.attachmentsJson, isUser)
@@ -232,14 +255,19 @@ function MessageBubbleInner({
     councilStore.startCouncil()
 
     // Start the council via IPC
-    window.api.councilStart({
-      workspaceId,
-      inputType: 'plan',
-      planContent,
-      structuredPlan: structuredPlan ?? undefined,
-      originalUserRequest: message.contentMd ?? '',
-      conversationId: undefined
-    })
+    window.api
+      .councilStart({
+        workspaceId,
+        inputType: 'plan',
+        planContent,
+        structuredPlan: structuredPlan ?? undefined,
+        originalUserRequest: message.contentMd ?? '',
+        conversationId: undefined
+      })
+      .then(({ sessionId }) => {
+        councilStore.setSessionIdentity(sessionId, workspaceId)
+      })
+      .catch(console.error)
   }
 
   /** Shared AI bubble styles */
@@ -253,7 +281,11 @@ function MessageBubbleInner({
     >
       {/* Avatar */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey={identity.avatarKey} size="xl" accentColor={identity.accentColor} />
+        <Avatar
+          avatarKey={identity.avatarKey}
+          size={AVATAR_SIZE_MAP[bubbleSize]}
+          accentColor={identity.accentColor}
+        />
       </div>
 
       {/* Content */}
@@ -320,10 +352,7 @@ function MessageBubbleInner({
             )}
 
             {/* Attachments (images + files) */}
-            <AttachmentList
-              imageAttachments={imageAttachments}
-              fileAttachments={fileAttachments}
-            />
+            <AttachmentList imageAttachments={imageAttachments} fileAttachments={fileAttachments} />
 
             {(isUser ? displayContent : message.contentMd) ? (
               <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>

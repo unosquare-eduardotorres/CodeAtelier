@@ -218,7 +218,7 @@ export default function SpecialistPage(): React.JSX.Element {
   const { attachedSkillIds, recommendedSkills, otherSkills } = useSpecialistSkillData({
     skills,
     specialistSkills: specialist?.skills,
-    skillRecommendations: specialist?.skillRecommendations
+    skillRecommendations: specialist?.skillRecommendations ?? undefined
   })
 
   const mannequinKey = getWorkspaceMannequin(activeWorkspace?.id ?? '', workspaces)

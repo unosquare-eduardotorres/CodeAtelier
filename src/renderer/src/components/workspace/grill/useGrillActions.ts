@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
 import type { QuestionState } from '@renderer/components/chat'
-import type { GrillTrackId, GrillTrackScore, LLMProvider } from '../../../../../shared/types'
+import type { GrillTrackId, GrillTrackScore, Idea } from '../../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
 import type { GrillChatMessage, GrillPhase } from '../GrillChatView'
 import type { GrillIteration } from './useGrillQuestionState'
@@ -24,6 +24,7 @@ export function useGrillActions(opts: {
   history: HistoryEntry[]
   trackScores: GrillTrackScore[]
   questionStates: Record<string, QuestionState>
+  chatMessages: GrillChatMessage[]
   condensedDocument: string | undefined
   saveDecisions: (
     score: number,
@@ -40,11 +41,12 @@ export function useGrillActions(opts: {
   setChatMessages: React.Dispatch<React.SetStateAction<GrillChatMessage[]>>
   setHistory: React.Dispatch<React.SetStateAction<HistoryEntry[]>>
   setQuestionsRepeated: (val: boolean) => void
-  completeFromGrill: (conversationId: string, description: string) => Promise<void>
+  completeFromGrill: (conversationId: string, summary?: string) => Promise<Idea | null>
   convertDirect: (ideaId: string, workspaceId: string) => Promise<{ conversation: { id: string } }>
   loadConversations: (workspaceId: string) => Promise<void>
   selectConversation: (conversationId: string) => Promise<void>
-  sendMessage: (message: string) => Promise<void>
+  appendLocalMessage: (content: string, opts?: { role?: 'da-vinci' }) => void
+  setStreamingIndicator: (active: boolean) => void
   onBack: () => void
   onComplete: () => void
 }): {
@@ -66,6 +68,7 @@ export function useGrillActions(opts: {
     history,
     trackScores,
     questionStates,
+    chatMessages,
     condensedDocument,
     saveDecisions,
     formatAnswers,
@@ -79,7 +82,8 @@ export function useGrillActions(opts: {
     convertDirect,
     loadConversations,
     selectConversation,
-    sendMessage,
+    appendLocalMessage,
+    setStreamingIndicator,
     onBack,
     onComplete
   } = opts
@@ -106,15 +110,19 @@ export function useGrillActions(opts: {
     const newIterationCount = iterationCount + 1
     setIterationCount(newIterationCount)
 
-    setChatMessages((prev) => [
-      ...prev,
+    // Build the new messages array explicitly so the persisted snapshot includes
+    // the just-submitted iteration (avoids the one-iteration lag from the stale
+    // chatMessages closure that setChatMessages' updater would otherwise hide).
+    const updatedMessages: GrillChatMessage[] = [
+      ...chatMessages,
       {
         type: 'questions',
         questions: currentIteration.questions,
         questionStates: { ...questionStates }
       },
       { type: 'user', content: answersText }
-    ])
+    ]
+    setChatMessages(updatedMessages)
 
     const newHistory: HistoryEntry = {
       iteration: newIterationCount,
@@ -127,7 +135,7 @@ export function useGrillActions(opts: {
     setHistory(updatedHistory)
     setPhase('evaluating')
     setQuestionsRepeated(false)
-    await saveDecisions(currentIteration.score, updatedHistory, trackScores)
+    await saveDecisions(currentIteration.score, updatedHistory, trackScores, updatedMessages)
     useGrillStreamStore.getState().reset()
 
     const historyText = updatedHistory
@@ -170,6 +178,7 @@ export function useGrillActions(opts: {
     saveDecisions,
     trackScores,
     questionStates,
+    chatMessages,
     ideaId,
     setIterationCount,
     setChatMessages,
@@ -183,13 +192,10 @@ export function useGrillActions(opts: {
   }, [finalize])
 
   const handleStopGrill = useCallback(async () => {
-    try {
-      await window.api.grillCancel()
-    } catch (error) {
-      console.error('Failed to cancel grill:', error)
-    }
-    setPhase('paused')
-  }, [setPhase])
+    // Stop = cancel + persist (mirrors Save & Exit without the navigation), so a
+    // stopped grill restores with full state instead of an agent-only chat.
+    await finalize('paused')
+  }, [finalize])
 
   const handleSaveAndExit = useCallback(async () => {
     await finalize('paused')
@@ -207,18 +213,63 @@ export function useGrillActions(opts: {
       console.error('Failed to complete from grill:', error)
     }
 
-    if (activeWorkspace) {
-      try {
-        const { conversation: newConv } = await convertDirect(ideaId, activeWorkspace.id)
-        await loadConversations(activeWorkspace.id)
-        await selectConversation(newConv.id)
-        const planPrompt = `## ${ideaTitle}\n\n${effectiveDescription}\n\nGenerate a comprehensive implementation plan for this requirement. Use the structured \`\`\`plan block format with sections (one per phase), steps, affected files, complexity estimates, and risks. Do NOT write the plan to a file — emit it inline.`
-        await sendMessage(planPrompt)
-      } catch (error) {
-        console.error('Failed to create planning conversation:', error)
-      }
+    // No workspace → nothing to convert; just close the grill view.
+    if (!activeWorkspace) {
+      onComplete()
+      return
     }
-    onComplete()
+
+    try {
+      const { conversation: newConv } = await convertDirect(ideaId, activeWorkspace.id)
+      await loadConversations(activeWorkspace.id)
+      await selectConversation(newConv.id)
+
+      // Kick off deterministic plan synthesis BEFORE navigating so unmounting the
+      // grill view can't race/cancel the in-flight backend call. The grill Q&A
+      // already gathered every clarifying decision, so there are no questions on
+      // this path — we go straight from handoff to synthesis to the plan card.
+      const planPromise = window.api.grillGeneratePlan({
+        sessionId: conversationId,
+        ideaId,
+        workspaceId: activeWorkspace.id
+      })
+
+      // Step 1+3 — Handoff: close the grill, land in chat immediately with a
+      // spinner + status line while the plan synthesizes in the background.
+      onComplete()
+      setStreamingIndicator(true)
+      appendLocalMessage('Synthesizing the plan from your grilled decisions…', {
+        role: 'da-vinci'
+      })
+
+      try {
+        // Step 4 — seed the deterministic plan card, then re-fetch so the
+        // persisted lead-in + card replace the transient status placeholder.
+        const plan = await planPromise
+        await window.api.grillSeedPlanCard({ conversationId: newConv.id, plan })
+        await selectConversation(newConv.id)
+      } catch (err) {
+        // NEVER paste the raw requirement prompt as a user message. Surface a
+        // recoverable status the user can act on instead.
+        console.error('Grill plan synthesis failed:', err)
+        appendLocalMessage(
+          "I couldn't synthesize the plan from your grilled decisions. Send a message to retry, or refine the idea.",
+          { role: 'da-vinci' }
+        )
+      } finally {
+        setStreamingIndicator(false)
+      }
+    } catch (error) {
+      console.error('Failed to create planning conversation:', error)
+      onComplete()
+    }
+
+    // Final handoff — strip transient grill state (Convert Directly keeps no plan).
+    try {
+      await window.api.grillComplete({ ideaId })
+    } catch (error) {
+      console.error('grillComplete failed:', error)
+    }
   }, [
     currentIteration,
     history,
@@ -227,13 +278,13 @@ export function useGrillActions(opts: {
     conversationId,
     onComplete,
     activeWorkspace,
-    ideaTitle,
     buildFullDescription,
     condensedDocument,
     convertDirect,
     loadConversations,
     selectConversation,
-    sendMessage,
+    appendLocalMessage,
+    setStreamingIndicator,
     saveDecisions,
     trackScores
   ])

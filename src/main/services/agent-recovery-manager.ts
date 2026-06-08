@@ -11,17 +11,100 @@
 import type { AgentSessionHost, StreamLoopState, StreamChunk } from './agent-session-host'
 import { SESSION_CONSTANTS } from './agent-session-host'
 import type { AgentIntent, LLMProvider, ModelAction } from '../../shared/types'
-import type { AdapterMcpResult } from './role-adapters/types'
+import type { AdapterMcpResult } from './agent-session.types'
 import { modelConfigService } from './model-config.service'
 import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import type { DiscoveredContext } from './local-plan-state.service'
+
+// N8: Single source of truth for the turn-limit-exhausted message
+const TURN_LIMIT_EXHAUSTED_MSG =
+  '\n\n---\n\n' +
+  "⏱️ **Turn limit reached** — I've used all available turns for this interaction. " +
+  'The session is preserved and you can send another message to continue where I left off.\n\n' +
+  '_Send "continue" or describe what you\'d like me to do next._'
 
 export class AgentRecoveryManager {
   private readonly s: AgentSessionHost
 
   constructor(session: unknown) {
     this.s = session as AgentSessionHost
+  }
+
+  // ── N7: Shared auto-continue logic ──────────────────────────────────────
+
+  /**
+   * Build a continuation prompt and execute a new stream turn.
+   * Used by both finalizeStream (happy path) and handleStreamError (error path)
+   * when max_turns is reached and continuations remain.
+   */
+  private async continueTurnLimit(params: {
+    conversationId: string
+    systemPrompt: string
+    isBuildMode: boolean
+    mcpResult: AdapterMcpResult
+    llmProvider: LLMProvider
+    recoveryDepth: number
+  }): Promise<void> {
+    const { conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth } =
+      params
+
+    this.s.maxTurnsContinuations++
+    this.s.circuitBreaker.reset()
+    this.s.log.info(
+      `[PIPELINE:max-turns-continue] continuation=${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
+        `conversationId=${conversationId}`
+    )
+
+    this.s.emit('chunk', {
+      type: 'text',
+      content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS})_\n\n`
+    } as StreamChunk)
+
+    const isLocal = llmProvider === 'local-llm'
+    let continuationPrompt: string
+
+    if (isLocal) {
+      const discoveries = this.s.toolActivityAccumulator.buildDiscoverySummary(2000)
+      const planState = localPlanStateService.getForConversation(conversationId)
+      const partialPlan = this.s.accumulatedText.slice(-1000)
+
+      continuationPrompt = [
+        '## Continuation — Complete the Plan',
+        '',
+        '### Original Request',
+        planState?.originalRequest ??
+          (typeof this.s.lastStreamOpts?.sdkPrompt === 'string'
+            ? (this.s.lastStreamOpts.sdkPrompt as string).slice(0, 500)
+            : ''),
+        '',
+        '### What You Found',
+        discoveries || '(no tool results recorded)',
+        '',
+        '### Partial Plan',
+        partialPlan || '(none yet)',
+        '',
+        '### Instructions',
+        'Complete the plan NOW. Do NOT re-read files you already explored.',
+        'Write the remaining plan items. Use at most 2 more tool calls if essential.'
+      ].join('\n')
+    } else {
+      continuationPrompt = isBuildMode
+        ? 'Continue implementing from where you left off. Do not repeat completed work.'
+        : 'Continue your analysis from where you left off. Do not repeat completed work.'
+    }
+
+    await this.s.executeStream({
+      sdkPrompt: continuationPrompt,
+      systemPrompt,
+      sessionId: isLocal ? undefined : this.s.sessionMap.get(conversationId),
+      conversationId,
+      turnCount: this.s.turnCounts.get(conversationId) ?? 1,
+      isBuildMode,
+      mcpResult,
+      llmProvider,
+      recoveryDepth // Preserve depth so recovery can't restart on continuations
+    })
   }
 
   // ── handleSessionRecovery ─────────────────────────────────────────────
@@ -131,63 +214,14 @@ export class AgentRecoveryManager {
       streamState.lastTerminalReason === 'max_turns' &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
-      this.s.maxTurnsContinuations++
-      // Reset circuit breaker so the continuation gets a fresh tool budget
-      this.s.circuitBreaker.reset()
-      this.s.log.info(
-        `[PIPELINE:max-turns-continue] continuation=${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
-          `conversationId=${conversationId}`
-      )
-
-      this.s.emit('chunk', {
-        type: 'text',
-        content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS})_\n\n`
-      } as StreamChunk)
-
-      // Context-injected auto-continue for local LLMs
-      const isLocalForContinue = llmProvider === 'local-llm'
-      let continuationPrompt: string
-
-      if (isLocalForContinue) {
-        const discoveries = this.s.toolActivityAccumulator.buildDiscoverySummary(2000)
-        const planState = localPlanStateService.getForConversation(conversationId)
-        const partialPlan = this.s.accumulatedText.slice(-1000)
-
-        continuationPrompt = [
-          '## Continuation — Complete the Plan',
-          '',
-          '### Original Request',
-          planState?.originalRequest ??
-            (typeof this.s.lastStreamOpts?.sdkPrompt === 'string'
-              ? (this.s.lastStreamOpts.sdkPrompt as string).slice(0, 500)
-              : ''),
-          '',
-          '### What You Found',
-          discoveries || '(no tool results recorded)',
-          '',
-          '### Partial Plan',
-          partialPlan || '(none yet)',
-          '',
-          '### Instructions',
-          'Complete the plan NOW. Do NOT re-read files you already explored.',
-          'Write the remaining plan items. Use at most 2 more tool calls if essential.'
-        ].join('\n')
-      } else {
-        continuationPrompt = isBuildMode
-          ? 'Continue implementing from where you left off. Do not repeat completed work.'
-          : 'Continue your analysis from where you left off. Do not repeat completed work.'
-      }
-
-      await this.s.executeStream({
-        sdkPrompt: continuationPrompt,
-        systemPrompt,
-        sessionId: isLocalForContinue ? undefined : this.s.sessionMap.get(conversationId),
+      // N7: Shared continuation logic
+      await this.continueTurnLimit({
         conversationId,
-        turnCount: this.s.turnCounts.get(conversationId) ?? 1,
+        systemPrompt,
         isBuildMode,
         mcpResult,
         llmProvider,
-        recoveryDepth // Preserve depth so recovery can't restart on continuations
+        recoveryDepth
       })
       return // executeStream handles its own finalization
     }
@@ -203,12 +237,40 @@ export class AgentRecoveryManager {
       )
       this.s.emit('chunk', {
         type: 'text',
-        content:
-          '\n\n---\n\n' +
-          "⏱️ **Turn limit reached** — I've used all available turns for this interaction. " +
-          'The session is preserved and you can send another message to continue where I left off.\n\n' +
-          '_Send "continue" or describe what you\'d like me to do next._'
+        content: TURN_LIMIT_EXHAUSTED_MSG
       } as StreamChunk)
+    }
+
+    // ── Plan-mode tool-block recovery ───────────────────────────────────────
+    // The model tried a blocked Write/Edit in Plan mode (auto-flagged by the
+    // stream processor). Fire a deterministic emit_plan recovery so the user
+    // still gets a plan card. Skip the silent-completion nudge below if we do.
+    let planRecoveryAttempted = false
+    if (
+      streamState.planModeToolBlock &&
+      this.s.currentMode === 'plan' &&
+      !this.s.controlToolState.plan &&
+      !timedOut
+    ) {
+      const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
+        cliExecutor: this.s.cliExecutor,
+        systemPrompt,
+        workspacePath: this.s.workspacePath!,
+        model: modelConfigService.getModel(
+          this.s.workspacePath!,
+          this.s.adapter.role as ModelAction
+        ),
+        sessionId: this.s.sessionMap.get(conversationId),
+        conversationId,
+        workspaceId: this.s.workspaceId,
+        mcpConfigPath: this.s.getCliMcpConfigPath(),
+        onSessionCapture: (sid) => this.s.sessionMap.set(conversationId, sid),
+        onChunk: (chunk) => this.s.emit('chunk', chunk),
+        onTokens: (tokens) => {
+          this.s.tokenUsage += tokens
+        }
+      })
+      planRecoveryAttempted = result.attempted
     }
 
     const skipNudgeReasons = new Set([
@@ -218,7 +280,8 @@ export class AgentRecoveryManager {
       'aborted_streaming'
     ])
     const shouldSkipNudge =
-      streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)
+      (streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)) ||
+      planRecoveryAttempted
     if (
       this.s.circuitBreaker.count > 0 &&
       !streamState.hasTextAfterLastTool &&
@@ -240,6 +303,7 @@ export class AgentRecoveryManager {
         isBuildMode,
         sessionId: this.s.sessionMap.get(conversationId),
         conversationId,
+        workspaceId: this.s.workspaceId,
         toolCallCount: this.s.circuitBreaker.count,
         onSessionCapture: (sid) => this.s.sessionMap.set(conversationId, sid),
         onChunk: (chunk) => this.s.emit('chunk', chunk),
@@ -279,7 +343,7 @@ export class AgentRecoveryManager {
       controlToolState: this.s.controlToolState,
       mode: this.s.currentMode,
       conversationId,
-      emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload)
+      emit: (evt: string, payload: unknown) => this.s.emitAdapterEvent(evt, payload)
     })
 
     // Mark plan state as completed when a plan intent was detected
@@ -354,59 +418,16 @@ export class AgentRecoveryManager {
       this.s.lastStreamOpts &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
-      this.s.maxTurnsContinuations++
-      // Reset circuit breaker so the continuation gets a fresh tool budget
-      this.s.circuitBreaker.reset()
+      // N7: Shared continuation logic
       const { conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider } =
         this.s.lastStreamOpts
-      this.s.log.info(
-        `[PIPELINE:max-turns-continue-error] continuation=${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
-          `conversationId=${conversationId}`
-      )
-
-      this.s.emit('chunk', {
-        type: 'text',
-        content: `\n\n_Continuing... (turn limit reached, auto-resuming ${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS})_\n\n`
-      } as StreamChunk)
-
-      // Context-injected continuation for error path
-      const isLocalForContinue = llmProvider === 'local-llm'
-      let errorContinuationPrompt: string
-
-      if (isLocalForContinue) {
-        const discoveries = this.s.toolActivityAccumulator.buildDiscoverySummary(2000)
-        const planState = localPlanStateService.getForConversation(conversationId)
-        errorContinuationPrompt = [
-          '## Continuation — Complete the Plan',
-          '',
-          '### Original Request',
-          planState?.originalRequest ?? '',
-          '',
-          '### What You Found',
-          discoveries || '(no tool results recorded)',
-          '',
-          '### Partial Plan',
-          this.s.accumulatedText.slice(-1000) || '(none yet)',
-          '',
-          '### Instructions',
-          'Complete the plan NOW. Do NOT re-read files. Write remaining plan items.'
-        ].join('\n')
-      } else {
-        errorContinuationPrompt = isBuildMode
-          ? 'Continue implementing from where you left off. Do not repeat completed work.'
-          : 'Continue your analysis from where you left off. Do not repeat completed work.'
-      }
-
-      await this.s.executeStream({
-        sdkPrompt: errorContinuationPrompt,
-        systemPrompt,
-        sessionId: isLocalForContinue ? undefined : this.s.sessionMap.get(conversationId),
+      await this.continueTurnLimit({
         conversationId,
-        turnCount: this.s.turnCounts.get(conversationId) ?? 1,
+        systemPrompt,
         isBuildMode,
         mcpResult,
         llmProvider,
-        recoveryDepth // Preserve depth so recovery can't restart on continuations
+        recoveryDepth
       })
       return
     }
@@ -419,11 +440,7 @@ export class AgentRecoveryManager {
       )
       this.s.emit('chunk', {
         type: 'text',
-        content:
-          '\n\n---\n\n' +
-          "⏱️ **Turn limit reached** — I've used all available turns for this interaction. " +
-          'The session is preserved and you can send another message to continue where I left off.\n\n' +
-          '_Send "continue" or describe what you\'d like me to do next._'
+        content: TURN_LIMIT_EXHAUSTED_MSG
       } as StreamChunk)
       this.s.currentStatus = 'idle'
       this.s.flushTokenUsage()

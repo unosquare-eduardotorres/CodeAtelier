@@ -34,6 +34,8 @@ export function runAddDangerModeMigration(db: Database.Database): void {
       pr_url TEXT,
       branch_name TEXT,
       sort_order INTEGER DEFAULT 0,
+      persona_specialist_id TEXT DEFAULT NULL
+        REFERENCES specialists(id) ON DELETE SET NULL,
       llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
       mcp_overrides_json TEXT DEFAULT '{}',
       communication_tone TEXT DEFAULT NULL,
@@ -44,13 +46,13 @@ export function runAddDangerModeMigration(db: Database.Database): void {
   db.exec(`
     INSERT INTO conversations_new (
       id, workspace_id, title, mode, created_at, status, summary, claude_session_id,
-      pr_number, pr_url, branch_name, sort_order, llm_provider, mcp_overrides_json,
-      communication_tone, effort
+      pr_number, pr_url, branch_name, sort_order, persona_specialist_id, llm_provider,
+      mcp_overrides_json, communication_tone, effort
     )
     SELECT
       id, workspace_id, title, mode, created_at, status, summary, claude_session_id,
-      pr_number, pr_url, branch_name, sort_order, llm_provider, mcp_overrides_json,
-      communication_tone, effort
+      pr_number, pr_url, branch_name, sort_order, persona_specialist_id, llm_provider,
+      mcp_overrides_json, communication_tone, effort
     FROM conversations;
   `)
 

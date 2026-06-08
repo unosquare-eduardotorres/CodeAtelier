@@ -24,6 +24,11 @@ import type { ConversationMode } from '../../shared/types'
 import type { ContextWindowTier } from './context-management'
 import type { OpenCodeProviderConfig } from './opencode-executor'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
+import {
+  LOCAL_MCP_SERVER_DEFS,
+  FORMATTER_DEFS,
+  buildLocalMcpServersFromRegistry
+} from './opencode-config-writer/opencode-config-data'
 
 const configLog = log.scope('OpenCodeConfigWriter')
 
@@ -256,7 +261,7 @@ export class OpenCodeConfigWriter {
   // ── Private ──
 
   private buildConfig(opts: OpenCodeConfigWriterOptions): OpenCodeConfig {
-    const { provider, workspacePath, workspaceId, contextTier } = opts
+    const { provider, workspacePath, contextTier } = opts
     const isLocal = opts.isLocalProvider ?? false
 
     // Resolve the model string in OpenCode format: provider/model
@@ -266,30 +271,7 @@ export class OpenCodeConfigWriter {
     const smallModel = this.resolveSmallModel(provider.providerId)
 
     // Build provider config with timeouts (#15)
-    const providers: OpenCodeConfig['provider'] = {}
-    if (provider.baseUrl || provider.apiKey || isLocal || provider.providerId === 'anthropic') {
-      providers[provider.providerId] = {
-        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
-        ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
-        // #15: Tier-aware timeouts — local models are slower
-        timeout: isLocal ? 600_000 : 300_000,
-        chunkTimeout: isLocal ? 30_000 : 15_000,
-        // C-1: Enable prompt caching for Anthropic — system prompts are large
-        // (DaVinci identity + CLAUDE.md + skills + conventions), caching reduces
-        // input token costs by 50-90% on repeat conversations.
-        ...(provider.providerId === 'anthropic' ? { setCacheKey: true } : {}),
-        // C-5: Context/output limits for local models — Ollama models may advertise
-        // larger context windows than they can handle efficiently. Our contextTier
-        // system knows the effective size.
-        ...(isLocal && contextTier
-          ? {
-              limit: {
-                context: contextTier === 'small' ? 8192 : contextTier === 'medium' ? 32768 : 131072
-              }
-            }
-          : {})
-      }
-    }
+    const providers = this.buildProviderConfig(provider, isLocal, contextTier)
 
     // Build MCP server config
     const mcp = this.buildMcpServers(opts)
@@ -302,30 +284,7 @@ export class OpenCodeConfigWriter {
     }
 
     // C-7: Build instructions from workspace instruction files.
-    // Auto-discover CLAUDE.md, AGENTS.md, and CONTRIBUTING.md for richer context.
-    const instructions: string[] = []
-    const instructionFiles = [
-      'CLAUDE.md',
-      'AGENTS.md',
-      '.github/CONTRIBUTING.md',
-      'CONTRIBUTING.md'
-    ]
-    for (const file of instructionFiles) {
-      if (existsSync(join(workspacePath, file))) {
-        instructions.push(`{file:${file}}`)
-      }
-    }
-
-    // 6D-4: Add glob patterns for broader context discovery.
-    // OpenCode supports globs natively in instructions — these patterns
-    // pull in architecture docs and cross-tool rule files.
-    const instructionGlobs = [
-      'docs/architecture/*.md', // Architecture decision records
-      '.cursor/rules/*.md' // Cursor rules (cross-tool compat)
-    ]
-    for (const glob of instructionGlobs) {
-      instructions.push(`{file:${glob}}`)
-    }
+    const instructions = this.buildInstructions(workspacePath)
 
     // ── #19: Glob-based permissions for plan mode ──
     const permission = this.buildPermissions(opts.mode)
@@ -334,30 +293,7 @@ export class OpenCodeConfigWriter {
     const compaction = this.buildCompactionConfig(contextTier)
 
     // ── #8: Shell environment injection ──
-    const shellEnv: Record<string, string> = {
-      WORKSPACE_PATH: workspacePath,
-      GIT_TERMINAL_PROMPT: '0'
-    }
-    if (workspaceId) shellEnv.WORKSPACE_ID = workspaceId
-    // Pass IPC socket path so the plugin can send events to the main process
-    if (opts.ipcSocketPath) shellEnv.IPC_SOCKET_PATH = opts.ipcSocketPath
-    // Prevent OOM in heavy Node.js tasks spawned by the agent
-    shellEnv.NODE_OPTIONS = '--max-old-space-size=4096'
-
-    // D-1: Write system prompt to a temp file and pass its path via env var.
-    // The plugin's experimental.chat.system.transform hook reads the file
-    // and injects the content into the real system prompt position.
-    // This avoids env var size limits (system prompts can be 10KB+).
-    if (opts.systemPrompt) {
-      const promptFilePath = join(
-        tmpdir(),
-        'code-atelier-opencode',
-        Buffer.from(opts.workspacePath).toString('base64url').slice(0, 32),
-        'system-prompt.txt'
-      )
-      writeFileSync(promptFilePath, opts.systemPrompt, 'utf-8')
-      shellEnv.CODE_ATELIER_SYSTEM_PROMPT_FILE = promptFilePath
-    }
+    const shellEnv = this.buildShellEnvironment(opts)
 
     const config: OpenCodeConfig = {
       $schema: 'https://opencode.ai/config.json',
@@ -552,54 +488,14 @@ export class OpenCodeConfigWriter {
 
   /**
    * B-6: Auto-detect the project's code formatter.
-   * Checks for Prettier, Biome, and dprint configs in the workspace.
+   * Uses FORMATTER_DEFS registry — adding a new formatter is a data entry.
    */
   private detectFormatter(workspacePath: string): NonNullable<OpenCodeConfig['formatter']> {
-    // Check for Prettier
-    const prettierConfigs = [
-      '.prettierrc',
-      '.prettierrc.json',
-      '.prettierrc.js',
-      '.prettierrc.cjs',
-      '.prettierrc.mjs',
-      'prettier.config.js',
-      'prettier.config.cjs',
-      'prettier.config.mjs'
-    ]
-    for (const config of prettierConfigs) {
-      if (existsSync(join(workspacePath, config))) {
-        return {
-          enabled: true,
-          command: ['npx', 'prettier', '--write'],
-          extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.md']
-        }
+    for (const def of FORMATTER_DEFS) {
+      if (def.configFiles.some((f) => existsSync(join(workspacePath, f)))) {
+        return { enabled: true, command: def.command, extensions: def.extensions }
       }
     }
-
-    // Check for Biome
-    if (
-      existsSync(join(workspacePath, 'biome.json')) ||
-      existsSync(join(workspacePath, 'biome.jsonc'))
-    ) {
-      return {
-        enabled: true,
-        command: ['npx', '@biomejs/biome', 'format', '--write'],
-        extensions: ['.ts', '.tsx', '.js', '.jsx', '.json']
-      }
-    }
-
-    // Check for dprint
-    if (
-      existsSync(join(workspacePath, 'dprint.json')) ||
-      existsSync(join(workspacePath, '.dprint.json'))
-    ) {
-      return {
-        enabled: true,
-        command: ['npx', 'dprint', 'fmt'],
-        extensions: ['.ts', '.tsx', '.js', '.jsx', '.json', '.md']
-      }
-    }
-
     // No specific formatter detected — use enabled-only (OpenCode default formatter)
     return { enabled: true }
   }
@@ -622,14 +518,116 @@ export class OpenCodeConfigWriter {
     }
   }
 
+  /** #15: Build provider entry with tier-aware timeouts and caching. */
+  private buildProviderConfig(
+    provider: OpenCodeConfigWriterOptions['provider'],
+    isLocal: boolean,
+    contextTier?: ContextWindowTier
+  ): OpenCodeConfig['provider'] {
+    const providers: OpenCodeConfig['provider'] = {}
+    if (provider.baseUrl || provider.apiKey || isLocal || provider.providerId === 'anthropic') {
+      providers[provider.providerId] = {
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+        ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+        // #15: Tier-aware timeouts — local models are slower
+        timeout: isLocal ? 600_000 : 300_000,
+        chunkTimeout: isLocal ? 30_000 : 15_000,
+        // C-1: Enable prompt caching for Anthropic
+        ...(provider.providerId === 'anthropic' ? { setCacheKey: true } : {}),
+        // C-5: Context/output limits for local models
+        ...(isLocal && contextTier
+          ? {
+              limit: {
+                context: contextTier === 'small' ? 8192 : contextTier === 'medium' ? 32768 : 131072
+              }
+            }
+          : {})
+      }
+    }
+    return providers
+  }
+
+  /** C-7: Discover workspace instruction files and glob patterns. */
+  private buildInstructions(workspacePath: string): string[] {
+    const instructions: string[] = []
+    const instructionFiles = [
+      'CLAUDE.md',
+      'AGENTS.md',
+      '.github/CONTRIBUTING.md',
+      'CONTRIBUTING.md'
+    ]
+    for (const file of instructionFiles) {
+      if (existsSync(join(workspacePath, file))) {
+        instructions.push(`{file:${file}}`)
+      }
+    }
+
+    // 6D-4: Add glob patterns for broader context discovery.
+    const instructionGlobs = [
+      'docs/architecture/*.md', // Architecture decision records
+      '.cursor/rules/*.md' // Cursor rules (cross-tool compat)
+    ]
+    for (const glob of instructionGlobs) {
+      instructions.push(`{file:${glob}}`)
+    }
+    return instructions
+  }
+
+  /** #8: Build shell environment vars for the agent subprocess. */
+  private buildShellEnvironment(opts: OpenCodeConfigWriterOptions): Record<string, string> {
+    const { workspacePath, workspaceId } = opts
+    const shellEnv: Record<string, string> = {
+      WORKSPACE_PATH: workspacePath,
+      GIT_TERMINAL_PROMPT: '0'
+    }
+    if (workspaceId) shellEnv.WORKSPACE_ID = workspaceId
+    // Pass IPC socket path so the plugin can send events to the main process
+    if (opts.ipcSocketPath) shellEnv.IPC_SOCKET_PATH = opts.ipcSocketPath
+    // Prevent OOM in heavy Node.js tasks spawned by the agent
+    shellEnv.NODE_OPTIONS = '--max-old-space-size=4096'
+
+    // D-1: Write system prompt to a temp file and pass its path via env var.
+    // This avoids env var size limits (system prompts can be 10KB+).
+    if (opts.systemPrompt) {
+      const promptFilePath = join(
+        tmpdir(),
+        'code-atelier-opencode',
+        Buffer.from(opts.workspacePath).toString('base64url').slice(0, 32),
+        'system-prompt.txt'
+      )
+      writeFileSync(promptFilePath, opts.systemPrompt, 'utf-8')
+      shellEnv.CODE_ATELIER_SYSTEM_PROMPT_FILE = promptFilePath
+    }
+    return shellEnv
+  }
+
   /**
    * Build MCP server declarations for OpenCode.
    * Same servers as CLI, different format.
    */
   private buildMcpServers(opts: OpenCodeConfigWriterOptions): OpenCodeConfig['mcp'] {
     const servers: OpenCodeConfig['mcp'] = {}
-    const { featureFlags, workspaceId, workspacePath, contextTier } = opts
 
+    // Compose from 3 focused sub-builders
+    Object.assign(servers, this.buildLocalMcpServers(opts))
+    this.buildExternalMcpServers(opts, servers)
+    this.buildRemoteMcpServers(opts, servers)
+
+    // 6D-2: Apply per-chat MCP toggles — use enabled:false instead of deleting.
+    // This preserves the config for re-enabling without regeneration.
+    const { featureFlags } = opts
+    for (const [serverId, enabled] of Object.entries(featureFlags.localMcpActive)) {
+      if (enabled === false && servers[serverId]) {
+        servers[serverId].enabled = false
+        configLog.info(`[opencode-config] Disabled MCP: ${serverId}`)
+      }
+    }
+
+    return servers
+  }
+
+  /** Local MCP servers bundled with the app — built from declarative registry. */
+  private buildLocalMcpServers(opts: OpenCodeConfigWriterOptions): OpenCodeConfig['mcp'] {
     // Resolve server script base path
     const serverBasePath = app.isPackaged
       ? join(
@@ -638,97 +636,29 @@ export class OpenCodeConfigWriter {
           'main',
           'mcp-servers'
         )
-      : join(__dirname, '..', 'mcp-servers')
+      : join(__dirname, 'mcp-servers')
 
-    // ── Code Graph ──
-    if (featureFlags.repomapEnabled && workspaceId) {
-      servers['code-graph'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'code-graph-server.js')],
-        environment: {
-          WORKSPACE_ID: workspaceId,
-          WORKSPACE_PATH: workspacePath,
-          ...(contextTier ? { CONTEXT_TIER: contextTier } : {})
-        },
-        // 6D-1: Code-graph indexes large repos — 5s default is too short
-        timeout: 15_000
-      }
-    }
+    // DB-backed servers (code-graph, semantic-search) run as plain `node` and can't
+    // call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
+    return buildLocalMcpServersFromRegistry(
+      LOCAL_MCP_SERVER_DEFS,
+      opts,
+      serverBasePath,
+      app.getPath('userData')
+    )
+  }
 
-    // ── Semantic Search ──
-    if (featureFlags.semanticSearchEnabled && workspaceId) {
-      servers['semantic-search'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'semantic-search-server.js')],
-        environment: { WORKSPACE_ID: workspaceId },
-        // 6D-1: Embedding queries can be slow on first call
-        timeout: 10_000
-      }
-    }
-
-    // ── Git Context ──
-    servers['git-context'] = {
-      type: 'local',
-      command: ['node', join(serverBasePath, 'git-context-server.js')],
-      environment: { WORKSPACE_PATH: workspacePath },
-      // 6D-1: Large repos with deep history
-      timeout: 10_000
-    }
-
-    // ── Checkpoint Context ──
-    if (opts.conversationId) {
-      servers['checkpoint-context'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'checkpoint-context-server.js')],
-        environment: {
-          CONVERSATION_ID: opts.conversationId,
-          WORKSPACE_PATH: workspacePath
-        },
-        timeout: 8_000
-      }
-    }
-
-    // ── GitHub Context ──
-    if (featureFlags.githubConfigured && workspaceId) {
-      servers['github-context'] = {
-        type: 'local',
-        command: ['node', join(serverBasePath, 'github-context-server.js')],
-        environment: {
-          WORKSPACE_ID: workspaceId,
-          WORKSPACE_PATH: workspacePath
-        },
-        timeout: 8_000
-      }
-    }
-
-    // ── Code Analysis ──
-    servers['code-analysis'] = {
-      type: 'local',
-      command: ['node', join(serverBasePath, 'code-analysis-server.js')],
-      environment: { WORKSPACE_PATH: workspacePath },
-      timeout: 8_000
-    }
-
-    // ── Control Actions ──
-    servers['control-actions'] = {
-      type: 'local',
-      command: ['node', join(serverBasePath, 'control-actions-server.js')],
-      environment: {
-        WORKSPACE_PATH: workspacePath,
-        ...(opts.ipcSocketPath ? { IPC_SOCKET_PATH: opts.ipcSocketPath } : {}),
-        ...(opts.conversationId ? { CONVERSATION_ID: opts.conversationId } : {}),
-        CONVERSATION_MODE: opts.mode
-      },
-      timeout: 8_000
-    }
-
-    // ── External MCP Integrations (Maestro, etc.) ──
-    const externalActive = featureFlags.externalMcpActive ?? {}
+  /** External MCP integrations (Maestro, etc.) registered via feature flags. */
+  private buildExternalMcpServers(
+    opts: OpenCodeConfigWriterOptions,
+    servers: OpenCodeConfig['mcp']
+  ): void {
+    const externalActive = opts.featureFlags.externalMcpActive ?? {}
     for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
       if (externalActive[integration.id]) {
         // Build env from the integration's envKeys
         const env: Record<string, string> = {}
-        for (const key of integration.envKeys) {
+        for (const key of integration.envKeys ?? []) {
           if (process.env[key]) {
             env[key] = process.env[key]!
           }
@@ -758,31 +688,24 @@ export class OpenCodeConfigWriter {
         configLog.info(`[opencode-config] Mounted external MCP: ${integration.id}`)
       }
     }
+  }
 
-    // GAP-8: Mount remote MCP servers (cloud code analysis, team indexes, CI/CD endpoints)
-    if (opts.remoteMcpServers) {
-      for (const [serverId, remote] of Object.entries(opts.remoteMcpServers)) {
-        servers[serverId] = {
-          type: 'remote',
-          url: remote.url,
-          ...(remote.headers ? { headers: remote.headers } : {}),
-          ...(remote.oauth ? { oauth: remote.oauth } : {}),
-          ...(remote.enabled === false ? { enabled: false } : {})
-        }
-        configLog.info(`[opencode-config] Mounted remote MCP: ${serverId} (${remote.url})`)
+  /** GAP-8: Remote MCP servers (cloud code analysis, team indexes, CI/CD endpoints). */
+  private buildRemoteMcpServers(
+    opts: OpenCodeConfigWriterOptions,
+    servers: OpenCodeConfig['mcp']
+  ): void {
+    if (!opts.remoteMcpServers) return
+    for (const [serverId, remote] of Object.entries(opts.remoteMcpServers)) {
+      servers[serverId] = {
+        type: 'remote',
+        url: remote.url,
+        ...(remote.headers ? { headers: remote.headers } : {}),
+        ...(remote.oauth ? { oauth: remote.oauth } : {}),
+        ...(remote.enabled === false ? { enabled: false } : {})
       }
+      configLog.info(`[opencode-config] Mounted remote MCP: ${serverId} (${remote.url})`)
     }
-
-    // 6D-2: Apply per-chat MCP toggles — use enabled:false instead of deleting.
-    // This preserves the config for re-enabling without regeneration.
-    for (const [serverId, enabled] of Object.entries(featureFlags.localMcpActive)) {
-      if (enabled === false && servers[serverId]) {
-        servers[serverId].enabled = false
-        configLog.info(`[opencode-config] Disabled MCP: ${serverId}`)
-      }
-    }
-
-    return servers
   }
 }
 

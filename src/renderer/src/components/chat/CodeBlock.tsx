@@ -1,13 +1,41 @@
 /**
- * CodeBlock — renders fenced code blocks with copy button and Mermaid support.
- * Extracted from MessageBubble.tsx for maintainability.
+ * CodeBlock — renders fenced code blocks with syntax highlighting, copy button,
+ * and Mermaid support. Uses prism-react-renderer for token coloring.
  */
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import { Copy, Check } from 'lucide-react'
+import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { MermaidDiagram } from '@renderer/components/common'
+import { useAppTheme } from '@renderer/store'
+
+/** Recursively extract text content from a React node tree */
+function extractTextContent(node: React.ReactNode): string {
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (!node) return ''
+  if (Array.isArray(node)) return node.map(extractTextContent).join('')
+  if (React.isValidElement(node)) {
+    const props = node.props as Record<string, unknown>
+    if (typeof props.filePath === 'string') return String(props.filePath)
+    if (props.children != null) return extractTextContent(props.children as React.ReactNode)
+  }
+  return ''
+}
+
+/** Map app theme → Prism highlight theme */
+const PRISM_THEME_MAP: Record<string, PrismTheme> = {
+  'code-atelier': themes.nightOwl,
+  glass: themes.nightOwl,
+  porcelain: themes.vsLight,
+  developer: themes.vsDark
+}
+
+/** Show line numbers when a code block has more than this many lines */
+const LINE_NUMBER_THRESHOLD = 5
 
 export function CodeBlock({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
+  const appTheme = useAppTheme()
 
   // Extract language and code text from children
   const codeChild = React.Children.toArray(children).find(
@@ -15,11 +43,18 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
       React.isValidElement(child) && (child as React.ReactElement).type === 'code'
   )
 
-  const className = (codeChild?.props as { className?: string })?.className || ''
-  const language = className.replace('language-', '')
-  const codeText = String(
-    (codeChild?.props as { children?: React.ReactNode })?.children || ''
+  // Extract language only from valid language-* class prefixes
+  const rawClassName = (codeChild?.props as { className?: string })?.className || ''
+  const langMatch = rawClassName.match(/language-(\S+)/)
+  const language = langMatch ? langMatch[1] : ''
+
+  // Extract code text: <code> child first, fallback to recursive extraction
+  const rawChildren = (codeChild?.props as { children?: React.ReactNode })?.children
+  const codeText = (
+    rawChildren != null ? String(rawChildren) : extractTextContent(children)
   ).replace(/\n$/, '')
+
+  const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])
 
   const handleCopy = useCallback(async () => {
     try {
@@ -68,9 +103,30 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
           )}
         </button>
       </div>
-      <pre className="bg-surface-base p-3 overflow-x-auto text-sm whitespace-pre-wrap break-words">
-        {children}
-      </pre>
+      <Highlight theme={prismTheme} code={codeText} language={language || 'text'}>
+        {({ tokens, getLineProps, getTokenProps, style }) => {
+          const showLineNumbers = tokens.length > LINE_NUMBER_THRESHOLD
+          return (
+            <pre
+              className="p-3 overflow-x-auto text-sm"
+              style={{ ...style, background: 'var(--color-surface-base)' }}
+            >
+              {tokens.map((line, i) => (
+                <div key={i} {...getLineProps({ line })}>
+                  {showLineNumbers && (
+                    <span className="select-none text-text-muted w-8 inline-block text-right mr-3 text-[11px] opacity-60">
+                      {i + 1}
+                    </span>
+                  )}
+                  {line.map((token, k) => (
+                    <span key={k} {...getTokenProps({ token })} />
+                  ))}
+                </div>
+              ))}
+            </pre>
+          )
+        }}
+      </Highlight>
     </div>
   )
 }

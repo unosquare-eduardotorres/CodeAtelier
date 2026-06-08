@@ -1,5 +1,5 @@
 import { BaseRepository } from '../base-repository'
-import type { Message } from '../../../shared/types'
+import type { Message, ToolActivity } from '../../../shared/types'
 
 interface MessageRow {
   id: string
@@ -10,6 +10,7 @@ interface MessageRow {
   attachments_json: string
   created_at: string
   parent_message_id: string | null
+  tool_activities_json: string | null
 }
 
 function mapRow(row: MessageRow): Message {
@@ -21,13 +22,18 @@ function mapRow(row: MessageRow): Message {
     contentMd: row.content_md,
     attachmentsJson: row.attachments_json,
     createdAt: row.created_at,
-    parentMessageId: row.parent_message_id ?? undefined
+    parentMessageId: row.parent_message_id ?? undefined,
+    toolActivities: row.tool_activities_json
+      ? (JSON.parse(row.tool_activities_json) as ToolActivity[])
+      : undefined
   }
 }
 
 export class MessageRepository extends BaseRepository<MessageRow, Message> {
   protected readonly tableName = 'messages'
-  protected mapRow(row: MessageRow): Message { return mapRow(row) }
+  protected mapRow(row: MessageRow): Message {
+    return mapRow(row)
+  }
 
   create(
     conversationId: string,
@@ -61,7 +67,6 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
     return rows.map(mapRow)
   }
 
-
   /**
    * F5: Fetch only the most recent N messages for a conversation.
    * Uses SQL LIMIT + DESC ordering to avoid loading the entire history,
@@ -94,6 +99,17 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
       .prepare('DELETE FROM messages WHERE conversation_id = ? AND created_at > ?')
       .run(conversationId, afterTimestamp)
     return result.changes
+  }
+
+  /**
+   * Persist tool activities for a saved message.
+   * Called after stream completion when tool activities have been accumulated.
+   */
+  updateToolActivities(messageId: string, activities: ToolActivity[]): void {
+    if (activities.length === 0) return
+    this.db()
+      .prepare('UPDATE messages SET tool_activities_json = ? WHERE id = ?')
+      .run(JSON.stringify(activities), messageId)
   }
 }
 

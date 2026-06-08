@@ -76,7 +76,10 @@ describe('Lean Conditional Gating', () => {
     })
     // Lean should use the compressed variant
     assert.ok(out.includes('Answer from context'), 'Lean should use compressed direct-answer boost')
-    assert.ok(!out.includes('Answer-Complete Rule'), 'Lean should not contain verbose Answer-Complete section')
+    assert.ok(
+      !out.includes('Answer-Complete Rule'),
+      'Lean should not contain verbose Answer-Complete section'
+    )
   })
 
   test('full mode uses verbose direct-answer boost on turn 3+', () => {
@@ -87,7 +90,10 @@ describe('Lean Conditional Gating', () => {
       turnCount: 3,
       model: 'claude-sonnet-4-6'
     })
-    assert.ok(out.includes('Answer-Complete Rule'), 'Full mode should contain verbose Answer-Complete section')
+    assert.ok(
+      out.includes('Answer-Complete Rule'),
+      'Full mode should contain verbose Answer-Complete section'
+    )
   })
 
   test('lean mode tightens ask-question regex', () => {
@@ -97,7 +103,10 @@ describe('Lean Conditional Gating', () => {
       false,
       'lean'
     )
-    assert.ok(!leanSections.includeAskQuestionPrompt, 'Lean should not trigger ask_user for broad "which" queries')
+    assert.ok(
+      !leanSections.includeAskQuestionPrompt,
+      'Lean should not trigger ask_user for broad "which" queries'
+    )
 
     // But "choose between" should still trigger
     const leanSections2 = promptBuilder.getGeneralistConditionalSections(
@@ -105,7 +114,10 @@ describe('Lean Conditional Gating', () => {
       false,
       'lean'
     )
-    assert.ok(leanSections2.includeAskQuestionPrompt, 'Lean should trigger ask_user for explicit "choose between"')
+    assert.ok(
+      leanSections2.includeAskQuestionPrompt,
+      'Lean should trigger ask_user for explicit "choose between"'
+    )
   })
 
   test('full mode keeps broad ask-question regex', () => {
@@ -114,6 +126,9 @@ describe('Lean Conditional Gating', () => {
       false,
       'full'
     )
-    assert.ok(fullSections.includeAskQuestionPrompt, 'Full should trigger ask_user for broad "which" queries')
+    assert.ok(
+      fullSections.includeAskQuestionPrompt,
+      'Full should trigger ask_user for broad "which" queries'
+    )
   })
 })

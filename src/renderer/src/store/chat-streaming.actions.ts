@@ -15,12 +15,9 @@ import {
   StreamSegmentAccumulator,
   type SegmentState
 } from '@renderer/utils/stream-segment-accumulator'
-import type {
-  ConversationPhase,
-  Message,
-  ToolActivity
-} from '../../../shared/types'
+import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
+import type { ChatState } from './chat.store'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +44,12 @@ export interface ChatStreamingState {
 }
 
 type GetFn = () => ChatStreamingState
-type SetFn = (partial: Partial<ChatStreamingState> | ((state: ChatStreamingState) => Partial<ChatStreamingState>)) => void
+// SetFn mirrors zustand's `set` for the full ChatState — the streaming actions
+// only touch the ChatStreamingState slice, but the callback receives the full
+// store state, so the param/return must be typed against ChatState.
+type SetFn = (
+  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
+) => void
 
 // ── ChatStreamingInternals ──────────────────────────────────────────────────
 
@@ -268,15 +270,15 @@ export function finalizeStreamAction(
         streamingConversationIds: newStreamingIds
       }
     })
-    // Then reload messages from DB asynchronously
+    // Reload messages from DB asynchronously.
+    // DB is the source of truth — no optimistic message preservation.
+    // The previous merge strategy incorrectly kept temp-* optimistic messages
+    // (whose IDs never exist in the DB), causing duplicate user bubbles.
     window.api
       .getMessages({ conversationId: activeConversation.id })
       .then((dbMessages) => {
         if (dbMessages.length > 0) {
-          const currentMessages = get()?.messages ?? []
-          set({
-            messages: dbMessages.length > 0 ? dbMessages : currentMessages
-          })
+          set({ messages: dbMessages })
         }
       })
       .catch((error) => {

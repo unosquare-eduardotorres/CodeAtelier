@@ -11,33 +11,24 @@
  *   - MCP servers mounted: code-graph + semantic-search + git-context (NO control-actions).
  */
 
-import type { AuditMode, AuditTrackId, CostPreference } from '../../../shared/types'
+import type { AuditMode, AuditTrackId } from '../../../shared/types'
 import type { RoundContext } from '../audit-prompt-templates'
 import type {
-  AdapterIntentContext,
-  AdapterMcpContext,
-  AdapterMcpResult,
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx,
-  AgentRoleAdapter,
-  AgentSessionEventName
+  AdapterSessionLifecycleCtx
 } from '../agent-session.types'
-import type { ControlActionCallbacks } from '../control-actions.tool'
 import { workspaceRepository } from '../../db/repositories'
 import { renderAuditPrompt } from '../audit-prompt-templates'
 import { detectTechStack } from '../tech-stack-detector.service'
-import { chatAgentLogger } from '../../logger'
-import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
-import { modelConfigService } from '../model-config.service'
-import { buildReadOnlyToolConfig } from './evaluation-mcp-config'
+import { BaseRoleAdapter, type McpStrategy } from './base.adapter'
+import type { AdapterIntentContext } from '../agent-session.types'
 
-export class AuditRoleAdapter implements AgentRoleAdapter {
+export class AuditRoleAdapter extends BaseRoleAdapter {
   readonly role = 'audit' as const
   readonly agentId: string
   interactionTimeoutMs = 5 * 60_000 // 5 min per auditor (adjusted for local LLMs in onSessionStart)
 
-  private readonly log = chatAgentLogger
   private readonly workspaceId: string
   private readonly trackId: AuditTrackId
   private readonly mode: AuditMode
@@ -48,10 +39,6 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
 
   private systemPrompt: string | null = null
 
-  // Feature flags read on session start
-  private repomapEnabled = true
-  private semanticSearchEnabled = true
-
   constructor(params: {
     workspaceId: string
     trackId: AuditTrackId
@@ -60,6 +47,7 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
     roundContext?: RoundContext
     llmProvider?: import('../../../shared/types').LLMProvider
   }) {
+    super()
     this.workspaceId = params.workspaceId
     this.trackId = params.trackId
     this.mode = params.mode
@@ -69,22 +57,12 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
     this.agentId = `audit-${params.trackId}-${params.workspaceId}`
   }
 
-  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
-    // Read workspace settings for MCP flags
-    try {
-      const settings = workspaceRepository.getSettings(this.workspaceId)
-      this.repomapEnabled = settings.repomapEnabled !== false
-      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
-    } catch {
-      /* non-fatal */
-    }
+  override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(this.workspaceId)
 
-    // Increase timeout for local LLMs — they're much slower but still productive.
-    // 45 min gives enough headroom to manually observe progress via live stream.
-    if (this.llmProvider === 'local-llm') {
-      this.interactionTimeoutMs = 45 * 60_000 // 45 min for local LLMs
-      this.log.info(`[audit-adapter] Using extended timeout (45 min) for local LLM`)
-    }
+    // Pattern 3: Centralized local LLM timeout
+    this.applyLocalLlmTimeout(this.llmProvider)
 
     // Detect tech stack and build prompt
     const detectedTechs = ctx.workspacePath ? detectTechStack(ctx.workspacePath).detectedTechs : []
@@ -98,9 +76,8 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       }
     })()
 
-    // Resolve model for lean prompt optimization (Opus 4.8+ gets compressed guidance)
-    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
-    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, 'audit')
+    // Pattern 1: Centralized model resolution
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'audit')
 
     this.systemPrompt = renderAuditPrompt({
       trackId: this.trackId,
@@ -111,28 +88,12 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
       model: resolvedModel
     })
 
-    // Append MCP tool guidance (same as DaVinci/Grill) so the agent knows how to use custom tools
-    const featureFlags: PromptFeatureFlags = {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: false, // auditors don't mount GitHub tools
-      includeGitContext: this.llmProvider !== 'local-llm',
-      includeCheckpoint: false // auditors don't mount checkpoint tools
-    }
-
-    this.systemPrompt = appendMcpToolGuidance(this.systemPrompt, 1, featureFlags, resolvedModel)
+    // Append MCP tool guidance via base class helper
+    this.systemPrompt = this.appendToolGuidance(this.systemPrompt, 1, resolvedModel)
 
     this.log.info(
       `[audit-adapter] ${this.trackId} audit started for workspace=${this.workspaceId} mode=${this.mode}`
     )
-  }
-
-  refreshFeatureFlags(_ctx: AdapterSessionLifecycleCtx): void {
-    // No-op — single-shot, no need to refresh mid-audit
-  }
-
-  onConversationSwitch(_conversationId: string): void {
-    // No-op — auditors don't switch conversations
   }
 
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
@@ -147,45 +108,22 @@ export class AuditRoleAdapter implements AgentRoleAdapter {
     }
   }
 
-  buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    // Use the shared read-only tool config — same pattern as grill/council adapters.
-    // Local LLMs skip git-context to save tokens (Bash + git CLI equivalent).
-    return buildReadOnlyToolConfig({
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      hasWorkspace: !!ctx.workspaceId,
-      includeGitContext: this.llmProvider !== 'local-llm'
-    })
+  protected override getMcpStrategy(): McpStrategy {
+    return 'readonly'
+  }
+  protected override getIncludeGitContext(): boolean {
+    return this.llmProvider !== 'local-llm'
+  }
+  protected override persistMemory(): void {
+    /* no-op */
   }
 
-  buildControlCallbacks(_params: {
-    conversationId: string | null
-    emit: (event: AgentSessionEventName, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    // No-op — auditors don't use control tools
-    return {
-      onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
-    }
+  /** No-op — auditors don't emit intents. */
+  override emitDetectedIntents(_ctx: AdapterIntentContext): void {
+    /* no-op */
   }
 
-  emitDetectedIntents(_ctx: AdapterIntentContext): void {
-    // No-op — auditors don't emit intents
-  }
-
-  getCompactionThresholds(
-    _costPreference: CostPreference
-  ): { suggest: number; auto: number } | null {
-    return null
-  }
-
-  getPersonaId(): string | null {
-    return null
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.systemPrompt = null
     this.repomapEnabled = true
     this.semanticSearchEnabled = true

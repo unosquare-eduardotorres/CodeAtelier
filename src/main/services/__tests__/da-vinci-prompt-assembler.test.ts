@@ -222,9 +222,7 @@ describe('DaVinciPromptAssembler', () => {
 
   test('buildEffectiveMessage_uses_lean_mode_block_for_opus_48', () => {
     const { assembler } = createPromptAssembler()
-    const result = assembler.buildEffectiveMessage(
-      defaultMessageOpts({ model: 'claude-opus-4-8' })
-    )
+    const result = assembler.buildEffectiveMessage(defaultMessageOpts({ model: 'claude-opus-4-8' }))
     // Lean plan mode block is shorter and doesn't contain certain sections
     assert.ok(result.includes('<mode-context>'), 'Should contain mode-context block')
     // The lean plan mode doesn't have "### Questions vs. Plans — Know the Difference (IMPORTANT)"

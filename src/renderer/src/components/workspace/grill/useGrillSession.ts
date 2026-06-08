@@ -7,7 +7,8 @@ import type {
   GrillTrackId,
   GrillTrackScore,
   DecisionEntry,
-  LLMProvider
+  LLMProvider,
+  GrillStructuredPlan
 } from '../../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
 import type { GrillChatMessage, GrillPhase } from '../GrillChatView'
@@ -71,10 +72,20 @@ export function useGrillSession(opts: {
   isNewSession?: boolean
   onBack: () => void
   onComplete: () => void
+  onRestorePlan?: (plan: GrillStructuredPlan) => void
 }): GrillSessionResult {
-  const { ideaId, conversationId, ideaTitle, ideaDescription, isNewSession, onBack, onComplete } =
-    opts
-  const { loadConversations, selectConversation, sendMessage } = useChatActions()
+  const {
+    ideaId,
+    conversationId,
+    ideaTitle,
+    ideaDescription,
+    isNewSession,
+    onBack,
+    onComplete,
+    onRestorePlan
+  } = opts
+  const { loadConversations, selectConversation, appendLocalMessage, setStreamingIndicator } =
+    useChatActions()
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const { completeFromGrill, convertDirect } = useIdeaStore()
 
@@ -120,7 +131,9 @@ export function useGrillSession(opts: {
       .then((settings) => {
         setGrillProvider((settings.llmProvider as LLMProvider) ?? 'claude')
       })
-      .catch((err) => console.warn('[useGrillSession] Non-fatal: workspace settings load failed:', err))
+      .catch((err) =>
+        console.warn('[useGrillSession] Non-fatal: workspace settings load failed:', err)
+      )
   }, [activeWorkspace?.id])
 
   // ── Start track evaluation ──
@@ -173,88 +186,110 @@ export function useGrillSession(opts: {
     initQuestionStates
   })
 
-  // ── On mount: load saved state or start fresh ──
+  // ── On mount: restore saved state (snapshot-authoritative) or start fresh ──
+  //
+  // The grill writes to two stores: the `grill_sessions` row (live status +
+  // currentIteration, but agent-narration-only messages) and the
+  // `ideas.grill_decisions` JSON snapshot (the ONLY place holding the full chat,
+  // history, trackScores and per-iteration decisions). We read both and treat
+  // the snapshot as authoritative for the data only it carries.
   useEffect(() => {
     if (mountedRef.current) return
     mountedRef.current = true
 
     const init = async (): Promise<void> => {
-      try {
-        const dbSession = await window.api.grillGetSession({ ideaId })
-        if (dbSession && typeof dbSession === 'object') {
-          const s = dbSession as {
-            status?: string
-            iterationCount?: number
-            history?: unknown[]
-            trackScores?: unknown[]
-            messages?: unknown[]
-            currentIteration?: GrillIteration | null
-            questionStates?: Record<string, QuestionState> | null
-            trackId?: GrillTrackId | null
-            currentScore?: number | null
-          }
-          if (s.iterationCount) setIterationCount(s.iterationCount)
-          if (s.history) setHistory(s.history as HistoryEntry[])
-          if (s.trackScores) setTrackScores(s.trackScores as GrillTrackScore[])
-          if (s.messages) setChatMessages(s.messages as GrillChatMessage[])
-          if (s.currentIteration) setCurrentIteration(s.currentIteration)
-          if (s.questionStates) setQuestionStates(s.questionStates as Record<string, QuestionState>)
-          if (s.trackId) setSelectedTrack(s.trackId)
+      // A brand-new session never restores — go straight to track selection.
+      if (isNewSession) {
+        setPhase('selecting')
+        return
+      }
 
-          if (s.status === 'evaluating') {
-            setPhase('evaluating')
-            return
-          }
-          if (s.status === 'awaiting_answers') {
-            setPhase('answering')
-            return
-          }
-          if (s.currentScore != null) {
-            if (s.currentIteration?.questions?.length && s.questionStates) {
-              setPhase('answering')
-            } else if (s.trackScores && (s.trackScores as unknown[]).length > 0) {
-              setPhase('selecting')
-            } else {
-              setPhase('paused')
-            }
-            return
+      // Live DB session — freshest status + currentIteration + (if completed) plan.
+      let dbSession: {
+        status?: string
+        currentIteration?: GrillIteration | null
+        plan?: GrillStructuredPlan | null
+      } | null = null
+      try {
+        const s = await window.api.grillGetSession({ ideaId })
+        if (s && typeof s === 'object') {
+          dbSession = s as {
+            status?: string
+            currentIteration?: GrillIteration | null
+            plan?: GrillStructuredPlan | null
           }
         }
       } catch {
-        /* non-fatal */
+        /* non-fatal — fall back to the snapshot */
       }
 
-      try {
-        const ideas = useIdeaStore.getState().ideas
-        const idea = ideas.find((i) => i.id === ideaId)
-        if (idea?.grillDecisions) {
-          const saved = JSON.parse(idea.grillDecisions)
-          if (saved.iterationCount) setIterationCount(saved.iterationCount)
-          if (saved.history) setHistory(saved.history)
-          if (saved.trackScores) setTrackScores(saved.trackScores)
-          if (saved.chatMessages) setChatMessages(saved.chatMessages)
-          if (saved.currentIteration) setCurrentIteration(saved.currentIteration)
-          if (saved.questionStates) setQuestionStates(saved.questionStates)
-          if (saved.activeTrack) setSelectedTrack(saved.activeTrack as GrillTrackId)
-          if (saved.currentScore != null && !isNewSession) {
-            if (saved.currentIteration?.questions?.length > 0 && saved.questionStates) {
-              setPhase('answering')
-            } else if (saved.trackScores?.length > 0) {
-              setPhase('selecting')
-            } else {
-              setPhase('paused')
-            }
-            return
-          }
+      // Completed handoff — transient state was stripped; surface the plan-only view.
+      if (dbSession?.status === 'completed') {
+        if (dbSession.plan) {
+          onRestorePlan?.(dbSession.plan)
+          setPhase('completed')
+        } else {
+          // Convert-Directly handoffs keep no grill plan — nothing to restore.
+          setPhase('selecting')
         }
+        return
+      }
+
+      // JSON snapshot — full chat + history + trackScores + per-iteration decisions.
+      let snapshot: {
+        iterationCount?: number
+        history?: HistoryEntry[]
+        trackScores?: GrillTrackScore[]
+        chatMessages?: GrillChatMessage[]
+        currentIteration?: GrillIteration | null
+        activeTrack?: GrillTrackId
+      } | null = null
+      try {
+        const idea = useIdeaStore.getState().ideas.find((i) => i.id === ideaId)
+        if (idea?.grillDecisions) snapshot = JSON.parse(idea.grillDecisions)
       } catch {
         /* ignore parse errors */
       }
 
-      setPhase('selecting')
+      // Nothing persisted anywhere → fresh selection screen.
+      if (!dbSession && !snapshot) {
+        setPhase('selecting')
+        return
+      }
+
+      // Snapshot is authoritative for the data only it carries.
+      if (snapshot) {
+        if (snapshot.iterationCount) setIterationCount(snapshot.iterationCount)
+        if (snapshot.history) setHistory(snapshot.history)
+        if (snapshot.trackScores) setTrackScores(snapshot.trackScores)
+        if (snapshot.chatMessages) setChatMessages(snapshot.chatMessages)
+        if (snapshot.activeTrack) setSelectedTrack(snapshot.activeTrack)
+      }
+
+      // Prefer the live row's currentIteration (freshest), fall back to snapshot.
+      const currentIteration = dbSession?.currentIteration ?? snapshot?.currentIteration ?? null
+      if (currentIteration) {
+        setCurrentIteration(currentIteration)
+        // Reset unsubmitted toggles — restored card starts from recommended defaults.
+        initQuestionStates(currentIteration.questions ?? [])
+      }
+
+      // Derive phase.
+      const status = dbSession?.status
+      const hasCurrentQuestions = (currentIteration?.questions?.length ?? 0) > 0
+      const hasTrackScores = (snapshot?.trackScores?.length ?? 0) > 0
+      if (status === 'evaluating') {
+        setPhase('evaluating')
+      } else if (status === 'awaiting_answers' || hasCurrentQuestions) {
+        setPhase('answering')
+      } else if (hasTrackScores) {
+        setPhase('selecting')
+      } else {
+        setPhase('paused')
+      }
     }
     init()
-  }, [activeWorkspace, isNewSession, ideaTitle, description, history, ideaId, selectedTrack])
+  }, [isNewSession, ideaId, setCurrentIteration, initQuestionStates, onRestorePlan])
 
   // ── Helpers ──
 
@@ -352,6 +387,7 @@ export function useGrillSession(opts: {
     history,
     trackScores,
     questionStates,
+    chatMessages,
     condensedDocument,
     saveDecisions,
     formatAnswers,
@@ -365,7 +401,8 @@ export function useGrillSession(opts: {
     convertDirect,
     loadConversations,
     selectConversation,
-    sendMessage,
+    appendLocalMessage,
+    setStreamingIndicator,
     onBack,
     onComplete
   })

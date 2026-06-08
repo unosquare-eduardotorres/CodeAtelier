@@ -19,12 +19,15 @@ import type {
   AuditFinding,
   AuditorStatus,
   AuditTrack,
+  AuditApplicability,
   AuditCoverageStats,
-  LLMProvider
+  LLMProvider,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
 import { AUDIT_TRACKS } from '../../shared/constants'
 import { AgentSessionService } from './agent-session.service'
+import { runOneShotClaude } from './one-shot-claude'
 import { AuditRoleAdapter } from './role-adapters/audit.adapter'
 import {
   parseAuditResponse,
@@ -60,6 +63,7 @@ export interface AuditResultPayload {
   skillsUsed: string[]
   coverageStats?: AuditCoverageStats
   coverageSufficient?: boolean
+  applicability?: AuditApplicability
 }
 
 export interface AuditIntermediateFindingsPayload {
@@ -365,19 +369,22 @@ export class AuditAgentService extends EventEmitter {
       } satisfies AuditProgressPayload)
 
       try {
-        const roundResult = await this.runAuditRound({
-          workspaceId: params.workspaceId,
-          workspacePath: params.workspacePath,
-          trackId: params.trackId,
-          mode: params.mode,
-          batch,
-          roundNumber,
-          previousFindings: allFindings,
-          remainingFileCount: remainingFiles.length - batch.length,
-          coverageTracker,
-          isFirstRound: roundNumber === 1,
-          llmProvider: params.llmProvider
-        }, state)
+        const roundResult = await this.runAuditRound(
+          {
+            workspaceId: params.workspaceId,
+            workspacePath: params.workspacePath,
+            trackId: params.trackId,
+            mode: params.mode,
+            batch,
+            roundNumber,
+            previousFindings: allFindings,
+            remainingFileCount: remainingFiles.length - batch.length,
+            coverageTracker,
+            isFirstRound: roundNumber === 1,
+            llmProvider: params.llmProvider
+          },
+          state
+        )
 
         allFindings.push(...roundResult.findings)
 
@@ -393,7 +400,11 @@ export class AuditAgentService extends EventEmitter {
         this.emit('progress', {
           trackId: params.trackId,
           status: 'running',
-          streamChunk: `\n\n📊 Round ${roundNumber}: ${roundResult.findings.length} finding(s), ${stats.fileCount}/${discovery.totalFiles} files covered\n\n`
+          streamChunk:
+            `\n\n📊 Round ${roundNumber}: ${roundResult.findings.length} finding(s), ${stats.fileCount}/${discovery.totalFiles} files covered` +
+            (roundResult.findings.length === 0 && stats.toolCallCount === 0
+              ? ` ⚠️ No tool calls detected — the LLM may not have responded properly.\n\n`
+              : `\n\n`)
         } satisfies AuditProgressPayload)
 
         this.emit('intermediate_findings', {
@@ -462,6 +473,15 @@ export class AuditAgentService extends EventEmitter {
     gated.coveragePercent =
       discovery.totalFiles > 0 ? Math.round((stats.fileCount / discovery.totalFiles) * 100) : null
 
+    // Derive applicability: no files discovered for this track ⇒ not-applicable;
+    // failed coverage gate ⇒ insufficient; otherwise the score is trustworthy.
+    const applicability: AuditApplicability =
+      discovery.totalFiles === 0 || stats.fileCount === 0
+        ? 'not-applicable'
+        : gated.isSufficient
+          ? 'ok'
+          : 'insufficient'
+
     return {
       trackId: params.trackId,
       score: gated.score,
@@ -470,7 +490,8 @@ export class AuditAgentService extends EventEmitter {
       summary: gated.summary,
       skillsUsed: [],
       coverageStats: gated.coverageStats,
-      coverageSufficient: gated.isSufficient
+      coverageSufficient: gated.isSufficient,
+      applicability
     }
   }
 
@@ -515,6 +536,28 @@ export class AuditAgentService extends EventEmitter {
     session.on('chunk', (chunk: StreamChunk) => {
       params.coverageTracker.onChunk(chunk)
 
+      // Surface error chunks — CLI auth failures, API issues, invalid flags
+      if (chunk.type === 'error' && chunk.error) {
+        auditLog.error(`[audit:${params.trackId}] Error chunk: ${chunk.error.slice(0, 300)}`)
+        this.emit('progress', {
+          trackId: params.trackId,
+          status: 'running',
+          streamChunk: `\n⚠️ Error: ${chunk.error.slice(0, 200)}\n`
+        } satisfies AuditProgressPayload)
+        return
+      }
+
+      // Surface auth issues so the user knows to fix credentials
+      if (chunk.type === 'auth_status' && chunk.content) {
+        auditLog.warn(`[audit:${params.trackId}] Auth status: ${chunk.content}`)
+        this.emit('progress', {
+          trackId: params.trackId,
+          status: 'running',
+          streamChunk: `\n🔑 ${chunk.content}\n`
+        } satisfies AuditProgressPayload)
+        return
+      }
+
       if (chunk.type === 'text' && chunk.content && this.isApiErrorText(chunk.content)) {
         auditLog.warn(
           `[audit:${params.trackId}] Suppressed API error from stream: ${chunk.content.slice(0, 150)}`
@@ -537,6 +580,11 @@ export class AuditAgentService extends EventEmitter {
       this.emit('stream', { trackId: params.trackId, chunk })
     })
 
+    // Re-emit inner-session status so the live token usage modal reflects audit activity.
+    session.on('statusUpdate', (status: AgentStatus) => {
+      this.emit('status', { workspaceId: params.workspaceId, status })
+    })
+
     try {
       await session.start(params.workspacePath, 'plan')
 
@@ -552,15 +600,44 @@ export class AuditAgentService extends EventEmitter {
       }
 
       const responseText = session.getStreamedContent()
+
+      // Detect empty/very short responses — likely CLI or API failure
+      if (responseText.length < 50) {
+        auditLog.error(
+          `[audit:${params.trackId}] Round ${params.roundNumber} produced near-empty response ` +
+            `(${responseText.length} chars). Possible CLI/API issue. ` +
+            `Response: "${responseText.slice(0, 100)}"`
+        )
+      }
+
       const parsed = parseAuditResponse(responseText)
 
-      if (
-        params.isFirstRound &&
-        parsed.score === 0 &&
-        parsed.findings.length === 0 &&
-        responseText.length > 200
-      ) {
-        return this.attemptToolFreeRecovery(params, responseText)
+      if (params.isFirstRound && parsed.score === 0 && parsed.findings.length === 0) {
+        if (responseText.length > 100) {
+          // Model responded but didn't emit structured blocks — try recovery
+          return this.attemptToolFreeRecovery(params, responseText)
+        }
+        // Near-empty response — emit diagnostic finding so the user sees WHY it failed
+        auditLog.error(
+          `[audit:${params.trackId}] Round 1 produced ${responseText.length}-char response with 0 findings`
+        )
+        return {
+          findings: [
+            {
+              id: randomUUID(),
+              severity: 'info' as const,
+              title: `${params.trackId} audit could not complete`,
+              description:
+                `The auditor received an empty or very short response (${responseText.length} chars) from the LLM. ` +
+                `This usually indicates a CLI authentication issue, API rate limit, or invalid CLI flags. ` +
+                `Check that the "claude" CLI is working by running "claude -p hello" in your terminal.`,
+              recommendation:
+                'Verify Claude CLI access: run "claude --version" and "claude -p hello" in your terminal.'
+            }
+          ],
+          score: null,
+          summary: 'Audit could not complete — empty LLM response. Check Claude CLI configuration.'
+        }
       }
 
       return {
@@ -581,7 +658,7 @@ export class AuditAgentService extends EventEmitter {
   // ── Private: tool-free recovery nudge ─────────────────────────────────
 
   private async attemptToolFreeRecovery(
-    params: { trackId: AuditTrackId; workspacePath: string },
+    params: { trackId: AuditTrackId; workspacePath: string; workspaceId?: string },
     responseText: string
   ): Promise<{ findings: AuditFinding[]; score: number | null; summary: string }> {
     auditLog.warn(
@@ -589,8 +666,6 @@ export class AuditAgentService extends EventEmitter {
     )
 
     try {
-      const { execFileSync } = await import('node:child_process')
-
       const nudgePrompt =
         `Your previous audit analysis is below. You investigated the codebase but did not emit any finding blocks.\n\n` +
         `--- ANALYSIS ---\n${responseText.slice(0, 8000)}\n--- END ---\n\n` +
@@ -598,17 +673,27 @@ export class AuditAgentService extends EventEmitter {
         '```json\n{"score": <0-100>, "summary": "<2-3 sentences>", "findings": [{"severity": "...", "title": "...", "description": "...", "filePath": "...", "recommendation": "..."}]}\n```\n\n' +
         `Score conservatively. Include findings for what you DID inspect. Output ONLY the JSON block.`
 
-      const nudgeText = execFileSync('claude', [
-        '-p', nudgePrompt,
-        '--model', modelConfigService.getModel(params.workspacePath, 'da-vinci:plan'),
-        '--system-prompt', 'You are an audit result formatter. Output only the requested JSON block.',
-        '--permission-mode', 'plan',
-        '--max-turns', '1',
-        '--output-format', 'text'
-      ], {
-        encoding: 'utf-8',
-        timeout: 60_000,
-        cwd: params.workspacePath
+      const recoveryModel = modelConfigService.getModel(params.workspacePath, 'da-vinci:plan')
+      const { text: nudgeText } = await runOneShotClaude({
+        feature: 'audit_recovery',
+        model: recoveryModel,
+        workspaceId: params.workspaceId ?? null,
+        args: [
+          '-p',
+          nudgePrompt,
+          '--model',
+          recoveryModel,
+          '--system-prompt',
+          'You are an audit result formatter. Output only the requested JSON block.',
+          '--permission-mode',
+          'plan',
+          '--max-turns',
+          '1'
+        ],
+        cli: {
+          timeout: 60_000,
+          cwd: params.workspacePath
+        }
       })
 
       const nudgeParsed = parseAuditResponse(nudgeText)
@@ -724,7 +809,11 @@ function calculateOverallScore(
   results: AuditResultPayload[],
   tracks: Record<AuditTrackId, AuditTrack>
 ): number | null {
-  const completed = results.filter((r) => r.status === 'completed')
+  // Exclude tracks whose coverage was insufficient (or not-applicable) — a
+  // hallucinated 0 from an empty audit must not drag down the overall score.
+  const completed = results.filter(
+    (r) => r.status === 'completed' && r.coverageSufficient !== false
+  )
   if (completed.length === 0) return null
 
   let weightedSum = 0

@@ -47,6 +47,6 @@ try {
     stdio: ['pipe', 'ignore', 'ignore'],
     timeout: 5000
   })
-} catch (e) {
+} catch {
   // Best-effort logging — don't block on failure
 }

@@ -3,6 +3,10 @@
 import './message.repository.test'
 import './conversation.repository.test'
 import './workspace.repository.test'
+import './grill-session.repository.test'
+import './mpa-campaign.repository.test'
+import './usage-log.repository.test'
+import './migration-v102.test'
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

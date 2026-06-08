@@ -18,20 +18,26 @@ describe('MPA Pre-flight Classifier', () => {
   })
 
   test('classifies refactor goal', () => {
-    const result = classifyGoal('Refactor the payment module to use repository pattern for better testability')
+    const result = classifyGoal(
+      'Refactor the payment module to use repository pattern for better testability'
+    )
     assert.equal(result.isValid, true)
     assert.equal(result.goalType, 'refactor')
     assert.deepEqual(result.phases, ['plan', 'execute', 'verify'])
   })
 
   test('classifies bugfix goal', () => {
-    const result = classifyGoal('Fix the login page crashing when users enter special characters in their password')
+    const result = classifyGoal(
+      'Fix the login page crashing when users enter special characters in their password'
+    )
     assert.equal(result.isValid, true)
     assert.equal(result.goalType, 'bugfix')
   })
 
   test('classifies test goal', () => {
-    const result = classifyGoal('Add unit tests for all services in src/services with good coverage')
+    const result = classifyGoal(
+      'Add unit tests for all services in src/services with good coverage'
+    )
     assert.equal(result.isValid, true)
     assert.equal(result.goalType, 'tests')
     assert.deepEqual(result.phases, ['plan', 'execute'])
@@ -63,7 +69,7 @@ describe('MPA Pre-flight Classifier', () => {
   })
 
   test('rejects goals over max length', () => {
-    const result = classifyGoal('A'.repeat(2001))
+    const result = classifyGoal('A'.repeat(50001))
     assert.equal(result.isValid, false)
     assert.ok(result.rejectionReason?.includes('long'))
   })
@@ -79,13 +85,17 @@ describe('MPA Pre-flight Classifier', () => {
   // ── Edge cases ──
 
   test('handles goal with only test keyword but specific enough', () => {
-    const result = classifyGoal('Add integration tests for the user authentication flow including error cases')
+    const result = classifyGoal(
+      'Add integration tests for the user authentication flow including error cases'
+    )
     assert.equal(result.isValid, true)
     assert.equal(result.goalType, 'tests')
   })
 
   test('defaults to feature for ambiguous goals', () => {
-    const result = classifyGoal('Create a new dashboard page with charts showing sales data over time')
+    const result = classifyGoal(
+      'Create a new dashboard page with charts showing sales data over time'
+    )
     assert.equal(result.isValid, true)
     assert.equal(result.goalType, 'feature')
   })

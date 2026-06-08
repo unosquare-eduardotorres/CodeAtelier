@@ -5,7 +5,7 @@ import {
   getFlatToolActivities
 } from '@renderer/store/grill-stream.store'
 import { stripGrillEvaluationBlocks } from '@renderer/utils/strip-grill-json'
-import type { GrillTrackId, GrillTrackScore } from '../../../../../shared/types'
+import type { GrillTrackId, GrillTrackScore, GrillQuestion } from '../../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
 import type { GrillChatMessage, GrillPhase } from '../GrillChatView'
 import type { GrillIteration } from './useGrillQuestionState'
@@ -23,8 +23,8 @@ export function useGrillStreamListeners(opts: {
   setPhase: (phase: GrillPhase) => void
   setTrackScores: React.Dispatch<React.SetStateAction<GrillTrackScore[]>>
   setSuggestedNextTrack: (val: { trackId: GrillTrackId; reason: string } | null) => void
-  checkAndSetRepeated: (questions: unknown[]) => void
-  initQuestionStates: (questions: unknown[]) => void
+  checkAndSetRepeated: (questions: GrillQuestion[]) => void
+  initQuestionStates: (questions: GrillQuestion[]) => void
 }): void {
   const {
     selectedTrack,
@@ -39,6 +39,20 @@ export function useGrillStreamListeners(opts: {
 
   useEffect(() => {
     const grillStore = useGrillStreamStore.getState()
+
+    // Progressive bubbles: when the accumulator finalizes a segment (at
+    // heading/tool boundaries), commit it as a real chat message immediately
+    // so it materializes above the ThinkingIndicator — same feel as chat.
+    grillStore.setOnSegmentCommit((segment) => {
+      const cleanContent = stripGrillEvaluationBlocks(segment.content)
+      if (cleanContent.trim() || segment.toolActivities.length > 0) {
+        setChatMessages((prev) => [
+          ...prev,
+          { type: 'agent', content: cleanContent, toolActivities: segment.toolActivities }
+        ])
+      }
+      grillStore.clearCommittedSegments()
+    })
 
     const unsubChunk = window.api.onGrillStreamChunk((data) => {
       grillStore.handleStreamChunk(data)
@@ -125,6 +139,7 @@ export function useGrillStreamListeners(opts: {
     })
 
     return () => {
+      grillStore.setOnSegmentCommit(null)
       unsubChunk()
       unsubEval()
       unsubComplete()

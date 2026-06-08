@@ -40,7 +40,6 @@ describe('Opus 4.8 Thinking Config', () => {
   })
 
   test('effort for opus 4.8 model uses high', () => {
-    const modelId = 'claude-opus-4-8'
     const effort = 'high' // Opus 4.8 at high ≥ 4.7 at xhigh
     assert.equal(effort, 'high')
   })

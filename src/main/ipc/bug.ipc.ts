@@ -8,12 +8,12 @@ import { requireObject, requireString } from './validate-args'
 export function registerBugIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.BUG_REPORT, (event, rawArgs: unknown) => {
     validateSender(event)
-    const input = requireObject(rawArgs, IPC_CHANNELS.BUG_REPORT) as CreateBugInput
-    requireString(input as Record<string, unknown>, 'errorMessage', IPC_CHANNELS.BUG_REPORT)
-    requireString(input as Record<string, unknown>, 'process', IPC_CHANNELS.BUG_REPORT)
-    requireString(input as Record<string, unknown>, 'appVersion', IPC_CHANNELS.BUG_REPORT)
+    const input = requireObject(rawArgs, IPC_CHANNELS.BUG_REPORT)
+    requireString(input, 'errorMessage', IPC_CHANNELS.BUG_REPORT)
+    requireString(input, 'process', IPC_CHANNELS.BUG_REPORT)
+    requireString(input, 'appVersion', IPC_CHANNELS.BUG_REPORT)
 
-    const result = bugRepository.upsertBug(input)
+    const result = bugRepository.upsertBug(input as unknown as CreateBugInput)
 
     if (result.isNew) {
       // Notify all renderer windows about the new bug

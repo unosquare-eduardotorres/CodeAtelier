@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   summary TEXT,
   claude_session_id TEXT,
+  persona_specialist_id TEXT DEFAULT NULL REFERENCES specialists(id) ON DELETE SET NULL,
   llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
   effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))
 );
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS messages (
   content_md TEXT NOT NULL,
   attachments_json TEXT DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  parent_message_id TEXT REFERENCES messages(id)
+  parent_message_id TEXT REFERENCES messages(id),
+  tool_activities_json TEXT DEFAULT NULL
 );
 
 -- Attachments: context files uploaded by user
@@ -420,6 +422,31 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
 
+-- ── Unified Token Usage Log ────────────────────────────────────────────────
+
+-- Single sink for ALL LLM token consumption (chat, grill, council, mpa, audit,
+-- and background one-shot claude calls) — powers the by-feature usage breakdown.
+CREATE TABLE IF NOT EXISTS usage_log (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  feature TEXT NOT NULL,
+  agent_type TEXT,
+  model TEXT,
+  workspace_id TEXT,
+  conversation_id TEXT,
+  session_id TEXT,
+  turn_number INTEGER,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0,
+  cache_creation_tokens INTEGER DEFAULT 0,
+  cost_cents INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_usage_log_workspace ON usage_log(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_usage_log_feature ON usage_log(feature);
+CREATE INDEX IF NOT EXISTS idx_usage_log_conversation ON usage_log(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
+
 -- ── Workspace Health: Audit Runs & Results ────────────────────────────────────
 
 -- Audit runs (multiple per workspace — history of up to 10 kept by repository)
@@ -474,6 +501,7 @@ CREATE TABLE IF NOT EXISTS grill_sessions (
   history TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(history)),
   question_states TEXT DEFAULT NULL,
   current_iteration TEXT DEFAULT NULL,
+  plan_json TEXT DEFAULT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

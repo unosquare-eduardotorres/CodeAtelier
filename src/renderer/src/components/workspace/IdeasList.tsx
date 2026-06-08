@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Lightbulb, Plus } from 'lucide-react'
+import { Lightbulb, Plus, MessageSquare, Flame, Play } from 'lucide-react'
 import { useIdeaStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ConfirmDialog, Skeleton } from '@renderer/components/common'
 import type { Idea } from '../../../../shared/types'
@@ -11,6 +11,114 @@ import {
   type IdeaFilter
 } from './ideas'
 
+// ── Empty-state onboarding panel ──
+
+function IdeasEmptyState({ onCreateIdea }: { onCreateIdea: () => void }): React.JSX.Element {
+  return (
+    <div className="flex flex-col items-center justify-center py-10 px-4">
+      <div className="max-w-2xl w-full space-y-6">
+        {/* Header */}
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-warning/15 mb-2">
+            <Lightbulb size={28} className="text-warning" />
+          </div>
+          <h2 className="text-lg font-semibold text-text-primary">Your Idea Board</h2>
+          <p className="text-sm text-text-secondary max-w-md mx-auto">
+            Capture rough ideas now, refine them later. Unlike chat, ideas
+            <span className="text-text-primary font-medium"> persist across sessions</span> and can
+            be thoroughly vetted before you start building.
+          </p>
+        </div>
+
+        {/* 3-column workflow cards */}
+        <div className="grid grid-cols-3 gap-3">
+          {/* Step 1: Capture */}
+          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-warning/15 flex items-center justify-center">
+                <Lightbulb size={14} className="text-warning" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Capture</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Jot down a rough idea — a title and optional description. Come back to it anytime.
+            </p>
+          </div>
+
+          {/* Step 2: Grill Me */}
+          <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center">
+                <Flame size={14} className="text-accent" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Grill Me</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              An AI analyst interviews you across 8 specialist tracks — requirements, architecture,
+              security & more — scoring your spec and asking tough questions until it&apos;s solid.
+            </p>
+          </div>
+
+          {/* Step 3: Build */}
+          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
+                <Play size={14} className="text-primary-text" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Build</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              When ready, convert your refined idea into a chat session and start building with full
+              context carried over.
+            </p>
+          </div>
+        </div>
+
+        {/* Chat vs Ideas comparison */}
+        <div className="rounded-lg border border-border-subtle bg-surface-overlay p-4">
+          <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
+            💬 Chat vs 💡 Ideas
+          </p>
+          <div className="grid grid-cols-2 gap-3 text-xs text-text-secondary">
+            <div className="flex items-start gap-2">
+              <MessageSquare size={12} className="text-text-muted mt-0.5 flex-shrink-0" />
+              <span>
+                <strong className="text-text-primary">Chat</strong> — freeform conversation for
+                immediate tasks, ephemeral thinking
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Lightbulb size={12} className="text-warning mt-0.5 flex-shrink-0" />
+              <span>
+                <strong className="text-text-primary">Ideas</strong> — persistent parking lot with
+                structured refinement before you build anything
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div className="flex flex-col items-center gap-2">
+          <button
+            onClick={onCreateIdea}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-warning/20 hover:bg-warning/30 text-warning rounded-xl transition-colors"
+          >
+            <Plus size={16} />
+            Capture Your First Idea
+          </button>
+          <p className="text-xs text-text-muted">
+            💡 Tip: type{' '}
+            <code className="px-1.5 py-0.5 rounded bg-surface-overlay text-accent text-xs">
+              /grillme
+            </code>{' '}
+            in any chat to jump here
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface IdeasListProps {
   onNavigateToChat: () => void
   onOpenGrillSession?: (
@@ -18,7 +126,8 @@ interface IdeasListProps {
     conversationId: string,
     ideaTitle: string,
     isNewSession?: boolean,
-    ideaDescription?: string
+    ideaDescription?: string,
+    reviewMode?: boolean
   ) => void
 }
 
@@ -45,26 +154,11 @@ export default function IdeasList({
   // Live grill status
   const [grillStatus, setGrillStatus] = useState<GrillStatus | null>(null)
 
+  // Idea IDs that have a persisted grill plan (eligible for read-only review)
+  const [plannedIdeaIds, setPlannedIdeaIds] = useState<Set<string>>(new Set())
+
   // New Idea modal state
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [newTitle, setNewTitle] = useState('')
-  const [newDescription, setNewDescription] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
-
-  const handleCreateIdea = async (): Promise<void> => {
-    if (!newTitle.trim() || !activeWorkspace || isCreating) return
-    setIsCreating(true)
-    try {
-      await createIdea(activeWorkspace.id, newTitle.trim(), newDescription.trim())
-      setShowCreateModal(false)
-      setNewTitle('')
-      setNewDescription('')
-    } catch (error) {
-      console.error('Failed to create idea:', error)
-    } finally {
-      setIsCreating(false)
-    }
-  }
 
   const filteredIdeas = useMemo(() => {
     let result = ideas
@@ -94,6 +188,16 @@ export default function IdeasList({
     const unsub = window.api.onGrillStatusChanged(setGrillStatus)
     return unsub
   }, [activeWorkspace?.id])
+
+  // Load the set of ideas that have a persisted plan (re-runs when ideas change
+  // so a freshly handed-off plan surfaces a Review Plan button on return).
+  useEffect(() => {
+    if (!activeWorkspace) return
+    window.api
+      .grillListPlannedIdeas({ workspaceId: activeWorkspace.id })
+      .then((ids) => setPlannedIdeaIds(new Set(ids)))
+      .catch(() => setPlannedIdeaIds(new Set()))
+  }, [activeWorkspace?.id, ideas])
 
   // ── Idea action handlers ──
 
@@ -167,6 +271,20 @@ export default function IdeasList({
     }
   }
 
+  // Read-only re-open of a completed grill to review the generated plan.
+  // Bypasses startGrill so it never flips idea.status back to 'grilling'.
+  const handleReviewPlan = (idea: Idea): void => {
+    if (!onOpenGrillSession) return
+    onOpenGrillSession(
+      idea.id,
+      idea.grillConversationId ?? '',
+      idea.title,
+      false,
+      idea.description,
+      true
+    )
+  }
+
   const handleGoToConversation = async (conversationId: string): Promise<void> => {
     if (!activeWorkspace) return
     try {
@@ -237,25 +355,13 @@ export default function IdeasList({
   if (ideas.length === 0) {
     return (
       <>
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Lightbulb size={32} className="text-warning/30 mb-3" />
-          <p className="text-sm text-text-secondary mb-3">No ideas yet</p>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-warning/20 hover:bg-warning/30 text-warning rounded-lg transition-colors"
-          >
-            <Plus size={14} />
-            New Idea
-          </button>
-        </div>
+        <IdeasEmptyState onCreateIdea={() => setShowCreateModal(true)} />
         {showCreateModal && (
           <CreateIdeaModal
-            title={newTitle}
-            description={newDescription}
-            isCreating={isCreating}
-            onTitleChange={setNewTitle}
-            onDescriptionChange={setNewDescription}
-            onCreate={handleCreateIdea}
+            onCreateIdea={async (title, description) => {
+              if (!activeWorkspace) return
+              await createIdea(activeWorkspace.id, title, description)
+            }}
             onClose={() => setShowCreateModal(false)}
           />
         )}
@@ -293,11 +399,13 @@ export default function IdeasList({
               key={idea.id}
               idea={idea}
               grillStatus={grillStatus}
+              hasPlan={plannedIdeaIds.has(idea.id)}
               onStartGrill={handleStartGrill}
               onContinueGrill={handleContinueGrill}
               onConvertDirect={handleConvertDirect}
               onGoToConversation={handleGoToConversation}
               onCreatePlan={handleCreatePlanFromCompleted}
+              onReviewPlan={handleReviewPlan}
               onDelete={setDeleteTarget}
               onEdit={handleEdit}
             />
@@ -307,12 +415,10 @@ export default function IdeasList({
 
       {showCreateModal && (
         <CreateIdeaModal
-          title={newTitle}
-          description={newDescription}
-          isCreating={isCreating}
-          onTitleChange={setNewTitle}
-          onDescriptionChange={setNewDescription}
-          onCreate={handleCreateIdea}
+          onCreateIdea={async (title, description) => {
+            if (!activeWorkspace) return
+            await createIdea(activeWorkspace.id, title, description)
+          }}
           onClose={() => setShowCreateModal(false)}
         />
       )}

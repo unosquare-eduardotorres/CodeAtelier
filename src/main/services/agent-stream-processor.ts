@@ -21,8 +21,14 @@ import {
   CLAUDE_1M_CONTEXT_WINDOW,
   MCP_TOOLS
 } from '../../shared/constants'
-import { resolveContextTier, TIER_LIMITS } from './context-management'
+import { resolveContextTier } from './context-management'
+import {
+  classifyCompaction,
+  resolveCompactionThresholds as resolveCompactionThresholdsPolicy,
+  resolveAppliedThresholds
+} from './compaction-policy'
 import { modelConfigService } from './model-config.service'
+import { featureForAgentRole } from './usage-tracker.service'
 import { supportsContext1M } from '../../shared/constants'
 import { conversationRepository, turnUsageRepository } from '../db/repositories'
 
@@ -73,11 +79,18 @@ export class AgentStreamProcessor {
       this.s.log.info(`[PIPELINE:terminal-reason] ${meta.terminalReason} for ${conversationId}`)
     }
 
+    const isBuild = this.s.currentMode !== 'plan'
+    const modelAction = `${this.s.adapter.role}:${isBuild ? 'build' : 'plan'}` as ModelAction
+    const resolvedModel = modelConfigService.getModel(this.s.workspacePath!, modelAction)
     const { totalTokens } = this.s.tokenTracker.recordTurn(meta, {
       turnCount,
       conversationId,
       dbSessionId: this.s.dbSessionId,
-      workspacePath: this.s.workspacePath!
+      workspacePath: this.s.workspacePath!,
+      feature: featureForAgentRole(this.s.adapter.role),
+      agentType: this.s.adapter.agentId,
+      model: resolvedModel,
+      workspaceId: this.s.workspaceId
     })
     this.s.tokenUsage += totalTokens
     this.s.inputTokens += meta.tokenUsage.input
@@ -85,17 +98,31 @@ export class AgentStreamProcessor {
     this.s.cacheReadTokens += meta.tokenUsage.cacheReadInputTokens
     this.s.cacheCreationTokens += meta.tokenUsage.cacheCreationInputTokens
 
-    // Compute context token total from CLI token usage fields.
-    const totalContextTokens =
+    // Context-window occupancy = the prompt size of the LATEST API round-trip
+    // (input + cache_read + cache_creation of the most recent message_start),
+    // exposed by the executor as contextWindowTokens.
+    //
+    // We deliberately do NOT sum these fields across the turn: a single user
+    // message drives an agentic loop with many round-trips, each re-reading the
+    // full cached context. Summing cache_read across round-trips over-counts
+    // occupancy ~5-10x (a plan turn would report ~42% of a 1M window after one
+    // message). The snapshot reflects true current occupancy.
+    //
+    // Fallback to the summed totals only when the backend doesn't report a
+    // per-call snapshot (e.g. OpenCode, or a stream with no message_start usage).
+    const summedContextTokens =
       meta.tokenUsage.input +
       meta.tokenUsage.cacheReadInputTokens +
       meta.tokenUsage.cacheCreationInputTokens
+    const contextWindowTokens = meta.tokenUsage.contextWindowTokens ?? 0
+    const totalContextTokens = contextWindowTokens > 0 ? contextWindowTokens : summedContextTokens
+    const consumedContextTokens = totalContextTokens
 
     // Update lastContextTokens for all backends (badge, compact modal, etc.)
     this.s.lastContextTokens = totalContextTokens
 
     // Push live context update to the renderer
-    if (totalContextTokens > 0) {
+    if (consumedContextTokens > 0) {
       const effectiveWindow = this.s.effectiveContextWindow ?? CLAUDE_DEFAULT_CONTEXT_WINDOW
       // F11: Reuse token tracker's cache efficiency calculation (single source of truth)
       // instead of duplicating the cacheRead / (input + cacheRead) formula here.
@@ -105,22 +132,15 @@ export class AgentStreamProcessor {
         type: 'context_usage_update',
         content: '',
         contextUsageUpdate: {
-          inputTokens: totalContextTokens,
+          inputTokens: consumedContextTokens,
           contextWindowSize: effectiveWindow,
-          percentage: Math.round((totalContextTokens / effectiveWindow) * 100),
+          percentage: Math.round((consumedContextTokens / effectiveWindow) * 100),
           cacheHitRate
         }
       } as StreamChunk)
     }
 
     this.checkCompaction(totalContextTokens)
-
-    // F10: For context pressure calculations, use only tokens that consume
-    // window capacity. cacheCreation tokens are being *written* to cache,
-    // not consuming the context window — including them inflates pressure
-    // and triggers false 85% warnings.
-    const consumedContextTokens =
-      meta.tokenUsage.input + meta.tokenUsage.cacheReadInputTokens
 
     // Evaluate context pressure for local LLMs AND Claude 200K models.
     const isLocal = this.s.llmProvider === 'local-llm'
@@ -227,6 +247,25 @@ export class AgentStreamProcessor {
       streamState.hasTextAfterLastTool = true
     }
 
+    // Detect a blocked Write/Edit attempt in Plan mode. Write/Edit aren't on the
+    // plan-mode allow-list, so the SDK returns "No such tool available". This is
+    // expected (not a bug — see tool-chunk-processor.isExpectedPlanModeBlock), but
+    // it means the model tried to author a plan as a file. Flag it so finalizeStream
+    // can fire a deterministic emit_plan recovery and the user still gets a plan card.
+    if (
+      chunk.type === 'tool_result' &&
+      this.s.currentMode === 'plan' &&
+      typeof chunk.content === 'string' &&
+      chunk.content.includes('<tool_use_error>') &&
+      chunk.content.includes('No such tool available') &&
+      /\b(Write|Edit|MultiEdit)\b/.test(`${chunk.toolName ?? ''} ${chunk.content}`)
+    ) {
+      streamState.planModeToolBlock = true
+      this.s.log.warn(
+        `[PIPELINE:plan-mode-tool-block] Blocked Write/Edit in plan mode for conversationId=${conversationId} — will attempt emit_plan recovery`
+      )
+    }
+
     if (chunk.type === 'tool_use') {
       const isControlTool = chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)
       if (isControlTool) {
@@ -286,6 +325,30 @@ export class AgentStreamProcessor {
       this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
     }
 
+    if (chunk.type === 'subagent_start') {
+      // Count sub-agent spawns against the circuit breaker — each sub-agent
+      // makes 20-90+ internal tool calls that bypass the normal tool_use count.
+      // Count the spawn itself as 10 tool calls (conservative estimate of cost).
+      for (let i = 0; i < 10; i++) {
+        const cbResult = this.s.circuitBreaker.onToolUse({
+          isBuildMode,
+          accumulatedTextLength: this.s.accumulatedText.length,
+          conversationId,
+          isLocalProvider: this.s.llmProvider === 'local-llm',
+          contextTier: ctx.contextTier
+        })
+        if (cbResult.broken) {
+          this.s.log.warn(
+            `[PIPELINE:subagent-circuit-break] Sub-agent spawn tripped circuit breaker at ${this.s.circuitBreaker.count} tool calls`
+          )
+          if (cbResult.errorChunk) {
+            this.s.emit('chunk', cbResult.errorChunk)
+          }
+          return 'break'
+        }
+      }
+    }
+
     // F12: Removed dead `promptSuggestion` event emission — no listener exists.
     // The chunk is already forwarded to the renderer via emit('chunk', chunk) below,
     // which the chunk-router routes through handlePromptSuggestion.
@@ -305,49 +368,68 @@ export class AgentStreamProcessor {
   ): void {
     const autoThreshold = this.s.compactAutoThreshold
     const suggestThreshold = this.s.compactSuggestThreshold
-    const warningThreshold = Math.floor(suggestThreshold * 0.8)
     const isLocal = this.s.llmProvider === 'local-llm'
+    const isAutoCompactEnabled = breakdown?.isAutoCompactEnabled === true
 
-    if (inputTokens >= autoThreshold) {
-      const autoCompactActive = breakdown?.isAutoCompactEnabled === true
-      const level = autoCompactActive ? 'auto-compact-pending' : 'critical'
+    // Instrumentation: surface the resolved thresholds with every band decision
+    // so live runs are observable (Part 3 of the compaction-verification plan).
+    this.s.log.info(
+      `[compaction:thresholds] inputTokens=${inputTokens} suggest=${suggestThreshold} ` +
+        `auto=${autoThreshold} isAutoCompactEnabled=${isAutoCompactEnabled} isLocal=${isLocal}`
+    )
 
+    // Pure band classification — all emit/log/state below is side-effect only.
+    const decision = classifyCompaction({
+      inputTokens,
+      suggestThreshold,
+      autoThreshold,
+      isAutoCompactEnabled,
+      compactSuggested: this.s.compactSuggested,
+      turnsSinceCompactSuggestion: this.s.turnsSinceCompactSuggestion
+    })
+
+    // F15: commit debounce state (reset below warning, advance on debounced suggest).
+    this.s.compactSuggested = decision.nextSuggested
+    this.s.turnsSinceCompactSuggestion = decision.nextTurns
+
+    if (!decision.level) return
+
+    if (decision.level === 'auto-compact-pending' || decision.level === 'critical') {
       this.s.log.warn(
         `[PIPELINE:compact-critical] Context at ${inputTokens} tokens ` +
-          `(threshold=${autoThreshold}) — ${autoCompactActive ? 'SDK auto-compact will handle' : 'critical notification'}`
+          `(threshold=${autoThreshold}) — ${decision.level === 'auto-compact-pending' ? 'SDK auto-compact will handle' : 'critical notification'}`
       )
       this.s.emit('compactNeeded', {
-        level,
+        level: decision.level,
         inputTokens,
         breakdown,
         isLocalProvider: isLocal
       })
-    } else if (inputTokens >= suggestThreshold) {
-      if (!this.s.compactSuggested || this.s.turnsSinceCompactSuggestion >= 3) {
-        this.s.compactSuggested = true
-        this.s.turnsSinceCompactSuggestion = 0
-        this.s.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
-        this.s.emit('compactNeeded', {
-          level: 'suggest',
-          inputTokens,
-          breakdown,
-          isLocalProvider: isLocal
-        })
-      } else {
-        this.s.turnsSinceCompactSuggestion++
-      }
-    } else if (inputTokens >= warningThreshold && !this.s.compactSuggested) {
-      this.s.log.info(
-        `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
-      )
-      this.s.emit('compactNeeded', {
-        level: 'warning',
-        inputTokens,
-        estimatedNextCost: Math.round(inputTokens * 0.05),
-        breakdown,
-        isLocalProvider: isLocal
-      })
+      return
     }
+
+    if (decision.level === 'suggest') {
+      this.s.log.info(`Context growing large (${inputTokens} input tokens) — suggesting compact`)
+      this.s.emit('compactNeeded', {
+        level: 'suggest',
+        inputTokens,
+        breakdown,
+        isLocalProvider: isLocal
+      })
+      return
+    }
+
+    // warning
+    this.s.log.info(
+      `[PIPELINE:compact-warning] Context approaching threshold (${inputTokens}/${suggestThreshold} tokens)`
+    )
+    this.s.emit('compactNeeded', {
+      level: 'warning',
+      inputTokens,
+      estimatedNextCost: Math.round(inputTokens * 0.05),
+      breakdown,
+      isLocalProvider: isLocal
+    })
   }
 
   applyCompactionThresholds(settings: Record<string, unknown>): void {
@@ -356,19 +438,22 @@ export class AgentStreamProcessor {
     if (isLocal) {
       const ctx = this.s.resolveLocalContextWindow()
       const tier = resolveContextTier(ctx)
-      const limits = TIER_LIMITS[tier]
-      this.s.compactSuggestThreshold = limits.compactSuggestThreshold
-      this.s.compactAutoThreshold = limits.compactAutoThreshold
+      const { suggest, auto } = resolveAppliedThresholds({ isLocal: true, localTier: tier })
+      this.s.compactSuggestThreshold = suggest
+      this.s.compactAutoThreshold = auto
     } else {
       const modelAction = `${this.s.adapter.role}:${this.s.currentMode}` as ModelAction
       const model = modelConfigService.getModel(this.s.workspacePath!, modelAction)
       const supports1M = supportsContext1M(model)
       const effectiveWindow = supports1M ? CLAUDE_1M_CONTEXT_WINDOW : CLAUDE_DEFAULT_CONTEXT_WINDOW
-      const defaults = this.resolveCompactionThresholds(effectiveWindow)
-
-      this.s.compactSuggestThreshold =
-        (settings.compactSuggestThreshold as number) ?? defaults.suggest
-      this.s.compactAutoThreshold = (settings.compactAutoThreshold as number) ?? defaults.auto
+      const { suggest, auto } = resolveAppliedThresholds({
+        isLocal: false,
+        effectiveContextWindow: effectiveWindow,
+        userSuggestThreshold: settings.compactSuggestThreshold as number | undefined,
+        userAutoThreshold: settings.compactAutoThreshold as number | undefined
+      })
+      this.s.compactSuggestThreshold = suggest
+      this.s.compactAutoThreshold = auto
     }
   }
 
@@ -376,10 +461,6 @@ export class AgentStreamProcessor {
     suggest: number
     auto: number
   } {
-    const isSmallWindow = effectiveContextWindow <= 200_000
-    return {
-      suggest: Math.round(effectiveContextWindow * (isSmallWindow ? 0.6 : 0.7)),
-      auto: Math.round(effectiveContextWindow * (isSmallWindow ? 0.75 : 0.85))
-    }
+    return resolveCompactionThresholdsPolicy(effectiveContextWindow)
   }
 }

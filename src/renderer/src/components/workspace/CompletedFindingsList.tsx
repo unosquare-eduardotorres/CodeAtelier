@@ -4,7 +4,8 @@
  */
 
 import { useMemo, useCallback } from 'react'
-import { Wrench, Download, RefreshCw } from 'lucide-react'
+import { Wrench, Download, RefreshCw, CheckCheck } from 'lucide-react'
+import { useAuditStore } from '@renderer/store'
 import type { AuditTrackId, AuditFinding } from '../../../../shared/types'
 
 type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low' | 'info'
@@ -54,6 +55,7 @@ export default function CompletedFindingsList({
 }: CompletedFindingsListProps): React.JSX.Element {
   const selectedIds = useMemo(() => new Set(selectedFindings.map((f) => f.id)), [selectedFindings])
   const isAnyRerunning = !!rerunningTrackId
+  const selectAllInTrack = useAuditStore((s) => s.selectAllInTrack)
 
   const filterFindings = useCallback(
     (items: AuditFinding[]): AuditFinding[] => {
@@ -137,9 +139,19 @@ export default function CompletedFindingsList({
         {/* Issues section */}
         {issues.length > 0 && (
           <div className="space-y-1.5">
-            <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
-              Issues ({issues.length})
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                Issues ({issues.length})
+              </span>
+              <button
+                onClick={() => selectAllInTrack(activeTrackId)}
+                className="flex items-center gap-1 text-[10px] text-text-secondary hover:text-primary-text transition-colors"
+                title="Select all issues in this auditor"
+              >
+                <CheckCheck size={11} />
+                Select all
+              </button>
+            </div>
             {issues.map((finding) => (
               <div
                 key={finding.id}

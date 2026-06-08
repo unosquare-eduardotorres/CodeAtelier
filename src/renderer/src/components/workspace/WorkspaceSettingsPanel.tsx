@@ -50,7 +50,7 @@ export const SETTINGS_MENU: {
   // ── Tools (interactive / operational) ──
   { id: 'health', label: 'Health', icon: ShieldCheck, iconColor: 'text-success', group: 'tools' },
   { id: 'goals', label: 'Goals', icon: Target, iconColor: 'text-cyan-400', group: 'tools' },
-  { id: 'council', label: 'Council', icon: Landmark, iconColor: 'text-purple-400', group: 'tools' },
+  { id: 'council', label: 'Council', icon: Landmark, iconColor: 'text-indigo-400', group: 'tools' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning', group: 'tools' },
   // ── Configuration (settings) ──
   {

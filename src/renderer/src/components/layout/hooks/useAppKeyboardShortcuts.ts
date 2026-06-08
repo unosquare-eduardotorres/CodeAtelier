@@ -15,7 +15,7 @@ interface AppKeyboardShortcutsDeps {
   updateMode: (mode: ConversationMode) => void
   navigateBack: () => void
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>
-  setView: React.Dispatch<React.SetStateAction<string>>
+  setView: React.Dispatch<React.SetStateAction<'chat' | 'app-settings' | 'help' | 'bugs'>>
   setShowNewChat: React.Dispatch<React.SetStateAction<boolean>>
 }
 
@@ -89,7 +89,16 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): void {
         window.api.zoomReset()
       }
     },
-    [activeWorkspace, activeConversation, updateMode, isStreaming, navigateBack, setSidebarCollapsed, setView, setShowNewChat]
+    [
+      activeWorkspace,
+      activeConversation,
+      updateMode,
+      isStreaming,
+      navigateBack,
+      setSidebarCollapsed,
+      setView,
+      setShowNewChat
+    ]
   )
 
   useEffect(() => {

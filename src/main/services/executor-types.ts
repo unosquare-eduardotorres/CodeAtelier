@@ -6,6 +6,8 @@
  * circular dependencies between executors and the normalizer.
  */
 
+import type { ContextManagementConfig } from './context-management'
+
 /**
  * Terminal reason — why a query/session stopped.
  * Emitted by the interactive CLI and OpenCode in the result event.
@@ -32,6 +34,13 @@ export interface ExecutorTokenUsage {
   output: number
   cacheReadInputTokens: number
   cacheCreationInputTokens: number
+  /**
+   * Current context-window occupancy — the prompt size of the latest API
+   * round-trip, NOT the per-turn accumulated sum. Used for the context badge
+   * and compaction thresholds. Optional: backends that don't report per-call
+   * usage (e.g. OpenCode) omit it, and consumers fall back to the summed totals.
+   */
+  contextWindowTokens?: number
 }
 
 /**
@@ -70,10 +79,19 @@ export interface ExecutorBaseOptions {
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   /** Completion goal — Claude works autonomously until this condition is met (Claude Code 2.1.139+) */
   goal?: string
+  /** Enable auto-compact */
+  autoCompactEnabled?: boolean
+  /** Context window size for auto-compact threshold */
+  contextWindowSize?: number
+  /** App-level context management config (tool-result clearing, compaction thresholds) */
+  contextManagement?: ContextManagementConfig
 }
 
 // ── Types previously from @anthropic-ai/claude-agent-sdk ──
 // Defined locally to remove the SDK dependency.
 
 /** Prompt input — replaces SDKUserMessage for non-SDK paths. */
-export type AgentPromptInput = string | Array<{ type: string; [key: string]: unknown }>
+export type AgentPromptInput =
+  | string
+  | Array<{ type: string; [key: string]: unknown }>
+  | { message: { role: string; content: unknown }; parent_tool_use_id: string | null }

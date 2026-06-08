@@ -15,7 +15,7 @@ import type {
 import { memoryService } from './memory.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
-import { flushTextBatcher } from '../ipc/chunk-router'
+import { flushTextBatcher, getAndClearToolActivities } from '../ipc/chunk-router'
 import {
   createTextChunk,
   createCompleteMessage,
@@ -30,6 +30,23 @@ import { conversationLifecycle } from './conversation-lifecycle'
 import { hookEngine } from './hook-engine.service'
 
 const log = chatIpcLogger
+
+// ── StreamContext — explicit per-stream state bag ──
+
+/** Immutable per-stream context — replaces the ad-hoc closure state bag. */
+interface StreamContext {
+  readonly conversationId: string
+  readonly requestId: string
+  readonly streamingRole: 'da-vinci' | 'specialist'
+  readonly phase: ConversationPhase
+  readonly specialistMeta: { specialist: string; taskId?: string } | undefined
+  readonly adapterAgentId: string
+  readonly workspacePath: string | undefined
+  /** Accumulated streamed content — mutable, shared across listeners. */
+  streamedContent: string
+  /** Guards against duplicate plan injection within a single stream. */
+  planInjected: boolean
+}
 
 // ── Pipeline Callbacks (strategy object) ──
 //
@@ -80,6 +97,13 @@ export class ChatStreamService {
    */
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null
 
+  /** Cleanup functions for all persistent event listeners registered in registerEventForwarders(). */
+  private eventCleanups: Array<() => void> = []
+
+  // N14: Track hook lifecycle listener for cleanup
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private hookLifecycleHandler?: ((...args: any[]) => void) | undefined
+
   constructor(mainWindow: BrowserWindow, callbacks: PipelineCallbacks) {
     this.mainWindow = mainWindow
     this.callbacks = callbacks
@@ -103,6 +127,7 @@ export class ChatStreamService {
   /** Resolve a workspace name from its ID (for permission toast labels). */
   private resolveWorkspaceName(workspaceId: string): string {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids db/repositories circular dependency
       const { workspaceRepository } = require('../db/repositories')
       const workspace = workspaceRepository.findById(workspaceId)
       return workspace?.name ?? workspaceId.slice(0, 8)
@@ -113,7 +138,7 @@ export class ChatStreamService {
 
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
-    chatAgentService.on('compactNeeded', (data: CompactNeededMessage['compactNeeded']) => {
+    const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
@@ -123,32 +148,39 @@ export class ChatStreamService {
           compactNeeded: data
         })
       )
-    })
+    }
+    chatAgentService.on('compactNeeded', onCompactNeeded)
+    this.eventCleanups.push(() => chatAgentService.off('compactNeeded', onCompactNeeded))
 
     // Legacy forwarders for MCP-triggered events (fire during streaming)
     // These handle the immediate path when control tools fire via MCP callbacks.
-    chatAgentService.on(
-      'askQuestion',
-      (data: { questions: GrillQuestion[]; action?: string; requestId?: string }) => {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
-          conversationId: chatAgentService.getCurrentConversationId() || '',
-          questions: data.questions,
-          action: data.action,
-          requestId: data.requestId
-        })
-      }
-    )
+    const onAskQuestion = (data: {
+      questions: GrillQuestion[]
+      action?: string
+      requestId?: string
+    }): void => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+        conversationId: chatAgentService.getCurrentConversationId() || '',
+        questions: data.questions,
+        action: data.action,
+        requestId: data.requestId
+      })
+    }
+    chatAgentService.on('askQuestion', onAskQuestion)
+    this.eventCleanups.push(() => chatAgentService.off('askQuestion', onAskQuestion))
 
     // Elicitation — MCP server user input requests forwarded to renderer
-    chatAgentService.on('elicitation', (data: ElicitationEvent) => {
+    const onElicitation = (data: ElicitationEvent): void => {
       this.mainWindow.webContents.send(IPC_CHANNELS.ELICITATION_REQUEST, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         ...data
       })
-    })
+    }
+    chatAgentService.on('elicitation', onElicitation)
+    this.eventCleanups.push(() => chatAgentService.off('elicitation', onElicitation))
 
     // Budget cap reached — forward as a CHAT_MESSAGE_CHUNK with budgetCapReached field
-    chatAgentService.on('budgetCapReached', (data: { conversationId: string; message: string }) => {
+    const onBudgetCapReached = (data: { conversationId: string; message: string }): void => {
       this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: data.conversationId,
         requestId: this.activeRequestId ?? undefined,
@@ -157,7 +189,9 @@ export class ChatStreamService {
           canContinue: true
         }
       })
-    })
+    }
+    chatAgentService.on('budgetCapReached', onBudgetCapReached)
+    this.eventCleanups.push(() => chatAgentService.off('budgetCapReached', onBudgetCapReached))
 
     // NOTE: The persistent 'plan' listener was removed to prevent duplicate delivery.
     // Plan events are now handled exclusively by the per-message onPlanEvent listener
@@ -165,59 +199,12 @@ export class ChatStreamService {
     // for DB persistence. The CHAT_PLAN IPC is still sent by the IntentRouter below
     // for regex-fallback detected plans.
 
-    // Multi-workspace: forward permission events from background workspaces.
-    // When a non-active workspace emits elicitation/askQuestion, send a
-    // PERMISSION_REQUEST so the NotificationStack can show a toast.
-    chatAgentService.on(
-      'elicitation:ws',
-      (workspaceId: string, data: ElicitationEvent) => {
-        if (workspaceId !== chatAgentService.activeWorkspaceId) {
-          // Background workspace — route through permission system
-          try {
-            const router = getSessionEventRouter()
-            router.sendPermissionRequest({
-              id: `elicit-${data.requestId ?? Date.now()}`,
-              workspaceId,
-              workspaceName: this.resolveWorkspaceName(workspaceId),
-              type: 'elicitation',
-              summary: data.message || 'Permission request from MCP server',
-              isSimple: data.mode !== 'form',
-              payload: data,
-              receivedAt: Date.now()
-            })
-          } catch {
-            // SessionEventRouter not yet initialized — fall through to legacy path
-          }
-        }
-      }
-    )
-
-    chatAgentService.on(
-      'askQuestion:ws',
-      (workspaceId: string, data: { questions: GrillQuestion[]; action?: string; requestId?: string }) => {
-        if (workspaceId !== chatAgentService.activeWorkspaceId) {
-          try {
-            const router = getSessionEventRouter()
-            router.sendPermissionRequest({
-              id: `ask-${data.requestId ?? Date.now()}`,
-              workspaceId,
-              workspaceName: this.resolveWorkspaceName(workspaceId),
-              type: 'askQuestion',
-              summary: data.questions?.[0]?.text || 'Question from agent',
-              isSimple: false,
-              payload: data,
-              receivedAt: Date.now()
-            })
-          } catch {
-            // SessionEventRouter not yet initialized — fall through to legacy path
-          }
-        }
-      }
-    )
+    // Multi-workspace permission routing for background workspaces
+    this.registerMultiWorkspaceForwarders()
 
     // Typed intent handler — routes post-stream intents (regex fallback + grill events)
     // via IntentRouter. Skips plan/askUser if they were already sent by MCP forwarders above.
-    chatAgentService.on('intent', (intent: AgentIntent) => {
+    const onIntent = (intent: AgentIntent): void => {
       const conversationId = chatAgentService.getCurrentConversationId() || ''
 
       // Skip types that were already forwarded by MCP legacy listeners
@@ -225,12 +212,15 @@ export class ChatStreamService {
       // but IntentDetector.detectAll() already filters out MCP-fired types, so these
       // intents only arrive here when they're regex-fallback detected)
       this.intentRouter.route(conversationId, intent)
-    })
+    }
+    chatAgentService.on('intent', onIntent)
+    this.eventCleanups.push(() => chatAgentService.off('intent', onIntent))
 
     // F7: Wire hook lifecycle events to the stream pipeline.
     // The HookEngine emits 'hookLifecycle' events when hooks start/complete/fail.
     // Forward these as StreamChunks so the renderer can show hook execution status.
-    hookEngine.on('hookLifecycle', (event: {
+    // N14: Store handler reference for cleanup in dispose().
+    this.hookLifecycleHandler = (event: {
       hookId: string
       hookName: string
       hookEvent: string
@@ -257,193 +247,85 @@ export class ChatStreamService {
         conversationId,
         this.currentStreamingRole,
         chunk,
-        { value: '' },  // hook chunks don't accumulate content
+        { value: '' }, // hook chunks don't accumulate content
         chatAgentService.getWorkspacePath() ?? undefined,
         undefined,
         'da-vinci-responding',
-        this.activeRequestId ?? undefined
+        this.activeRequestId ?? undefined,
+        chatAgentService.getMode()
       )
-    })
+    }
+    hookEngine.on('hookLifecycle', this.hookLifecycleHandler)
   }
 
-  // ── Stream Listener Factory ──
+  /**
+   * Register event forwarders for multi-workspace permission routing.
+   * When a non-active workspace emits elicitation/askQuestion, routes through
+   * SessionEventRouter so the NotificationStack can show a permission toast.
+   * Extracted from registerEventForwarders() — structurally identical pair.
+   */
+  private registerMultiWorkspaceForwarders(): void {
+    const onElicitationWs = (workspaceId: string, data: ElicitationEvent): void => {
+      if (workspaceId !== chatAgentService.activeWorkspaceId) {
+        try {
+          const router = getSessionEventRouter()
+          router.sendPermissionRequest({
+            id: `elicit-${data.elicitationId ?? Date.now()}`,
+            workspaceId,
+            workspaceName: this.resolveWorkspaceName(workspaceId),
+            type: 'elicitation',
+            summary: data.message || 'Permission request from MCP server',
+            isSimple: data.mode !== 'form',
+            payload: data,
+            receivedAt: Date.now()
+          })
+        } catch {
+          // SessionEventRouter not yet initialized — fall through to legacy path
+        }
+      }
+    }
+    chatAgentService.on('elicitation:ws', onElicitationWs)
+    this.eventCleanups.push(() => chatAgentService.off('elicitation:ws', onElicitationWs))
+
+    const onAskQuestionWs = (
+      workspaceId: string,
+      data: { questions: GrillQuestion[]; action?: string; requestId?: string }
+    ): void => {
+      if (workspaceId !== chatAgentService.activeWorkspaceId) {
+        try {
+          const router = getSessionEventRouter()
+          router.sendPermissionRequest({
+            id: `ask-${data.requestId ?? Date.now()}`,
+            workspaceId,
+            workspaceName: this.resolveWorkspaceName(workspaceId),
+            type: 'askQuestion',
+            summary: data.questions?.[0]?.question || 'Question from agent',
+            isSimple: false,
+            payload: data,
+            receivedAt: Date.now()
+          })
+        } catch {
+          // SessionEventRouter not yet initialized — fall through to legacy path
+        }
+      }
+    }
+    chatAgentService.on('askQuestion:ws', onAskQuestionWs)
+    this.eventCleanups.push(() => chatAgentService.off('askQuestion:ws', onAskQuestionWs))
+  }
+
+  // ── Extracted Lifecycle Methods ──
 
   /**
-   * Builds the per-stream event listeners as a cohesive object.
-   * Extracted from stream() to reduce its cyclomatic complexity.
+   * Acquire the streaming lock, transition the state machine, and begin
+   * the conversation lifecycle. Throws if already streaming.
    */
-  private buildStreamListeners(ctx: {
-    conversationId: string
+  private acquireStreamLock(conversationId: string): {
     requestId: string
-    streamingRole: 'da-vinci' | 'specialist'
-    phase: ConversationPhase
-    streamedContent: { value: string }
-    planInjected: { value: boolean }
-    workspacePath: string | undefined
-    specialistMeta: { specialist: string; taskId?: string } | undefined
-    adapterAgentId: string
+    signal: AbortSignal
     resolveDone: () => void
     rejectDone: (err: Error) => void
-  }): {
-    onChunk: (chunk: StreamChunk) => void
-    onComplete: () => void
-    onIntent: (intent: AgentIntent) => Promise<void>
-    onPlanEvent: (data: PlanDetectedEvent) => void
-    cleanupListeners: () => void
+    done: Promise<void>
   } {
-    const onChunk = (chunk: StreamChunk): void => {
-      try {
-        log.info(`[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`)
-        forwardChunkToRenderer(
-          this.mainWindow,
-          ctx.conversationId,
-          ctx.streamingRole,
-          chunk,
-          ctx.streamedContent,
-          ctx.workspacePath,
-          ctx.specialistMeta,
-          ctx.phase,
-          ctx.requestId
-        )
-      } catch (error) {
-        log.error('Failed to forward chunk to renderer:', error)
-      }
-    }
-
-    const onComplete = (): void => {
-      // Flush any pending batched text deltas before finalizing
-      flushTextBatcher()
-
-      if (this.isStopped) {
-        cleanupListeners()
-        ctx.resolveDone()
-        return
-      }
-
-      const finalize = async (): Promise<void> => {
-        try {
-          log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.value.length })
-          const cleanedContent = ctx.streamedContent.value.trim()
-
-          if (!cleanedContent) {
-            const accumulatedText = chatAgentService.getStreamedContent()
-            log.error(
-              `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
-                `streamedLen=${ctx.streamedContent.value.length} ` +
-                `accumulatedLen=${accumulatedText?.length ?? 0} ` +
-                `executorBackend=${chatAgentService.getExecutorBackend()} ` +
-                `role=${ctx.streamingRole} specialist=${ctx.specialistMeta?.specialist ?? 'none'} ` +
-                `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
-            )
-          }
-
-          const savedMessage = messageRepository.create(
-            ctx.conversationId,
-            ctx.streamingRole,
-            cleanedContent,
-            ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
-          )
-          log.info('Agent message saved, id:', savedMessage.id)
-
-          // Process memory blocks
-          try {
-            const wpPath = chatAgentService.getWorkspacePath()
-            const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
-            const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
-            if (workspace) {
-              const memoriesCreated = memoryService.processMemoryBlocks(
-                ctx.streamedContent.value,
-                ctx.conversationId,
-                ctx.adapterAgentId,
-                workspace.id
-              )
-              if (memoriesCreated > 0) {
-                log.info(`Created ${memoriesCreated} memories from agent response`)
-              }
-            }
-          } catch (memErr) {
-            log.warn('Memory block processing failed:', memErr)
-          }
-
-          log.info(`[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`)
-          this.mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({ conversationId: ctx.conversationId, messageId: savedMessage.id, requestId: ctx.requestId })
-          )
-        } catch (error) {
-          log.error('Failed to save generalist message:', error)
-          this.mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-            createTextChunk({
-              conversationId: ctx.conversationId,
-              requestId: ctx.requestId,
-              text: `\n\n**Error saving response:** ${(error as Error).message}`,
-              role: ctx.streamingRole
-            })
-          )
-          this.mainWindow.webContents.send(
-            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({ conversationId: ctx.conversationId, messageId: `error-${Date.now()}`, requestId: ctx.requestId })
-          )
-        }
-
-        conversationStateMachine.transition('chatAgentComplete')
-        cleanupListeners()
-        ctx.resolveDone()
-      }
-
-      finalize().catch((err) => {
-        log.error('[PIPELINE:complete] Finalize failed:', err)
-        cleanupListeners()
-        ctx.rejectDone(err instanceof Error ? err : new Error(String(err)))
-      })
-    }
-
-    const onIntent = async (_intent: AgentIntent): Promise<void> => {
-      // No-op — handled by IntentRouter's persistent listener
-    }
-
-    const onPlanEvent = (data: PlanDetectedEvent): void => {
-      if (ctx.planInjected.value) {
-        log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
-        return
-      }
-      ctx.planInjected.value = true
-
-      const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
-      ctx.streamedContent.value += planBlock
-      this.mainWindow.webContents.send(
-        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-        createTextChunk({
-          conversationId: ctx.conversationId,
-          requestId: ctx.requestId,
-          text: planBlock,
-          role: ctx.streamingRole
-        })
-      )
-      log.info('[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer')
-    }
-
-    const cleanupListeners = (): void => {
-      if (conversationLifecycle.isActive) {
-        conversationLifecycle.complete()
-      }
-    }
-
-    return { onChunk, onComplete, onIntent, onPlanEvent, cleanupListeners }
-  }
-
-  // ── Stream Lifecycle ──
-
-  /**
-   * Full generalist streaming lifecycle.
-   */
-  async stream(
-    conversationId: string,
-    text: string,
-    attachments?: string[]
-  ): Promise<StreamHandle> {
-    // Prevent concurrent streams — reject if already streaming
     if (this.streamingLock || !conversationStateMachine.isIdle()) {
       log.warn('[STREAM:concurrent-rejected] Already streaming or state machine not idle')
       throw new Error(
@@ -453,8 +335,31 @@ export class ChatStreamService {
     this.streamingLock = true
     conversationStateMachine.transition('sendMessage', conversationId)
 
-    // Snapshot the active adapter's identity for this turn — adapter cannot change
-    // mid-stream because switchPersona / swap require lifecycle stop.
+    const signal = conversationLifecycle.begin(conversationId)
+    const requestId = conversationLifecycle.requestId!
+    this.activeRequestId = requestId
+    this.isStopped = false
+
+    let resolveDone!: () => void
+    let rejectDone!: (err: Error) => void
+    const done = new Promise<void>((resolve, reject) => {
+      resolveDone = resolve
+      rejectDone = reject
+    })
+
+    return { requestId, signal, resolveDone, rejectDone, done }
+  }
+
+  /**
+   * Snapshot the adapter identity for this stream turn.
+   * Returns role, phase, and specialist metadata.
+   */
+  private resolveStreamIdentity(): {
+    streamingRole: 'da-vinci' | 'specialist'
+    phase: ConversationPhase
+    specialistMeta: { specialist: string; taskId?: string } | undefined
+    adapterAgentId: string
+  } {
     const messageRole = chatAgentService.getActiveMessageRole()
     const adapterAgentId = chatAgentService.getActiveAgentId()
 
@@ -472,26 +377,59 @@ export class ChatStreamService {
         ? { specialist: adapterAgentId }
         : undefined
 
-    // Snapshot per-stream identity for event forwarders (e.g. compactNeeded)
-    this.currentStreamingRole = streamingRole
+    return { streamingRole, phase, specialistMeta, adapterAgentId }
+  }
 
-    // Reset stop flag for new message cycle
-    this.isStopped = false
+  /**
+   * Start keepalive and safety timers for a stream.
+   * Registers dispose handlers on the lifecycle — no manual cleanup needed.
+   */
+  private setupStreamTimers(
+    conversationId: string,
+    requestId: string,
+    rejectDone: (err: Error) => void
+  ): void {
+    // Keepalive — prevents renderer's 2-min safety timer from firing
+    this.keepaliveTimer = setInterval(() => {
+      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+        conversationId,
+        requestId,
+        keepalive: true
+      })
+    }, 30_000)
 
-    // Start lifecycle — generates requestId, provides AbortSignal for cooperative cancellation
-    const signal = conversationLifecycle.begin(conversationId)
-    const requestId = conversationLifecycle.requestId!
-    this.activeRequestId = requestId
+    // Main-process safety timeout (5 min) — last-resort recovery
+    const MAIN_PROCESS_SAFETY_TIMEOUT_MS = 5 * 60 * 1000
+    const safetyTimer = setTimeout(() => {
+      if (this.streamingLock) {
+        log.error(
+          '[STREAM:main-safety-timeout] Streaming lock stuck for 5 minutes — force-resetting. ' +
+            `conversationId=${conversationId} requestId=${requestId}`
+        )
+        conversationLifecycle.abort('safety-timeout')
+        rejectDone(new Error('Streaming timed out — safety recovery triggered'))
+      }
+    }, MAIN_PROCESS_SAFETY_TIMEOUT_MS)
 
-    // Deferred promise — resolves when the entire pipeline completes
-    let resolveDone!: () => void
-    let rejectDone!: (err: Error) => void
-    const done = new Promise<void>((resolve, reject) => {
-      resolveDone = resolve
-      rejectDone = reject
+    conversationLifecycle.onDispose(() => {
+      clearTimeout(safetyTimer)
+      if (this.keepaliveTimer) {
+        clearInterval(this.keepaliveTimer)
+        this.keepaliveTimer = null
+      }
     })
+  }
 
-    // Register centralized cleanup — runs on both complete() and abort()
+  /**
+   * Register centralized cleanup disposers — runs on both complete() and abort().
+   */
+  private registerStreamDisposers(
+    onChunk: (chunk: StreamChunk) => void,
+    onComplete: () => void,
+    onIntent: (intent: AgentIntent) => Promise<void>,
+    onPlanEvent: (data: PlanDetectedEvent) => void
+  ): void {
+    // Release lock + clear request ID
     conversationLifecycle.onDispose(() => {
       this.streamingLock = false
       this.activeRequestId = null
@@ -499,19 +437,16 @@ export class ChatStreamService {
       // it should retain the per-stream value until the next stream starts.
       // Resetting to 'da-vinci' corrupts any event forwarders that fire
       // between dispose and the next stream() call (e.g. compactNeeded).
-
-      // Stop keepalive timer
-      if (this.keepaliveTimer) {
-        clearInterval(this.keepaliveTimer)
-        this.keepaliveTimer = null
-      }
     })
+
+    // Remove per-stream listeners
     conversationLifecycle.onDispose(() => {
       chatAgentService.removeListener('chunk', onChunk)
       chatAgentService.removeListener('complete', onComplete)
       chatAgentService.removeListener('intent', onIntent)
       chatAgentService.removeListener('plan', onPlanEvent)
     })
+
     // Invoke caller-supplied stop pipeline hook on lifecycle dispose.
     // onStopPipeline is required to be idempotent — the duplicate call is harmless.
     conversationLifecycle.onDispose(() => {
@@ -519,14 +454,18 @@ export class ChatStreamService {
         log.warn('[STREAM] Lifecycle dispose: onStopPipeline failed:', e)
       })
     })
+  }
 
-    void signal // AbortSignal available for future cooperative cancellation
-
-    // ── Step 0: Announce streaming identity ──
-    // The renderer's thinking indicator renders as soon as isStreaming=true
-    // (set by sendMessage before the IPC invoke resolves). This early chunk
-    // sets streamingRole + streamingSpecialist so the avatar matches the
-    // active adapter from the first frame — before any content arrives.
+  /**
+   * Send the empty identity chunk to renderer so the avatar matches from frame one.
+   */
+  private announceStreamStart(
+    conversationId: string,
+    requestId: string,
+    streamingRole: 'da-vinci' | 'specialist',
+    phase: ConversationPhase,
+    specialistMeta: { specialist: string; taskId?: string } | undefined
+  ): void {
     this.mainWindow.webContents.send(
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createTextChunk({
@@ -539,76 +478,44 @@ export class ChatStreamService {
         taskId: specialistMeta?.taskId
       })
     )
+  }
 
-    // ── Keepalive ──
-    // MCP tools (e.g. Maestro run_flow_files) can block the SDK message loop for
-    // minutes. The renderer's 2-minute safety timer would fire and disconnect the UI.
-    // This keepalive sends a lightweight IPC event every 30s to keep the timer alive.
-    this.keepaliveTimer = setInterval(() => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
-        conversationId,
-        requestId,
-        keepalive: true
-      })
-    }, 30_000)
-
-    // ── Step 1: Process attachments ──
+  /**
+   * Process attachments and return text content + image data.
+   */
+  private prepareUserMessage(
+    text: string,
+    attachments?: string[]
+  ): { fullContent: string; imageAttachments: ImageAttachment[] } {
     let fullContent = text
-    const imageAttachments: ImageAttachment[] = []
+    let imageAttachments: ImageAttachment[] = []
 
     if (attachments && attachments.length > 0) {
-      const attachmentContents: string[] = []
-      for (const filePath of attachments) {
-        try {
-          if (fileService.isImageFile(filePath)) {
-            const { base64, mimeType } = fileService.readImageAsBase64(filePath)
-            const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'image'
-            imageAttachments.push({ base64, mimeType, fileName })
-            attachmentContents.push(
-              `\n---\n**Attached image: ${fileName}** (${mimeType}) — visible in the conversation\n`
-            )
-          } else {
-            const content = fileService.readFileContent(filePath)
-            const tokens = fileService.estimateTokens(content)
-            attachmentContents.push(
-              `\n---\n**Attached file: ${filePath}** (${tokens} tokens)\n\`\`\`\n${content}\n\`\`\`\n`
-            )
-          }
-        } catch (error) {
-          attachmentContents.push(
-            `\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`
-          )
-        }
-      }
-      fullContent += attachmentContents.join('')
+      const result = this.processAttachments(attachments)
+      fullContent += result.textContent
+      imageAttachments = result.images
     }
 
-    // ── Step 2: Save user message to DB ──
-    const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
-    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
-    log.info('User message saved to DB')
+    return { fullContent, imageAttachments }
+  }
 
-    // ── Build per-stream listeners (extracted for reduced complexity) ──
-    const streamedContent = { value: '' }
-    const planInjected = { value: false }
-    const workspacePath = chatAgentService.getWorkspacePath() ?? undefined
-
-    const { onChunk, onComplete, onIntent, onPlanEvent, cleanupListeners } =
-      this.buildStreamListeners({
-        conversationId,
-        requestId,
-        streamingRole,
-        phase,
-        streamedContent,
-        planInjected,
-        workspacePath,
-        specialistMeta,
-        adapterAgentId,
-        resolveDone,
-        rejectDone
-      })
-
-    // ── Step 3 + 5: Mode switch + send ──
+  /**
+   * Wire listeners, do mode switch, call chatAgentService.send(), handle catch.
+   */
+  private async dispatchToAgent(
+    conversationId: string,
+    fullContent: string,
+    imageAttachments: ImageAttachment[],
+    listeners: {
+      onChunk: (chunk: StreamChunk) => void
+      onComplete: () => void
+      onIntent: (intent: AgentIntent) => Promise<void>
+      onPlanEvent: (data: PlanDetectedEvent) => void
+    },
+    ctx: StreamContext,
+    requestId: string,
+    rejectDone: (err: Error) => void
+  ): Promise<void> {
     try {
       const conversation = conversationRepository.findById(conversationId)
       if (conversation && conversation.mode !== chatAgentService.getMode()) {
@@ -616,10 +523,10 @@ export class ChatStreamService {
         await chatAgentService.switchMode(conversation.mode as ConversationMode)
       }
 
-      chatAgentService.on('chunk', onChunk)
-      chatAgentService.on('complete', onComplete)
-      chatAgentService.on('intent', onIntent)
-      chatAgentService.on('plan', onPlanEvent)
+      chatAgentService.on('chunk', listeners.onChunk)
+      chatAgentService.on('complete', listeners.onComplete)
+      chatAgentService.on('intent', listeners.onIntent)
+      chatAgentService.on('plan', listeners.onPlanEvent)
       await chatAgentService.send(
         fullContent,
         conversationId,
@@ -631,19 +538,25 @@ export class ChatStreamService {
 
       eventLoggerService.logSessionFailed({
         conversationId,
-        agentId: adapterAgentId,
+        agentId: ctx.adapterAgentId,
         error: (error as Error).message
       })
 
-      const roleLabel = streamingRole === 'specialist' ? 'Specialist' : 'Generalist'
+      const roleLabel = ctx.streamingRole === 'specialist' ? 'Specialist' : 'Generalist'
       log.error(`${roleLabel} send failed:`, (error as Error).message)
       const errorMsg = `**${roleLabel} Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
       const savedMessage = messageRepository.create(
         conversationId,
-        streamingRole,
+        ctx.streamingRole,
         errorMsg,
-        specialistMeta?.specialist ?? adapterAgentId
+        ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
       )
+
+      // Persist any tool activities accumulated before the error
+      const errorToolActivities = getAndClearToolActivities(conversationId)
+      if (errorToolActivities.length > 0) {
+        messageRepository.updateToolActivities(savedMessage.id, errorToolActivities)
+      }
 
       this.mainWindow.webContents.send(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
@@ -651,7 +564,7 @@ export class ChatStreamService {
           conversationId,
           requestId,
           text: errorMsg,
-          role: streamingRole
+          role: ctx.streamingRole
         })
       )
       this.mainWindow.webContents.send(
@@ -665,9 +578,339 @@ export class ChatStreamService {
       // Note: lifecycle.abort('streamError') already force-reset the state machine to idle
       rejectDone(error instanceof Error ? error : new Error(String(error)))
     }
+  }
+
+  /**
+   * Persist the streamed message to DB, process memory blocks, and notify renderer.
+   * Extracted from the onComplete closure — all error paths transition the state machine.
+   */
+  private async finalizeStreamMessage(ctx: StreamContext): Promise<void> {
+    try {
+      log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.length })
+      const cleanedContent = ctx.streamedContent.trim()
+
+      if (!cleanedContent) {
+        const accumulatedText = chatAgentService.getStreamedContent()
+        log.error(
+          `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
+            `streamedLen=${ctx.streamedContent.length} ` +
+            `accumulatedLen=${accumulatedText?.length ?? 0} ` +
+            `executorBackend=${chatAgentService.getExecutorBackend()} ` +
+            `role=${ctx.streamingRole} specialist=${ctx.specialistMeta?.specialist ?? 'none'} ` +
+            `accumulatedPreview=${(accumulatedText ?? '').slice(0, 200).replace(/\n/g, ' ')}`
+        )
+
+        // Surface the failure to the user instead of saving an empty message
+        this.mainWindow.webContents.send(
+          IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+          createTextChunk({
+            conversationId: ctx.conversationId,
+            requestId: ctx.requestId,
+            text: '\n\n**Error:** Agent produced no response. Check the app logs for details.',
+            role: ctx.streamingRole
+          })
+        )
+      }
+
+      const savedMessage = messageRepository.create(
+        ctx.conversationId,
+        ctx.streamingRole,
+        cleanedContent ||
+          '**Error:** Agent produced no response. Check the app logs for details.',
+        ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
+      )
+      log.info('Agent message saved, id:', savedMessage.id)
+
+      // Persist tool activities accumulated during streaming
+      const toolActivities = getAndClearToolActivities(ctx.conversationId)
+      if (toolActivities.length > 0) {
+        messageRepository.updateToolActivities(savedMessage.id, toolActivities)
+        log.info(
+          `[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`
+        )
+      }
+
+      // Process memory blocks
+      this.processMemoryBlocks(ctx)
+
+      log.info(
+        `[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
+      )
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+        createCompleteMessage({
+          conversationId: ctx.conversationId,
+          messageId: savedMessage.id,
+          requestId: ctx.requestId
+        })
+      )
+    } catch (error) {
+      log.error('Failed to save generalist message:', error)
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({
+          conversationId: ctx.conversationId,
+          requestId: ctx.requestId,
+          text: `\n\n**Error saving response:** ${(error as Error).message}`,
+          role: ctx.streamingRole
+        })
+      )
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+        createCompleteMessage({
+          conversationId: ctx.conversationId,
+          messageId: `error-${Date.now()}`,
+          requestId: ctx.requestId
+        })
+      )
+    }
+
+    // ALWAYS transition state machine — regardless of success or failure.
+    // This is the single point where streaming → idle happens on the happy path.
+    conversationStateMachine.transition('chatAgentComplete')
+  }
+
+  /**
+   * Extract and persist memory blocks from agent response content.
+   */
+  private processMemoryBlocks(ctx: StreamContext): void {
+    try {
+      const wpPath = chatAgentService.getWorkspacePath()
+      const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
+      const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+      if (workspace) {
+        const memoriesCreated = memoryService.processMemoryBlocks(
+          ctx.streamedContent,
+          ctx.conversationId,
+          ctx.adapterAgentId,
+          workspace.id
+        )
+        if (memoriesCreated > 0) {
+          log.info(`Created ${memoriesCreated} memories from agent response`)
+        }
+      }
+    } catch (memErr) {
+      log.warn('Memory block processing failed:', memErr)
+    }
+  }
+
+  // ── Stream Listener Factory ──
+
+  /**
+   * Builds the per-stream event listeners as a cohesive object.
+   * Extracted from stream() to reduce its cyclomatic complexity.
+   */
+  private buildStreamListeners(
+    ctx: StreamContext,
+    resolveDone: () => void,
+    rejectDone: (err: Error) => void
+  ): {
+    onChunk: (chunk: StreamChunk) => void
+    onComplete: () => void
+    onIntent: (intent: AgentIntent) => Promise<void>
+    onPlanEvent: (data: PlanDetectedEvent) => void
+  } {
+    // Adapter for forwardChunkToRenderer which still expects { value: string }
+    const streamedContentRef = { get value() { return ctx.streamedContent }, set value(v: string) { ctx.streamedContent = v } }
+
+    const onChunk = (chunk: StreamChunk): void => {
+      try {
+        log.info(
+          `[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`
+        )
+        forwardChunkToRenderer(
+          this.mainWindow,
+          ctx.conversationId,
+          ctx.streamingRole,
+          chunk,
+          streamedContentRef,
+          ctx.workspacePath,
+          ctx.specialistMeta,
+          ctx.phase,
+          ctx.requestId,
+          chatAgentService.getMode()
+        )
+      } catch (error) {
+        log.error('Failed to forward chunk to renderer:', error)
+      }
+    }
+
+    const cleanupListeners = (): void => {
+      if (conversationLifecycle.isActive) {
+        conversationLifecycle.complete()
+      }
+    }
+
+    const onComplete = (): void => {
+      // Flush any pending batched text deltas before finalizing
+      flushTextBatcher()
+
+      if (this.isStopped) {
+        cleanupListeners()
+        resolveDone()
+        return
+      }
+
+      this.finalizeStreamMessage(ctx)
+        .then(() => {
+          cleanupListeners()
+          resolveDone()
+        })
+        .catch((err) => {
+          log.error('[PIPELINE:complete] Finalize failed:', err)
+          // Safety net: if finalizeStreamMessage's inner catch block threw before
+          // reaching the transition (e.g. mainWindow destroyed), ensure the state
+          // machine still moves to idle. Idempotent when already idle.
+          conversationStateMachine.transition('chatAgentComplete')
+          cleanupListeners()
+          rejectDone(err instanceof Error ? err : new Error(String(err)))
+        })
+    }
+
+    const onIntent = async (_intent: AgentIntent): Promise<void> => {
+      // No-op — handled by IntentRouter's persistent listener
+    }
+
+    const onPlanEvent = (data: PlanDetectedEvent): void => {
+      if (ctx.planInjected) {
+        log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
+        return
+      }
+      ctx.planInjected = true
+
+      const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
+      ctx.streamedContent += planBlock
+      this.mainWindow.webContents.send(
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({
+          conversationId: ctx.conversationId,
+          requestId: ctx.requestId,
+          text: planBlock,
+          role: ctx.streamingRole
+        })
+      )
+      log.info(
+        '[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer'
+      )
+    }
+
+    return { onChunk, onComplete, onIntent, onPlanEvent }
+  }
+
+  // ── Stream Lifecycle ──
+
+  /**
+   * Full generalist streaming lifecycle — orchestrates the decomposed stages.
+   */
+  async stream(
+    conversationId: string,
+    text: string,
+    attachments?: string[]
+  ): Promise<StreamHandle> {
+    // Stage 1: Acquire lock + lifecycle
+    const { requestId, signal, resolveDone, rejectDone, done } =
+      this.acquireStreamLock(conversationId)
+
+    // Stage 2: Ensure workspace session is live
+    try {
+      const conv = conversationRepository.findById(conversationId)
+      const ws = conv ? workspaceRepository.findById(conv.workspaceId) : undefined
+      if (ws?.repoPath) await chatAgentService.ensureStarted(ws.id, ws.repoPath)
+    } catch (error) {
+      conversationLifecycle.abort('streamError')
+      throw error
+    }
+
+    // Stage 3: Resolve identity
+    const { streamingRole, phase, specialistMeta, adapterAgentId } =
+      this.resolveStreamIdentity()
+    this.currentStreamingRole = streamingRole
+
+    void signal // AbortSignal available for future cooperative cancellation
+
+    // Stage 4: Announce streaming identity to renderer
+    this.announceStreamStart(conversationId, requestId, streamingRole, phase, specialistMeta)
+
+    // Stage 5: Setup timers (keepalive + safety)
+    this.setupStreamTimers(conversationId, requestId, rejectDone)
+
+    // Clear any stale tool activities from a previous crashed stream
+    getAndClearToolActivities(conversationId)
+
+    // Stage 6: Prepare user message
+    const { fullContent, imageAttachments } = this.prepareUserMessage(text, attachments)
+    const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
+    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
+    log.info('User message saved to DB')
+
+    // Stage 7: Build context + listeners
+    const ctx: StreamContext = {
+      conversationId,
+      requestId,
+      streamingRole,
+      phase,
+      specialistMeta,
+      adapterAgentId,
+      workspacePath: chatAgentService.getWorkspacePath() ?? undefined,
+      streamedContent: '',
+      planInjected: false
+    }
+
+    const { onChunk, onComplete, onIntent, onPlanEvent } =
+      this.buildStreamListeners(ctx, resolveDone, rejectDone)
+
+    // Stage 8: Register disposers (needs listener refs)
+    this.registerStreamDisposers(onChunk, onComplete, onIntent, onPlanEvent)
+
+    // Stage 9: Dispatch to agent
+    await this.dispatchToAgent(
+      conversationId,
+      fullContent,
+      imageAttachments,
+      { onChunk, onComplete, onIntent, onPlanEvent },
+      ctx,
+      requestId,
+      rejectDone
+    )
 
     // Return StreamHandle — callers can optionally await `done` for full pipeline completion
     return { done, abort: () => conversationLifecycle.abort('external'), requestId }
+  }
+
+  /**
+   * Process file attachments into text content and image data.
+   * Detects images vs text files, reads content, estimates tokens.
+   * Extracted from stream() — pure data-transformation concern.
+   */
+  private processAttachments(attachments: string[]): {
+    textContent: string
+    images: ImageAttachment[]
+  } {
+    const images: ImageAttachment[] = []
+    const parts: string[] = []
+
+    for (const filePath of attachments) {
+      try {
+        if (fileService.isImageFile(filePath)) {
+          const { base64, mimeType } = fileService.readImageAsBase64(filePath)
+          const fileName = filePath.split('/').pop() || filePath.split('\\').pop() || 'image'
+          images.push({ base64, mimeType, fileName })
+          parts.push(
+            `\n---\n**Attached image: ${fileName}** (${mimeType}) — visible in the conversation\n`
+          )
+        } else {
+          const content = fileService.readFileContent(filePath)
+          const tokens = fileService.estimateTokens(content)
+          parts.push(
+            `\n---\n**Attached file: ${filePath}** (${tokens} tokens)\n\`\`\`\n${content}\n\`\`\`\n`
+          )
+        }
+      } catch (error) {
+        parts.push(`\n---\n**Failed to read: ${filePath}**: ${(error as Error).message}\n`)
+      }
+    }
+
+    return { textContent: parts.join(''), images }
   }
 
   // ── Stop ──
@@ -711,6 +954,15 @@ export class ChatStreamService {
         )
         log.info('Stopped message saved to DB, id:', savedMessage.id)
 
+        // Persist tool activities accumulated before user stopped
+        const stopToolActivities = getAndClearToolActivities(conversationId)
+        if (stopToolActivities.length > 0) {
+          messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
+          log.info(
+            `[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`
+          )
+        }
+
         this.mainWindow.webContents.send(
           IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
           createCompleteMessage({
@@ -737,6 +989,34 @@ export class ChatStreamService {
     log.info(`Compact requested (nuance=${extractNuance})`)
     await chatAgentService.compact(extractNuance)
   }
+
+  /**
+   * Force-reset streaming state if switching away from a workspace with a stuck stream.
+   * Called by the workspace switch IPC handler to prevent cross-workspace lock contamination.
+   */
+  forceResetIfStuck(): void {
+    if (this.streamingLock) {
+      log.warn(
+        '[STREAM:workspace-switch-reset] Streaming lock active during workspace switch — force-resetting'
+      )
+      conversationLifecycle.abort('workspace-switch')
+    }
+  }
+
+  // N14: Clean up all persistent listeners when the service is replaced
+  dispose(): void {
+    // Clean up all persistent event forwarders registered in registerEventForwarders()
+    for (const cleanup of this.eventCleanups) {
+      cleanup()
+    }
+    this.eventCleanups = []
+
+    // hookLifecycle cleanup (stored separately as named handler)
+    if (this.hookLifecycleHandler) {
+      hookEngine.off('hookLifecycle', this.hookLifecycleHandler)
+      this.hookLifecycleHandler = undefined
+    }
+  }
 }
 
 // ── Singleton with lazy initialization ──
@@ -747,6 +1027,8 @@ export function initChatStream(
   mainWindow: BrowserWindow,
   callbacks: PipelineCallbacks
 ): ChatStreamService {
+  // N14: Dispose previous instance to remove stale listeners
+  _instance?.dispose()
   _instance = new ChatStreamService(mainWindow, callbacks)
   return _instance
 }

@@ -4,15 +4,7 @@
  */
 
 import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from 'react'
-import {
-  Bot,
-  RefreshCw,
-  Trash2,
-  Loader2,
-  Power,
-  PowerOff,
-  Sparkles
-} from 'lucide-react'
+import { Bot, RefreshCw, Trash2, Loader2, Power, PowerOff } from 'lucide-react'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import { ConfirmDialog } from '@renderer/components/common'
 import { useSpecialistStore } from '@renderer/store'
@@ -41,289 +33,279 @@ const AgentManagementSection = forwardRef<AgentManagementHandle, AgentManagement
     { workspacePath, activeAgents, inactiveAgents, agents, onSkillClick },
     ref
   ) {
-  const { loadAgents, deployAll } = useSettingsStore()
-  const { specialists } = useSpecialistStore()
+    const { loadAgents } = useSettingsStore()
+    const { specialists } = useSpecialistStore()
 
-  // Agent interaction state
-  const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
-  const [syncingAgentIds, setSyncingAgentIds] = useState<Set<string>>(new Set())
-  const [deleteAgentTarget, setDeleteAgentTarget] = useState<DiscoveredAgent | null>(null)
-  const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
-  const [togglingId, setTogglingId] = useState<string | null>(null)
-  const [isDeploying, setIsDeploying] = useState(false)
-  const [showInactive, setShowInactive] = useState(false)
+    // Agent interaction state
+    const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
+    const [syncingAgentIds, setSyncingAgentIds] = useState<Set<string>>(new Set())
+    const [deleteAgentTarget, setDeleteAgentTarget] = useState<DiscoveredAgent | null>(null)
+    const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
+    const [togglingId, setTogglingId] = useState<string | null>(null)
+    const [showInactive, setShowInactive] = useState(false)
 
-  // YAML editor state
-  const [editorContent, setEditorContent] = useState('')
-  const [isSaving, setIsSaving] = useState(false)
-  const [hasEditorChanges, setHasEditorChanges] = useState(false)
-  const [initialContent, setInitialContent] = useState('')
-  const [yamlOpen, setYamlOpen] = useState(false)
+    // YAML editor state
+    const [editorContent, setEditorContent] = useState('')
+    const [isSaving, setIsSaving] = useState(false)
+    const [hasEditorChanges, setHasEditorChanges] = useState(false)
+    const [initialContent, setInitialContent] = useState('')
+    const [yamlOpen, setYamlOpen] = useState(false)
 
-  // Scroll refs for cross-navigation
-  const agentCardsRef = useRef<Map<string, HTMLDivElement>>(new Map())
+    // Scroll refs for cross-navigation
+    const agentCardsRef = useRef<Map<string, HTMLDivElement>>(new Map())
 
-  // ── Agent YAML loading ──
+    // ── Agent YAML loading ──
 
-  const loadAgentContent = useCallback(async (agent: DiscoveredAgent) => {
-    if (!agent.isDeployed) {
-      setEditorContent('')
-      setInitialContent('')
-      return
-    }
-    try {
-      const content = await window.api.readWorkspaceFile({ filePath: agent.filePath })
-      setEditorContent(content)
-      setInitialContent(content)
-      setHasEditorChanges(false)
-    } catch {
-      setEditorContent('')
-      setInitialContent('')
-    }
-  }, [])
+    const loadAgentContent = useCallback(async (agent: DiscoveredAgent) => {
+      if (!agent.isDeployed) {
+        setEditorContent('')
+        setInitialContent('')
+        return
+      }
+      try {
+        const content = await window.api.readWorkspaceFile({ filePath: agent.filePath })
+        setEditorContent(content)
+        setInitialContent(content)
+        setHasEditorChanges(false)
+      } catch {
+        setEditorContent('')
+        setInitialContent('')
+      }
+    }, [])
 
-  // ── Agent handlers ──
+    // ── Agent handlers ──
 
-  const handleExpandAgent = (agent: DiscoveredAgent): void => {
-    const key = agent.filename
-    if (expandedAgent === key) {
-      setExpandedAgent(null)
-      setYamlOpen(false)
-    } else {
-      setExpandedAgent(key)
-      setYamlOpen(false)
-      loadAgentContent(agent)
-    }
-  }
-
-  const handleSyncAgent = async (agent: DiscoveredAgent): Promise<void> => {
-    const id = agent.filename
-    setSyncingAgentIds((prev) => new Set(prev).add(id))
-    try {
-      await window.api.syncAgentToWorkspace({ workspacePath, filename: agent.filename })
-      await loadAgents(workspacePath)
-    } catch (error) {
-      console.error('Failed to sync agent:', error)
-    } finally {
-      setSyncingAgentIds((prev) => {
-        const next = new Set(prev)
-        next.delete(id)
-        return next
-      })
-    }
-  }
-
-  const handleDeleteAgentConfirm = async (): Promise<void> => {
-    if (!deleteAgentTarget) return
-    setDeletingAgentId(deleteAgentTarget.filename)
-    try {
-      await window.api.deleteAgentFromWorkspace({
-        workspacePath,
-        filename: deleteAgentTarget.filename
-      })
-      if (expandedAgent === deleteAgentTarget.filename) {
+    const handleExpandAgent = (agent: DiscoveredAgent): void => {
+      const key = agent.filename
+      if (expandedAgent === key) {
         setExpandedAgent(null)
-      }
-      await loadAgents(workspacePath)
-    } catch (error) {
-      console.error('Failed to delete agent:', error)
-    } finally {
-      setDeleteAgentTarget(null)
-      setDeletingAgentId(null)
-    }
-  }
-
-  const handleActivateToggle = async (agent: DiscoveredAgent): Promise<void> => {
-    setTogglingId(agent.filename)
-    try {
-      if (agent.isActive) {
-        await window.api.deactivateAgent({ workspacePath, agentName: agent.parsed.name })
+        setYamlOpen(false)
       } else {
-        await window.api.activateAgent({ workspacePath, agentName: agent.parsed.name })
-      }
-      await loadAgents(workspacePath)
-    } catch (error) {
-      console.error('Failed to toggle agent:', error)
-    } finally {
-      setTogglingId(null)
-    }
-  }
-
-  const handleSaveYaml = async (agent: DiscoveredAgent): Promise<void> => {
-    if (!hasEditorChanges) return
-    setIsSaving(true)
-    try {
-      await window.api.writeWorkspaceFile({ filePath: agent.filePath, content: editorContent })
-      setInitialContent(editorContent)
-      setHasEditorChanges(false)
-      await loadAgents(workspacePath)
-    } catch (error) {
-      console.error('Failed to save YAML:', error)
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const handleEditorChange = (value: string): void => {
-    setEditorContent(value)
-    setHasEditorChanges(value !== initialContent)
-  }
-
-  const handleAutoActivate = async (): Promise<void> => {
-    setIsDeploying(true)
-    try {
-      await deployAll(workspacePath)
-    } finally {
-      setIsDeploying(false)
-    }
-  }
-
-  /** Navigate to a specific agent (used by SkillManagementSection cross-nav) */
-  const scrollToAgentByName = useCallback(
-    (agentName: string): void => {
-      const agent = agents.find((a) => {
-        const meta = getAgentMeta(a.parsed.name, specialists)
-        return (meta?.displayName ?? a.parsed.name) === agentName
-      })
-      if (agent) {
-        setExpandedAgent(agent.filename)
+        setExpandedAgent(key)
+        setYamlOpen(false)
         loadAgentContent(agent)
-        setTimeout(() => {
-          const el = agentCardsRef.current.get(agent.filename)
-          el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-        }, 100)
       }
-    },
-    [agents, specialists, loadAgentContent]
-  )
+    }
 
-  // Expose scrollToAgent to parent for cross-section navigation
-  useImperativeHandle(ref, () => ({ scrollToAgent: scrollToAgentByName }), [scrollToAgentByName])
+    const handleSyncAgent = async (agent: DiscoveredAgent): Promise<void> => {
+      const id = agent.filename
+      setSyncingAgentIds((prev) => new Set(prev).add(id))
+      try {
+        await window.api.syncAgentToWorkspace({ workspacePath, filename: agent.filename })
+        await loadAgents(workspacePath)
+      } catch (error) {
+        console.error('Failed to sync agent:', error)
+      } finally {
+        setSyncingAgentIds((prev) => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+      }
+    }
 
-  return (
-    <>
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Bot size={16} className="text-info" />
-            <h3 className="text-sm font-semibold text-text-primary">
-              Agents ({activeAgents.length} active)
-            </h3>
+    const handleDeleteAgentConfirm = async (): Promise<void> => {
+      if (!deleteAgentTarget) return
+      setDeletingAgentId(deleteAgentTarget.filename)
+      try {
+        await window.api.deleteAgentFromWorkspace({
+          workspacePath,
+          filename: deleteAgentTarget.filename
+        })
+        if (expandedAgent === deleteAgentTarget.filename) {
+          setExpandedAgent(null)
+        }
+        await loadAgents(workspacePath)
+      } catch (error) {
+        console.error('Failed to delete agent:', error)
+      } finally {
+        setDeleteAgentTarget(null)
+        setDeletingAgentId(null)
+      }
+    }
+
+    const handleActivateToggle = async (agent: DiscoveredAgent): Promise<void> => {
+      setTogglingId(agent.filename)
+      try {
+        if (agent.isActive) {
+          await window.api.deactivateAgent({ workspacePath, agentName: agent.parsed.name })
+        } else {
+          await window.api.activateAgent({ workspacePath, agentName: agent.parsed.name })
+        }
+        await loadAgents(workspacePath)
+      } catch (error) {
+        console.error('Failed to toggle agent:', error)
+      } finally {
+        setTogglingId(null)
+      }
+    }
+
+    const handleSaveYaml = async (agent: DiscoveredAgent): Promise<void> => {
+      if (!hasEditorChanges) return
+      setIsSaving(true)
+      try {
+        await window.api.writeWorkspaceFile({ filePath: agent.filePath, content: editorContent })
+        setInitialContent(editorContent)
+        setHasEditorChanges(false)
+        await loadAgents(workspacePath)
+      } catch (error) {
+        console.error('Failed to save YAML:', error)
+      } finally {
+        setIsSaving(false)
+      }
+    }
+
+    const handleEditorChange = (value: string): void => {
+      setEditorContent(value)
+      setHasEditorChanges(value !== initialContent)
+    }
+
+    /** Navigate to a specific agent (used by SkillManagementSection cross-nav) */
+    const scrollToAgentByName = useCallback(
+      (agentName: string): void => {
+        const agent = agents.find((a) => {
+          const meta = getAgentMeta(a.parsed.name, specialists)
+          return (meta?.displayName ?? a.parsed.name) === agentName
+        })
+        if (agent) {
+          setExpandedAgent(agent.filename)
+          loadAgentContent(agent)
+          setTimeout(() => {
+            const el = agentCardsRef.current.get(agent.filename)
+            el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          }, 100)
+        }
+      },
+      [agents, specialists, loadAgentContent]
+    )
+
+    // Expose scrollToAgent to parent for cross-section navigation
+    useImperativeHandle(ref, () => ({ scrollToAgent: scrollToAgentByName }), [scrollToAgentByName])
+
+    return (
+      <>
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Bot size={16} className="text-info" />
+              <h3 className="text-sm font-semibold text-text-primary">
+                Agents ({activeAgents.length} active)
+              </h3>
+            </div>
+            {inactiveAgents.length > 0 && (
+              <button
+                onClick={() => setShowInactive(!showInactive)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-float transition-colors"
+              >
+                {showInactive ? 'Hide' : 'Show'} inactive ({inactiveAgents.length})
+              </button>
+            )}
           </div>
-          {inactiveAgents.length > 0 && (
-            <button
-              onClick={() => setShowInactive(!showInactive)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-float transition-colors"
-            >
-              {showInactive ? 'Hide' : 'Show'} inactive ({inactiveAgents.length})
-            </button>
+
+          {/* Active agents */}
+          {activeAgents.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
+                Active
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {activeAgents.map((agent) => (
+                  <AgentCard
+                    key={agent.filename}
+                    agent={agent}
+                    isExpanded={expandedAgent === agent.filename}
+                    isSyncing={syncingAgentIds.has(agent.filename)}
+                    isDeleting={deletingAgentId === agent.filename}
+                    isToggling={togglingId === agent.filename}
+                    onExpand={() => handleExpandAgent(agent)}
+                    onSync={() => handleSyncAgent(agent)}
+                    onDelete={() => setDeleteAgentTarget(agent)}
+                    onToggle={() => handleActivateToggle(agent)}
+                    onSkillClick={onSkillClick}
+                    ref={(el) => {
+                      if (el) agentCardsRef.current.set(agent.filename, el)
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
           )}
-        </div>
 
-        {/* Active agents */}
-        {activeAgents.length > 0 && (
-          <div className="mb-4">
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
-              Active
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {activeAgents.map((agent) => (
-                <AgentCard
-                  key={agent.filename}
-                  agent={agent}
-                  isExpanded={expandedAgent === agent.filename}
-                  isSyncing={syncingAgentIds.has(agent.filename)}
-                  isDeleting={deletingAgentId === agent.filename}
-                  isToggling={togglingId === agent.filename}
-                  onExpand={() => handleExpandAgent(agent)}
-                  onSync={() => handleSyncAgent(agent)}
-                  onDelete={() => setDeleteAgentTarget(agent)}
-                  onToggle={() => handleActivateToggle(agent)}
-                  onSkillClick={onSkillClick}
-                  ref={(el) => {
-                    if (el) agentCardsRef.current.set(agent.filename, el)
-                  }}
-                />
-              ))}
+          {/* Divider between active and inactive */}
+          {showInactive && activeAgents.length > 0 && inactiveAgents.length > 0 && (
+            <div className="border-t border-border-subtle my-4" />
+          )}
+
+          {/* Inactive agents — only when toggled */}
+          {showInactive && inactiveAgents.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
+                Inactive
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {inactiveAgents.map((agent) => (
+                  <AgentCard
+                    key={agent.filename}
+                    agent={agent}
+                    isExpanded={expandedAgent === agent.filename}
+                    isSyncing={syncingAgentIds.has(agent.filename)}
+                    isDeleting={deletingAgentId === agent.filename}
+                    isToggling={togglingId === agent.filename}
+                    onExpand={() => handleExpandAgent(agent)}
+                    onSync={() => handleSyncAgent(agent)}
+                    onDelete={() => setDeleteAgentTarget(agent)}
+                    onToggle={() => handleActivateToggle(agent)}
+                    onSkillClick={onSkillClick}
+                    ref={(el) => {
+                      if (el) agentCardsRef.current.set(agent.filename, el)
+                    }}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Divider between active and inactive */}
-        {showInactive && activeAgents.length > 0 && inactiveAgents.length > 0 && (
-          <div className="border-t border-border-subtle my-4" />
-        )}
-
-        {/* Inactive agents — only when toggled */}
-        {showInactive && inactiveAgents.length > 0 && (
-          <div>
-            <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">
-              Inactive
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {inactiveAgents.map((agent) => (
-                <AgentCard
-                  key={agent.filename}
+          {/* Agent detail — inline expand */}
+          {expandedAgent &&
+            (() => {
+              const agent = agents.find((a) => a.filename === expandedAgent)
+              if (!agent) return null
+              return (
+                <AgentDetailPanel
                   agent={agent}
-                  isExpanded={expandedAgent === agent.filename}
-                  isSyncing={syncingAgentIds.has(agent.filename)}
-                  isDeleting={deletingAgentId === agent.filename}
-                  isToggling={togglingId === agent.filename}
-                  onExpand={() => handleExpandAgent(agent)}
-                  onSync={() => handleSyncAgent(agent)}
-                  onDelete={() => setDeleteAgentTarget(agent)}
-                  onToggle={() => handleActivateToggle(agent)}
+                  togglingId={togglingId}
+                  syncingAgentIds={syncingAgentIds}
+                  deletingAgentId={deletingAgentId}
+                  yamlOpen={yamlOpen}
+                  setYamlOpen={setYamlOpen}
+                  editorContent={editorContent}
+                  hasEditorChanges={hasEditorChanges}
+                  isSaving={isSaving}
+                  onActivateToggle={handleActivateToggle}
+                  onSyncAgent={handleSyncAgent}
+                  onSaveYaml={handleSaveYaml}
+                  onEditorChange={handleEditorChange}
+                  onDeleteAgent={setDeleteAgentTarget}
+                  onClose={() => setExpandedAgent(null)}
                   onSkillClick={onSkillClick}
-                  ref={(el) => {
-                    if (el) agentCardsRef.current.set(agent.filename, el)
-                  }}
                 />
-              ))}
-            </div>
-          </div>
-        )}
+              )
+            })()}
+        </section>
 
-        {/* Agent detail — inline expand */}
-        {expandedAgent &&
-          (() => {
-            const agent = agents.find((a) => a.filename === expandedAgent)
-            if (!agent) return null
-            return (
-              <AgentDetailPanel
-                agent={agent}
-                togglingId={togglingId}
-                syncingAgentIds={syncingAgentIds}
-                deletingAgentId={deletingAgentId}
-                yamlOpen={yamlOpen}
-                setYamlOpen={setYamlOpen}
-                editorContent={editorContent}
-                hasEditorChanges={hasEditorChanges}
-                isSaving={isSaving}
-                onActivateToggle={handleActivateToggle}
-                onSyncAgent={handleSyncAgent}
-                onSaveYaml={handleSaveYaml}
-                onEditorChange={handleEditorChange}
-                onDeleteAgent={setDeleteAgentTarget}
-                onClose={() => setExpandedAgent(null)}
-                onSkillClick={onSkillClick}
-              />
-            )
-          })()}
-      </section>
-
-      {/* Delete agent confirmation */}
-      <ConfirmDialog
-        isOpen={deleteAgentTarget !== null}
-        title="Delete Agent"
-        message={`Remove "${deleteAgentTarget?.parsed.name ?? ''}" from this workspace? This will delete the agent YAML from .claude/agents/ and remove references from CLAUDE.md.`}
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        variant="danger"
-        onConfirm={handleDeleteAgentConfirm}
-        onCancel={() => setDeleteAgentTarget(null)}
-      />
-    </>
-  )
+        {/* Delete agent confirmation */}
+        <ConfirmDialog
+          isOpen={deleteAgentTarget !== null}
+          title="Delete Agent"
+          message={`Remove "${deleteAgentTarget?.parsed.name ?? ''}" from this workspace? This will delete the agent YAML from .claude/agents/ and remove references from CLAUDE.md.`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          variant="danger"
+          onConfirm={handleDeleteAgentConfirm}
+          onCancel={() => setDeleteAgentTarget(null)}
+        />
+      </>
+    )
   }
 )
 

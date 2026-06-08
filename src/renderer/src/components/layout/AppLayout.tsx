@@ -74,7 +74,11 @@ export default function AppLayout(): React.JSX.Element {
 
   // ── Extracted hooks ──
   const zoomFactor = useAppZoom()
-  const { currentBranch, isGitRepo } = useBranchIndicator(activeWorkspace, activeConversation, repoInfo)
+  const { currentBranch, isGitRepo } = useBranchIndicator(
+    activeWorkspace,
+    activeConversation,
+    repoInfo
+  )
   const grillStatus = useGrillStatus(activeWorkspace?.id)
   useWorkspaceListeners(activeWorkspace, setWorkspaceSettingsTab, setSidebarView)
   const {
@@ -83,7 +87,8 @@ export default function AppLayout(): React.JSX.Element {
     handleFixInNewChat,
     handleCreateIdea,
     handleStartGrillMe,
-    handleNavigateToGrill
+    handleNavigateToGrill,
+    handleSendPlanToGrill
   } = useNavigationHandlers(
     activeWorkspace,
     activeConversation,
@@ -94,8 +99,10 @@ export default function AppLayout(): React.JSX.Element {
     setPendingGrill
   )
 
-  const mpaStatus = useMpaStore((s) => s.isRunning || s.status.status === 'paused' ? s.status : null)
-  const councilPhase = useCouncilStore((s) => s.isActive ? s.phase : null)
+  const mpaStatus = useMpaStore((s) =>
+    s.isRunning || s.status.status === 'paused' ? s.status : null
+  )
+  const councilPhase = useCouncilStore((s) => (s.isActive ? s.phase : null))
 
   // Load app version once on mount
   useEffect(() => {
@@ -130,9 +137,15 @@ export default function AppLayout(): React.JSX.Element {
     }
   }, [activeConversation])
 
-  const handleZoomIn = useCallback(() => { window.api.zoomIn() }, [])
-  const handleZoomOut = useCallback(() => { window.api.zoomOut() }, [])
-  const handleZoomReset = useCallback(() => { window.api.zoomReset() }, [])
+  const handleZoomIn = useCallback(() => {
+    window.api.zoomIn()
+  }, [])
+  const handleZoomOut = useCallback(() => {
+    window.api.zoomOut()
+  }, [])
+  const handleZoomReset = useCallback(() => {
+    window.api.zoomReset()
+  }, [])
 
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
@@ -194,6 +207,7 @@ export default function AppLayout(): React.JSX.Element {
           onNavigateToChat={handleNavigateToChat}
           onFixInNewChat={handleFixInNewChat}
           onSettingsTabChange={(t) => setWorkspaceSettingsTab(t)}
+          onSendPlanToGrill={handleSendPlanToGrill}
           pendingGrill={pendingGrill}
           onPendingGrillConsumed={() => setPendingGrill(null)}
         />
@@ -301,7 +315,7 @@ export default function AppLayout(): React.JSX.Element {
 
       <TokenDetailsModal
         isOpen={tokenModalOpen}
-        conversationId={activeConversation?.id ?? null}
+        workspaceId={activeWorkspace?.id ?? null}
         contextWindowTokens={contextWindowTokens}
         liveOutputTokens={sessionOutputTokens}
         onClose={() => setTokenModalOpen(false)}

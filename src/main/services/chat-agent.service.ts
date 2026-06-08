@@ -93,7 +93,9 @@ export class ChatAgentService extends EventEmitter {
       // Adapter may have changed (e.g., specialist build_status changed)
       const nextAdapter = this.resolveAdapter(workspacePath)
       if (nextAdapter !== existing.adapter) {
-        this.log.info(`[multi-session] Adapter changed for workspace ${workspaceId} — rebuilding session`)
+        this.log.info(
+          `[multi-session] Adapter changed for workspace ${workspaceId} — rebuilding session`
+        )
         await this.stopForWorkspace(workspaceId)
         // Fall through to create a new session below
       } else {
@@ -265,6 +267,19 @@ export class ChatAgentService extends EventEmitter {
     return this.getActiveEntry()?.adapter ?? this.daVinciAdapter
   }
 
+  /**
+   * Ensure a live session exists & is active for a workspace; lazily starts
+   * it if missing. Self-heals the fire-and-forget startAgent race.
+   */
+  async ensureStarted(workspaceId: string, workspacePath: string): Promise<void> {
+    if (!this.hasSessionForWorkspace(workspaceId)) {
+      await this.startForWorkspace(workspaceId, workspacePath)
+    }
+    if (this._activeWorkspaceId !== workspaceId) {
+      this.setActiveWorkspace(workspaceId)
+    }
+  }
+
   // ── Backward-Compatible Lifecycle (delegates to active workspace) ─
 
   /**
@@ -428,10 +443,6 @@ export class ChatAgentService extends EventEmitter {
     return this.getActiveSession()?.isRunning() ?? false
   }
 
-  getActiveQuery(): null {
-    return this.getActiveSession()?.getActiveQuery() ?? null
-  }
-
   /**
    * Route the renderer's answer to an ask_user question back through the IPC bridge
    * to the control-actions MCP server's pending askUserAndWaitForResponse promise.
@@ -466,7 +477,7 @@ export class ChatAgentService extends EventEmitter {
   getCacheEfficiency(): CacheEfficiencyReport {
     const session = this.getActiveSession()
     if (!session) {
-      return { totalQueries: 0, cacheHits: 0, hitRate: 0, estimatedSavings: 0, reuseEfficiency: 0 }
+      return { hitRate: 0, savedTokens: 0, totalInput: 0, turns: 0, turnBreakdown: [] }
     }
     return session.getCacheEfficiency()
   }

@@ -10,7 +10,7 @@
  */
 
 import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
-import type { AdapterMcpResult } from './role-adapters/types'
+import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 
 import type { ConversationMode, ModelAction } from '../../shared/types'
@@ -24,10 +24,8 @@ import {
 } from '../../shared/constants'
 
 import { modelConfigService } from './model-config.service'
-import {
-  conversationRepository,
-  workspaceRepository
-} from '../db/repositories'
+import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
+import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { existsSync } from 'node:fs'
@@ -36,6 +34,8 @@ export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
   /** Cached MCP config path — reused on continueSession turns to avoid rebuild. */
   private cachedMcpConfigPath: string | undefined
+  /** F18: 1M context beta header — extracted from magic string for maintainability. */
+  private static readonly CONTEXT_1M_BETA = 'context-1m-2025-08-07'
 
   constructor(session: unknown) {
     this.s = session as AgentSessionHost
@@ -45,6 +45,11 @@ export class AgentExecutorFactory {
   // Called on mode switch to ensure permission changes take effect immediately.
   invalidateMcpConfigCache(): void {
     this.cachedMcpConfigPath = undefined
+  }
+
+  /** Expose the cached MCP config path so recovery turns can re-mount control-actions/emit_plan. */
+  getCachedMcpConfigPath(): string | undefined {
+    return this.cachedMcpConfigPath
   }
 
   // ── resolveLocalContextWindow ─────────────────────────────────────────
@@ -82,7 +87,7 @@ export class AgentExecutorFactory {
         semanticSearchEnabled: settings.semanticSearchEnabled !== false,
         githubConfigured: !!settings.githubToken,
         externalMcpActive: this.resolveExternalMcpFlags(),
-        localMcpActive: settings.localMcpActive ?? {}
+        localMcpActive: {}
       }
     } catch {
       return defaults
@@ -229,7 +234,22 @@ export class AgentExecutorFactory {
       : CLAUDE_DEFAULT_CONTEXT_WINDOW
     this.s.effectiveContextWindow = effectiveContextWindow
 
+    const sdkContextWindowSize = resolveSdkContextWindowSize(supports1M, effectiveContextWindow)
+    // The `claude` CLI controls its auto-compact window via env vars, not argv
+    // flags. Without this, 1M models use the (smaller) model-default window —
+    // inflating the context badge and triggering premature auto-compact.
+    const compactionEnv = resolveClaudeCompactionEnv(supports1M, effectiveContextWindow)
+
     const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
+
+    // C2: Log tool availability on EVERY turn (not just first spawn)
+    this.s.log.info(
+      `[CLI:tools] turn=every allowedTools=${allowedTools?.length ?? 'all'} ` +
+        `disallowed=[${disallowedTools?.join(',') ?? ''}] ` +
+        `hasEmitPlan=${allowedTools === undefined || allowedTools.includes('mcp__control-actions__emit_plan')} ` +
+        `hasCodeGraph=${allowedTools === undefined || allowedTools.some((t: string) => t.includes('code-graph'))} ` +
+        `canContinue=${canContinue}`
+    )
 
     // ── Fast path: continueSession — skip expensive work ────────────────
     // When the CLI process is alive and we're continuing the same session,
@@ -240,6 +260,8 @@ export class AgentExecutorFactory {
     if (canContinue) {
       return {
         prompt,
+        systemPrompt,
+        permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
         model: resolvedModel,
         cwd: this.s.workspacePath!,
         abortController,
@@ -248,10 +270,11 @@ export class AgentExecutorFactory {
         continueSession: true,
         // Reuse cached MCP config — process already has MCP servers connected
         mcpConfigPath: this.cachedMcpConfigPath,
-        contextWindowSize: supports1M
-          ? effectiveContextWindow
-          : Math.round(effectiveContextWindow * 0.8),
+        contextWindowSize: sdkContextWindowSize,
         autoCompactEnabled: true,
+        // No-op on a live process (env only applies at spawn) — included for a
+        // consistent option shape with the new-spawn path.
+        envOverrides: compactionEnv,
         // F1: thinkingBudget must persist across continueSession turns to
         // enforce user cost control on every turn, not just the first.
         thinkingBudget: this.resolveThinkingBudget(),
@@ -276,6 +299,14 @@ export class AgentExecutorFactory {
     const mcpConfigPath = this.buildCLIMcpConfigPath(params)
     this.cachedMcpConfigPath = mcpConfigPath
 
+    // Instrumentation: one-line snapshot of the resolved compaction config on spawn.
+    this.s.log.info(
+      `[compaction:config] model=${resolvedModel} supports1M=${supports1M} ` +
+        `contextWindowSize=${sdkContextWindowSize} autoCompactEnabled=true ` +
+        `autoCompactWindow=${compactionEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW} ` +
+        `pctOverride=${compactionEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ?? 'none'}`
+    )
+
     return {
       prompt,
       systemPrompt,
@@ -290,13 +321,17 @@ export class AgentExecutorFactory {
       abortController,
       agentId: this.s.adapter.agentId,
       effort: this.resolveEffort(resolvedModel),
-      betas: supports1M ? ['context-1m-2025-08-07'] : undefined,
-      fallbackModel: resolvedModel !== 'claude-sonnet-4-6' ? 'claude-sonnet-4-6' : undefined,
+      betas: supports1M ? [AgentExecutorFactory.CONTEXT_1M_BETA] : undefined,
+      // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
+      // Haiku → no fallback (it's the cheapest; falling back to Sonnet increases cost).
+      // Opus → Sonnet fallback (appropriate cost reduction).
+      // Sonnet → no fallback (it IS the fallback target).
+      fallbackModel: resolvedModel.includes('opus') ? 'claude-sonnet-4-6' : undefined,
       additionalDirectories,
-      contextWindowSize: supports1M
-        ? effectiveContextWindow
-        : Math.round(effectiveContextWindow * 0.8),
+      contextWindowSize: sdkContextWindowSize,
       autoCompactEnabled: true,
+      // Wire compaction window into the CLI's process env (see resolveClaudeCompactionEnv).
+      envOverrides: compactionEnv,
       continueSession: false,
       mcpConfigPath,
       goal: params.goal,
@@ -315,7 +350,7 @@ export class AgentExecutorFactory {
 
       const controlCallbacks = this.s.adapter.buildControlCallbacks({
         conversationId: this.s.currentConversationId ?? '',
-        emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload),
+        emit: (evt: string, payload: unknown) => this.s.emitAdapterEvent(evt, payload),
         getAccumulatedText: () => this.s.accumulatedText
       })
 
@@ -337,8 +372,8 @@ export class AgentExecutorFactory {
       this.s.log.info(`[buildCLIMcpConfigPath] MCP config written: ${configPath}`)
       return configPath
     } catch (error) {
-      this.s.log.warn('[buildCLIMcpConfigPath] Failed to write MCP config:', error)
-      return undefined
+      this.s.log.error('[buildCLIMcpConfigPath] CRITICAL: MCP config write failed:', error)
+      throw error // Don't swallow — agent needs control tools
     }
   }
 
@@ -350,9 +385,7 @@ export class AgentExecutorFactory {
    *   build  → 'auto'              (AI safety classifier)
    *   danger → 'bypassPermissions' (unrestricted)
    */
-  private resolveCliPermissionMode(
-    mode: ConversationMode
-  ): 'plan' | 'auto' | 'bypassPermissions' {
+  private resolveCliPermissionMode(mode: ConversationMode): 'plan' | 'auto' | 'bypassPermissions' {
     switch (mode) {
       case 'danger':
         return 'bypassPermissions'

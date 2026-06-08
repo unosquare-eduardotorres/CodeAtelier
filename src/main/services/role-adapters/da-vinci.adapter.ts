@@ -10,67 +10,24 @@
  * functional drift — only structural reorganization.
  */
 
+import type { ConversationMode, ModelAction, Specialist } from '../../../shared/types'
 import type {
-  ConversationMode,
-  CostPreference,
-  AgentIntent,
-  MemoryType,
-  ModelAction,
-  Specialist
-} from '../../../shared/types'
-import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
-import { modelConfigService } from '../model-config.service'
-import type {
-  AdapterIntentContext,
-  AdapterMcpContext,
-  AdapterMcpResult,
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx,
-  AgentRoleAdapter,
-  AgentSessionEventName
+  AdapterSessionLifecycleCtx
 } from '../agent-session.types'
-import type { ControlActionCallbacks } from '../control-actions.tool'
 import { DA_VINCI_AGENT_ID } from '../../../shared/constants'
 import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
-import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
-import { githubService } from '../github.service'
 import { memoryService } from '../memory.service'
-import {
-  conversationRepository,
-  memoryRepository,
-  specialistRepository,
-  workspaceRepository
-} from '../../db/repositories'
-import { intentDetector } from '../intent-detector'
-import { chatAgentLogger } from '../../logger'
+import { modelConfigService } from '../model-config.service'
+import { specialistRepository, workspaceRepository } from '../../db/repositories'
+import { BaseRoleAdapter } from './base.adapter'
 
-export class DaVinciRoleAdapter implements AgentRoleAdapter {
+export class DaVinciRoleAdapter extends BaseRoleAdapter {
   readonly role = 'da-vinci' as const
   readonly agentId = DA_VINCI_AGENT_ID
 
-  private readonly log = chatAgentLogger
   private readonly promptAssembler = new DaVinciPromptAssembler()
-
-  /** Feature flags refreshed from workspace settings each send(). */
-  private repomapEnabled = true
-  private semanticSearchEnabled = true
-  private githubConfigured = false
-
-  /**
-   * Strategy Λ (Lambda): Locked MCP feature flags — snapshotted at onSessionStart()
-   * and used for buildMcpConfig() for the entire session lifetime. This prevents
-   * mid-session tool set drift that would break Claude's prompt cache prefix.
-   *
-   * refreshFeatureFlags() still reads live settings (for specialist-ready detection
-   * and telemetry), but the locked flags are what actually drive MCP server mounting.
-   * Flags are only re-locked on the next start() or explicit session restart.
-   */
-  private lockedMcpFlags: {
-    repomapEnabled: boolean
-    semanticSearchEnabled: boolean
-    githubConfigured: boolean
-  } | null = null
 
   /** Persona overlay — null = Da Vinci default. */
   private currentPersonaSpecialistId: string | null = null
@@ -98,25 +55,15 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
         const memoryCtx = memoryService.getContextForPrompt(workspace.id, memoryBudget)
         if (memoryCtx) this.promptAssembler.setMemoryContext(memoryCtx)
       }
-
-      this.repomapEnabled = settings.repomapEnabled !== false
-      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
-      this.githubConfigured = ctx.workspaceId ? githubService.isConfigured(ctx.workspaceId) : false
     } catch {
       /* non-fatal — keep defaults */
     }
 
-    // Strategy Λ: Lock MCP flags at session start — tool set stays stable for
-    // the entire session, ensuring Claude's prompt cache prefix is never broken
-    // by a mid-session settings toggle.
-    this.lockedMcpFlags = {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: this.githubConfigured
-    }
-    this.log.info(
-      `[adapter:lock-mcp-flags] repomap=${this.lockedMcpFlags.repomapEnabled} semantic=${this.lockedMcpFlags.semanticSearchEnabled} github=${this.lockedMcpFlags.githubConfigured}`
-    )
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(ctx.workspaceId, ctx.workspacePath)
+
+    // Pattern 6 / Strategy Λ: Lock MCP flags at session start
+    this.lockMcpFlags()
 
     // Persona carries across session start if conversation was persona-bound,
     // but the session-layer resolves conversations per-send.  On start, reset.
@@ -125,15 +72,8 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   }
 
   refreshFeatureFlags(ctx: AdapterSessionLifecycleCtx): void {
-    if (!ctx.workspaceId) return
-    try {
-      const settings = workspaceRepository.getSettings(ctx.workspaceId)
-      this.repomapEnabled = settings.repomapEnabled !== false
-      this.semanticSearchEnabled = settings.semanticSearchEnabled !== false
-      this.githubConfigured = githubService.isConfigured(ctx.workspaceId)
-    } catch {
-      /* non-fatal */
-    }
+    // Pattern 2: Centralized workspace feature flag refresh
+    this.refreshWorkspaceFeatureFlags(ctx.workspaceId, ctx.workspacePath)
 
     // Detect if a Project Specialist has become ready for this workspace
     // since the last send(). If so, arm the one-shot signal so the next
@@ -141,13 +81,15 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     // sentinel into the user message — DaVinci's prompt instructs it to
     // respond with an ask_user swap proposal.
     try {
-      const readySpecialist = specialistRepository.findReadyByWorkspace(ctx.workspaceId)
-      if (readySpecialist && readySpecialist.id !== this.lastAnnouncedSpecialistId) {
-        this.promptAssembler.setPendingSpecialistReadySignal(readySpecialist.displayName)
-        this.lastAnnouncedSpecialistId = readySpecialist.id
-        this.log.info(
-          `[adapter:specialist-ready] Armed swap proposal for workspace=${ctx.workspaceId} specialist=${readySpecialist.displayName}`
-        )
+      if (ctx.workspaceId) {
+        const readySpecialist = specialistRepository.findReadyByWorkspace(ctx.workspaceId)
+        if (readySpecialist && readySpecialist.id !== this.lastAnnouncedSpecialistId) {
+          this.promptAssembler.setPendingSpecialistReadySignal(readySpecialist.displayName)
+          this.lastAnnouncedSpecialistId = readySpecialist.id
+          this.log.info(
+            `[adapter:specialist-ready] Armed swap proposal for workspace=${ctx.workspaceId} specialist=${readySpecialist.displayName}`
+          )
+        }
       }
     } catch {
       /* non-fatal — detection is best-effort */
@@ -160,24 +102,18 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
   }
 
   buildPrompts(ctx: AdapterPromptContext): AdapterPromptResult {
-    // Strategy Λ: Use locked flags for prompt assembly (MCP guidance sections
-    // must match the tool set mounted via buildMcpConfig). Fall back to live
-    // flags only if session hasn't started yet (shouldn't happen in practice).
-    const mcpFlags = this.lockedMcpFlags ?? {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: this.githubConfigured
-    }
+    // Strategy Λ: Use locked flags for prompt assembly
+    const mcpFlags = this.getLockedMcpFlags()
 
     // Resolve which external MCPs are active for this chat — drives prompt guidance
     const externalMcpActive = this.resolveExternalMcpActive(ctx.workspaceId, ctx.conversationId)
 
-    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
-
-    // Resolve the model for prompt verbosity gating (Opus 4.8+ → lean prompts)
+    // Pattern 1: Centralized model resolution
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
     const modelAction = `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = isLocal ? undefined : modelConfigService.getModel(ctx.workspacePath, modelAction)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction)
+    // isLocalProvider is still needed by the assembler for local-prompt branching
+    const isLocalProvider = modelConfigService.isLocalProvider(ctx.workspacePath)
 
     const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
       message: ctx.message,
@@ -191,7 +127,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
       costPreference: ctx.costPreference,
       personaSpecialistId: this.currentPersonaSpecialistId,
       personaData: this.currentPersonaData,
-      isLocalProvider: isLocal,
+      isLocalProvider,
       model: resolvedModel
     })
 
@@ -208,110 +144,22 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     return { systemPrompt, effectiveMessage }
   }
 
-  buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
-    // Strategy Λ: Use locked flags so the MCP server set stays identical across
-    // all turns in this session, preserving the Claude prompt cache prefix.
-    // Exception: externalMcpActive is ALWAYS read fresh (per-message toggling).
-    const baseMcpFlags = this.lockedMcpFlags ?? {
-      repomapEnabled: this.repomapEnabled,
-      semanticSearchEnabled: this.semanticSearchEnabled,
-      githubConfigured: this.githubConfigured
-    }
-
-    // Resolve external MCP active states via shared helper (same logic as buildPrompts)
-    const externalMcpActive = this.resolveExternalMcpActive(ctx.workspaceId, ctx.conversationId)
-
-    // Resolve per-chat local MCP active state from conversation overrides
-    const localMcpActive: Record<string, boolean> = {}
+  protected override resolveWorkspaceId(): string | null {
     try {
-      const conv = ctx.conversationId ? conversationRepository.findById(ctx.conversationId) : null
-      const chatOverrides = conv?.mcpOverrides ?? {}
-      for (const lm of LOCAL_MCP_INTEGRATIONS) {
-        localMcpActive[lm.id] = chatOverrides[lm.id] !== false
-      }
-    } catch (err) {
-      this.log.error('[adapter:local-mcp] Failed to resolve local MCP overrides:', err)
-    }
-
-    return buildWorkspaceMcpConfig({
-      mode: ctx.mode,
-      workspacePath: ctx.workspacePath,
-      workspaceId: ctx.workspaceId,
-      conversationId: ctx.conversationId,
-      featureFlags: { ...baseMcpFlags, externalMcpActive, localMcpActive },
-      controlCallbacks: ctx.controlCallbacks,
-      isLocalProvider: modelConfigService.isLocalProvider(ctx.workspacePath),
-      contextTier: ctx.contextTier
-    })
-  }
-
-  buildControlCallbacks(params: {
-    conversationId: string | null
-    emit: (event: AgentSessionEventName, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    return {
-      onPlan: (_plan) => {
-        // Session wraps this and emits 'plan' — adapter does nothing extra.
-      },
-      onAskUser: (_questions) => {
-        // Session wraps this and emits 'askQuestion'.
-      },
-      onMemory: (memory: { type: MemoryType; title: string; content: string }) => {
-        // Persist immediately — no need to wait for stream finalize.
-        try {
-          const workspaces = workspaceRepository.findAll()
-          const workspace = workspaces.find((w) => w.repoPath)
-          const memWorkspaceId =
-            memory.type === 'user' || memory.type === 'feedback' ? null : (workspace?.id ?? null)
-          const mem = memoryRepository.createIfNotDuplicate({
-            workspaceId: memWorkspaceId,
-            type: memory.type,
-            title: memory.title,
-            content: memory.content,
-            tags: [],
-            sourceConversationId: params.conversationId ?? undefined,
-            sourceAgentId: DA_VINCI_AGENT_ID,
-            importance: 5
-          })
-          if (mem) {
-            this.log.info(`Memory created via tool: [${memory.type}] ${memory.title}`)
-          } else {
-            this.log.info(`Memory skipped (duplicate): [${memory.type}] ${memory.title}`)
-          }
-        } catch (err) {
-          this.log.warn('Failed to persist tool-emitted memory:', err)
-        }
-      }
+      const workspaces = workspaceRepository.findAll()
+      const workspace = workspaces.find((w) => w.repoPath)
+      return workspace?.id ?? null
+    } catch {
+      return null
     }
   }
 
-  emitDetectedIntents(ctx: AdapterIntentContext): void {
-    const detectedIntents = intentDetector.detectAll(
-      ctx.accumulatedText,
-      ctx.controlToolState,
-      ctx.mode
-    )
-
-    for (const intent of detectedIntents) {
-      ctx.emit('intent', intent)
-    }
-
-    if (detectedIntents.length === 0) {
-      this.log.info(`[PIPELINE:response-path] no-action textLen=${ctx.accumulatedText.length}`)
-      ctx.emit('intent', {
-        type: 'response',
-        content: ctx.accumulatedText
-      } as AgentIntent)
-    }
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.promptAssembler.resetSession()
     this.repomapEnabled = true
     this.semanticSearchEnabled = true
     this.githubConfigured = false
-    this.lockedMcpFlags = null
+    this.unlockMcpFlags()
     this.currentPersonaSpecialistId = null
     this.currentPersonaData = null
     this.lastAnnouncedSpecialistId = null
@@ -356,55 +204,7 @@ export class DaVinciRoleAdapter implements AgentRoleAdapter {
     return this.promptAssembler.getPendingContextSize(conversationId)
   }
 
-  getCompactionThresholds(
-    _costPreference: CostPreference
-  ): { suggest: number; auto: number } | null {
-    // Use session defaults.
-    return null
-  }
-
-  getPersonaId(): string | null {
-    return this.currentPersonaSpecialistId
-  }
-
   clearConversation(conversationId: string): void {
     this.promptAssembler.clearConversation(conversationId)
-  }
-
-  /**
-   * Read workspace settings + conversation overrides to determine which
-   * external MCPs are active for this chat. Used by both buildPrompts
-   * (prompt guidance injection) and buildMcpConfig (tool mounting).
-   */
-  private resolveExternalMcpActive(
-    workspaceId: string | null,
-    conversationId: string | null
-  ): Record<string, boolean> {
-    const result: Record<string, boolean> = {}
-    try {
-      const wsSettings = workspaceId ? workspaceRepository.getSettings(workspaceId) : {}
-      const conv = conversationId ? conversationRepository.findById(conversationId) : null
-      const chatOverrides = conv?.mcpOverrides ?? {}
-
-      this.log.info(
-        `[adapter:resolve-external-mcp] workspaceId=${workspaceId} conversationId=${conversationId} ` +
-          `wsFound=${!!workspaceId} wsSettingsKeys=${Object.keys(wsSettings)
-            .filter((k) => k.includes('Available'))
-            .join(',')} ` +
-          `convFound=${!!conv} chatOverrides=${JSON.stringify(chatOverrides)}`
-      )
-
-      for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-        const wsAvailable = !!wsSettings[`${integration.id}Available`]
-        const chatActive = !!chatOverrides[integration.id]
-        result[integration.id] = wsAvailable && chatActive
-        this.log.info(
-          `[adapter:resolve-external-mcp] ${integration.id}: wsAvailable=${wsAvailable} chatActive=${chatActive} → mounted=${result[integration.id]}`
-        )
-      }
-    } catch (err) {
-      this.log.error('[adapter:external-mcp] Failed to resolve MCP state:', err)
-    }
-    return result
   }
 }

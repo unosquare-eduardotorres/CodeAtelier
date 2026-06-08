@@ -44,7 +44,9 @@ function mapRow(row: EdgeRow): CodeGraphEdge {
  */
 export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEdge> {
   protected readonly tableName = 'code_graph_edges'
-  protected mapRow(row: EdgeRow): CodeGraphEdge { return mapRow(row) }
+  protected mapRow(row: EdgeRow): CodeGraphEdge {
+    return mapRow(row)
+  }
 
   /**
    * Bulk upsert graph edges for a workspace.

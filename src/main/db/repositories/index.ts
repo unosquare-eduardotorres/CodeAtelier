@@ -41,6 +41,15 @@ export { CodeGraphRankRepository, codeGraphRankRepository } from './code-graph-r
 export { TurnUsageRepository, turnUsageRepository } from './turn-usage.repository'
 export type { TurnUsage } from './turn-usage.repository'
 
+export { UsageLogRepository, usageLogRepository } from './usage-log.repository'
+export type {
+  UsageLogEntry,
+  RecordUsageLogInput,
+  UsageSummary,
+  FeatureUsage
+} from './usage-log.repository'
+
 export { AuditRepository, auditRepository } from './audit.repository'
+export { AuditPlanRepository, auditPlanRepository } from './audit-plan.repository'
 export { GrillSessionRepository, grillSessionRepository } from './grill-session.repository'
 export type { GrillSession, GrillSessionStatus } from './grill-session.repository'

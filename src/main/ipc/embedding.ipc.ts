@@ -1,31 +1,41 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { embeddingProvider } from '../services/embedding-provider.service'
+import { llamafileEmbeddingProvider } from '../services/llamafile-embedding.service'
+import { llamafileDownloadService } from '../services/llamafile-download.service'
 import { validateSender } from './validate-sender'
+import type { EmbeddingModelStatus } from '../../shared/types'
 
 export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
-  // Forward model download progress to renderer
-  embeddingProvider.on('modelDownloadProgress', (progress) => {
+  // Forward download progress (binary + model phases) to the renderer.
+  llamafileEmbeddingProvider.on('modelDownloadProgress', (progress) => {
     mainWindow.webContents.send(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, progress)
   })
-  embeddingProvider.on('modelReady', () => {
+  llamafileEmbeddingProvider.on('modelReady', () => {
     mainWindow.webContents.send(IPC_CHANNELS.EMBEDDING_MODEL_READY)
   })
-  embeddingProvider.on('modelError', (error: string) => {
+  llamafileEmbeddingProvider.on('modelError', (error: string) => {
     mainWindow.webContents.send(IPC_CHANNELS.EMBEDDING_MODEL_ERROR, error)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMBEDDING_CHECK_STATUS, async (event) => {
-    validateSender(event)
-    return {
-      ready: embeddingProvider.isReady,
-      cached: await embeddingProvider.isModelCached()
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDING_CHECK_STATUS,
+    async (event): Promise<EmbeddingModelStatus> => {
+      validateSender(event)
+      const engineInstalled = llamafileDownloadService.isEngineInstalled()
+      const modelInstalled = llamafileDownloadService.isModelInstalled()
+      return {
+        ready: llamafileEmbeddingProvider.isReady,
+        cached: engineInstalled && modelInstalled,
+        backend: 'llamafile',
+        engineInstalled,
+        modelInstalled
+      }
     }
-  })
+  )
 
   ipcMain.handle(IPC_CHANNELS.EMBEDDING_INITIALIZE, async (event) => {
     validateSender(event)
-    await embeddingProvider.initialize()
+    await llamafileEmbeddingProvider.initialize()
   })
 }

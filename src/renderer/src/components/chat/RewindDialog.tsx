@@ -124,9 +124,7 @@ export default function RewindDialog({
           </div>
           <div>
             <h3 className="text-base font-semibold text-text-primary">Rewind Conversation</h3>
-            <p className="text-xs text-text-secondary">
-              Select a checkpoint to rewind to
-            </p>
+            <p className="text-xs text-text-secondary">Select a checkpoint to rewind to</p>
           </div>
         </div>
 
@@ -156,9 +154,7 @@ export default function RewindDialog({
             <div className="py-8 text-center text-sm text-text-secondary">
               No checkpoints found for this conversation.
               <br />
-              <span className="text-xs">
-                Checkpoints are created during build-mode executions.
-              </span>
+              <span className="text-xs">Checkpoints are created during build-mode executions.</span>
             </div>
           ) : (
             <div className="max-h-64 overflow-y-auto space-y-1">

@@ -62,7 +62,9 @@ function mapRow(row: ConversationRow): Conversation {
 
 export class ConversationRepository extends BaseRepository<ConversationRow, Conversation> {
   protected readonly tableName = 'conversations'
-  protected mapRow(row: ConversationRow): Conversation { return mapRow(row) }
+  protected mapRow(row: ConversationRow): Conversation {
+    return mapRow(row)
+  }
 
   create(
     workspaceId: string,
@@ -116,6 +118,12 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
 
   delete(id: string): void {
     this.runTransaction(() => {
+      // Tables without FK cascade — clean explicitly to prevent orphaned rows
+      this.db().prepare('DELETE FROM checkpoints WHERE conversation_id = ?').run(id)
+      this.db().prepare('DELETE FROM turn_usage WHERE conversation_id = ?').run(id)
+      // events are kept for audit (time-pruned separately via pruneOlderThan) — do NOT delete here
+
+      // FK-cascaded tables (explicit delete for messages; attachments cascade from messages)
       this.db().prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
       this.db().prepare('DELETE FROM conversations WHERE id = ?').run(id)
     })
@@ -129,9 +137,7 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
   }
 
   archive(id: string): void {
-    this.db()
-      .prepare("UPDATE conversations SET status = 'archived' WHERE id = ?")
-      .run(id)
+    this.db().prepare("UPDATE conversations SET status = 'archived' WHERE id = ?").run(id)
   }
 
   updateSessionId(id: string, sessionId: string): void {
@@ -148,16 +154,12 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
   }
 
   updateBranchName(id: string, branchName: string): void {
-    this.db()
-      .prepare('UPDATE conversations SET branch_name = ? WHERE id = ?')
-      .run(branchName, id)
+    this.db().prepare('UPDATE conversations SET branch_name = ? WHERE id = ?').run(branchName, id)
   }
 
   updatePrInfo(id: string, prUrl: string, prNumber: number, branchName: string): void {
     this.db()
-      .prepare(
-        'UPDATE conversations SET pr_url = ?, pr_number = ?, branch_name = ? WHERE id = ?'
-      )
+      .prepare('UPDATE conversations SET pr_url = ?, pr_number = ?, branch_name = ? WHERE id = ?')
       .run(prUrl, prNumber, branchName, id)
   }
 
@@ -192,9 +194,7 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
    * The `summary` column already exists in the schema.
    */
   updateSummary(id: string, summary: string): void {
-    this.db()
-      .prepare('UPDATE conversations SET summary = ? WHERE id = ?')
-      .run(summary, id)
+    this.db().prepare('UPDATE conversations SET summary = ? WHERE id = ?').run(summary, id)
   }
 
   /**
@@ -202,9 +202,9 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
    * Returns undefined if no summary has been captured yet.
    */
   getSummary(id: string): string | undefined {
-    const row = this.db()
-      .prepare('SELECT summary FROM conversations WHERE id = ?')
-      .get(id) as { summary: string | null } | undefined
+    const row = this.db().prepare('SELECT summary FROM conversations WHERE id = ?').get(id) as
+      | { summary: string | null }
+      | undefined
     return row?.summary ?? undefined
   }
 

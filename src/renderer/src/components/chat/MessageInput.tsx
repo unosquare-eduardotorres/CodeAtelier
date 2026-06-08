@@ -12,7 +12,6 @@ import {
   useSpecialistStore
 } from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
-import type { LLMProvider } from '../../../../shared/types'
 import IdeaPopover from './IdeaPopover'
 import VoiceIndicator from './VoiceIndicator'
 import {

@@ -140,41 +140,35 @@ function loadSkillsForSpecialist(specialistId: string): Array<{
 }
 
 export function registerProjectSpecialistIpc(): void {
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_GET,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      const row = loadRow(workspaceId)
-      if (!row) return null
-      const serialized = serializeRow(row)
-      serialized.skills = loadSkillsForSpecialist(row.id)
-      return serialized
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_GET, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    const row = loadRow(workspaceId)
+    if (!row) return null
+    const serialized = serializeRow(row)
+    serialized.skills = loadSkillsForSpecialist(row.id)
+    return serialized
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_BUILD,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_BUILD
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      const row = loadRow(workspaceId)
-      if (!row) throw new Error(`No Project Specialist for workspace ${workspaceId}`)
-      emitProgress(row.id, 'started', 'Building specialist for this project…')
-      try {
-        const result = await specialistBuilderService.buildProjectSpecialist(workspaceId)
-        emitProgress(row.id, 'ready', `Ready — ${result.detectedTechs.length} techs detected`)
-        return result
-      } catch (err) {
-        emitProgress(row.id, 'failed', (err as Error).message)
-        throw err
-      }
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_BUILD, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_BUILD
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    const row = loadRow(workspaceId)
+    if (!row) throw new Error(`No Project Specialist for workspace ${workspaceId}`)
+    emitProgress(row.id, 'started', 'Building specialist for this project…')
+    try {
+      const result = await specialistBuilderService.buildProjectSpecialist(workspaceId)
+      emitProgress(row.id, 'ready', `Ready — ${result.detectedTechs.length} techs detected`)
+      return result
+    } catch (err) {
+      emitProgress(row.id, 'failed', (err as Error).message)
+      throw err
     }
-  )
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_REBUILD_PROMPT,
@@ -206,77 +200,63 @@ export function registerProjectSpecialistIpc(): void {
     }
   )
 
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT
-      const args = requireObject(rawArgs, ch)
-      const specialistId = requireString(args, 'specialistId', ch)
-      const prompt = requireString(args, 'prompt', ch)
-      const db = getDatabase()
-      db.prepare(
-        `UPDATE specialists SET prompt = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(prompt, specialistId)
-      psLog.info(`Prompt updated for specialist ${specialistId} (${prompt.length} chars)`)
-      return { ok: true }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_UPDATE_PROMPT
+    const args = requireObject(rawArgs, ch)
+    const specialistId = requireString(args, 'specialistId', ch)
+    const prompt = requireString(args, 'prompt', ch)
+    const db = getDatabase()
+    db.prepare(`UPDATE specialists SET prompt = ?, updated_at = datetime('now') WHERE id = ?`).run(
+      prompt,
+      specialistId
+    )
+    psLog.info(`Prompt updated for specialist ${specialistId} (${prompt.length} chars)`)
+    return { ok: true }
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL
-      const args = requireObject(rawArgs, ch)
-      const specialistId = requireString(args, 'specialistId', ch)
-      const skillId = requireString(args, 'skillId', ch)
-      const enabled = optionalBoolean(args, 'enabled', ch) ?? false
-      const db = getDatabase()
-      db.prepare(
-        `UPDATE specialist_skills SET is_enabled = ?
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_TOGGLE_SKILL
+    const args = requireObject(rawArgs, ch)
+    const specialistId = requireString(args, 'specialistId', ch)
+    const skillId = requireString(args, 'skillId', ch)
+    const enabled = optionalBoolean(args, 'enabled', ch) ?? false
+    const db = getDatabase()
+    db.prepare(
+      `UPDATE specialist_skills SET is_enabled = ?
            WHERE specialist_id = ? AND skill_id = ?`
-      ).run(enabled ? 1 : 0, specialistId, skillId)
-      return { ok: true }
-    }
-  )
+    ).run(enabled ? 1 : 0, specialistId, skillId)
+    return { ok: true }
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL
-      const args = requireObject(rawArgs, ch)
-      const specialistId = requireString(args, 'specialistId', ch)
-      const skillId = requireString(args, 'skillId', ch)
-      specialistRepository.assignSkill(specialistId, skillId)
-      return { ok: true }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_ATTACH_SKILL
+    const args = requireObject(rawArgs, ch)
+    const specialistId = requireString(args, 'specialistId', ch)
+    const skillId = requireString(args, 'skillId', ch)
+    specialistRepository.assignSkill(specialistId, skillId)
+    return { ok: true }
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL
-      const args = requireObject(rawArgs, ch)
-      const specialistId = requireString(args, 'specialistId', ch)
-      const skillId = requireString(args, 'skillId', ch)
-      specialistRepository.removeSkill(specialistId, skillId)
-      return { ok: true }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_DETACH_SKILL
+    const args = requireObject(rawArgs, ch)
+    const specialistId = requireString(args, 'specialistId', ch)
+    const skillId = requireString(args, 'skillId', ch)
+    specialistRepository.removeSkill(specialistId, skillId)
+    return { ok: true }
+  })
 
-  ipcMain.handle(
-    IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      return stackDriftDetectorService.detectForWorkspace(workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET_DRIFT
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    return stackDriftDetectorService.detectForWorkspace(workspaceId)
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.PROJECT_SPECIALIST_REFRESH_RECOMMENDATIONS,

@@ -8,12 +8,12 @@
 
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { mainLogger } from '../logger'
+import baseLog from '../logger'
 import { chatAgentService } from '../services'
 import { mpaOrchestrationService } from '../services/mpa-orchestration.service'
 import { validateSender } from './validate-sender'
 
-const log = mainLogger.scope('permission-ipc')
+const log = baseLog.scope('permission-ipc')
 
 export function registerPermissionIpc(): void {
   ipcMain.handle(
@@ -40,7 +40,9 @@ export function registerPermissionIpc(): void {
           if (session) {
             session.emit('elicitationResponse', response)
           } else {
-            log.warn(`[permission] No session for workspace ${workspaceId} — elicitation response dropped`)
+            log.warn(
+              `[permission] No session for workspace ${workspaceId} — elicitation response dropped`
+            )
           }
           break
         }
@@ -49,11 +51,7 @@ export function registerPermissionIpc(): void {
           // Route askQuestion response — extract requestId and answer from response
           const resp = response as { requestId?: string; answer?: string }
           if (resp.requestId && resp.answer) {
-            chatAgentService.respondToAskUserForWorkspace(
-              workspaceId,
-              resp.requestId,
-              resp.answer
-            )
+            chatAgentService.respondToAskUserForWorkspace(workspaceId, resp.requestId, resp.answer)
           } else {
             log.warn(`[permission] askQuestion response missing requestId or answer`)
           }

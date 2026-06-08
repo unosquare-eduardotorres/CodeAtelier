@@ -84,9 +84,14 @@ function mapRow(row: CouncilSessionRow): CouncilSessionRecord {
 
 // ── Repository ──────────────────────────────────────────────────────────────
 
-export class CouncilSessionRepository extends BaseRepository<CouncilSessionRow, CouncilSessionRecord> {
+export class CouncilSessionRepository extends BaseRepository<
+  CouncilSessionRow,
+  CouncilSessionRecord
+> {
   protected readonly tableName = 'council_sessions'
-  protected mapRow(row: CouncilSessionRow): CouncilSessionRecord { return mapRow(row) }
+  protected mapRow(row: CouncilSessionRow): CouncilSessionRecord {
+    return mapRow(row)
+  }
 
   /** Create a new council session */
   createSession(params: {
@@ -98,34 +103,34 @@ export class CouncilSessionRepository extends BaseRepository<CouncilSessionRow, 
     conversationId?: string
   }): CouncilSessionRecord {
     const id = crypto.randomUUID().replace(/-/g, '').toLowerCase()
-    this.db().prepare(
-      `INSERT INTO council_sessions (id, workspace_id, conversation_id, input_type, input_content, grill_session_id, structured_plan_json, phase)
+    this.db()
+      .prepare(
+        `INSERT INTO council_sessions (id, workspace_id, conversation_id, input_type, input_content, grill_session_id, structured_plan_json, phase)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'framing')`
-    ).run(
-      id,
-      params.workspaceId,
-      params.conversationId ?? null,
-      params.inputType,
-      params.inputContent,
-      params.grillSessionId ?? null,
-      params.structuredPlanJson ?? null
-    )
+      )
+      .run(
+        id,
+        params.workspaceId,
+        params.conversationId ?? null,
+        params.inputType,
+        params.inputContent,
+        params.grillSessionId ?? null,
+        params.structuredPlanJson ?? null
+      )
     return this.findById(id)!
   }
 
   /** Update the current phase */
   updatePhase(id: string, phase: CouncilPhase): void {
-    this.db().prepare(
-      `UPDATE council_sessions SET phase = ? WHERE id = ?`
-    ).run(phase, id)
+    this.db().prepare(`UPDATE council_sessions SET phase = ? WHERE id = ?`).run(phase, id)
   }
 
   /** Append a completed advisor review (incremental persistence) */
   appendAdvisorReview(id: string, review: CouncilReview): void {
     // Read current reviews, append, and write back
-    const row = this.db().prepare(
-      `SELECT advisor_reviews_json, completed_advisors FROM council_sessions WHERE id = ?`
-    ).get(id) as Pick<CouncilSessionRow, 'advisor_reviews_json' | 'completed_advisors'> | undefined
+    const row = this.db()
+      .prepare(`SELECT advisor_reviews_json, completed_advisors FROM council_sessions WHERE id = ?`)
+      .get(id) as Pick<CouncilSessionRow, 'advisor_reviews_json' | 'completed_advisors'> | undefined
 
     if (!row) return
 
@@ -137,42 +142,53 @@ export class CouncilSessionRepository extends BaseRepository<CouncilSessionRow, 
       completedAdvisors.push(review.advisorRole)
     }
 
-    this.db().prepare(
-      `UPDATE council_sessions
+    this.db()
+      .prepare(
+        `UPDATE council_sessions
        SET advisor_reviews_json = ?, completed_advisors = ?
        WHERE id = ?`
-    ).run(JSON.stringify(reviews), JSON.stringify(completedAdvisors), id)
+      )
+      .run(JSON.stringify(reviews), JSON.stringify(completedAdvisors), id)
   }
 
   /** Save all peer reviews at once */
   savePeerReviews(id: string, peerReviews: CouncilPeerReview[]): void {
-    this.db().prepare(
-      `UPDATE council_sessions SET peer_reviews_json = ? WHERE id = ?`
-    ).run(JSON.stringify(peerReviews), id)
+    this.db()
+      .prepare(`UPDATE council_sessions SET peer_reviews_json = ? WHERE id = ?`)
+      .run(JSON.stringify(peerReviews), id)
   }
 
   /** Save the chairman verdict */
   saveVerdict(id: string, verdict: CouncilVerdict): void {
-    this.db().prepare(
-      `UPDATE council_sessions SET verdict_json = ? WHERE id = ?`
-    ).run(JSON.stringify(verdict), id)
+    this.db()
+      .prepare(`UPDATE council_sessions SET verdict_json = ? WHERE id = ?`)
+      .run(JSON.stringify(verdict), id)
   }
 
   /** Save transcript markdown */
   saveTranscript(id: string, transcriptMd: string): void {
-    this.db().prepare(
-      `UPDATE council_sessions SET transcript_md = ? WHERE id = ?`
-    ).run(transcriptMd, id)
+    this.db()
+      .prepare(`UPDATE council_sessions SET transcript_md = ? WHERE id = ?`)
+      .run(transcriptMd, id)
   }
 
   /** Update session status */
   updateStatus(id: string, status: CouncilSessionStatus): void {
-    const completedAt = (status === 'completed' || status === 'failed' || status === 'cancelled')
-      ? new Date().toISOString()
-      : null
-    this.db().prepare(
-      `UPDATE council_sessions SET status = ?, completed_at = COALESCE(?, completed_at) WHERE id = ?`
-    ).run(status, completedAt, id)
+    const completedAt =
+      status === 'completed' || status === 'failed' || status === 'cancelled'
+        ? new Date().toISOString()
+        : null
+    this.db()
+      .prepare(
+        `UPDATE council_sessions SET status = ?, completed_at = COALESCE(?, completed_at) WHERE id = ?`
+      )
+      .run(status, completedAt, id)
+  }
+
+  /** Delete a council session by ID */
+  deleteSession(id: string): boolean {
+    const result = this.db().prepare(`DELETE FROM council_sessions WHERE id = ?`).run(id)
+    return result.changes > 0
   }
 
   /** Find sessions for a workspace, newest first */
@@ -204,13 +220,15 @@ export class CouncilSessionRepository extends BaseRepository<CouncilSessionRow, 
   /** Mark stale 'running' sessions as 'failed' (for app restart recovery) */
   markStaleAsFailed(workspaceId?: string): number {
     if (workspaceId) {
-      return this.db().prepare(
-        `UPDATE council_sessions SET status = 'failed' WHERE workspace_id = ? AND status = 'running'`
-      ).run(workspaceId).changes
+      return this.db()
+        .prepare(
+          `UPDATE council_sessions SET status = 'failed' WHERE workspace_id = ? AND status = 'running'`
+        )
+        .run(workspaceId).changes
     }
-    return this.db().prepare(
-      `UPDATE council_sessions SET status = 'failed' WHERE status = 'running'`
-    ).run().changes
+    return this.db()
+      .prepare(`UPDATE council_sessions SET status = 'failed' WHERE status = 'running'`)
+      .run().changes
   }
 }
 

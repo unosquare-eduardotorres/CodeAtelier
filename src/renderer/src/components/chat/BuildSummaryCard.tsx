@@ -29,20 +29,18 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
       {/* Header */}
       <div
         className={`flex items-center gap-3 px-4 py-3 border-b ${
-          hasErrors
-            ? 'border-amber-500/20 bg-amber-500/10'
-            : 'border-emerald-500/20 bg-emerald-500/10'
+          hasErrors ? 'border-warning/20 bg-warning/10' : 'border-success/20 bg-success/10'
         }`}
       >
         <div
           className={`w-8 h-8 rounded flex items-center justify-center ${
-            hasErrors ? 'bg-amber-500/20' : 'bg-emerald-500/20'
+            hasErrors ? 'bg-warning/20' : 'bg-success/20'
           }`}
         >
           {hasErrors ? (
-            <AlertTriangle size={16} className="text-amber-400" />
+            <AlertTriangle size={16} className="text-warning" />
           ) : (
-            <CheckCircle2 size={16} className="text-emerald-400" />
+            <CheckCircle2 size={16} className="text-success" />
           )}
         </div>
         <div className="flex-1 min-w-0">
@@ -83,16 +81,16 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
                 <td className="py-1.5 pr-2">
                   <span className="inline-flex items-center gap-1">
                     {task.status === 'completed' && (
-                      <CheckCircle2 size={12} className="text-emerald-400" />
+                      <CheckCircle2 size={12} className="text-success" />
                     )}
-                    {task.status === 'failed' && <XCircle size={12} className="text-red-400" />}
+                    {task.status === 'failed' && <XCircle size={12} className="text-danger" />}
                     {task.status === 'skipped' && <Clock size={12} className="text-text-muted" />}
                     <span
                       className={
                         task.status === 'completed'
-                          ? 'text-emerald-400'
+                          ? 'text-success'
                           : task.status === 'failed'
-                            ? 'text-red-400'
+                            ? 'text-danger'
                             : 'text-text-muted'
                       }
                     >
@@ -101,7 +99,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
                   </span>
                   {task.error && (
                     <p
-                      className="text-red-400/80 text-[10px] mt-0.5 max-w-[400px]"
+                      className="text-danger/80 text-[10px] mt-0.5 max-w-[400px]"
                       title={task.error}
                     >
                       {task.error}
@@ -121,7 +119,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
       {allFiles.length > 0 && (
         <div className="px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-1.5 mb-2">
-            <FileCode size={13} className="text-sky-400" />
+            <FileCode size={13} className="text-info" />
             <span className="text-xs font-medium text-text-secondary">
               Files Changed ({allFiles.length})
             </span>
@@ -130,7 +128,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
             {allFiles.map((file) => (
               <span
                 key={file}
-                className="inline-flex items-center gap-1 text-sky-400 font-mono text-xs bg-sky-400/10 px-1.5 py-0.5 rounded"
+                className="inline-flex items-center gap-1 text-info font-mono text-xs bg-info/10 px-1.5 py-0.5 rounded"
               >
                 <FileCode size={12} />
                 {file}
@@ -162,13 +160,13 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
       {summary.recommendations && summary.recommendations.length > 0 && (
         <div className="px-4 py-3">
           <div className="flex items-center gap-1.5 mb-2">
-            <Lightbulb size={13} className="text-amber-400" />
+            <Lightbulb size={13} className="text-warning" />
             <span className="text-xs font-medium text-text-secondary">Recommendations</span>
           </div>
           <ul className="space-y-1">
             {summary.recommendations.map((rec, idx) => (
               <li key={idx} className="text-xs text-text-body flex items-start gap-1.5">
-                <span className="text-amber-400 mt-0.5">&bull;</span>
+                <span className="text-warning mt-0.5">&bull;</span>
                 {rec}
               </li>
             ))}

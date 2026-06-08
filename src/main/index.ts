@@ -12,9 +12,16 @@ import {
   crashReporter
 } from 'electron'
 import { join } from 'node:path'
+import os from 'node:os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getDatabase, closeDatabase } from './db'
+import {
+  agentSessionRepository,
+  grillSessionRepository,
+  usageLogRepository,
+  turnUsageRepository
+} from './db/repositories'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
 import { memoryFeedService } from './services/memory-feed.service'
@@ -27,6 +34,8 @@ import { councilService } from './services/council.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
+import { llamafileEmbeddingProvider } from './services/llamafile-embedding.service'
+import { cleanupStalePromptFiles } from './services/cli-executor'
 
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
@@ -54,9 +63,8 @@ process.on('unhandledRejection', (reason) => {
 function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
   try {
     // Lazy import to avoid circular deps during early bootstrap
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { bugRepository } = require('./db/repositories/bug.repository')
-    const { BrowserWindow } = require('electron') as typeof import('electron')
-    const os = require('node:os')
 
     // Parse source file/line from stack trace
     let sourceFile: string | undefined
@@ -226,13 +234,15 @@ function createWindow(): void {
     )
   }
 
-  // Clean up stale "running" sessions left over from a previous app crash/quit
+  // Clean up stale sessions left over from a previous app crash/quit
   try {
-    const { agentSessionRepository } =
-      require('./db/repositories') as typeof import('./db/repositories')
-    const staleCount = agentSessionRepository.terminateStale()
-    if (staleCount > 0) {
-      log.info(`[Startup] Terminated ${staleCount} stale agent session(s) from previous run`)
+    const staleAgents = agentSessionRepository.terminateStale()
+    if (staleAgents > 0) {
+      log.info(`[Startup] Terminated ${staleAgents} stale agent session(s) from previous run`)
+    }
+    const staleGrills = grillSessionRepository.terminateStale()
+    if (staleGrills > 0) {
+      log.info(`[Startup] Recovered ${staleGrills} stale grill session(s) from previous run`)
     }
   } catch (error) {
     log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
@@ -243,6 +253,14 @@ function createWindow(): void {
     eventLoggerService.prune(30)
   } catch (error) {
     dbLogger.debug('Event pruning on startup failed (non-critical):', error)
+  }
+
+  // Prune old token usage to prevent unbounded DB growth (90-day cost history)
+  try {
+    usageLogRepository.pruneOlderThan(90)
+    turnUsageRepository.pruneOlderThan(90)
+  } catch (error) {
+    dbLogger.debug('Token usage pruning on startup failed (non-critical):', error)
   }
 
   // Register IPC handlers
@@ -360,6 +378,9 @@ app.whenReady().then(() => {
     uploadToServer: false
   })
 
+  // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
+  cleanupStalePromptFiles()
+
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     const allowedPermissions: string[] = ['notifications', 'media']
@@ -457,6 +478,13 @@ app.on('before-quit', async (event) => {
 
   // Stop all file watchers for Code Graph / Semantic Search
   fileWatcherService.stopAll()
+
+  // Kill the llamafile embedding sidecar so it doesn't orphan after quit
+  try {
+    llamafileEmbeddingProvider.dispose()
+  } catch (e) {
+    log.debug('Llamafile embedding dispose error (expected during quit):', e)
+  }
 
   closeDatabase()
   app.quit()

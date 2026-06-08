@@ -1,8 +1,11 @@
-import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
-import { GrillQuestionCard, ToolActivityBlock } from '@renderer/components/chat'
+import { useChatStore, useChatActions } from '@renderer/store'
+import { GrillQuestionCard } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
-import { Avatar, CompactContextModal } from '@renderer/components/common'
+import { CompactContextModal } from '@renderer/components/common'
+import { ThinkingIndicator } from '@renderer/components/streaming'
 import AutoModeSwitchPill from './AutoModeSwitchPill'
+import DiagnosticsPanel from './DiagnosticsPanel'
+import type { ToolActivity } from '../../../../shared/types'
 
 interface MessageListFooterProps {
   promptSuggestion: string | null
@@ -11,7 +14,7 @@ interface MessageListFooterProps {
   ideaPopoverData: { title: string; description: string } | null
   onCloseIdeaPopover: () => void
   thinkingIdentity: { name: string; avatarKey: string; accentColor: string }
-  allStreamingTools: Array<{ id: string; name: string; status: string; serverName?: string }>
+  allStreamingTools: ToolActivity[]
 }
 
 export default function MessageListFooter({
@@ -82,9 +85,7 @@ export default function MessageListFooter({
         isOpen={!!compactSuggestion}
         inputTokens={compactSuggestion?.inputTokens ?? 0}
         contextWindowSize={
-          activeConversationId
-            ? contextUsages[activeConversationId]?.contextWindowSize
-            : undefined
+          activeConversationId ? contextUsages[activeConversationId]?.contextWindowSize : undefined
         }
         level={compactSuggestion?.level ?? 'suggest'}
         categories={
@@ -129,6 +130,9 @@ export default function MessageListFooter({
         }}
       />
 
+      {/* LSP diagnostics panel (N3 — populated via App.tsx subscription) */}
+      {activeConversationId && <DiagnosticsPanel conversationId={activeConversationId} />}
+
       {/* Pending questions card */}
       {hasPendingQuestions && pendingQuestions && (
         <div className="flex justify-start px-4">
@@ -142,37 +146,17 @@ export default function MessageListFooter({
         </div>
       )}
 
-      {/* Thinking indicator */}
+      {/* Thinking indicator (shared primitive — chat keeps no live-text bubble) */}
       {isStreaming && (
-        <div className="flex gap-3 flex-row">
-          <div className="flex-shrink-0 mt-0.5">
-            <Avatar
-              avatarKey={thinkingIdentity.avatarKey}
-              size="xl"
-              accentColor={thinkingIdentity.accentColor}
-            />
-          </div>
-          <div className="flex flex-col max-w-[92%] items-start">
-            <div className="flex flex-col mb-1 px-1 items-start">
-              <span className="text-sm font-semibold text-text-primary leading-tight">
-                {thinkingIdentity.name}
-              </span>
-            </div>
-            <div className="flex flex-col gap-2 px-5 py-4 rounded-xl bg-surface-overlay border border-border-subtle shadow-sm">
-              <div className="flex items-center gap-1.5 py-0.5 px-1">
-                <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-                <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-                <span className="typing-dot" style={{ animationDelay: '300ms' }} />
-              </div>
-              <p className="text-sm text-text-muted italic">Let me take a look…</p>
-              {allStreamingTools.length > 0 && (
-                <div className="mt-2">
-                  <ToolActivityBlock activities={allStreamingTools} defaultExpanded />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <ThinkingIndicator
+          identity={{
+            name: thinkingIdentity.name,
+            avatarKey: thinkingIdentity.avatarKey,
+            accentColor: thinkingIdentity.accentColor
+          }}
+          toolActivities={allStreamingTools}
+          showHookIndicator
+        />
       )}
     </>
   )

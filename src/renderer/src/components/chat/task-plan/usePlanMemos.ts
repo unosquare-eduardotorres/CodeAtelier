@@ -13,7 +13,18 @@ function filterPlanArray<T>(arr: T[] | undefined, predicate?: (item: T) => boole
  * All defensive `useMemo` filters for structured plan arrays.
  * Extracted from TaskPlanCard to centralise validation logic.
  */
-export function usePlanMemos(structuredPlan: StructuredPlan | null) {
+export function usePlanMemos(structuredPlan: StructuredPlan | null): {
+  visibleFilesChanged: NonNullable<StructuredPlan['filesChanged']>
+  visibleFiles: NonNullable<StructuredPlan['files']>
+  visibleRisks: NonNullable<StructuredPlan['risks']>
+  visibleDeferredItems: NonNullable<StructuredPlan['deferredItems']>
+  visibleDiagrams: NonNullable<StructuredPlan['diagrams']>
+  visibleSections: NonNullable<StructuredPlan['sections']>
+  visibleRootCauses: NonNullable<StructuredPlan['rootCauses']>
+  visibleVerification: NonNullable<StructuredPlan['verification']>
+  visiblePhases: NonNullable<StructuredPlan['phases']>
+  visibleDecisions: NonNullable<StructuredPlan['decisions']>
+} {
   const visibleFilesChanged = useMemo(
     () =>
       filterPlanArray(
@@ -84,11 +95,7 @@ export function usePlanMemos(structuredPlan: StructuredPlan | null) {
   )
 
   const visibleDecisions = useMemo(
-    () =>
-      filterPlanArray(
-        structuredPlan?.decisions,
-        (d) => !!d?.what?.trim() && !!d?.why?.trim()
-      ),
+    () => filterPlanArray(structuredPlan?.decisions, (d) => !!d?.what?.trim() && !!d?.why?.trim()),
     [structuredPlan]
   )
 

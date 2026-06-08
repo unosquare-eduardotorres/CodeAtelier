@@ -9,9 +9,40 @@ import { test, describe, summaryAsync } from './test-harness'
 import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
 
 describe('appendMcpToolGuidance', () => {
-  test('no-op after turn 1', () => {
+  test('turn 2+ appends compact tool priority reminder for non-lean models with repomap', () => {
     const out = appendMcpToolGuidance('BASE', 2, {
       repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: true
+    })
+    assert.ok(out.includes('Tool Priority'), 'Should include compact tool priority reminder')
+    assert.ok(out.includes('search_identifiers'), 'Should mention search_identifiers')
+    assert.ok(out.includes('emit_plan'), 'Should include lean plan output guidance')
+    // Should NOT include the full guidance blocks
+    assert.ok(!out.includes('## Code Graph'), 'Should NOT include full Code Graph guidance')
+    assert.ok(
+      !out.includes('## Semantic Search'),
+      'Should NOT include full Semantic Search guidance'
+    )
+  })
+
+  test('turn 2+ is no-op for lean models', () => {
+    const out = appendMcpToolGuidance(
+      'BASE',
+      2,
+      {
+        repomapEnabled: true,
+        semanticSearchEnabled: true,
+        githubConfigured: true
+      },
+      'claude-opus-4-8'
+    )
+    assert.equal(out, 'BASE')
+  })
+
+  test('turn 2+ is no-op when repomap disabled', () => {
+    const out = appendMcpToolGuidance('BASE', 2, {
+      repomapEnabled: false,
       semanticSearchEnabled: true,
       githubConfigured: true
     })
@@ -29,7 +60,10 @@ describe('appendMcpToolGuidance', () => {
     assert.ok(allOff.includes('## Checkpoint Tools'), 'Checkpoint guidance should be appended')
     // Repomap / Semantic / GitHub require flags.
     assert.ok(!allOff.includes('## Code Graph'), 'Code Graph should not be appended when disabled')
-    assert.ok(!allOff.includes('## Semantic Search'), 'Semantic Search should not be appended when disabled')
+    assert.ok(
+      !allOff.includes('## Semantic Search'),
+      'Semantic Search should not be appended when disabled'
+    )
     assert.ok(!allOff.includes('## GitHub Tools'), 'GitHub should not be appended when disabled')
 
     const allOn = appendMcpToolGuidance('BASE', 1, {
@@ -38,38 +72,77 @@ describe('appendMcpToolGuidance', () => {
       githubConfigured: true
     })
     assert.ok(allOn.includes('## Code Graph'), 'Code Graph should be appended when enabled')
-    assert.ok(allOn.includes('## Semantic Search'), 'Semantic Search should be appended when enabled')
+    assert.ok(
+      allOn.includes('## Semantic Search'),
+      'Semantic Search should be appended when enabled'
+    )
     assert.ok(allOn.includes('## GitHub Tools'), 'GitHub should be appended when enabled')
   })
 
-  test('lean mode skips REPOMAP_GUIDANCE on turn 1', () => {
-    const out = appendMcpToolGuidance('BASE', 1, {
-      repomapEnabled: true,
-      semanticSearchEnabled: true,
-      githubConfigured: false
-    }, 'claude-opus-4-8')
-    // Lean: Code Graph rules are merged into identity prompt
-    assert.ok(!out.includes('## Code Graph'), 'Lean mode should skip REPOMAP_GUIDANCE')
+  test('lean mode injects compressed REPOMAP_GUIDANCE when base lacks ## Code Exploration', () => {
+    const out = appendMcpToolGuidance(
+      'BASE',
+      1,
+      {
+        repomapEnabled: true,
+        semanticSearchEnabled: true,
+        githubConfigured: false
+      },
+      'claude-opus-4-8'
+    )
+    // Specialist/evaluation adapters have no ## Code Exploration — they get the lean guidance.
+    assert.ok(
+      out.includes('## Code Graph'),
+      'Lean non-DaVinci should get compressed Code Graph guidance'
+    )
     // But semantic search should still be present
     assert.ok(out.includes('## Semantic Search'), 'Semantic search should still be injected')
   })
 
+  test('lean mode skips REPOMAP_GUIDANCE when base already has ## Code Exploration (DaVinci)', () => {
+    const out = appendMcpToolGuidance(
+      'BASE\n\n## Code Exploration\nbuilt-in',
+      1,
+      {
+        repomapEnabled: true,
+        semanticSearchEnabled: false,
+        githubConfigured: false
+      },
+      'claude-opus-4-8'
+    )
+    // DaVinci lean identity already covers Code Graph rules — avoid duplication.
+    assert.ok(
+      !out.includes('## Code Graph'),
+      'DaVinci lean should not duplicate Code Graph guidance'
+    )
+  })
+
   test('full mode includes REPOMAP_GUIDANCE on turn 1', () => {
-    const out = appendMcpToolGuidance('BASE', 1, {
-      repomapEnabled: true,
-      semanticSearchEnabled: false,
-      githubConfigured: false
-    }, 'claude-sonnet-4-6')
+    const out = appendMcpToolGuidance(
+      'BASE',
+      1,
+      {
+        repomapEnabled: true,
+        semanticSearchEnabled: false,
+        githubConfigured: false
+      },
+      'claude-sonnet-4-6'
+    )
     assert.ok(out.includes('## Code Graph'), 'Full mode should include REPOMAP_GUIDANCE')
   })
 
   test('lean mode uses compressed Maestro guidance', () => {
-    const out = appendMcpToolGuidance('BASE', 1, {
-      repomapEnabled: false,
-      semanticSearchEnabled: false,
-      githubConfigured: false,
-      externalMcpActive: { maestro: true }
-    }, 'claude-opus-4-8')
+    const out = appendMcpToolGuidance(
+      'BASE',
+      1,
+      {
+        repomapEnabled: false,
+        semanticSearchEnabled: false,
+        githubConfigured: false,
+        externalMcpActive: { maestro: true }
+      },
+      'claude-opus-4-8'
+    )
     assert.ok(out.includes('## Maestro'), 'Should include Maestro guidance')
     // Lean Maestro is shorter — no ### subsections
     assert.ok(!out.includes('### Workflow'), 'Lean Maestro should not have ### Workflow subsection')
@@ -77,12 +150,17 @@ describe('appendMcpToolGuidance', () => {
   })
 
   test('full mode uses verbose Maestro guidance', () => {
-    const out = appendMcpToolGuidance('BASE', 1, {
-      repomapEnabled: false,
-      semanticSearchEnabled: false,
-      githubConfigured: false,
-      externalMcpActive: { maestro: true }
-    }, 'claude-sonnet-4-6')
+    const out = appendMcpToolGuidance(
+      'BASE',
+      1,
+      {
+        repomapEnabled: false,
+        semanticSearchEnabled: false,
+        githubConfigured: false,
+        externalMcpActive: { maestro: true }
+      },
+      'claude-sonnet-4-6'
+    )
     assert.ok(out.includes('### Workflow'), 'Full mode should have ### Workflow subsection')
   })
 

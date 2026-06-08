@@ -85,7 +85,7 @@ export function registerSdkControlIpc(): void {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_STOP_TASK
     const obj = requireObject(args, channel)
-    const _taskId = requireString(obj, 'taskId', channel)
+    requireString(obj, 'taskId', channel)
     // SDK Query object no longer available — CLI abort handles full session stop
     log.warn(`[${channel}] Individual task stop not available without SDK Query`)
     return { success: false, error: 'Task stop requires SDK (removed)' }
@@ -95,12 +95,7 @@ export function registerSdkControlIpc(): void {
   ipcMain.handle(IPC_CHANNELS.SDK_SUPPORTED_MODELS, async (event) => {
     validateSender(event)
     // Return static model list — the CLI doesn't expose supportedModels()
-    return [
-      'claude-sonnet-4-6',
-      'claude-sonnet-4-20250514',
-      'claude-opus-4-0',
-      'claude-haiku-3-5'
-    ]
+    return ['claude-sonnet-4-6', 'claude-sonnet-4-20250514', 'claude-opus-4-0', 'claude-haiku-3-5']
   })
 
   // ── SubAgent inspection — not available without SDK ────────────────────
@@ -109,7 +104,7 @@ export function registerSdkControlIpc(): void {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_LIST_SUBAGENTS
     const obj = requireObject(args, channel)
-    const _sessionId = requireString(obj, 'sessionId', channel)
+    requireString(obj, 'sessionId', channel)
     log.info(`[${channel}] SubAgent listing not available — SDK removed`)
     return []
   })
@@ -118,8 +113,8 @@ export function registerSdkControlIpc(): void {
     validateSender(event)
     const channel = IPC_CHANNELS.SDK_GET_SUBAGENT_MESSAGES
     const obj = requireObject(args, channel)
-    const _sessionId = requireString(obj, 'sessionId', channel)
-    const _subagentId = requireString(obj, 'subagentId', channel)
+    requireString(obj, 'sessionId', channel)
+    requireString(obj, 'subagentId', channel)
     log.info(`[${channel}] SubAgent messages not available — SDK removed`)
     return []
   })
@@ -149,11 +144,20 @@ export function registerSdkControlIpc(): void {
     const channel = IPC_CHANNELS.SDK_FORK_SESSION
     const obj = requireObject(args, channel)
     const sessionId = requireString(obj, 'sessionId', channel)
-    const _upToMessageId = optionalString(obj, 'upToMessageId', channel)
+    optionalString(obj, 'upToMessageId', channel)
     // CLI supports --fork-session with --resume
     try {
       const { execFileSync } = await import('node:child_process')
-      const cliArgs = ['--resume', sessionId, '--fork-session', '-p', '--print', 'forked', '--output-format', 'json']
+      const cliArgs = [
+        '--resume',
+        sessionId,
+        '--fork-session',
+        '-p',
+        '--print',
+        'forked',
+        '--output-format',
+        'json'
+      ]
       const result = execFileSync('claude', cliArgs, { encoding: 'utf-8', timeout: 10_000 })
       return JSON.parse(result.trim())
     } catch (err) {

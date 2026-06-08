@@ -72,9 +72,11 @@ export const useAgentStore = create<AgentState>((set) => ({
         [status.agentId]: curOut
       }
 
-      // Extract context window size from the da-vinci agent status (point-in-time value)
+      // Extract context window size from the latest non-zero status of ANY agent
+      // (chat, grill, council, mpa, audit) — point-in-time value. Unifies the live
+      // context badge across every feature, not just da-vinci.
       const contextWindowTokens =
-        status.agentType === 'da-vinci' && status.contextTokens
+        status.contextTokens && status.contextTokens > 0
           ? status.contextTokens
           : state.contextWindowTokens
 

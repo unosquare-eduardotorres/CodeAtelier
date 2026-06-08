@@ -1,7 +1,12 @@
 import { useState } from 'react'
 import { RefreshCw, Loader2, HardDrive } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
+import { LLAMAFILE_EMBEDDING } from '../../../../../shared/constants'
 import type { EmbeddingModelStatus } from '../../../../../shared/types'
+
+const TOTAL_DOWNLOAD_MB = Math.round(
+  (LLAMAFILE_EMBEDDING.engine.sizeBytes + LLAMAFILE_EMBEDDING.model.sizeBytes) / (1024 * 1024)
+)
 
 interface EmbeddingModelCardProps {
   embeddingStatus: EmbeddingModelStatus | null
@@ -50,7 +55,9 @@ export default function EmbeddingModelCard({
         {/* Model name */}
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Model</span>
-          <span className="text-text-body font-mono">nomic-ai/nomic-embed-text-v1.5</span>
+          <span className="text-text-body font-mono">
+            {LLAMAFILE_EMBEDDING.model.modelName} (Q4_K_M GGUF)
+          </span>
         </div>
 
         {/* Status */}
@@ -65,7 +72,7 @@ export default function EmbeddingModelCard({
         {/* Size */}
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Size</span>
-          <span className="text-text-body">~270 MB (ONNX quantized)</span>
+          <span className="text-text-body">~{TOTAL_DOWNLOAD_MB} MB (engine + GGUF model)</span>
         </div>
 
         {/* Cache location */}
@@ -79,7 +86,7 @@ export default function EmbeddingModelCard({
         {/* Runtime */}
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Runtime</span>
-          <span className="text-text-body">WASM (in-process, no external tools)</span>
+          <span className="text-text-body">llamafile server (native, downloaded on first use)</span>
         </div>
       </div>
 
@@ -96,7 +103,7 @@ export default function EmbeddingModelCard({
             ) : (
               <RefreshCw size={12} />
             )}
-            Re-download Model
+            Repair / Re-initialize
           </button>
         ) : (
           <button

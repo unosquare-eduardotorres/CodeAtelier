@@ -31,7 +31,7 @@ Both adapters share the same execution model, MCP toolbox, and plan/build mode r
 
 ## Tech Stack
 
-- **Runtime**: Electron 40 (Chromium 144 + Node 24)
+- **Runtime**: Electron 41 (Chromium 146 + Node 24)
 - **Frontend**: React 19 + TypeScript 5.9
 - **Bundler**: electron-vite 5 (Vite 7)
 - **Styling**: Tailwind CSS 4

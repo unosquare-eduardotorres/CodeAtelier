@@ -1,6 +1,12 @@
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import type { BudgetTier, CommunicationTone, ConversationMode, PromptVerbosity, Skill } from '../../shared/types'
+import type {
+  BudgetTier,
+  CommunicationTone,
+  ConversationMode,
+  PromptVerbosity,
+  Skill
+} from '../../shared/types'
 import type { ContextWindowTier } from './context-management'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
@@ -97,11 +103,14 @@ export class PromptBuilder {
 
     // Lean: tighter regex — require explicit option-signal phrasing.
     // Full: broader triggers for models that need more guidance.
-    const includeAskQuestionPrompt = verbosity === 'lean'
-      ? /\b(choose between|give me options|what are my options|which (one|option) should)\b/i.test(normalized)
-      : /\b(which|choose|choice|option|pick|select|either|vs|versus|should i|what do you prefer)\b/i.test(
-          normalized
-        )
+    const includeAskQuestionPrompt =
+      verbosity === 'lean'
+        ? /\b(choose between|give me options|what are my options|which (one|option) should)\b/i.test(
+            normalized
+          )
+        : /\b(which|choose|choice|option|pick|select|either|vs|versus|should i|what do you prefer)\b/i.test(
+            normalized
+          )
 
     const includeMemoryProtocolPrompt =
       /\b(remember|preference|prefer|i like|i dislike|always|never|for future|from now on|note this|keep in mind)\b/i.test(
@@ -205,7 +214,9 @@ export class PromptBuilder {
    * Layer 1: Base role prompt (from DB, user-editable).
    */
   private appendRoleAndIdentityLayers(layers: string[], options: PromptBuildOptions): void {
-    layers.push(this.getRolePrompt(options.role, options.mode, options.communicationTone, options.model))
+    layers.push(
+      this.getRolePrompt(options.role, options.mode, options.communicationTone, options.model)
+    )
   }
 
   /**
@@ -235,7 +246,9 @@ export class PromptBuilder {
    */
   private appendMemoryContextLayer(layers: string[], options: PromptBuildOptions): void {
     if (options.memoryContext) {
-      log.warn('[prompt-builder] memoryContext passed via PromptBuildOptions is deprecated (Strategy C). Memory should be in the user prompt.')
+      log.warn(
+        '[prompt-builder] memoryContext passed via PromptBuildOptions is deprecated (Strategy C). Memory should be in the user prompt.'
+      )
       layers.push(`## Auto Memory\n\n${options.memoryContext}`)
     }
   }
@@ -258,10 +271,7 @@ export class PromptBuilder {
         const directive = TONE_STYLE_DIRECTIVES[tone]
         const styleSectionRe = /## Style\n[\s\S]*?(?=\n##|\n$)/
         if (styleSectionRe.test(dbPrompt.promptText)) {
-          return dbPrompt.promptText.replace(
-            styleSectionRe,
-            `## Style\n${directive}`
-          )
+          return dbPrompt.promptText.replace(styleSectionRe, `## Style\n${directive}`)
         }
         return dbPrompt.promptText + `\n\n## Communication Tone Override\n${directive}`
       }
@@ -270,9 +280,10 @@ export class PromptBuilder {
     // Fallback to defaults — build identity prompt with tone baked in
     if (role === 'da-vinci') {
       const verbosity = resolvePromptVerbosity(model ?? '')
-      const identity = verbosity === 'lean'
-        ? buildDaVinciIdentityPromptLean(tone)
-        : buildDaVinciIdentityPrompt(tone)
+      const identity =
+        verbosity === 'lean'
+          ? buildDaVinciIdentityPromptLean(tone)
+          : buildDaVinciIdentityPrompt(tone)
       // Lean mode: skip UNIFIED_MODE_SECTION since per-message <mode-context>
       // block already provides detailed mode instructions every turn.
       // Saves ~80 tokens from the system prompt.
@@ -311,7 +322,7 @@ export class PromptBuilder {
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
     // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
     if (budgetTier === 'minimal') {
-      return 'Tech: Electron 40, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
+      return 'Tech: Electron 41, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
     }
 
     try {
@@ -488,15 +499,18 @@ You are in PLAN mode. Your job: produce a WRITTEN PLAN, not execute changes.
 1. PARSE the request — identify what the user wants (0 tools)
 2. LOCATE files — use Glob/Grep/FindSymbol (2-3 calls max)
 3. READ key sections — use Read with offset+limit (2-3 calls max)
-4. WRITE THE PLAN — numbered list of specific file changes
+4. EMIT THE PLAN — call **emit_plan** with your findings and proposed file changes.
+   If emit_plan is unavailable, output a numbered list of specific file changes.
 
 ### Rules:
-- Maximum ${budget} tool calls total. Then WRITE.
+- Maximum ${budget} tool calls total. Then EMIT.
 - After reading 2-3 files, you have enough context. STOP exploring.
 - A partial plan is ALWAYS better than no plan.
 - NEVER explore "just in case."
 
 ### Output Format:
+Call **emit_plan** with type, title, and phases listing specific file changes.
+Fallback (if emit_plan unavailable):
 1. **\`path/to/file.tsx\`** — Description of change
 2. **\`path/to/other.ts\`** — Description of change
 `

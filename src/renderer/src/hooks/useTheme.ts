@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useAppTheme } from '@renderer/store'
 import type { AppTheme } from '../../../shared/types'
 
-const VALID_THEMES: AppTheme[] = ['code-atelier', 'neon-forge', 'porcelain']
+const VALID_THEMES: AppTheme[] = ['code-atelier', 'glass', 'porcelain', 'developer']
 
 /**
  * Applies the active theme by setting `data-theme` on `<html>`.

@@ -211,6 +211,25 @@ export async function summaryAsync(): Promise<void> {
   process.exit(failed > 0 ? 1 : 0)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Async mutex — serialize tests that mutate a process-global (e.g. globalThis.fetch).
+// The harness starts all async tests concurrently, so any two suites that swap a
+// shared global will clobber each other across `await` points. Wrap their bodies
+// in `runExclusive()` so they take turns on a single shared lock.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let exclusiveChain: Promise<unknown> = Promise.resolve()
+
+export function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = exclusiveChain.then(fn, fn)
+  // Keep the chain alive regardless of success/failure so the next waiter still runs.
+  exclusiveChain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 /**
  * Reset counters — useful when running multiple test files in a single process.
  */

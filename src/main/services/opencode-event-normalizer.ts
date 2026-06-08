@@ -44,6 +44,10 @@ export interface NormalizerState {
   lastFinishReason?: string
   /** GAP-12: Last emitted context usage percentage — avoids flooding UI with micro-updates */
   lastContextPercentage?: number
+  /** F16: Track last part type for turn boundary detection */
+  lastPartType?: 'text' | 'thinking' | 'tool'
+  /** F16: Whether we've seen text content before (for thinking→text boundary) */
+  hasPriorText?: boolean
 }
 
 type EventProperties = Record<string, unknown>
@@ -55,102 +59,146 @@ type EventHandler = (
   state: NormalizerState
 ) => StreamChunk[]
 
-// ── Per-event-type handler functions ──
+// ── Per-part-type sub-handlers for message.part.updated ──
 
-function handleMessagePartUpdated(properties: EventProperties): StreamChunk[] {
+/** Handle text part — includes thinking→text turn boundary detection (F16). */
+function handleTextPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
+  const text = part.content as string | undefined
+  if (!text) return []
+
   const chunks: StreamChunk[] = []
-  const part = properties.part as Record<string, unknown> | undefined
+  // F16: Emit turn_boundary when transitioning from thinking→text
+  // so the renderer shows visual separation between thinking and response.
+  if (state.lastPartType === 'thinking' && state.hasPriorText) {
+    chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+  }
+  chunks.push({ type: 'text', content: text })
+  state.lastPartType = 'text'
+  state.hasPriorText = true
+  return chunks
+}
 
-  if (part?.type === 'text') {
-    const text = part.content as string | undefined
-    if (text) chunks.push({ type: 'text', content: text })
+/** Handle tool-invocation part — call, partial (streaming args), and result sub-states. */
+function handleToolInvocationPart(
+  part: Record<string, unknown>,
+  state: NormalizerState
+): StreamChunk[] {
+  const chunks: StreamChunk[] = []
+  const toolName = part.toolName as string | undefined
+  const toolId = part.toolCallId as string | undefined
+  // N1: Renamed from `state` to avoid shadowing the NormalizerState parameter
+  const invocationState = part.state as string | undefined
+
+  if (invocationState === 'call' && toolName) {
+    state.lastPartType = 'tool'
+    chunks.push({ type: 'tool_use', toolName, toolId })
   }
 
-  if (part?.type === 'tool-invocation') {
-    const toolName = part.toolName as string | undefined
-    const toolId = part.toolCallId as string | undefined
-    const state = part.state as string | undefined
-
-    if (state === 'call' && toolName) {
-      chunks.push({ type: 'tool_use', toolName, toolId })
-    }
-
-    if (state === 'partial' && toolName) {
-      const partialArgs = part.args as Record<string, unknown> | undefined
-      if (partialArgs) {
-        const inputPreview = summarizeToolInput(toolName, partialArgs)
-        if (inputPreview) {
-          chunks.push({
-            type: 'tool_progress',
-            toolName,
-            toolId,
-            toolInput: inputPreview,
-            content: `${toolName}: ${inputPreview}`
-          })
-        }
-      }
-    }
-
-    if (state === 'result') {
-      const result = part.result as string | undefined
-      const resultStr = typeof result === 'string' ? result : JSON.stringify(result)
-      chunks.push({
-        type: 'tool_result',
-        toolName: toolName ?? 'unknown',
-        toolId,
-        content: resultStr
-      })
-
-      // Generate a human-readable tool_use_summary
-      const toolNameStr = toolName ?? 'unknown'
-      const resultSummaryObj = extractResultSummary(toolNameStr, resultStr)
-      let inputSummary: string | undefined
-      const toolInput = part.args as Record<string, unknown> | undefined
-      if (toolInput) inputSummary = summarizeToolInput(toolNameStr, toolInput)
-
-      if (resultSummaryObj?.result || inputSummary) {
+  if (invocationState === 'partial' && toolName) {
+    const partialArgs = part.args as Record<string, unknown> | undefined
+    if (partialArgs) {
+      const inputPreview = summarizeToolInput(toolName, partialArgs)
+      if (inputPreview) {
         chunks.push({
-          type: 'tool_use_summary',
-          toolName: toolNameStr,
+          type: 'tool_progress',
+          toolName,
           toolId,
-          content: [
-            inputSummary ? `Input: ${inputSummary}` : '',
-            resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
-          ]
-            .filter(Boolean)
-            .join(' — ')
+          toolInput: inputPreview,
+          content: `${toolName}: ${inputPreview}`
         })
       }
     }
   }
 
-  if (part?.type === 'thinking') {
-    const thinking = part.content as string | undefined
-    if (thinking) chunks.push({ type: 'thinking', content: thinking })
-  }
+  if (invocationState === 'result') {
+    const result = part.result as string | undefined
+    const resultStr = typeof result === 'string' ? result : JSON.stringify(result)
+    chunks.push({
+      type: 'tool_result',
+      toolName: toolName ?? 'unknown',
+      toolId,
+      content: resultStr
+    })
 
-  // 6C-1: Handle 'reasoning' / 'reasoning-delta' part type (same UI as thinking)
-  if (part?.type === 'reasoning' || part?.type === 'reasoning-delta') {
-    const reasoning = part.content as string | undefined
-    if (reasoning) chunks.push({ type: 'thinking', content: reasoning })
-  }
+    // Generate a human-readable tool_use_summary
+    const toolNameStr = toolName ?? 'unknown'
+    const resultSummaryObj = extractResultSummary(toolNameStr, resultStr)
+    let inputSummary: string | undefined
+    const toolInput = part.args as Record<string, unknown> | undefined
+    if (toolInput) inputSummary = summarizeToolInput(toolNameStr, toolInput)
 
-  // GAP-9: Surface structured output from agent response
-  if (part?.type === 'structured_output' || part?.type === 'structured-output') {
-    const data = part.content ?? part.data ?? part.result
-    if (data) {
+    if (resultSummaryObj?.result || inputSummary) {
       chunks.push({
-        type: 'structured_output',
-        structuredOutput: {
-          data,
-          schemaName: part.schemaName as string | undefined
-        },
-        content: typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+        type: 'tool_use_summary',
+        toolName: toolNameStr,
+        toolId,
+        content: [
+          inputSummary ? `Input: ${inputSummary}` : '',
+          resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
+        ]
+          .filter(Boolean)
+          .join(' — ')
       })
     }
   }
 
   return chunks
+}
+
+/**
+ * Handle thinking / reasoning part — both map to the 'thinking' chunk type.
+ * 6C-1: 'reasoning' / 'reasoning-delta' treated identically to 'thinking'.
+ */
+function handleThinkingPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
+  const content = part.content as string | undefined
+  if (!content) return []
+  state.lastPartType = 'thinking'
+  return [{ type: 'thinking', content }]
+}
+
+/** GAP-9: Handle structured_output / structured-output part. */
+function handleStructuredOutputPart(part: Record<string, unknown>): StreamChunk[] {
+  const data = part.content ?? part.data ?? part.result
+  if (!data) return []
+  return [
+    {
+      type: 'structured_output',
+      structuredOutput: {
+        data,
+        schemaName: part.schemaName as string | undefined
+      },
+      content: typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+    }
+  ]
+}
+
+// ── Per-event-type handler functions ──
+
+/** Dispatcher for message.part.updated — delegates to per-part-type sub-handlers. */
+function handleMessagePartUpdated(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const part = properties.part as Record<string, unknown> | undefined
+  if (!part?.type) return []
+
+  switch (part.type) {
+    case 'text':
+      return handleTextPart(part, state)
+    case 'tool-invocation':
+      return handleToolInvocationPart(part, state)
+    case 'thinking':
+    case 'reasoning':
+    case 'reasoning-delta':
+      return handleThinkingPart(part, state)
+    case 'structured_output':
+    case 'structured-output':
+      return handleStructuredOutputPart(part)
+    default:
+      return []
+  }
 }
 
 function handleSessionUpdated(
@@ -169,16 +217,23 @@ function handleSessionUpdated(
       usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
   }
 
-  // GAP-12: Emit per-turn context usage updates (gated by 2% minimum delta)
-  if (usage?.inputTokens && usage?.contextWindowSize) {
-    const percentage = Math.round((usage.inputTokens / usage.contextWindowSize) * 100)
+  // GAP-12: Emit per-turn context usage updates (gated by 2% minimum delta).
+  // Context consumption = fresh input + cache reads + cache writes, matching
+  // Claude Code / agent-stream-processor. Using usage.inputTokens alone misses
+  // cached tokens (often the bulk of the window) and under-reported usage.
+  const contextTokens =
+    (usage?.inputTokens ?? 0) +
+    (usage?.cacheReadInputTokens ?? 0) +
+    (usage?.cacheCreationInputTokens ?? 0)
+  if (contextTokens > 0 && usage?.contextWindowSize) {
+    const percentage = Math.round((contextTokens / usage.contextWindowSize) * 100)
     const lastPct = state.lastContextPercentage ?? 0
     if (Math.abs(percentage - lastPct) >= 2) {
       state.lastContextPercentage = percentage
       chunks.push({
         type: 'context_usage_update',
         contextUsageUpdate: {
-          inputTokens: usage.inputTokens,
+          inputTokens: contextTokens,
           contextWindowSize: usage.contextWindowSize,
           percentage
         }
@@ -213,7 +268,7 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
   const isTransient = TRANSIENT_PATTERNS.some((p) => p.test(error))
   if (isTransient) {
     openCodeLog.info(`[opencode] Transient error detected — UI will show retry status: ${error}`)
-    return [
+    const chunks: StreamChunk[] = [
       {
         type: 'api_retry',
         content: `Transient error: ${error}`,
@@ -225,6 +280,16 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
         }
       }
     ]
+    // F17: Additionally emit rate_limit for rate-limit-specific errors so the
+    // UI rate limit indicator works for OpenCode sessions (parity with CLI).
+    const isRateLimit = /rate.?limit|429|too many requests/i.test(error)
+    if (isRateLimit) {
+      chunks.push({
+        type: 'rate_limit',
+        rateLimit: { status: 'rejected', utilization: 100, rateLimitType: 'api' }
+      })
+    }
+    return chunks
   }
 
   return [{ type: 'error', error }]
@@ -235,20 +300,31 @@ function handleSessionCompacted(properties: EventProperties): StreamChunk[] {
 
   // 6C-4: Emit context usage reset so the UI badge refreshes post-compaction
   const usage = properties.usage as Record<string, number> | undefined
-  if (usage?.inputTokens && usage?.contextWindowSize) {
+  const contextTokens =
+    (usage?.inputTokens ?? 0) +
+    (usage?.cacheReadInputTokens ?? 0) +
+    (usage?.cacheCreationInputTokens ?? 0)
+  if (contextTokens > 0 && usage?.contextWindowSize) {
     chunks.push({
       type: 'context_usage_update',
       contextUsageUpdate: {
-        inputTokens: usage.inputTokens,
+        inputTokens: contextTokens,
         contextWindowSize: usage.contextWindowSize,
-        percentage: Math.round((usage.inputTokens / usage.contextWindowSize) * 100)
+        percentage: Math.round((contextTokens / usage.contextWindowSize) * 100)
       }
     })
   } else {
-    // Estimate: compaction typically reduces to ~30% usage
+    // N12: Estimate compaction reduces to ~30% usage. Use a sane default
+    // context window to avoid 0/0 = NaN in the renderer's qualityPct calculation.
+    const estimatedWindow = 200_000
+    const estimatedTokens = Math.round(estimatedWindow * 0.3)
     chunks.push({
       type: 'context_usage_update',
-      contextUsageUpdate: { inputTokens: 0, contextWindowSize: 0, percentage: 30 }
+      contextUsageUpdate: {
+        inputTokens: estimatedTokens,
+        contextWindowSize: estimatedWindow,
+        percentage: 30
+      }
     })
   }
 
@@ -539,7 +615,7 @@ function handleServerConnected(
 // ── Dispatch table ──
 
 const EVENT_HANDLERS: Record<string, EventHandler> = {
-  'message.part.updated': handleMessagePartUpdated as EventHandler,
+  'message.part.updated': handleMessagePartUpdated,
   'session.updated': handleSessionUpdated,
   'session.error': handleSessionError as EventHandler,
   'session.compacted': handleSessionCompacted as EventHandler, // 6C-4: now emits context_usage_update

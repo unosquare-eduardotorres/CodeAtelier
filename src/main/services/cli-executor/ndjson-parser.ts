@@ -120,9 +120,7 @@ export function buildUserMessage(
   textOrBlocks: string | Array<Record<string, unknown>>
 ): Record<string, unknown> {
   const content =
-    typeof textOrBlocks === 'string'
-      ? [{ type: 'text', text: textOrBlocks }]
-      : textOrBlocks
+    typeof textOrBlocks === 'string' ? [{ type: 'text', text: textOrBlocks }] : textOrBlocks
 
   return {
     type: 'user',

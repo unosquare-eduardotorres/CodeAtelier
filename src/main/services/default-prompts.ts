@@ -31,8 +31,7 @@ ask_user parameters:
  * Compressed ask_user guidance for Opus 4.8+ models.
  * Opus sees tool schemas natively — only needs behavioral reminders.
  */
-export const ASK_QUESTION_PROMPT_LEAN =
-  `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
+export const ASK_QUESTION_PROMPT_LEAN = `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
 
 export const MEMORY_PROTOCOL_PROMPT = `## Memory Protocol
 
@@ -51,8 +50,7 @@ Do NOT emit for: transient discussion, info already in CLAUDE.md/Auto Memory, or
  * Opus uses emit_memory naturally but needs the type taxonomy
  * to scope memories correctly (user vs project vs feedback vs reference).
  */
-export const MEMORY_PROTOCOL_PROMPT_LEAN =
-  `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
+export const MEMORY_PROTOCOL_PROMPT_LEAN = `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
 
 export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
 
@@ -174,18 +172,15 @@ Only use tools for NEW information requests not already in your context.
  * Compressed direct-answer boost for Opus 4.8+ models.
  * 84% reduction from the full variant.
  */
-export const DIRECT_ANSWER_BOOST_PROMPT_LEAN =
-  `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
+export const DIRECT_ANSWER_BOOST_PROMPT_LEAN = `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
 
 // ── Plan & Direct Answer conditional prefix constants ─────────────────────
 
-export const PLAN_REMINDER_FULL =
-  `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards.]`
+export const PLAN_REMINDER_FULL = `[Reminder: Use the emit_plan tool to produce a structured plan. Plain-text plans are not actionable — only tool-emitted plans render as interactive cards. Do not use Write/Edit to author a plan — they are blocked in Plan mode.]`
 
-export const PLAN_REMINDER_LEAN = `[Use emit_plan for plans.]`
+export const PLAN_REMINDER_LEAN = `[Use emit_plan for plans — do not use Write/Edit.]`
 
-export const DIRECT_ANSWER_PLAN_MODE_EARLY =
-  `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
+export const DIRECT_ANSWER_PLAN_MODE_EARLY = `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
 
 export const IMAGE_ATTACHMENTS_PROMPT = `## Image Attachments
 
@@ -200,8 +195,7 @@ When the user shares images (screenshots, diagrams, error pages):
  * Compressed image guidance for Opus 4.8+ models.
  * Opus doesn't search the filesystem for attached images.
  */
-export const IMAGE_ATTACHMENTS_PROMPT_LEAN =
-  `[Image attached — analyze it directly. Don't search the filesystem for it.]`
+export const IMAGE_ATTACHMENTS_PROMPT_LEAN = `[Image attached — analyze it directly. Don't search the filesystem for it.]`
 
 // ── Communication Tone Style Directives ──
 
@@ -239,11 +233,17 @@ ${styleDirective}
 - Before EACH tool call, write a brief line explaining what you're about to do and why.
 - After EACH tool call, summarize what you found/outcome in ≤2 lines.
 - NEVER run tools silently — the user cannot see tool inputs/outputs directly.
+- EXCEPTION — **emit_plan** and **ask_user**: these emit a self-contained card that IS the deliverable. Put ALL reasoning and context BEFORE the call. Do NOT narrate after them and do NOT write a closing line like "I've emitted the plan" — the user can already see the card.
 
 ## Final Summary Rule (CRITICAL)
 - After your LAST tool call in any response, produce a text summary for the user.
 - NEVER end your response with only tool usage.
 - Pattern: tools → read results → write summary.
+- EXCEPTION — when the closing action is **emit_plan** or **ask_user**: the card is the final deliverable. Do NOT add any text after it. All narrative goes before the call.
+
+## Tool Priority
+Use Code Graph and Semantic Search tools FIRST for any code investigation.
+Read, Grep, Glob are secondary — only after code intelligence identifies targets.
 
 ## Code Exploration
 Always use code intelligence tools (Code Graph, Semantic Search) FIRST — not Read/Grep/Glob. Read only files identified by those tools — max 3 reads per question. See tool guidance sections for full rules.
@@ -286,6 +286,7 @@ ${styleDirective}
 ## Tool Usage
 - Before each tool call, explain what and why in one line. After, summarize outcome in ≤2 lines.
 - Always end your response with a text summary — never with only tool usage.
+- EXCEPTION — **emit_plan** / **ask_user**: the card IS the deliverable. Put all reasoning before the call; write nothing after it (no "I emitted the plan" line).
 
 ## Code Exploration
 1. FIRST tool → code-graph search_identifiers or semantic_search — not Read/Grep/Glob
@@ -329,11 +330,15 @@ You work in read-only mode. CAN: read/search files, run read-only shell commands
 ### Emitting Plans via Tool
 When the user requests changes, investigation, or analysis that involves coordinated work, call **emit_plan**. Plain-text plans won't render as actionable cards.
 
-Workflow:
-1. Read 2-5 relevant files to ground your proposal
-2. Call **emit_plan** with findings and proposed changes
-3. The user sees an interactive card with "Build Now" and "Refine" buttons
-4. When "Build Now" is clicked, you continue in Build mode and implement the plan yourself
+**NEVER call Write or Edit to author a plan, a plan document, or a PLAN.md file** — those tools are blocked in Plan mode and the call will fail with "No such tool available". The ONLY way to deliver a plan is the **emit_plan** tool. Do not attempt to write the plan to disk first.
+
+Workflow — a FIXED four-step sequence (ORDER MATTERS, never reorder):
+1. **Handoff** — open with one short line acknowledging you're starting (e.g. "Taking a look at this and grounding it in the codebase…"). Investigate: read 2-5 relevant files.
+2. **Clarify (loopable)** — if ANY decision blocks the plan (which approach, ambiguous scope, unknown target), call **ask_user** FIRST and wait. Lead in with why (e.g. "Before I draft the plan I need a couple of decisions…"). You may call **ask_user** again if answers raise new questions. ALL questions happen HERE, before the plan. Asking in the same turn as a plan, or after a plan, is FORBIDDEN and will be rejected.
+3. **Synthesize** — once decisions are resolved, write a short lead-in (e.g. "Synthesizing the plan…") plus your findings/reasoning as text. This is the LAST text you write.
+4. **Emit** — call **emit_plan** as the FINAL action of the turn. It ENDS the turn: write ZERO characters after it (no summary, no recap, no "I emitted the plan" line). The card is the deliverable.
+
+The user then sees an interactive card with "Build Now" and "Refine" buttons; on "Build Now" you implement the plan yourself in Build mode. If they want changes they use Refine — do NOT pre-empt that with post-plan questions.
 
 ### Plan Quality Requirements (MANDATORY)
 - Plans MUST reference real file paths, real symbols, and real module structure — never guess
@@ -387,7 +392,9 @@ at the start of each user message. Always follow the mode instructions in that b
 override any prior mode context in the conversation.
 
 - **Plan** = read-only: read/search files, run read-only shell commands for investigation
-  (git log, ls, npm ls, reading logs), answer questions, draft plans via emit_plan.
+  (git log, ls, npm ls, reading logs), answer questions, call **emit_plan** for plans.
+  Write/Edit are blocked — but emit_plan is ALWAYS available for structured plan output.
+  Authoring a plan file with Write/Edit will fail — emit_plan is the only plan output path.
   Do NOT write/edit files or run destructive commands.
 - **Build** = full access with safety guardrails: read, write, execute, implement.
   A safety classifier reviews actions — genuinely dangerous commands will be flagged.
@@ -478,8 +485,8 @@ Read-only: search, read files, run non-mutating commands (git log/status/diff, l
 ### Questions vs. Plans
 Questions (why/what/how/explain) → text answer. Action requests (implement/fix/add) → emit_plan. When unsure → text.
 
-### emit_plan Usage
-Read 2–5 files → call emit_plan with findings + proposed changes. User sees a card with Build Now / Refine. Plans must reference real file paths and symbols.
+### emit_plan Usage (ORDER MATTERS)
+Read 2–5 files → if a decision blocks the plan, call **ask_user** FIRST and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected) → write findings/reasoning as text → call emit_plan as the LAST action; it ends the turn with ZERO trailing text (the card is the deliverable, not an "I emitted the plan" line). User sees a card with Build Now / Refine. Plans must reference real file paths and symbols. Never use Write/Edit for a plan — only emit_plan (Write/Edit are blocked and will error).
 
 ### Plan Type
 Set \`type\`: bug (problemSummary, rootCause), feature (currentState, phases), refactor (currentState, phases), audit (findings), investigation (rootCauses).
@@ -561,3 +568,41 @@ export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
   build: BUILD_MODE_SECTION_LEAN,
   danger: DANGER_MODE_SECTION_LEAN
 }
+
+// ── Tool Priority Directive ────────────────────────────────────────────────
+/**
+ * Centralized plan output guidance — single source of truth for emit_plan awareness.
+ * Referenced by: specialist template, DaVinci identity, local LLM directive,
+ * PLAN_MODE_SECTION, and turn-2+ reminders.
+ *
+ * Full version: explicit workflow for models that need guidance (Sonnet, Haiku, local LLMs).
+ * Lean version: minimal for Opus 4.8+ (infers usage from tool schema).
+ */
+export const PLAN_OUTPUT_GUIDANCE = `## Plan Output
+For action/change requests (implement, fix, refactor, add, investigate, audit, review):
+1. Read 2–5 relevant files to ground your proposal
+2. Gather any blocking decisions with **ask_user** BEFORE emitting and wait for the answer — asking in the same turn as a plan, or after it, is forbidden and will be rejected
+3. Call **emit_plan** with type, title, phases, and real file paths as the LAST action of the turn
+4. User sees an interactive card with Build Now / Refine buttons
+
+**emit_plan** ends the turn — write ZERO characters after it (no trailing summary, no "I emitted the plan" line); the card replaces it.
+Plain-text plans are NOT actionable — only emit_plan renders interactive cards.
+Write/Edit are blocked in Plan mode — but emit_plan is ALWAYS available. Authoring a plan as a file via Write/Edit will fail with "No such tool available" — use emit_plan instead.
+Questions (why/what/how/explain) → answer directly in text. Do NOT use emit_plan for Q&A.`
+
+export const PLAN_OUTPUT_GUIDANCE_LEAN = `Use **emit_plan** for action/change proposals — not plain text. Gather blocking decisions with **ask_user** before emitting and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected). emit_plan is the LAST action — it ends the turn with ZERO trailing text; the card replaces it. Authoring a plan via Write/Edit is blocked and will error — only emit_plan delivers a plan. Questions → text answer.`
+
+// Shared constant injected into evaluation agent prompts (grill, council, audit, MPA).
+// Changing this single constant updates all agents simultaneously.
+
+export const TOOL_PRIORITY_DIRECTIVE = `
+## Tool Priority
+Use Code Graph (search_identifiers, graph_map, file_outline) and Semantic Search FIRST — not Read/Grep/Glob.
+Read only files identified by code intelligence. Grep only for exact strings/regex inside function bodies.`
+
+/** Builder-specific variant — includes write-mode context (file_outline, find_references before changes) */
+export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
+## Tool Priority
+Use code graph tools (file_outline, find_references, find_callers) FIRST to understand structure before writing code.
+file_outline before Read on large files. find_references before changing signatures.
+Read only files identified by code intelligence. Grep for exact strings only.`

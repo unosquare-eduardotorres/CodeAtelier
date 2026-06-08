@@ -11,7 +11,7 @@
 | Aspect              | Value                                                                     |
 | ------------------- | ------------------------------------------------------------------------- |
 | Language            | TypeScript 5.9 (strict)                                                   |
-| Runtime             | Electron 40 (Node 24) / React 19                                          |
+| Runtime             | Electron 41 (Node 24) / React 19                                          |
 | Test framework      | Custom tsx-based runner (`node:assert/strict`) + shared `test-harness.ts` |
 | E2E framework       | Playwright (`@playwright/test ^1.59.0-alpha`)                             |
 | LLM tests           | Live Claude SDK via CLI (opt-in, `test:llm`)                              |

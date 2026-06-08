@@ -18,7 +18,16 @@ export type PromptVerbosity = 'full' | 'lean'
  * rewrote persisted values from `'generalist'` to `'da-vinci'` so the DB and
  * the type line up.
  */
-export type AgentRole = 'da-vinci' | 'project-specialist' | 'audit' | 'grill' | 'mpa-planner' | 'mpa-builder' | 'mpa-verifier' | 'council-member' | 'council-chairman'
+export type AgentRole =
+  | 'da-vinci'
+  | 'project-specialist'
+  | 'audit'
+  | 'grill'
+  | 'mpa-planner'
+  | 'mpa-builder'
+  | 'mpa-verifier'
+  | 'council-member'
+  | 'council-chairman'
 
 /** Communication tone for AI responses — workspace default + per-conversation override */
 export type CommunicationTone = 'default' | 'calm' | 'optimistic' | 'brutal' | 'caveman'
@@ -211,6 +220,15 @@ export interface CompletionNotification {
 }
 
 // ── Tool Activity ──
+export type ToolOperationType =
+  | 'read'
+  | 'write'
+  | 'edit'
+  | 'search'
+  | 'shell'
+  | 'codegraph'
+  | 'other'
+
 export interface ToolActivity {
   id: string
   toolName: string
@@ -223,6 +241,12 @@ export interface ToolActivity {
   completedAt?: number
   /** Updated by tool_progress events — elapsed time in seconds */
   elapsedSeconds?: number
+  /** Workspace-relative file path (e.g., "src/main/app.ts") */
+  filePath?: string
+  /** Line range (e.g., "42-56") */
+  lineRange?: string
+  /** Operation classification */
+  operationType?: ToolOperationType
 }
 
 // ── Specialist & Skill Models ──
@@ -317,7 +341,7 @@ export interface SpecialistTokenEstimate {
 export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
 
 /** Visual theme for the entire application */
-export type AppTheme = 'code-atelier' | 'neon-forge' | 'porcelain'
+export type AppTheme = 'code-atelier' | 'glass' | 'porcelain' | 'developer'
 
 /** GitHub PAT type — classic uses OAuth scopes, fine-grained uses granular permissions */
 export type GitHubTokenType = 'classic' | 'fine-grained' | 'unknown'
@@ -482,6 +506,7 @@ export type ModelAction =
   | 'council-member'
   | 'council-chairman'
   | 'grill:plan'
+  | 'mpa:decompose'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -781,6 +806,25 @@ export interface TokenSummary {
   byAgent: { agentType: string; totalTokens: number; sessionCount: number }[]
 }
 
+/** Per-feature usage row in the unified usage_log breakdown. */
+export interface FeatureUsageSummary {
+  feature: string
+  tokens: number
+  costCents: number
+  calls: number
+}
+
+/** Unified usage_log summary (all token consumption, broken down by feature). */
+export interface WorkspaceUsageSummary {
+  totalTokens: number
+  totalInput: number
+  totalOutput: number
+  totalCacheRead: number
+  totalCacheCreation: number
+  totalCostCents: number
+  byFeature: FeatureUsageSummary[]
+}
+
 // ── Auto Memory System ──
 
 export type MemoryType = 'user' | 'feedback' | 'project' | 'reference'
@@ -896,15 +940,27 @@ export interface AutoConfigureResult {
 
 // ── Embedding Provider ──
 
-/** Status of the bundled embedding model */
+/** Which embedding backend is active. Currently llamafile-only. */
+export type EmbeddingBackend = 'llamafile'
+
+/** Which downloaded artefact a progress/phase event refers to. */
+export type EmbeddingDownloadPhase = 'binary' | 'model'
+
+/** Status of the downloaded embedding sidecar + model */
 export interface EmbeddingModelStatus {
-  /** Model is loaded and ready for inference */
+  /** Server is spawned and ready for inference */
   ready: boolean
-  /** Model files exist in local cache (no download needed) */
+  /** Both engine binary + GGUF model are present on disk (no download needed) */
   cached: boolean
+  /** Active embedding backend */
+  backend: EmbeddingBackend
+  /** Engine binary exists + passes the SHA-256/size check */
+  engineInstalled: boolean
+  /** GGUF model exists + passes the SHA-256/size check */
+  modelInstalled: boolean
 }
 
-/** Progress event during model download */
+/** Progress event during model/binary download */
 export interface EmbeddingModelProgress {
   /** Percentage 0–100 */
   progress: number
@@ -912,6 +968,8 @@ export interface EmbeddingModelProgress {
   loaded: number
   /** Total bytes */
   total: number
+  /** Which artefact this progress refers to ('binary' = engine, 'model' = GGUF) */
+  phase: EmbeddingDownloadPhase
 }
 
 // ── Ollama ──
@@ -1163,6 +1221,17 @@ export interface AuditTrack {
   scoringFocus: string[] // key areas this auditor evaluates
 }
 
+/** A curated, selectable focus area for an auditor in Deep mode. */
+export interface AuditSkill {
+  id: string
+  name: string
+  description: string
+  icon: string // Lucide icon name
+}
+
+/** Per-track selected skill ids (Deep mode). */
+export type AuditSelectedSkills = Partial<Record<AuditTrackId, string[]>>
+
 export interface AuditFinding {
   id: string // generated UUID
   severity: 'info' | 'low' | 'medium' | 'high' | 'critical'
@@ -1179,6 +1248,14 @@ export interface AuditCoverageStats {
   readToolCount: number
 }
 
+/**
+ * Whether a track's score should count toward the overall score.
+ * - 'ok'             — sufficient evidence, score is trustworthy
+ * - 'not-applicable' — no files of this track's kind exist in the repo
+ * - 'insufficient'   — some files inspected but coverage too low to trust
+ */
+export type AuditApplicability = 'ok' | 'not-applicable' | 'insufficient'
+
 export interface AuditResult {
   id: string
   auditRunId: string
@@ -1194,6 +1271,12 @@ export interface AuditResult {
   coverageStats?: AuditCoverageStats
   /** Whether the audit had sufficient evidence to trust the score */
   coverageSufficient?: boolean
+  /**
+   * Whether this track counts toward the overall score. Derived in the audit
+   * service from file discovery + coverage gate. Not persisted — recompute via
+   * `deriveApplicability` when reading a run back from the DB.
+   */
+  applicability?: AuditApplicability
   /** Runtime-only: multi-round progress (not persisted to DB) */
   roundProgress?: {
     roundNumber: number
@@ -1211,9 +1294,46 @@ export interface AuditRun {
   overallScore: number | null
   selectedTracks: AuditTrackId[]
   detectedTechs: string[]
+  /** Per-track skills the user selected for this run (Deep mode). Execution deferred. */
+  selectedSkills?: AuditSelectedSkills
   results: AuditResult[] // joined for UI convenience
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Structured remediation plan synthesized from selected audit findings.
+ * Modeled on GrillStructuredPlan. `requirementDocument` is the markdown handed
+ * off when routing to Chat / Grill / Goals / Council / Export.
+ */
+export interface AuditPlan {
+  version: 1
+  title: string
+  summary: string
+  items: Array<{
+    id: string
+    title: string
+    description: string
+    scope: 'backend' | 'frontend' | 'database' | 'shared' | 'tests'
+    severity?: 'info' | 'low' | 'medium' | 'high' | 'critical'
+    files: string[]
+    recommendation: string
+    dependsOn?: string[]
+  }>
+  risks: string[]
+  sourceFindingIds: string[]
+  requirementDocument: string
+}
+
+/** A persisted audit plan with its DB identity. */
+export interface AuditPlanRecord {
+  id: string
+  auditRunId: string
+  title: string
+  summary: string
+  plan: AuditPlan
+  sourceFindingIds: string[]
+  createdAt: string
 }
 
 export interface AuditProgressEvent {
@@ -1304,10 +1424,10 @@ export type CouncilInputType = 'plan' | 'requirement' | 'question'
 
 /** Current phase of the council process */
 export type CouncilPhase =
-  | 'framing'       // Step 1: context enrichment
-  | 'deliberating'  // Step 2: 5 parallel advisor sessions
-  | 'peer-review'   // Step 3: anonymous peer review
-  | 'synthesizing'  // Step 4: chairman synthesis
+  | 'framing' // Step 1: context enrichment
+  | 'deliberating' // Step 2: 5 parallel advisor sessions
+  | 'peer-review' // Step 3: anonymous peer review
+  | 'synthesizing' // Step 4: chairman synthesis
   | 'complete'
   | 'cancelled'
   | 'failed'

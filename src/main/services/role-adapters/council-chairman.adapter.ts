@@ -10,31 +10,21 @@
  * NO MCP tools — pure synthesis of existing reviews.
  */
 
-import type { CostPreference, AgentIntent, LLMProvider } from '../../../shared/types'
+import type { LLMProvider } from '../../../shared/types'
 import type { CouncilReview, CouncilPeerReview, CouncilFramedInput } from '../../../shared/types'
 import type {
-  AdapterIntentContext,
-  AdapterMcpContext,
-  AdapterMcpResult,
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx,
-  AgentRoleAdapter,
-  AgentSessionEventName
+  AdapterSessionLifecycleCtx
 } from '../agent-session.types'
-import type { ControlActionCallbacks } from '../control-actions.tool'
 import { resolvePromptVerbosity } from '../../../shared/constants'
-import { intentDetector } from '../intent-detector'
-import { modelConfigService } from '../model-config.service'
-import { chatAgentLogger } from '../../logger'
-import { buildNoToolsConfig } from './evaluation-mcp-config'
+import { BaseRoleAdapter, type McpStrategy } from './base.adapter'
 
-export class CouncilChairmanRoleAdapter implements AgentRoleAdapter {
+export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
   readonly role = 'council-chairman' as const
   readonly agentId: string
   interactionTimeoutMs = 3 * 60_000 // 3 min for synthesis (no tools)
 
-  private readonly log = chatAgentLogger
   private readonly workspaceId: string
   private readonly framedInput: CouncilFramedInput
   private readonly reviews: CouncilReview[]
@@ -51,6 +41,7 @@ export class CouncilChairmanRoleAdapter implements AgentRoleAdapter {
     peerReviews: CouncilPeerReview[]
     llmProvider?: LLMProvider
   }) {
+    super()
     this.workspaceId = params.workspaceId
     this.framedInput = params.framedInput
     this.reviews = params.reviews
@@ -59,18 +50,12 @@ export class CouncilChairmanRoleAdapter implements AgentRoleAdapter {
     this.agentId = `council-chairman-${params.workspaceId}`
   }
 
-  async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
-    // Increase timeout for local LLMs
-    if (this.llmProvider === 'local-llm') {
-      this.interactionTimeoutMs = 15 * 60_000
-      this.log.info('[council-chairman] Using extended timeout (15 min) for local LLM')
-    }
+  override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
+    // Pattern 3: Centralized local LLM timeout (chairman uses 15 min)
+    this.applyLocalLlmTimeout(this.llmProvider, 15)
 
-    // Resolve model for lean prompt gating
-    const isLocal = modelConfigService.isLocalProvider(ctx.workspacePath)
-    this.resolvedModel = isLocal
-      ? undefined
-      : modelConfigService.getModel(ctx.workspacePath, 'council-chairman')
+    // Pattern 1: Centralized model resolution
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-chairman')
 
     this.systemPrompt = this.buildSystemPrompt()
 
@@ -79,19 +64,9 @@ export class CouncilChairmanRoleAdapter implements AgentRoleAdapter {
     )
   }
 
-  refreshFeatureFlags(_ctx: AdapterSessionLifecycleCtx): void {
-    // No-op
-  }
-
-  onConversationSwitch(_conversationId: string): void {
-    // No-op
-  }
-
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
     if (!this.systemPrompt) {
-      throw new Error(
-        'CouncilChairmanRoleAdapter.buildPrompts() called before onSessionStart()'
-      )
+      throw new Error('CouncilChairmanRoleAdapter.buildPrompts() called before onSessionStart()')
     }
 
     return {
@@ -100,53 +75,14 @@ export class CouncilChairmanRoleAdapter implements AgentRoleAdapter {
     }
   }
 
-  buildMcpConfig(_ctx: AdapterMcpContext): AdapterMcpResult {
-    // Chairman has NO tools — pure synthesis
-    return buildNoToolsConfig()
+  protected override getMcpStrategy(): McpStrategy {
+    return 'none'
+  }
+  protected override persistMemory(): void {
+    /* no-op */
   }
 
-  buildControlCallbacks(_params: {
-    conversationId: string | null
-    emit: (event: AgentSessionEventName, payload: unknown) => void
-    getAccumulatedText: () => string
-  }): ControlActionCallbacks {
-    return {
-      onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
-    }
-  }
-
-  emitDetectedIntents(ctx: AdapterIntentContext): void {
-    const detectedIntents = intentDetector.detectAll(
-      ctx.accumulatedText,
-      ctx.controlToolState,
-      ctx.mode
-    )
-
-    for (const intent of detectedIntents) {
-      ctx.emit('intent', intent)
-    }
-
-    if (detectedIntents.length === 0) {
-      ctx.emit('intent', {
-        type: 'response',
-        content: ctx.accumulatedText
-      } as AgentIntent)
-    }
-  }
-
-  getCompactionThresholds(
-    _costPreference: CostPreference
-  ): { suggest: number; auto: number } | null {
-    return null
-  }
-
-  getPersonaId(): string | null {
-    return null
-  }
-
-  onSessionStop(): void {
+  override onSessionStop(): void {
     this.systemPrompt = null
     this.resolvedModel = undefined
   }

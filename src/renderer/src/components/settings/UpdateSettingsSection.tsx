@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FolderOpen, HardDrive, Github, Info } from 'lucide-react'
+import { FolderOpen, HardDrive, Info } from 'lucide-react'
+import { GithubIcon } from '../common/icons/GithubIcon'
 import { useUpdateStore } from '@renderer/store'
 import type { UpdateSourceProvider } from '../../../../shared/types'
 import UpdateButton from './UpdateButton'
@@ -101,7 +102,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
                 : 'border-border-subtle text-text-secondary hover:bg-surface-base'
             }`}
           >
-            <Github size={14} />
+            <GithubIcon size={14} />
             GitHub
           </button>
         </div>

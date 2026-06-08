@@ -4,13 +4,20 @@ import { rendererLog } from '@renderer/utils/logger'
 import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import { useWorkspaceStore } from './workspace.store'
-import { useProjectSpecialistStore } from './project-specialist.store'
 import {
   streamingInternals as internals,
   appendStreamChunkAction,
   finalizeStreamAction,
   finalizeTurnBubbleAction
 } from './chat-streaming.actions'
+import {
+  buildStreamingResetState,
+  mergeChatSegments,
+  createStoppedMessage,
+  createOptimisticUserMessage,
+  createErrorMessage
+} from './chat-action-utils'
+import { executeSwapToSpecialist } from './swap-to-specialist.action'
 import type {
   CommunicationTone,
   CompleteResult,
@@ -29,7 +36,7 @@ import type {
 
 // ChatStreamingInternals + internals singleton are in ./chat-streaming.actions.ts
 
-interface ChatState {
+export interface ChatState {
   conversations: Conversation[]
   activeConversation: Conversation | null
   messages: Message[]
@@ -44,7 +51,7 @@ interface ChatState {
   /** Conversation phase — more precise than isStreaming boolean */
   streamingPhase: ConversationPhase | null
   toolActivities: ToolActivity[]
-  /** Finalized streaming segments — each gets its own MessageBubble */
+  /** Streaming segments accumulated during streaming — merged into a single message on completion */
   streamingSegments: StreamSegment[]
 
   /** Backend state machine mirror — single source of truth for conversation lifecycle state */
@@ -119,6 +126,12 @@ interface ChatState {
   // Slash command actions
   clearDisplay: () => void
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
+  /**
+   * Toggle the chat thinking-indicator spinner for non-streaming background work
+   * (e.g. grill plan synthesis). Unlike a real SDK stream it never arms the
+   * streaming safety timer, so callers MUST clear it (use try/finally).
+   */
+  setStreamingIndicator: (active: boolean) => void
 
   // Compact suggestion
   setCompactSuggestion: (
@@ -396,9 +409,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSegments: [],
       compactSuggestion: null,
       budgetCapBanner: null,
-      pendingQuestions: null,
-      pendingQuestionAction: null,
-      pendingQuestionRequestId: null,
+      // Preserve any in-flight ask_user question when re-opening / re-rendering the
+      // SAME actively-streaming conversation. Hard-nulling here wiped the requestId,
+      // so submitQuestionAnswers could no longer route the answer and it looked like
+      // a timeout. Only clear when switching to a different / non-streaming convo.
+      ...(isConversationStillStreaming
+        ? {}
+        : {
+            pendingQuestions: null,
+            pendingQuestionAction: null,
+            pendingQuestionRequestId: null
+          }),
       activeRequestId: isConversationStillStreaming ? restoredRequestId : null,
       // Hydrate effort from persisted conversation state
       effortLevels: conversation.effort
@@ -466,82 +487,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Preserve partial streaming content as a single merged message with a "stopped" suffix
     if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
-      const stopTs = Date.now()
+      const { mergedContent, mergedTools } = mergeChatSegments(streamingSegments, streamingContent)
+      const stoppedMessage = createStoppedMessage(
+        activeConversation.id,
+        mergedContent,
+        mergedTools,
+        streamingRole,
+        streamingSpecialist,
+        streamingSegments
+      )
 
-      // Merge all segments + current content into one stopped message
-      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent || '']
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .join('\n\n')
-
-      const mergedTools = [
-        ...streamingSegments.flatMap((s) => s.toolActivities)
-        // Note: don't include current toolActivities here — they weren't part of streamed content
-      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
-
-      const stoppedMessage: Message = {
-        id: `stopped-${stopTs}`,
-        conversationId: activeConversation.id,
-        role: streamingRole,
-        ...(streamingRole === 'specialist' && streamingSpecialist
-          ? { agentId: streamingSpecialist }
-          : {}),
-        contentMd: (mergedContent || '') + '\n\n---\n\n⏹ *Generation stopped by user.*',
-        attachmentsJson: '[]',
-        createdAt:
-          streamingSegments.length > 0
-            ? new Date(streamingSegments[0].timestamp).toISOString()
-            : new Date().toISOString(),
-        toolActivities: mergedTools.length > 0 ? mergedTools : undefined
-      }
-
-      set((state) => {
-        const newStreamingIds = new Set(state.streamingConversationIds)
-        if (activeConversation) newStreamingIds.delete(activeConversation.id)
-        return {
-          messages: [...state.messages, stoppedMessage],
-          streamingContent: '',
-          streamingSegments: [],
-          isStreaming: false,
-          toolActivities: [],
-          activeRequestId: null,
-          conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
-          streamingConversationIds: newStreamingIds
-        }
-      })
+      set((state) => ({
+        messages: [...state.messages, stoppedMessage],
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+      }))
     } else if (activeConversation) {
       // No partial content — still show a local indicator
-      const stoppedMessage: Message = {
-        id: `stopped-${Date.now()}`,
-        conversationId: activeConversation.id,
-        role: 'da-vinci',
-        contentMd: '⏹ *Generation stopped by user.*',
-        attachmentsJson: '[]',
-        createdAt: new Date().toISOString()
-      }
-      set((state) => {
-        const newStreamingIds = new Set(state.streamingConversationIds)
-        newStreamingIds.delete(activeConversation.id)
-        return {
-          messages: [...state.messages, stoppedMessage],
-          streamingContent: '',
-          streamingSegments: [],
-          isStreaming: false,
-          toolActivities: [],
-          activeRequestId: null,
-          conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
-          streamingConversationIds: newStreamingIds
-        }
-      })
+      const stoppedMessage = createStoppedMessage(
+        activeConversation.id,
+        '',
+        [],
+        'da-vinci',
+        null,
+        []
+      )
+      set((state) => ({
+        messages: [...state.messages, stoppedMessage],
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+      }))
     } else {
-      set({
-        isStreaming: false,
-        streamingContent: '',
-        streamingSegments: [],
-        toolActivities: [],
-        activeRequestId: null,
-        conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-      })
+      set(buildStreamingResetState(null, get().streamingConversationIds))
     }
 
     internals.resetAccumulator()
@@ -556,15 +531,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await updateMode('plan')
     }
 
-    // Add optimistic user message
-    const optimisticMessage: Message = {
-      id: `temp-${Date.now()}`,
-      conversationId: activeConversation.id,
-      role: 'user',
-      contentMd: text,
-      attachmentsJson: attachments ? JSON.stringify(attachments) : '[]',
-      createdAt: new Date().toISOString()
-    }
+    const optimisticMessage = createOptimisticUserMessage(activeConversation.id, text, attachments)
 
     set((state) => ({
       messages: [...state.messages, optimisticMessage],
@@ -574,7 +541,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolActivities: [],
       budgetCapBanner: null,
       // activeRequestId is set AFTER the backend returns — see below.
-      // This prevents the mismatch where renderer and backend generate different IDs.
       activeRequestId: null,
       // Track this conversation as streaming (for sidebar indicator when user switches away)
       streamingConversationIds: new Set([...state.streamingConversationIds, activeConversation.id])
@@ -587,8 +553,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     internals.resetSafetyTimer()
 
     try {
-      // Backend is the single source of truth for requestId — it generates the ID
-      // in ConversationLifecycle.begin() and returns it via the IPC response.
       const result = await window.api.sendMessage({
         conversationId: activeConversation.id,
         text,
@@ -600,35 +564,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       rendererLog.error('Failed to send message:', error)
       internals.clearSafetyTimer()
 
-      // Show user-visible error instead of silent failure
       const errorMsg = error instanceof Error ? error.message : String(error)
       const { activeConversation: conv } = get()
       if (conv) {
-        const errorMessage: Message = {
-          id: `error-${Date.now()}`,
-          conversationId: conv.id,
-          role: 'da-vinci',
-          contentMd: `**Failed to send message:** ${errorMsg}`,
-          attachmentsJson: '[]',
-          createdAt: new Date().toISOString()
-        }
-        set((state) => {
-          const newStreamingIds = new Set(state.streamingConversationIds)
-          newStreamingIds.delete(conv.id)
-          return {
-            messages: [...state.messages, errorMessage],
-            isStreaming: false,
-            streamingSegments: [],
-            conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
-            streamingConversationIds: newStreamingIds
-          }
-        })
+        const errMessage = createErrorMessage(conv.id, errorMsg)
+        set((state) => ({
+          messages: [...state.messages, errMessage],
+          ...buildStreamingResetState(conv.id, state.streamingConversationIds)
+        }))
       } else {
-        set({
-          isStreaming: false,
-          streamingSegments: [],
-          conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
-        })
+        set(buildStreamingResetState(null, get().streamingConversationIds))
       }
     }
   },
@@ -664,7 +609,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
     internals.resetSafetyTimer()
-    internals.getOrCreateAccumulator()
+    internals
+      .getOrCreateAccumulator()
       .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 
@@ -783,72 +729,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null })
 
       if (accepted) {
-        const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
-        if (workspaceId) {
-          // Show immediate feedback
-          get().appendLocalMessage('🔄 *Swapping to Project Specialist…*')
-
-          window.api
-            .swapToSpecialist({ workspaceId })
-            .then(async () => {
-              // Reload messages to get clean state after swap
-              const { activeConversation } = get()
-              if (activeConversation) {
-                const messages = await window.api.getMessages({
-                  conversationId: activeConversation.id
-                })
-                set({ messages })
-              }
-
-              // Resolve the Project Specialist to get its identity
-              await useProjectSpecialistStore.getState().loadForWorkspace(workspaceId)
-              const specialist = useProjectSpecialistStore.getState().byWorkspace[workspaceId]
-
-              if (specialist) {
-                // Switch the persona selector to the specialist
-                await get().switchPersona(specialist.id)
-
-                // Greeting from the specialist (with specialist avatar/identity)
-                get().appendLocalMessage(
-                  `👋 **${specialist.displayName}** is now active and ready. I'm your dedicated specialist for this workspace — send a message and let's get to work!`,
-                  { role: 'specialist', agentId: specialist.agentId }
-                )
-              } else {
-                get().appendLocalMessage(
-                  '✅ *Specialist is now active. Send a message to start working with your Project Specialist.*'
-                )
-              }
-
-              // ── Auto-continue: re-send the user's original message ──
-              // The swap was triggered by a user request that DaVinci deferred
-              // to the specialist. Re-sending ensures the specialist picks up
-              // immediately instead of sitting idle waiting for new input.
-              const { messages: currentMessages } = get()
-              const lastUserMessage = [...currentMessages].reverse().find((m) => m.role === 'user')
-              if (lastUserMessage?.contentMd?.trim()) {
-                // Parse attachments from the original message (if any)
-                let attachments: string[] | undefined
-                try {
-                  const parsed = JSON.parse(lastUserMessage.attachmentsJson || '[]') as string[]
-                  if (parsed.length > 0) attachments = parsed
-                } catch {
-                  /* no attachments */
-                }
-
-                // Brief delay to let the greeting render and scroll settle
-                await new Promise((resolve) => setTimeout(resolve, 300))
-                await get().sendMessage(lastUserMessage.contentMd, attachments)
-              }
-            })
-            .catch((err) => {
-              rendererLog.error('swapToSpecialist failed:', err)
-              get().appendLocalMessage(
-                '❌ *Failed to swap to specialist. Please try again from workspace settings.*'
-              )
-            })
-        } else {
-          rendererLog.warn('swap-to-specialist: no active workspace — skipping IPC call')
-        }
+        executeSwapToSpecialist(get, set)
       } else {
         // User declined — let DaVinci know so it doesn't re-propose immediately.
         get().sendMessage("I'll keep DaVinci for now.")
@@ -917,6 +798,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [...state.messages, localMessage]
     }))
   },
+
+  setStreamingIndicator: (active: boolean) =>
+    set((state) => ({
+      isStreaming: active,
+      conversationState: active
+        ? {
+            phase: 'da-vinci-responding' as ConversationPhase,
+            from: null,
+            event: null,
+            conversationId: state.activeConversation?.id ?? null
+          }
+        : { phase: 'idle' as const, from: null, event: null, conversationId: null }
+    })),
 
   // ── Draft text per conversation ──
   setDraftText: (conversationId: string, text: string) =>
@@ -1020,6 +914,7 @@ export const useChatActions = (): Pick<
   | 'stopGeneration'
   | 'clearDisplay'
   | 'appendLocalMessage'
+  | 'setStreamingIndicator'
   | 'completeConversation'
   | 'closeConversation'
   | 'createConversation'
@@ -1054,6 +949,7 @@ export const useChatActions = (): Pick<
       stopGeneration: s.stopGeneration,
       clearDisplay: s.clearDisplay,
       appendLocalMessage: s.appendLocalMessage,
+      setStreamingIndicator: s.setStreamingIndicator,
       completeConversation: s.completeConversation,
       closeConversation: s.closeConversation,
       createConversation: s.createConversation,

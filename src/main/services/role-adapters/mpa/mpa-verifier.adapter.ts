@@ -14,15 +14,18 @@ export class MpaVerifierAdapter extends MpaBaseAdapter {
 
   private readonly goal: string
   private readonly plan: MpaPlanArtifact
+  private readonly successCriteria?: string[]
 
   constructor(params: {
     workspaceId: string
     goal: string
     plan: MpaPlanArtifact
+    successCriteria?: string[]
   }) {
     super({ workspaceId: params.workspaceId })
     this.goal = params.goal
     this.plan = params.plan
+    this.successCriteria = params.successCriteria
     this.agentId = `mpa-verifier-${params.workspaceId}`
   }
 
@@ -31,6 +34,7 @@ export class MpaVerifierAdapter extends MpaBaseAdapter {
       goal: this.goal,
       plan: this.plan,
       workspaceName: this.workspaceName,
+      successCriteria: this.successCriteria,
       model: this.resolvedModel
     })
   }

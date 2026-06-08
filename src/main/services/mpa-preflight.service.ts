@@ -45,7 +45,7 @@ const TEST_KEYWORDS = [
 ]
 
 const MIN_GOAL_LENGTH = 15
-const MAX_GOAL_LENGTH = 2000
+const MAX_GOAL_LENGTH = 50000
 
 // ── Vague Goal Patterns ──
 
@@ -58,7 +58,7 @@ const VAGUE_PATTERNS = [
 
 // ── Phase Templates ──
 
-const PHASE_TEMPLATES: Record<MpaGoalType, MpaPhaseType[]> = {
+export const PHASE_TEMPLATES: Record<MpaGoalType, MpaPhaseType[]> = {
   feature: ['plan', 'execute', 'verify'],
   refactor: ['plan', 'execute', 'verify'],
   bugfix: ['plan', 'execute', 'verify'],
@@ -122,10 +122,7 @@ export function classifyGoal(goal: string): MpaClassifyResult {
 
 function detectGoalType(lowerGoal: string): MpaGoalType {
   // Test-focused goals
-  const testScore = TEST_KEYWORDS.reduce(
-    (score, kw) => score + (lowerGoal.includes(kw) ? 1 : 0),
-    0
-  )
+  const testScore = TEST_KEYWORDS.reduce((score, kw) => score + (lowerGoal.includes(kw) ? 1 : 0), 0)
   // Only classify as tests if test keywords dominate
   if (testScore >= 2 || (testScore === 1 && lowerGoal.startsWith('add test'))) {
     return 'tests'

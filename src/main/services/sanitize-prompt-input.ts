@@ -13,12 +13,14 @@
  * - XML-like system tags that could mimic system-level instructions
  */
 export function sanitizePromptInput(value: string): string {
-  return value
-    // Strip markdown headings (## System Override, etc.)
-    .replace(/^#{1,6}\s+/gm, '')
-    // Strip code fence openers/closers that could inject fake structured blocks
-    // (e.g., ```grill-evaluation or ```goal-plan)
-    .replace(/^`{3,}[\w-]*$/gm, '')
-    // Strip XML-like system tags that could mimic internal instructions
-    .replace(/<\/?(?:system|mode-context|instructions)[^>]*>/gi, '')
+  return (
+    value
+      // Strip markdown headings (## System Override, etc.)
+      .replace(/^#{1,6}\s+/gm, '')
+      // Strip code fence openers/closers that could inject fake structured blocks
+      // (e.g., ```grill-evaluation or ```goal-plan)
+      .replace(/^`{3,}[\w-]*$/gm, '')
+      // Strip XML-like system tags that could mimic internal instructions
+      .replace(/<\/?(?:system|mode-context|instructions)[^>]*>/gi, '')
+  )
 }

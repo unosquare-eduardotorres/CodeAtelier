@@ -12,6 +12,19 @@ import type { MpaPlanArtifact, MpaVerifyReport } from '../../shared/mpa-types'
 const mpaLog = log.scope('mpa')
 
 /**
+ * Whether a verify report has at least one failing success criterion.
+ * Guards against a non-array `criteriaResults` (a malformed field from the
+ * model) so it can't throw and spuriously fail a run — a missing/invalid array
+ * simply means "no failing criteria".
+ */
+export function hasFailingCriteria(report: MpaVerifyReport | null | undefined): boolean {
+  return (
+    Array.isArray(report?.criteriaResults) &&
+    report.criteriaResults.some((c) => c?.status === 'fail')
+  )
+}
+
+/**
  * Parse a plan artifact from agent output text.
  * Looks for ```goal-plan tagged block, then falls back to JSON with items array.
  */

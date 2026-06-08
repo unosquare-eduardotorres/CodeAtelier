@@ -28,20 +28,33 @@ interface CompactContextModalProps {
 }
 
 const DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
-/** Quality window is 50% of context window, capped at 500K */
-const QUALITY_RATIO = 0.5
-const QUALITY_WINDOW_CAP = 500_000
 
 function getBarColor(level: string): string {
   switch (level) {
     case 'critical':
+    case 'red':
       return 'bg-danger'
     case 'suggest':
+    case 'yellow':
       return 'bg-warning'
     case 'warning':
       return 'bg-info'
     default:
       return 'bg-success'
+  }
+}
+
+/** Map the (already correct) usage level to the human-readable quality label. */
+function getQualityLabel(level: string): string {
+  switch (level) {
+    case 'critical':
+      return 'Low'
+    case 'red':
+      return 'Moderate'
+    case 'yellow':
+      return 'Good'
+    default:
+      return 'Excellent'
   }
 }
 
@@ -103,26 +116,14 @@ export default function CompactContextModal({
   if (!isOpen) return null
 
   const effectiveWindowSize = contextWindowSize || DEFAULT_CONTEXT_WINDOW_SIZE
-  // Adjust quality window when auto-compact is active — server-side clearing
-  // buys extra quality headroom since stale content is being purged.
-  const qualityBoost = breakdown?.isAutoCompactEnabled ? 1.2 : 1.0
-  const qualityWindow = Math.min(
-    Math.round(effectiveWindowSize * QUALITY_RATIO * qualityBoost),
-    QUALITY_WINDOW_CAP
-  )
   const tokensK = (inputTokens / 1000).toFixed(1)
   const windowK = (effectiveWindowSize / 1000).toFixed(1)
+  // Single source of truth: % of the real context window in use. The bar width
+  // and the text now share this value (previously the bar used a 50%/500K-capped
+  // "quality" window, so a 1M session at 42% drew an ~83% red bar).
   const percentage = Math.min(Math.round((inputTokens / effectiveWindowSize) * 100), 100)
-  // Quality is based on a scaled quality window (50% of context window, capped at 500K)
-  const qualityPercentage = Math.min(Math.round((inputTokens / qualityWindow) * 100), 100)
-  const qualityLabel =
-    qualityPercentage <= 40
-      ? 'Excellent'
-      : qualityPercentage <= 60
-        ? 'Good'
-        : qualityPercentage <= 80
-          ? 'Moderate'
-          : 'Low'
+  // Quality label is derived from the (correct) usage level, so it stays in sync.
+  const qualityLabel = getQualityLabel(level)
   const barColor = getBarColor(level)
 
   return (
@@ -181,7 +182,7 @@ export default function CompactContextModal({
           <div className="w-full h-2 bg-surface-overlay rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-300 ${barColor}`}
-              style={{ width: `${qualityPercentage}%` }}
+              style={{ width: `${percentage}%` }}
             />
           </div>
           <p className="mt-2 text-[10px] text-text-muted leading-snug">

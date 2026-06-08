@@ -15,15 +15,15 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 96
+const CURRENT_SCHEMA_VERSION = 102
 
-interface Migration {
+export interface Migration {
   version: number
   name: string
   up: (db: Database.Database) => void
 }
 
-const migrations: Migration[] = [
+export const migrations: Migration[] = [
   {
     version: 1,
     name: 'add-mode-column-to-conversations',
@@ -2169,7 +2169,9 @@ const migrations: Migration[] = [
     version: 91,
     name: 'add-conversation-effort',
     up: (db) => {
-      db.exec(`ALTER TABLE conversations ADD COLUMN effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))`)
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))`
+      )
       dbLogger.info('[migration-91] ✓ Added effort column to conversations')
     }
   },
@@ -2286,6 +2288,112 @@ const migrations: Migration[] = [
       `)
       dbLogger.info('[migration-96] ✓ Added resume columns to council_sessions')
     }
+  },
+  {
+    version: 97,
+    name: 'recover-persona-specialist-id',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE conversations
+        ADD COLUMN persona_specialist_id TEXT DEFAULT NULL
+        REFERENCES specialists(id) ON DELETE SET NULL
+      `)
+      dbLogger.info('[migration-97] ✓ Recovered persona_specialist_id column')
+    }
+  },
+  {
+    version: 98,
+    name: 'add-tool-activities-json-to-messages',
+    up: (db) => {
+      db.exec(`ALTER TABLE messages ADD COLUMN tool_activities_json TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-98] ✓ Added tool_activities_json to messages')
+    }
+  },
+  {
+    version: 99,
+    name: 'add-selected-skills-to-audit-runs',
+    up: (db) => {
+      db.exec(
+        `ALTER TABLE audit_runs ADD COLUMN selected_skills TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(selected_skills))`
+      )
+      dbLogger.info('[migration-99] ✓ Added selected_skills column to audit_runs')
+    }
+  },
+  {
+    version: 100,
+    name: 'create-audit-plans-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS audit_plans (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL DEFAULT '',
+          plan_json TEXT NOT NULL CHECK (json_valid(plan_json)),
+          source_finding_ids TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(source_finding_ids)),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_plans_run ON audit_plans(audit_run_id);
+      `)
+      dbLogger.info('[migration-100] ✓ Created audit_plans table')
+    }
+  },
+  {
+    version: 101,
+    name: 'create-mpa-campaigns-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mpa_campaigns (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          original_plan_md TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'paused', 'completed', 'failed', 'cancelled')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT
+        );
+
+        ALTER TABLE mpa_runs ADD COLUMN campaign_id TEXT
+          REFERENCES mpa_campaigns(id) ON DELETE CASCADE;
+        ALTER TABLE mpa_runs ADD COLUMN order_index INTEGER;
+
+        CREATE INDEX IF NOT EXISTS idx_mpa_campaigns_workspace ON mpa_campaigns(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_mpa_runs_campaign ON mpa_runs(campaign_id);
+      `)
+      dbLogger.info(
+        '[migration-101] ✓ Created mpa_campaigns table + campaign_id/order_index on mpa_runs'
+      )
+    }
+  },
+  {
+    version: 102,
+    name: 'add-usage-log',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS usage_log (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          feature TEXT NOT NULL,
+          agent_type TEXT,
+          model TEXT,
+          workspace_id TEXT,
+          conversation_id TEXT,
+          session_id TEXT,
+          turn_number INTEGER,
+          input_tokens INTEGER DEFAULT 0,
+          output_tokens INTEGER DEFAULT 0,
+          cache_read_tokens INTEGER DEFAULT 0,
+          cache_creation_tokens INTEGER DEFAULT 0,
+          cost_cents INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_log_workspace ON usage_log(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_feature ON usage_log(feature);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_conversation ON usage_log(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
+      `)
+      dbLogger.info('[migration-102] ✓ Created usage_log table')
+    }
   }
 ]
 
@@ -2335,8 +2443,11 @@ function runMigrations(database: Database.Database): void {
 export function getDatabase(): Database.Database {
   if (db) return db
 
-  const newDbPath = join(app.getPath('userData'), 'code-atelier.db')
-  const oldDbPath = join(app.getPath('userData'), 'agent-studio.db')
+  // Standalone MCP-server processes run as plain `node` (no Electron app global),
+  // so `app.getPath()` is undefined and would crash. They pass DB_PATH explicitly.
+  const userDataDir = process.env.DB_PATH ?? app.getPath('userData')
+  const newDbPath = join(userDataDir, 'code-atelier.db')
+  const oldDbPath = join(userDataDir, 'agent-studio.db')
 
   // Migrate DB filename for existing installations
   if (!existsSync(newDbPath) && existsSync(oldDbPath)) {

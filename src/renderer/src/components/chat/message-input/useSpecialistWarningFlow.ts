@@ -14,7 +14,6 @@ import type { SpecialistWarningType } from '../SpecialistWarningDialog'
 
 interface Conversation {
   mode?: string
-  [key: string]: unknown
 }
 
 interface UseSpecialistWarningFlowOptions {

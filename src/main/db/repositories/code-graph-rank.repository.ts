@@ -5,9 +5,15 @@ import { BaseRepository } from '../base-repository'
  * Stores pre-computed PageRank scores per file for instant lookups
  * during graph_map generation and decompose() file ranking.
  */
-export class CodeGraphRankRepository extends BaseRepository<{ workspace_id: string; rel_fname: string; page_rank: number }, { relFname: string; pageRank: number }> {
+export class CodeGraphRankRepository extends BaseRepository<
+  { workspace_id: string; rel_fname: string; page_rank: number },
+  { relFname: string; pageRank: number }
+> {
   protected readonly tableName = 'code_graph_ranks'
-  protected mapRow(row: { workspace_id: string; rel_fname: string; page_rank: number }): { relFname: string; pageRank: number } {
+  protected mapRow(row: { workspace_id: string; rel_fname: string; page_rank: number }): {
+    relFname: string
+    pageRank: number
+  } {
     return { relFname: row.rel_fname, pageRank: row.page_rank }
   }
 

@@ -8,19 +8,28 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain, dialog } from 'electron'
 import { writeFile } from 'node:fs/promises'
-import { IPC_CHANNELS, AUDIT_TRACKS, MCP_TOOLS } from '../../shared/constants'
+import { IPC_CHANNELS, AUDIT_TRACKS } from '../../shared/constants'
 import type {
   AuditMode,
   AuditTrackId,
   AuditFinding,
   AuditRun,
-  LLMProvider
+  AuditPlanRecord,
+  AuditSelectedSkills,
+  LLMProvider,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
-import { summarizeToolInput } from '../services/agent-base.service'
-import { extractResultSummary, reportToolError } from './chat-shared'
-import { auditRepository, conversationRepository, messageRepository } from '../db/repositories'
+import { processToolChunk } from './tool-chunk-processor'
+import { createTimedCleanupMap } from './listener-cleanup'
+import {
+  auditRepository,
+  auditPlanRepository,
+  conversationRepository,
+  messageRepository
+} from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
+import { auditPlanGeneratorService } from '../services/audit-plan-generator.service'
 import { detectTechStack } from '../services/tech-stack-detector.service'
 import {
   auditAgentService,
@@ -29,6 +38,7 @@ import {
   type AuditCompletePayload,
   type AuditIntermediateFindingsPayload
 } from '../services/audit-agent.service'
+import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
 import log from 'electron-log'
 
@@ -44,7 +54,7 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
 
 // ── Lifecycle Handlers ──────────────────────────────────────────────────────
 
-function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
+function registerAuditLifecycleHandlers(_mainWindow: BrowserWindow): void {
   // ── audit:start — start a new audit run ─────────────────────────────
 
   ipcMain.handle(
@@ -56,11 +66,12 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
         mode: AuditMode
         tracks: AuditTrackId[]
         llmProvider?: LLMProvider
+        selectedSkills?: AuditSelectedSkills
       }
     ): Promise<AuditRun> => {
       validateSender(event)
 
-      const { workspaceId, mode, tracks, llmProvider: explicitProvider } = args
+      const { workspaceId, mode, tracks, llmProvider: explicitProvider, selectedSkills } = args
 
       if (auditAgentService.isRunning) {
         throw new Error('An audit is already running. Cancel it first.')
@@ -80,7 +91,13 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
       // Create new run in DB (deletes previous for this workspace)
-      const run = auditRepository.createRun(workspaceId, mode, tracks, detectedTechs)
+      const run = auditRepository.createRun(
+        workspaceId,
+        mode,
+        tracks,
+        detectedTechs,
+        selectedSkills ?? {}
+      )
       const results = auditRepository.createResults(run.id, tracks)
       run.results = results
 
@@ -89,7 +106,7 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
       )
 
       // Wire event forwarding: auditAgentService → renderer + DB
-      wireAuditEvents(mainWindow, run.id, workspaceId, workspace.repoPath)
+      wireAuditEvents(run.id, workspaceId, workspace.repoPath)
 
       // Start the audit (non-blocking — runs in background)
       auditAgentService
@@ -147,7 +164,7 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
       auditLog.info(`[audit:rerunTrack] trackId=${trackId} mode=${mode} runId=${latestRun.id}`)
 
       // Wire event forwarding for this single-track run
-      wireAuditEvents(mainWindow, latestRun.id, workspaceId, workspace.repoPath)
+      wireAuditEvents(latestRun.id, workspaceId, workspace.repoPath)
 
       auditAgentService
         .runSingleTrack({
@@ -159,7 +176,10 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
         .then(() => {
           // Recalculate overall score after single track re-run
           const results = auditRepository.findResultsByRunId(latestRun.id)
-          const completed = results.filter((r) => r.status === 'completed' && r.score !== null)
+          // Exclude insufficient-coverage tracks — mirrors calculateOverallScore.
+          const completed = results.filter(
+            (r) => r.status === 'completed' && r.score !== null && r.coverageSufficient !== false
+          )
           const hasFailed = results.some((r) => r.status === 'failed')
 
           let newOverall: number | null = null
@@ -181,7 +201,16 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
             status: newStatus
           })
           if (updatedRun) {
-            mainWindow.webContents.send(IPC_CHANNELS.AUDIT_COMPLETE, updatedRun)
+            try {
+              const router = getSessionEventRouter()
+              router.sendWorkspaceEvent(
+                IPC_CHANNELS.AUDIT_COMPLETE,
+                workspaceId,
+                updatedRun as unknown as Record<string, unknown>
+              )
+            } catch {
+              /* router may not be initialized */
+            }
           }
         })
         .catch((err) => {
@@ -234,7 +263,7 @@ function registerAuditLifecycleHandlers(mainWindow: BrowserWindow): void {
       run.status = 'running'
 
       // Wire events and start — same as audit:start but targeting only incomplete tracks
-      wireAuditEvents(mainWindow, run.id, args.workspaceId, workspace.repoPath)
+      wireAuditEvents(run.id, args.workspaceId, workspace.repoPath)
 
       auditAgentService
         .runAudit({
@@ -300,6 +329,46 @@ function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
     (event, args: { workspaceId: string; limit?: number }): AuditRun[] => {
       validateSender(event)
       return auditRepository.getHistoryForWorkspace(args.workspaceId, args.limit ?? 10)
+    }
+  )
+
+  // ── audit:deleteRun — delete a single past run ──────────────────────
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_DELETE_RUN,
+    (event, args: { runId: string }): { deleted: boolean } => {
+      validateSender(event)
+      const deleted = auditRepository.deleteRun(args.runId)
+      auditLog.info(`[audit:deleteRun] runId=${args.runId} deleted=${deleted}`)
+      return { deleted }
+    }
+  )
+
+  // ── audit:generatePlan — synthesize a remediation plan from findings ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GENERATE_PLAN,
+    async (
+      event,
+      args: { workspaceId: string; runId: string; findings: AuditFinding[] }
+    ): Promise<AuditPlanRecord> => {
+      validateSender(event)
+      auditLog.info(`[audit:generatePlan] runId=${args.runId} findings=${args.findings.length}`)
+      return auditPlanGeneratorService.generate({
+        workspaceId: args.workspaceId,
+        runId: args.runId,
+        findings: args.findings
+      })
+    }
+  )
+
+  // ── audit:getPlans — list plans persisted for a run ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GET_PLANS,
+    (event, args: { runId: string }): AuditPlanRecord[] => {
+      validateSender(event)
+      return auditPlanRepository.getPlansForRun(args.runId)
     }
   )
 }
@@ -424,48 +493,39 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
  * Forwards progress/result/complete to the renderer and persists to DB.
  */
 /** Per-workspace listener cleanup functions. */
-const auditListenerCleanups = new Map<string, Array<() => void>>()
+const auditCleanup = createTimedCleanupMap('audit')
 
-function wireAuditEvents(
-  mainWindow: BrowserWindow,
-  runId: string,
-  workspaceId: string,
-  workspacePath: string
-): void {
-  // Clean up stale listeners for THIS workspace only (not other workspaces)
-  const existingCleanups = auditListenerCleanups.get(workspaceId)
-  if (existingCleanups) {
-    for (const cleanup of existingCleanups) cleanup()
-  }
-  const cleanups: Array<() => void> = []
-  auditListenerCleanups.set(workspaceId, cleanups)
-
-  const on = <T>(event: string, handler: (data: T) => void): void => {
-    auditAgentService.on(event, handler)
-    cleanups.push(() => auditAgentService.off(event, handler))
-  }
+function wireAuditEvents(runId: string, workspaceId: string, workspacePath: string): void {
+  const cleanups = auditCleanup.prepareCleanups(workspaceId)
+  const router = getSessionEventRouter()
 
   // ── progress ──
-  on<AuditProgressPayload>('progress', (data: AuditProgressPayload) => {
-    // Update result row status when it transitions to 'running' or 'cancelled'
-    if (data.status === 'running' || data.status === 'cancelled') {
-      const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
-      if (resultRow) {
-        auditRepository.updateResult(resultRow.id, {
-          status: data.status,
-          ...(data.status === 'running' ? { startedAt: new Date().toISOString() } : {})
-        })
+  auditCleanup.addListener<AuditProgressPayload>(
+    cleanups,
+    auditAgentService,
+    'progress',
+    (data) => {
+      // Update result row status when it transitions to 'running' or 'cancelled'
+      if (data.status === 'running' || data.status === 'cancelled') {
+        const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+        if (resultRow) {
+          auditRepository.updateResult(resultRow.id, {
+            status: data.status,
+            ...(data.status === 'running' ? { startedAt: new Date().toISOString() } : {})
+          })
+        }
       }
-    }
 
-    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_PROGRESS, {
-      workspaceId,
-      ...data
-    })
-  })
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.AUDIT_PROGRESS,
+        workspaceId,
+        data as unknown as Record<string, unknown>
+      )
+    }
+  )
 
   // ── result ──
-  on<AuditResultPayload>('result', (data: AuditResultPayload) => {
+  auditCleanup.addListener<AuditResultPayload>(cleanups, auditAgentService, 'result', (data) => {
     // Persist to DB (including coverage data)
     const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
     if (resultRow) {
@@ -484,67 +544,105 @@ function wireAuditEvents(
     // Forward to renderer
     const updatedResult = resultRow ? auditRepository.findResultById(resultRow.id) : null
     if (updatedResult) {
-      mainWindow.webContents.send(IPC_CHANNELS.AUDIT_RESULT, updatedResult)
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.AUDIT_RESULT,
+        workspaceId,
+        updatedResult as unknown as Record<string, unknown>
+      )
     }
   })
 
   // ── intermediate findings — live accumulation during multi-round ──
-  on<AuditIntermediateFindingsPayload>('intermediate_findings', (data: AuditIntermediateFindingsPayload) => {
-    // Persist partial findings to DB for crash resilience
-    const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
-    if (resultRow) {
-      auditRepository.updateResult(resultRow.id, {
+  auditCleanup.addListener<AuditIntermediateFindingsPayload>(
+    cleanups,
+    auditAgentService,
+    'intermediate_findings',
+    (data) => {
+      // Persist partial findings to DB for crash resilience
+      const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+      if (resultRow) {
+        auditRepository.updateResult(resultRow.id, {
+          findings: data.findings,
+          summary: `Round ${data.roundNumber}: ${data.findings.length} finding(s), ${data.coverageStats.fileCount} files inspected`,
+          coverageStats: data.coverageStats
+        })
+      }
+
+      // Forward to renderer for live display
+      router.sendWorkspaceEvent(IPC_CHANNELS.AUDIT_INTERMEDIATE, workspaceId, {
+        trackId: data.trackId,
         findings: data.findings,
-        summary: `Round ${data.roundNumber}: ${data.findings.length} finding(s), ${data.coverageStats.fileCount} files inspected`,
-        coverageStats: data.coverageStats
+        coverageStats: data.coverageStats,
+        roundNumber: data.roundNumber,
+        totalRounds: data.totalRounds,
+        totalFiles: data.totalFiles,
+        batchSize: data.batchSize
       })
     }
-
-    // Forward to renderer for live display
-    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_INTERMEDIATE, {
-      workspaceId,
-      trackId: data.trackId,
-      findings: data.findings,
-      coverageStats: data.coverageStats,
-      roundNumber: data.roundNumber,
-      totalRounds: data.totalRounds,
-      totalFiles: data.totalFiles,
-      batchSize: data.batchSize
-    })
-  })
+  )
 
   // ── complete ──
-  on<AuditCompletePayload>('complete', (data: AuditCompletePayload) => {
-    // Determine final run status
-    const results = auditRepository.findResultsByRunId(runId)
-    const hasFailed = results.some((r) => r.status === 'failed')
-    const hasCancelled = results.some((r) => r.status === 'cancelled')
+  auditCleanup.addListener<AuditCompletePayload>(
+    cleanups,
+    auditAgentService,
+    'complete',
+    (data) => {
+      // Determine final run status
+      const results = auditRepository.findResultsByRunId(runId)
+      const hasFailed = results.some((r) => r.status === 'failed')
+      const hasCancelled = results.some((r) => r.status === 'cancelled')
 
-    let finalStatus: 'completed' | 'partial' | 'cancelled' = 'completed'
-    if (hasCancelled && !results.some((r) => r.status === 'completed')) {
-      finalStatus = 'cancelled'
-    } else if (hasFailed || hasCancelled) {
-      finalStatus = 'partial'
+      let finalStatus: 'completed' | 'partial' | 'cancelled' = 'completed'
+      if (hasCancelled && !results.some((r) => r.status === 'completed')) {
+        finalStatus = 'cancelled'
+      } else if (hasFailed || hasCancelled) {
+        finalStatus = 'partial'
+      }
+
+      const updatedRun = auditRepository.updateRun(runId, {
+        status: finalStatus,
+        overallScore: data.overallScore
+      })
+
+      if (updatedRun) {
+        router.sendWorkspaceEvent(
+          IPC_CHANNELS.AUDIT_COMPLETE,
+          workspaceId,
+          updatedRun as unknown as Record<string, unknown>
+        )
+      }
+
+      auditLog.info(
+        `[audit:complete] runId=${runId} status=${finalStatus} overallScore=${data.overallScore}`
+      )
+
+      auditCleanup.runCleanup(workspaceId)
     }
-
-    const updatedRun = auditRepository.updateRun(runId, {
-      status: finalStatus,
-      overallScore: data.overallScore
-    })
-
-    if (updatedRun) {
-      mainWindow.webContents.send(IPC_CHANNELS.AUDIT_COMPLETE, updatedRun)
-    }
-
-    auditLog.info(
-      `[audit:complete] runId=${runId} status=${finalStatus} overallScore=${data.overallScore}`
-    )
-  })
+  )
 
   // ── stream — rich chunk forwarding for chat-like audit view ──
-  on<{ trackId: AuditTrackId; chunk: StreamChunk }>('stream', (data: { trackId: AuditTrackId; chunk: StreamChunk }) => {
-    processAuditStreamChunk(mainWindow, workspaceId, workspacePath, data.trackId, data.chunk)
-  })
+  auditCleanup.addListener<{ trackId: AuditTrackId; chunk: StreamChunk }>(
+    cleanups,
+    auditAgentService,
+    'stream',
+    (data) => {
+      processAuditStreamChunk(router, workspaceId, workspacePath, data.trackId, data.chunk)
+    }
+  )
+
+  // ── status — forward live token/context counters to the renderer ──
+  auditCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
+    cleanups,
+    auditAgentService,
+    'status',
+    (data) => {
+      if (data.workspaceId && data.workspaceId !== workspaceId) return
+      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+    }
+  )
+
+  // Safety net: auto-clean listeners after 90 min (multi-track sequential execution)
+  auditCleanup.scheduleAutoCleanup(workspaceId, cleanups, 90 * 60_000)
 }
 
 // ── Stream chunk processing ─────────────────────────────────────────────────
@@ -553,16 +651,17 @@ function wireAuditEvents(
  * Process a single stream chunk from the audit agent and forward it to the renderer.
  * Handles text, tool_use, tool_result, and tool_progress chunk types.
  */
+import type { SessionEventRouter } from '../services/session-event-router'
+
 function processAuditStreamChunk(
-  mainWindow: BrowserWindow,
+  router: SessionEventRouter,
   workspaceId: string,
   workspacePath: string,
   trackId: AuditTrackId,
   chunk: StreamChunk
 ): void {
   if (chunk.type === 'text' && chunk.content) {
-    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-      workspaceId,
+    router.sendWorkspaceEvent(IPC_CHANNELS.AUDIT_STREAM_CHUNK, workspaceId, {
       trackId,
       type: 'text',
       content: chunk.content
@@ -570,100 +669,18 @@ function processAuditStreamChunk(
     return
   }
 
-  if (chunk.type === 'tool_use') {
-    // Skip control tools
-    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-    let inputSummary: string | undefined
-    if (chunk.toolInput) {
-      // CLI streams already provide summarized input (from stream-normalizer)
-      inputSummary = chunk.toolInput.slice(0, 120)
-    }
-
-    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
+  if (chunk.type === 'tool_use' || chunk.type === 'tool_result' || chunk.type === 'tool_progress') {
+    const result = processToolChunk(chunk, {
+      workspacePath,
+      agentType: 'audit',
       workspaceId,
-      trackId,
-      type: 'tool_activity',
-      toolActivity: {
-        id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'running' as const,
-        input: inputSummary,
-        startedAt: Date.now()
-      }
+      formatTagsToSkip: ['audit-finding', 'audit-score']
     })
-    return
-  }
-
-  if (chunk.type === 'tool_result') {
-    // Skip control tools
-    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-    const isToolError =
-      typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-
-    // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
-    // audit-finding / audit-score are fenced-block language tags, not real tools.
-    const AUDIT_FORMAT_TAGS = new Set(['audit-finding', 'audit-score'])
-
-    // Auto-capture tool errors to the bug tracker (skip known format tags)
-    if (isToolError && chunk.content && !AUDIT_FORMAT_TAGS.has(chunk.toolName ?? '')) {
-      reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
-        agentType: 'audit',
-        workspaceId
+    if (result) {
+      router.sendWorkspaceEvent(IPC_CHANNELS.AUDIT_STREAM_CHUNK, workspaceId, {
+        trackId,
+        ...result
       })
     }
-
-    const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
-    let resultSummary = resultSummaryObj?.result
-    const resultDetail = resultSummaryObj?.resultDetail
-
-    // Try to get input summary from result content for tool_result
-    let inputSummary: string | undefined
-    if (chunk.content) {
-      try {
-        const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-        inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-      } catch {
-        // Non-JSON content — skip input summary
-      }
-    }
-
-    // For Read, compose file path into result so it's always visible
-    if (chunk.toolName === 'Read' && inputSummary && resultSummary) {
-      resultSummary = `${resultSummary} — ${inputSummary}`
-    }
-
-    const toolActivity: Record<string, unknown> = {
-      id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      toolName: chunk.toolName ?? 'Unknown',
-      status: isToolError ? 'error' : 'completed',
-      completedAt: Date.now()
-    }
-    if (inputSummary) toolActivity.input = inputSummary
-    if (resultSummary) toolActivity.result = resultSummary
-    if (resultDetail) toolActivity.resultDetail = resultDetail
-
-    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-      workspaceId,
-      trackId,
-      type: 'tool_activity',
-      toolActivity
-    })
-    return
-  }
-
-  if (chunk.type === 'tool_progress') {
-    mainWindow.webContents.send(IPC_CHANNELS.AUDIT_STREAM_CHUNK, {
-      workspaceId,
-      trackId,
-      type: 'tool_activity',
-      toolActivity: {
-        id: chunk.toolId ?? `tool-${Date.now()}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: 'running' as const,
-        elapsedSeconds: chunk.elapsedSeconds
-      }
-    })
   }
 }

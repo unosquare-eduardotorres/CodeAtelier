@@ -13,6 +13,7 @@
 import { EventEmitter } from 'node:events'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
+import type { AgentStatus } from '../../shared/types'
 import { AgentSessionService } from './agent-session.service'
 import { MpaPlannerAdapter } from './role-adapters/mpa/mpa-planner.adapter'
 import { MpaBuilderAdapter } from './role-adapters/mpa/mpa-builder.adapter'
@@ -22,7 +23,7 @@ import {
   buildBuilderGoalCondition,
   buildVerifierGoalCondition
 } from './mpa-goal-conditions'
-import { parsePlanArtifact, parseVerifyReport } from './mpa-artifact-parsers'
+import { parsePlanArtifact, parseVerifyReport, hasFailingCriteria } from './mpa-artifact-parsers'
 import { mpaRunRepository } from '../db/repositories/mpa-run.repository'
 import { mpaArtifactRepository } from '../db/repositories/mpa-artifact.repository'
 import { hookEngine } from './hook-engine.service'
@@ -103,6 +104,14 @@ export class MpaOrchestrationService extends EventEmitter {
     return undefined
   }
 
+  /** Reverse-lookup the workspaceId owning a given run ID. */
+  private findWorkspaceIdByRunId(runId: string): string | undefined {
+    for (const [workspaceId, pipeline] of this.pipelines) {
+      if (pipeline.currentRunId === runId) return workspaceId
+    }
+    return undefined
+  }
+
   // ── Public API ──
 
   async orchestrate(params: MpaOrchestrateParams): Promise<void> {
@@ -126,90 +135,47 @@ export class MpaOrchestrationService extends EventEmitter {
         phases: params.phases,
         grillDecisions: params.grillDecisions,
         workspacePath: params.workspacePath
-      }
+      },
+      campaignId: params.campaignId,
+      orderIndex: params.orderIndex
     })
     pipeline.currentRunId = run.id
+
+    // Persist the per-goal spec (success criteria) so history + verify can
+    // reference it. goal_spec is an existing artifact type.
+    if (params.successCriteria && params.successCriteria.length > 0) {
+      mpaArtifactRepository.create({
+        runId: run.id,
+        artifactType: 'goal_spec',
+        contentJson: { outcome: params.title, successCriteria: params.successCriteria }
+      })
+    }
 
     mpaLog.info(`[orchestrate] Starting MPA run ${run.id} — goal: "${params.goal.slice(0, 80)}"`)
 
     try {
-      let plan: MpaPlanArtifact | null = null
-      let planArtifact: MpaArtifact | null = null
+      const loopResult = await this.executePhaseLoop(run, params, pipeline, params.phases, null)
+      if (loopResult === 'cancelled') return
 
-      for (let phaseIdx = 0; phaseIdx < params.phases.length; phaseIdx++) {
-        if (pipeline.abortController?.signal.aborted) break
-
-        const phaseType = params.phases[phaseIdx]
-
-        mpaRunRepository.updateRun(run.id, { currentPhase: phaseType })
-
-        switch (phaseType) {
-          case 'plan': {
-            const result = await this.runPlanPhase(run, params, plan, undefined)
-            plan = result.plan
-            planArtifact = result.artifact
-
-            // Fire hook: plan phase complete
-            hookEngine.executeHooks('mpa_plan_complete', {
-              runId: run.id,
-              goal: params.goal.slice(0, 200),
-              workspaceId: params.workspaceId
-            }).catch(() => { /* non-blocking */ })
-
-            // User gate — wait for approval (with optional feedback loop)
-            if (plan && planArtifact) {
-              const gateResult = await this.runUserGate(run, plan, planArtifact, params)
-              if (!gateResult) {
-                // Rejected or cancelled
-                mpaRunRepository.updateRun(run.id, {
-                  status: 'cancelled',
-                  completedAt: new Date().toISOString()
-                })
-                this.emitComplete(run.id, 'cancelled', 0)
-                return
-              }
-              plan = gateResult.plan
-              planArtifact = gateResult.artifact
-            }
-            break
-          }
-
-          case 'execute': {
-            if (!plan) {
-              mpaLog.error('[orchestrate] Execute phase requires a plan')
-              break
-            }
-            // Fire hook: build phase start
-            hookEngine.executeHooks('mpa_build_start', {
-              runId: run.id,
-              workspaceId: params.workspaceId
-            }).catch(() => { /* non-blocking */ })
-
-            await this.runExecutePhase(run, params, plan)
-
-            // Fire hook: build phase complete
-            hookEngine.executeHooks('mpa_build_complete', {
-              runId: run.id,
-              workspaceId: params.workspaceId
-            }).catch(() => { /* non-blocking */ })
-            break
-          }
-
-          case 'verify': {
-            if (!plan) {
-              mpaLog.error('[orchestrate] Verify phase requires a plan')
-              break
-            }
-            await this.runVerifyLoop(run, params, plan)
-
-            // Fire hook: verify phase complete
-            hookEngine.executeHooks('mpa_verify_complete', {
-              runId: run.id,
-              workspaceId: params.workspaceId
-            }).catch(() => { /* non-blocking */ })
-            break
-          }
-        }
+      // Verify phase exhausted its iterations without passing all checks /
+      // success criteria → treat the run as failed so a campaign can pause.
+      if (loopResult === 'verify_incomplete') {
+        mpaRunRepository.updateRun(run.id, {
+          status: 'failed',
+          completedAt: new Date().toISOString()
+        })
+        hookEngine
+          .executeHooks('mpa_goal_failed', {
+            runId: run.id,
+            goal: params.goal.slice(0, 200),
+            error: 'Verification did not pass all checks',
+            workspaceId: params.workspaceId
+          })
+          .catch(() => {
+            /* non-blocking */
+          })
+        this.emitComplete(run.id, 'failed', 0)
+        return
       }
 
       // Pipeline complete
@@ -219,11 +185,15 @@ export class MpaOrchestrationService extends EventEmitter {
       })
 
       // Fire hook: goal achieved
-      hookEngine.executeHooks('mpa_goal_achieved', {
-        runId: run.id,
-        goal: params.goal.slice(0, 200),
-        workspaceId: params.workspaceId
-      }).catch(() => { /* non-blocking */ })
+      hookEngine
+        .executeHooks('mpa_goal_achieved', {
+          runId: run.id,
+          goal: params.goal.slice(0, 200),
+          workspaceId: params.workspaceId
+        })
+        .catch(() => {
+          /* non-blocking */
+        })
 
       this.emitComplete(run.id, 'completed', updatedRun?.totalTokens ?? 0)
     } catch (err) {
@@ -237,12 +207,16 @@ export class MpaOrchestrationService extends EventEmitter {
       })
 
       // Fire hook: goal failed
-      hookEngine.executeHooks('mpa_goal_failed', {
-        runId: run.id,
-        goal: params.goal.slice(0, 200),
-        error: (err as Error).message?.slice(0, 200) ?? 'unknown',
-        workspaceId: params.workspaceId
-      }).catch(() => { /* non-blocking */ })
+      hookEngine
+        .executeHooks('mpa_goal_failed', {
+          runId: run.id,
+          goal: params.goal.slice(0, 200),
+          error: (err as Error).message?.slice(0, 200) ?? 'unknown',
+          workspaceId: params.workspaceId
+        })
+        .catch(() => {
+          /* non-blocking */
+        })
 
       this.emitComplete(run.id, 'failed', 0)
     } finally {
@@ -312,6 +286,109 @@ export class MpaOrchestrationService extends EventEmitter {
     }
   }
 
+  // ── Phase Loop (shared by orchestrate + resume) ──
+
+  /**
+   * Execute the phase loop for a set of phases. Shared by orchestrate() and resumeRun().
+   * Handles plan → user gate → execute → verify with hook firing.
+   */
+  private async executePhaseLoop(
+    run: MpaRun,
+    params: MpaOrchestrateParams,
+    pipeline: MpaPipelineState,
+    phases: MpaPhaseType[],
+    initialPlan: MpaPlanArtifact | null
+  ): Promise<'completed' | 'cancelled' | 'verify_incomplete'> {
+    let currentPlan = initialPlan
+    let verifyIncomplete = false
+
+    for (const phaseType of phases) {
+      if (pipeline.abortController?.signal.aborted) break
+
+      mpaRunRepository.updateRun(run.id, { currentPhase: phaseType })
+
+      switch (phaseType) {
+        case 'plan': {
+          const result = await this.runPlanPhase(run, params, currentPlan, undefined)
+          currentPlan = result.plan
+
+          hookEngine
+            .executeHooks('mpa_plan_complete', {
+              runId: run.id,
+              goal: params.goal.slice(0, 200),
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
+
+          if (currentPlan && result.artifact) {
+            const gateResult = await this.runUserGate(run, currentPlan, result.artifact, params)
+            if (!gateResult) {
+              mpaRunRepository.updateRun(run.id, {
+                status: 'cancelled',
+                completedAt: new Date().toISOString()
+              })
+              this.emitComplete(run.id, 'cancelled', 0)
+              return 'cancelled'
+            }
+            currentPlan = gateResult.plan
+          }
+          break
+        }
+
+        case 'execute': {
+          if (!currentPlan) {
+            mpaLog.error('[phase-loop] Execute phase requires a plan')
+            break
+          }
+          hookEngine
+            .executeHooks('mpa_build_start', {
+              runId: run.id,
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
+
+          await this.runExecutePhase(run, params, currentPlan)
+
+          hookEngine
+            .executeHooks('mpa_build_complete', {
+              runId: run.id,
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
+          break
+        }
+
+        case 'verify': {
+          if (!currentPlan) {
+            mpaLog.error('[phase-loop] Verify phase requires a plan')
+            break
+          }
+          const verifyComplete = await this.runVerifyLoop(run, params, currentPlan)
+          verifyIncomplete = !verifyComplete
+
+          hookEngine
+            .executeHooks('mpa_verify_complete', {
+              runId: run.id,
+              workspaceId: params.workspaceId
+            })
+            .catch(() => {
+              /* non-blocking */
+            })
+          break
+        }
+      }
+    }
+
+    if (pipeline.abortController?.signal.aborted) return 'cancelled'
+    return verifyIncomplete ? 'verify_incomplete' : 'completed'
+  }
+
   // ── Verify Loop ──
 
   /**
@@ -323,7 +400,7 @@ export class MpaOrchestrationService extends EventEmitter {
     run: MpaRun,
     params: MpaOrchestrateParams,
     plan: MpaPlanArtifact
-  ): Promise<void> {
+  ): Promise<boolean> {
     let verifyIteration = 0
     let allComplete = false
 
@@ -331,7 +408,13 @@ export class MpaOrchestrationService extends EventEmitter {
       verifyIteration++
       const report = await this.runVerifyPhase(run, params, plan, verifyIteration)
 
-      if (report?.allComplete) {
+      // A run with explicit success criteria only passes when every criterion
+      // passes AND the verifier reports allComplete. hasFailingCriteria guards
+      // against a non-array criteriaResults from the model so a malformed field
+      // can't throw and spuriously fail the run.
+      const criteriaFailed = hasFailingCriteria(report)
+
+      if (report?.allComplete && !criteriaFailed) {
         allComplete = true
       } else if (report && verifyIteration < MAX_VERIFY_ITERATIONS) {
         this.emit('feedbackLoop', {
@@ -348,9 +431,11 @@ export class MpaOrchestrationService extends EventEmitter {
 
     if (!allComplete && verifyIteration >= MAX_VERIFY_ITERATIONS) {
       mpaLog.warn(
-        `[orchestrate] Max verify iterations (${MAX_VERIFY_ITERATIONS}) reached — completing with warnings`
+        `[orchestrate] Max verify iterations (${MAX_VERIFY_ITERATIONS}) reached without passing all checks`
       )
     }
+
+    return allComplete
   }
 
   // ── Phase Runners ──
@@ -407,15 +492,22 @@ export class MpaOrchestrationService extends EventEmitter {
     })
 
     const { phase, text } = await this.setupAndExecutePhase({
-      run, adapter, phaseType: 'plan', iteration,
+      run,
+      adapter,
+      phaseType: 'plan',
+      iteration,
       goalCondition: buildPlannerGoalCondition(params.goal),
       workspacePath: params.workspacePath
     })
 
     const plan = parsePlanArtifact(text)
     const artifact = this.persistPhaseResult({
-      runId: run.id, phaseId: phase.id, parsed: plan,
-      rawText: text, artifactType: 'plan', iteration
+      runId: run.id,
+      phaseId: phase.id,
+      parsed: plan,
+      rawText: text,
+      artifactType: 'plan',
+      iteration
     })
 
     return { plan, artifact }
@@ -437,7 +529,10 @@ export class MpaOrchestrationService extends EventEmitter {
     const iteration = verifierFeedback ? 2 : 1
 
     const { phase } = await this.setupAndExecutePhase({
-      run, adapter, phaseType: 'execute', iteration,
+      run,
+      adapter,
+      phaseType: 'execute',
+      iteration,
       goalCondition: buildBuilderGoalCondition(plan),
       workspacePath: params.workspacePath
     })
@@ -457,19 +552,27 @@ export class MpaOrchestrationService extends EventEmitter {
     const adapter = new MpaVerifierAdapter({
       workspaceId: params.workspaceId,
       goal: params.goal,
-      plan
+      plan,
+      successCriteria: params.successCriteria
     })
 
     const { phase, text } = await this.setupAndExecutePhase({
-      run, adapter, phaseType: 'verify', iteration,
+      run,
+      adapter,
+      phaseType: 'verify',
+      iteration,
       goalCondition: buildVerifierGoalCondition(plan),
       workspacePath: params.workspacePath
     })
 
     const report = parseVerifyReport(text)
     this.persistPhaseResult({
-      runId: run.id, phaseId: phase.id, parsed: report,
-      rawText: text, artifactType: 'verify_report', iteration
+      runId: run.id,
+      phaseId: phase.id,
+      parsed: report,
+      rawText: text,
+      artifactType: 'verify_report',
+      iteration
     })
 
     return report
@@ -561,6 +664,11 @@ export class MpaOrchestrationService extends EventEmitter {
         // Append to DB for persistence
         mpaRunRepository.appendStreamContent(phaseId, chunk.content)
       }
+    })
+
+    // Re-emit inner-session status so the live token usage modal reflects MPA activity.
+    session.on('statusUpdate', (status: AgentStatus) => {
+      this.emit('status', { workspaceId: this.findWorkspaceIdByRunId(runId), status })
     })
 
     const mode = phaseType === 'execute' ? 'build' : 'plan'
@@ -720,10 +828,19 @@ export class MpaOrchestrationService extends EventEmitter {
     // 3. Find completed phases and the plan artifact
     const phases = mpaRunRepository.findPhasesByRun(runId)
     const artifacts = mpaArtifactRepository.findByRun(runId)
-    const planArtifact = artifacts.find(a => a.artifactType === 'plan')
+    const planArtifact = artifacts.find((a) => a.artifactType === 'plan')
     const plan: MpaPlanArtifact | null = planArtifact
       ? (planArtifact.contentJson as unknown as MpaPlanArtifact)
       : null
+
+    // Restore per-goal success criteria from the goal_spec artifact (campaign runs)
+    // so resumed verification re-checks them.
+    const goalSpec = artifacts.find((a) => a.artifactType === 'goal_spec')
+    const successCriteria = Array.isArray(
+      (goalSpec?.contentJson as { successCriteria?: unknown })?.successCriteria
+    )
+      ? (goalSpec!.contentJson as { successCriteria: string[] }).successCriteria
+      : undefined
 
     // 4. Determine which phases remain
     const config = run.configJson as {
@@ -735,18 +852,23 @@ export class MpaOrchestrationService extends EventEmitter {
     if (!workspacePath) throw new Error('Run config missing workspacePath — cannot resume')
 
     const completedPhaseTypes = new Set(
-      phases.filter(p => p.status === 'completed').map(p => p.phaseType)
+      phases.filter((p) => p.status === 'completed').map((p) => p.phaseType)
     )
-    const remainingPhases = config.phases.filter(p => !completedPhaseTypes.has(p))
+    const remainingPhases = config.phases.filter((p) => !completedPhaseTypes.has(p))
 
     if (remainingPhases.length === 0) {
       mpaLog.info('[resume] All phases already completed — marking as completed')
-      mpaRunRepository.updateRun(runId, { status: 'completed', completedAt: new Date().toISOString() })
+      mpaRunRepository.updateRun(runId, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      })
       this.emitComplete(runId, 'completed', run.totalTokens)
       return
     }
 
-    mpaLog.info(`[resume] Resuming run ${runId} — ${remainingPhases.length} phase(s) remaining: ${remainingPhases.join(', ')}`)
+    mpaLog.info(
+      `[resume] Resuming run ${runId} — ${remainingPhases.length} phase(s) remaining: ${remainingPhases.join(', ')}`
+    )
 
     // 5. Reset run status and activate pipeline
     pipeline.running = true
@@ -763,56 +885,31 @@ export class MpaOrchestrationService extends EventEmitter {
       goalType: run.goalType,
       phases: remainingPhases,
       grillSessionId: run.grillSessionId ?? undefined,
-      grillDecisions: (config.grillDecisions as import('../../shared/mpa-types').GrillDecision[] | undefined)
+      grillDecisions: config.grillDecisions as
+        | import('../../shared/mpa-types').GrillDecision[]
+        | undefined,
+      campaignId: run.campaignId ?? undefined,
+      orderIndex: run.orderIndex ?? undefined,
+      successCriteria
     }
 
     try {
-      let currentPlan = plan
+      const loopResult = await this.executePhaseLoop(run, params, pipeline, remainingPhases, plan)
+      if (loopResult === 'cancelled') return
 
-      for (const phaseType of remainingPhases) {
-        if (pipeline.abortController?.signal.aborted) break
-
-        mpaRunRepository.updateRun(runId, { currentPhase: phaseType })
-
-        switch (phaseType) {
-          case 'plan': {
-            const result = await this.runPlanPhase(run, params, currentPlan, undefined)
-            currentPlan = result.plan
-
-            // User gate for new plan
-            if (currentPlan && result.artifact) {
-              const gateResult = await this.runUserGate(run, currentPlan, result.artifact, params)
-              if (!gateResult) {
-                mpaRunRepository.updateRun(runId, { status: 'cancelled', completedAt: new Date().toISOString() })
-                this.emitComplete(runId, 'cancelled', 0)
-                return
-              }
-              currentPlan = gateResult.plan
-            }
-            break
-          }
-
-          case 'execute': {
-            if (!currentPlan) {
-              mpaLog.error('[resume] Execute phase requires a plan')
-              break
-            }
-            await this.runExecutePhase(run, params, currentPlan)
-            break
-          }
-
-          case 'verify': {
-            if (!currentPlan) {
-              mpaLog.error('[resume] Verify phase requires a plan')
-              break
-            }
-            await this.runVerifyLoop(run, params, currentPlan)
-            break
-          }
-        }
+      if (loopResult === 'verify_incomplete') {
+        mpaRunRepository.updateRun(runId, {
+          status: 'failed',
+          completedAt: new Date().toISOString()
+        })
+        this.emitComplete(runId, 'failed', 0)
+        return
       }
 
-      mpaRunRepository.updateRun(runId, { status: 'completed', completedAt: new Date().toISOString() })
+      mpaRunRepository.updateRun(runId, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      })
       this.emitComplete(runId, 'completed', 0)
     } catch (err) {
       if (pipeline.abortController?.signal.aborted) return

@@ -56,9 +56,7 @@ export function useGrillQuestionState(): UseGrillQuestionStateResult {
     return currentIteration.questions.filter((q) => {
       const state = questionStates[q.id]
       if (!state) return false
-      return (
-        state.skipped || state.selectedOptions.length > 0 || state.otherText.trim().length > 0
-      )
+      return state.skipped || state.selectedOptions.length > 0 || state.otherText.trim().length > 0
     }).length
   }, [currentIteration, questionStates])
 

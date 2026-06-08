@@ -7,7 +7,6 @@
  */
 
 import React from 'react'
-import type { ReactNode } from 'react'
 import {
   ClipboardList,
   FileCode,
@@ -19,41 +18,12 @@ import {
   ArrowRight,
   Lightbulb
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkStripStrayBackticks } from '../remark-plugins'
-import type { StructuredPlan } from '../../../../../shared/types'
+import type { StructuredPlan, PlanRootCause, PlanPhase } from '../../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
-import { RootCausesList, PhasesList } from './PlanHelpers'
-
-// ── SectionCard — reusable wrapper ──
-
-function SectionCard({
-  icon: Icon,
-  iconColor,
-  label,
-  className = 'pt-3 border-t border-border-subtle',
-  labelColor = 'text-text-secondary',
-  children
-}: {
-  icon: LucideIcon
-  iconColor?: string
-  label: string
-  className?: string
-  labelColor?: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <div className={className}>
-      <div className={`flex items-center gap-2 text-sm font-semibold ${labelColor} mb-2`}>
-        <Icon size={14} className={iconColor} />
-        {label}
-      </div>
-      {children}
-    </div>
-  )
-}
+import { RootCausesList, PhasesList, SectionCard } from './PlanHelpers'
 
 // ── Helpers ──
 
@@ -92,9 +62,9 @@ export interface TaskPlanSectionsProps {
   visibleDeferredItems: string[]
   visibleDiagrams: Array<{ title: string; mermaid: string }>
   visibleSections: Array<{ heading: string; content: string; icon?: string; mermaid?: string }>
-  visibleRootCauses: Array<{ title: string; description: string }>
+  visibleRootCauses: PlanRootCause[]
   visibleVerification: string[]
-  visiblePhases: Array<{ id: number; title: string; risk?: string; complexity: number }>
+  visiblePhases: PlanPhase[]
   visibleDecisions: Array<{ what: string; why: string }>
   isSimplePlan: boolean
 }
@@ -290,7 +260,12 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   )
 
   const verificationSection = visibleVerification.length > 0 && (
-    <SectionCard icon={CheckCircle2} iconColor="text-[var(--color-plan-card-accent)]" label="Verification" labelColor="text-[var(--color-plan-card-accent)]">
+    <SectionCard
+      icon={CheckCircle2}
+      iconColor="text-[var(--color-plan-card-accent)]"
+      label="Verification"
+      labelColor="text-[var(--color-plan-card-accent)]"
+    >
       <ol className="list-decimal pl-5 space-y-1.5 text-sm text-text-body">
         {visibleVerification.map((item, index) => (
           <li key={`verify-${index}`}>{item}</li>
@@ -303,7 +278,12 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
     'expectedOutcome' in structuredPlan &&
     typeof structuredPlan.expectedOutcome === 'string' &&
     structuredPlan.expectedOutcome.trim() && (
-      <SectionCard icon={CheckCircle2} iconColor="text-success" label="Expected Outcome" labelColor="text-success">
+      <SectionCard
+        icon={CheckCircle2}
+        iconColor="text-success"
+        label="Expected Outcome"
+        labelColor="text-success"
+      >
         <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
       </SectionCard>
     )

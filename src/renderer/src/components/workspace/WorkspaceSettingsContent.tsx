@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Lightbulb } from 'lucide-react'
+import { Landmark, Lightbulb } from 'lucide-react'
 import { useWorkspaceStore, useChatStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
@@ -15,7 +15,7 @@ import IntegrationsPage from './IntegrationsPage'
 import SpecialistPage from './SpecialistPage'
 import HealthPage from './HealthPage'
 import GoalPage from './GoalPage'
-import { CouncilView } from './council'
+import { CouncilLanding } from './council'
 import { SkillDetailPage } from '@renderer/components/settings'
 import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
@@ -26,6 +26,7 @@ interface WorkspaceSettingsContentProps {
   onNavigateToChat: () => void
   onFixInNewChat: () => void
   onSettingsTabChange?: (tab: SettingsTab) => void
+  onSendPlanToGrill?: (title: string, description: string) => void
   pendingGrill?: {
     ideaId: string
     conversationId: string
@@ -41,6 +42,7 @@ export default function WorkspaceSettingsContent({
   onNavigateToChat,
   onFixInNewChat,
   onSettingsTabChange,
+  onSendPlanToGrill,
   pendingGrill,
   onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
@@ -62,6 +64,7 @@ export default function WorkspaceSettingsContent({
     ideaTitle: string
     ideaDescription?: string
     isNewSession?: boolean
+    reviewMode?: boolean
   } | null>(null)
 
   const workspacePath = activeWorkspace?.repoPath ?? null
@@ -113,25 +116,43 @@ export default function WorkspaceSettingsContent({
     >
       {tab === 'specialist' && <SpecialistPage />}
       {tab === 'health' && (
-        <HealthPage onNavigateToChat={onNavigateToChat} onFixInNewChat={onFixInNewChat} />
+        <HealthPage
+          onNavigateToChat={onNavigateToChat}
+          onFixInNewChat={onFixInNewChat}
+          onSendPlanToGrill={onSendPlanToGrill}
+          onNavigateToCouncil={() => onSettingsTabChange?.('council')}
+          onNavigateToGoals={() => onSettingsTabChange?.('goals')}
+        />
       )}
       {tab === 'goals' && <GoalPage onNavigateToChat={onNavigateToChat} />}
       {tab === 'council' && (
-        <CouncilView
-          onAcceptAndBuild={() => {
-            onNavigateToChat()
-          }}
-          onRevisePlan={(feedback) => {
-            // Inject council feedback into chat as a local message
-            const { appendLocalMessage } = useChatStore.getState()
-            appendLocalMessage(
-              `🏛️ **Council Review Feedback:**\n\n${feedback}\n\nPlease revise the plan based on this feedback.`,
-              { role: 'user' }
-            )
-            onNavigateToChat()
-          }}
-          onDismiss={() => onNavigateToChat()}
-        />
+        <div className="p-6">
+          <div className="flex items-center gap-2 mb-2">
+            <Landmark size={16} className="text-indigo-400" />
+            <h3 className="text-sm font-semibold text-text-primary">Council</h3>
+          </div>
+          <p className="text-xs text-text-secondary mb-4">
+            5 independent AI advisors review your plans, cross-examine each other, and deliver a
+            scored verdict with recommendations.
+          </p>
+          <CouncilLanding
+            onAcceptAndBuild={() => {
+              onNavigateToChat()
+            }}
+            onRevisePlan={(feedback) => {
+              const { appendLocalMessage } = useChatStore.getState()
+              appendLocalMessage(
+                `🏛️ **Council Review Feedback:**\n\n${feedback}\n\nPlease revise the plan based on this feedback.`,
+                { role: 'user' }
+              )
+              onNavigateToChat()
+            }}
+            onDismiss={() => {
+              // In standalone context: just reset, stay on council page
+              // CouncilView already calls reset() before onDismiss
+            }}
+          />
+        </div>
       )}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
@@ -152,14 +173,15 @@ export default function WorkspaceSettingsContent({
             ideaTitle={activeGrill.ideaTitle}
             ideaDescription={activeGrill.ideaDescription}
             isNewSession={activeGrill.isNewSession}
+            reviewMode={activeGrill.reviewMode}
             onBack={() => setActiveGrill(null)}
             onComplete={() => {
               setActiveGrill(null)
               onNavigateToChat()
             }}
-            onNavigateToGoals={() => {
+            onNavigateToCouncil={() => {
               setActiveGrill(null)
-              onSettingsTabChange?.('goals')
+              onSettingsTabChange?.('council')
             }}
           />
         ) : (
@@ -169,8 +191,8 @@ export default function WorkspaceSettingsContent({
               <h3 className="text-sm font-semibold text-text-primary">Ideas</h3>
             </div>
             <p className="text-xs text-text-secondary mb-4">
-              Captured ideas for future work items. Refine them with &quot;Grill Me&quot; or convert
-              directly into conversations.
+              Your idea parking lot. Grill ideas with an AI analyst before building, or jump
+              straight into a chat session.
             </p>
             <IdeasList
               onNavigateToChat={onNavigateToChat}
@@ -179,9 +201,17 @@ export default function WorkspaceSettingsContent({
                 conversationId,
                 ideaTitle,
                 isNewSession,
-                ideaDescription
+                ideaDescription,
+                reviewMode
               ) =>
-                setActiveGrill({ ideaId, conversationId, ideaTitle, ideaDescription, isNewSession })
+                setActiveGrill({
+                  ideaId,
+                  conversationId,
+                  ideaTitle,
+                  ideaDescription,
+                  isNewSession,
+                  reviewMode
+                })
               }
             />
           </div>

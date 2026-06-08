@@ -82,6 +82,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
       // Resolve workspace name
       let workspaceName = workspaceId.slice(0, 8)
       try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids db/repositories circular dependency
         const { workspaceRepository } = require('../db/repositories')
         const ws = workspaceRepository.findById(workspaceId)
         if (ws) workspaceName = ws.name

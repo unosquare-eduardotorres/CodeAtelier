@@ -110,7 +110,9 @@ function computeFingerprint(
 
 export class BugRepository extends BaseRepository<BugRow, BugRecord> {
   protected readonly tableName = 'bugs'
-  protected mapRow(row: BugRow): BugRecord { return toModel(row) }
+  protected mapRow(row: BugRow): BugRecord {
+    return toModel(row)
+  }
 
   /**
    * Insert or update a bug based on fingerprint deduplication.
@@ -126,41 +128,47 @@ export class BugRepository extends BaseRepository<BugRow, BugRecord> {
 
     if (existing) {
       if (existing.is_resolved === 0) {
-        this.db().prepare(
-          'UPDATE bugs SET occurrence_count = occurrence_count + 1, last_seen_at = ? WHERE id = ?'
-        ).run(now, existing.id)
+        this.db()
+          .prepare(
+            'UPDATE bugs SET occurrence_count = occurrence_count + 1, last_seen_at = ? WHERE id = ?'
+          )
+          .run(now, existing.id)
         return { isNew: false, bugId: existing.id }
       } else {
-        this.db().prepare(
-          'UPDATE bugs SET is_resolved = 0, occurrence_count = occurrence_count + 1, last_seen_at = ? WHERE id = ?'
-        ).run(now, existing.id)
+        this.db()
+          .prepare(
+            'UPDATE bugs SET is_resolved = 0, occurrence_count = occurrence_count + 1, last_seen_at = ? WHERE id = ?'
+          )
+          .run(now, existing.id)
         return { isNew: true, bugId: existing.id }
       }
     }
 
     const id = randomUUID()
-    this.db().prepare(
-      `INSERT INTO bugs (id, fingerprint, timestamp, last_seen_at, process, severity, error_message, stack_trace, source_file, source_line, source_column, component_name, active_view, workspace_id, agent_id, app_version, os_info)
+    this.db()
+      .prepare(
+        `INSERT INTO bugs (id, fingerprint, timestamp, last_seen_at, process, severity, error_message, stack_trace, source_file, source_line, source_column, component_name, active_view, workspace_id, agent_id, app_version, os_info)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id,
-      fingerprint,
-      now,
-      now,
-      input.process,
-      input.severity,
-      input.errorMessage,
-      input.stackTrace ?? null,
-      input.sourceFile ?? null,
-      input.sourceLine ?? null,
-      input.sourceColumn ?? null,
-      input.componentName ?? null,
-      input.activeView ?? null,
-      input.workspaceId ?? null,
-      input.agentId ?? null,
-      input.appVersion,
-      input.osInfo ?? null
-    )
+      )
+      .run(
+        id,
+        fingerprint,
+        now,
+        now,
+        input.process,
+        input.severity,
+        input.errorMessage,
+        input.stackTrace ?? null,
+        input.sourceFile ?? null,
+        input.sourceLine ?? null,
+        input.sourceColumn ?? null,
+        input.componentName ?? null,
+        input.activeView ?? null,
+        input.workspaceId ?? null,
+        input.agentId ?? null,
+        input.appVersion,
+        input.osInfo ?? null
+      )
     return { isNew: true, bugId: id }
   }
 
@@ -219,7 +227,9 @@ export class BugRepository extends BaseRepository<BugRow, BugRecord> {
   }
 
   getUnresolvedCount(): number {
-    const result = this.db().prepare('SELECT COUNT(*) as count FROM bugs WHERE is_resolved = 0').get() as {
+    const result = this.db()
+      .prepare('SELECT COUNT(*) as count FROM bugs WHERE is_resolved = 0')
+      .get() as {
       count: number
     }
     return result.count

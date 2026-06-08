@@ -25,7 +25,11 @@ describe('IntentRouter', () => {
 
     // Plan data reaches the renderer through the streaming pipeline (TaskPlanCard),
     // so no dedicated IPC channel is needed.
-    assert.equal(sentMessages.length, 0, 'plan intent should not send IPC — data arrives via streaming')
+    assert.equal(
+      sentMessages.length,
+      0,
+      'plan intent should not send IPC — data arrives via streaming'
+    )
   })
 
   test('routes_askUser_intent_to_CHAT_ASK_QUESTION_channel', () => {
@@ -73,7 +77,11 @@ describe('IntentRouter', () => {
       }
     })
 
-    assert.equal(sentMessages.length, 0, 'grill intents should not send IPC — handled by dedicated grill system')
+    assert.equal(
+      sentMessages.length,
+      0,
+      'grill intents should not send IPC — handled by dedicated grill system'
+    )
   })
 
   test('does_not_send_IPC_for_response_intent', () => {

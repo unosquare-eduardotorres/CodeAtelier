@@ -7,22 +7,38 @@
 
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
-import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
-import type { GrillTrackId, GrillEvaluation, LLMProvider } from '../../shared/types'
+import { IPC_CHANNELS } from '../../shared/constants'
+import type {
+  GrillTrackId,
+  GrillEvaluation,
+  LLMProvider,
+  GrillStructuredPlan,
+  GrillDecision,
+  GrillTrackScore,
+  AgentStatus
+} from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
-import { summarizeToolInput } from '../services/agent-base.service'
-import { extractResultSummary, reportToolError } from './chat-shared'
-import { workspaceRepository } from '../db/repositories'
+import { processToolChunk } from './tool-chunk-processor'
+import { createTimedCleanupMap } from './listener-cleanup'
+import {
+  workspaceRepository,
+  grillSessionRepository,
+  ideaRepository,
+  messageRepository
+} from '../db/repositories'
 import { grillAgentService } from '../services/grill-agent.service'
 import { grillPersistenceController } from '../services/grill-persistence.controller'
 import { grillPlanGeneratorService } from '../services/grill-plan-generator.service'
+import { runOneShotClaude } from '../services/one-shot-claude'
+import { grillPlanToStructuredPlan } from '../services/grill-plan-mapper'
+import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 import log from 'electron-log'
-import type { GrillStructuredPlan } from '../../shared/types'
 
 const grillLog = log.scope('grill-ipc')
 
-export function registerGrillIpc(mainWindow: BrowserWindow): void {
+export function registerGrillIpc(_mainWindow: BrowserWindow): void {
   // ── grill:evaluate — start a grill evaluation ──────────────────────
 
   ipcMain.handle(
@@ -76,7 +92,20 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
         const llmProvider: LLMProvider = explicitProvider ?? 'claude'
 
         // Wire event forwarding (no persistence controller for greenfield)
-        wireGrillEvents(mainWindow, '')
+        wireGrillEvents(workspaceId, '')
+
+        // Emit transient 'evaluating' status so the bottom bar shows "Grilling…"
+        // immediately. The standard path gets this from startTracking, but
+        // greenfield skips the persistence controller.
+        try {
+          getSessionEventRouter().sendWorkspaceEvent(
+            IPC_CHANNELS.GRILL_STATUS_CHANGED,
+            workspaceId,
+            { status: 'evaluating', ideaId: '', trackId, score: null }
+          )
+        } catch {
+          /* router not initialized */
+        }
 
         grillAgentService
           .evaluateGreenfield({
@@ -113,7 +142,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
       const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
 
       // Wire event forwarding (through persistence controller)
-      wireGrillEvents(mainWindow, workspace.repoPath)
+      wireGrillEvents(workspaceId, workspace.repoPath)
 
       // Start the evaluation (non-blocking — runs in background)
       grillAgentService
@@ -138,21 +167,29 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.GRILL_CANCEL, (event): void => {
     validateSender(event)
     grillAgentService.cancel()
-    grillPersistenceController.clearTracking(mainWindow)
+    grillPersistenceController.clearTracking()
   })
 
   // ── grill:getStatus — current grill status for a workspace ────────
 
   ipcMain.handle(IPC_CHANNELS.GRILL_GET_STATUS, (event, args: { workspaceId: string }) => {
     validateSender(event)
-    return grillPersistenceController.getStatusForWorkspace(args.workspaceId)
+    const status = grillPersistenceController.getStatusForWorkspace(args.workspaceId)
+    grillLog.info(
+      `[grill:getStatus] workspace=${args.workspaceId} status=${status?.status ?? 'null'}`
+    )
+    return status
   })
 
   // ── grill:getSession — full session state from DB ─────────────────
 
   ipcMain.handle(IPC_CHANNELS.GRILL_GET_SESSION, (event, args: { ideaId: string }) => {
     validateSender(event)
-    return grillPersistenceController.getSessionState(args.ideaId)
+    const session = grillPersistenceController.getSessionState(args.ideaId)
+    grillLog.info(
+      `[grill:getSession] idea=${args.ideaId} reconnect status=${session?.status ?? 'null'}`
+    )
+    return session
   })
 
   // ── grill:saveAnswers — persist question states to DB session ─────
@@ -161,7 +198,7 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.GRILL_SAVE_ANSWERS,
     (event, args: { sessionId: string; questionStates: Record<string, unknown> }): void => {
       validateSender(event)
-      grillPersistenceController.saveAnswers(args.sessionId, args.questionStates, mainWindow)
+      grillPersistenceController.saveAnswers(args.sessionId, args.questionStates)
     }
   )
 
@@ -169,27 +206,141 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.GRILL_GENERATE_PLAN,
-    async (event, args: { sessionId: string; workspaceId: string }): Promise<GrillStructuredPlan> => {
+    async (
+      event,
+      args: { sessionId: string; ideaId?: string; workspaceId: string }
+    ): Promise<GrillStructuredPlan> => {
       validateSender(event)
 
-      const { sessionId, workspaceId } = args
+      const { sessionId, ideaId, workspaceId } = args
       if (!sessionId || !workspaceId) {
         throw new Error('sessionId and workspaceId are required')
       }
 
-      grillLog.info(`[grill:generatePlan] Generating plan for session=${sessionId}`)
+      grillLog.info(
+        `[grill:generatePlan] Generating plan for idea=${ideaId ?? 'n/a'} session=${sessionId}`
+      )
 
       const workspace = workspaceRepository.findById(workspaceId)
       const workspacePath = workspace?.repoPath
 
       const plan = await grillPlanGeneratorService.generate({
         sessionId,
+        ideaId,
         workspaceId,
         workspacePath
       })
 
       grillLog.info(`[grill:generatePlan] ✓ Plan generated: ${plan.items.length} items`)
       return plan
+    }
+  )
+
+  // ── grill:generatePlanFromDecisions — session-less plan from decisions ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_GENERATE_PLAN_FROM_DECISIONS,
+    async (
+      event,
+      args: {
+        projectName: string
+        description: string
+        grillDecisions: GrillDecision[]
+        trackScores?: GrillTrackScore[]
+        workspaceId: string
+      }
+    ): Promise<GrillStructuredPlan> => {
+      validateSender(event)
+
+      const { projectName, description, grillDecisions, trackScores, workspaceId } = args
+      if (!workspaceId) {
+        throw new Error('workspaceId is required')
+      }
+
+      grillLog.info(
+        `[grill:generatePlanFromDecisions] Generating plan for project="${projectName}" (${grillDecisions?.length ?? 0} decisions)`
+      )
+
+      const plan = await grillPlanGeneratorService.generateFromDecisions({
+        projectName: projectName ?? '',
+        description: description ?? '',
+        grillDecisions: grillDecisions ?? [],
+        trackScores,
+        workspaceId
+      })
+
+      grillLog.info(
+        `[grill:generatePlanFromDecisions] ✓ Plan generated: ${plan.items.length} items`
+      )
+      return plan
+    }
+  )
+
+  // ── grill:seedPlanCard — seed an already-generated plan as a chat card ──
+  // Maps the GrillStructuredPlan to the chat StructuredPlan shape and writes it
+  // as a `da-vinci` message containing a ```plan block. Deterministic — no LLM
+  // round-trip — so the grill→chat handoff renders the existing plan instantly.
+
+  ipcMain.handle(IPC_CHANNELS.GRILL_SEED_PLAN_CARD, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.GRILL_SEED_PLAN_CARD)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.GRILL_SEED_PLAN_CARD)
+    const plan = (args as { plan?: GrillStructuredPlan }).plan
+    if (!plan || typeof plan !== 'object') {
+      throw new Error(`${IPC_CHANNELS.GRILL_SEED_PLAN_CARD}: field 'plan' must be an object`)
+    }
+
+    const structured = grillPlanToStructuredPlan(plan)
+    const leadIn = 'Here’s the implementation plan synthesized from your grill session.'
+    const contentMd = `${leadIn}\n\n\`\`\`plan\n${JSON.stringify(structured)}\n\`\`\``
+
+    grillLog.info(
+      `[grill:seedPlanCard] Seeding plan card into conversation=${conversationId} (${structured.phases?.length ?? 0} phases)`
+    )
+    return messageRepository.create(conversationId, 'da-vinci', contentMd)
+  })
+
+  // ── grill:complete — strip transient state at final handoff, keep plan ──
+
+  ipcMain.handle(IPC_CHANNELS.GRILL_COMPLETE, (event, args: { ideaId: string }): void => {
+    validateSender(event)
+    const { ideaId } = args
+    if (!ideaId) throw new Error('ideaId is required')
+
+    grillLog.info(`[grill:complete] Completing + stripping transient state for idea=${ideaId}`)
+    grillSessionRepository.completeAndStrip(ideaId)
+    ideaRepository.clearGrillDecisions(ideaId)
+
+    // Emit terminal status so the renderer badge clears immediately
+    const workspace = ideaRepository.findById(ideaId)?.workspaceId
+    if (workspace) grillPersistenceController.notifyTerminal(workspace, ideaId, 'completed')
+  })
+
+  // ── grill:discard — delete the session row + snapshot entirely ──────
+
+  ipcMain.handle(IPC_CHANNELS.GRILL_DISCARD, (event, args: { ideaId: string }): void => {
+    validateSender(event)
+    const { ideaId } = args
+    if (!ideaId) throw new Error('ideaId is required')
+
+    grillLog.info(`[grill:discard] Discarding grill session + snapshot for idea=${ideaId}`)
+    // Capture workspaceId BEFORE deleting the session/idea data
+    const workspace = ideaRepository.findById(ideaId)?.workspaceId
+    grillSessionRepository.deleteByIdeaId(ideaId)
+    ideaRepository.clearGrillDecisions(ideaId)
+
+    // Emit terminal status so the renderer badge clears immediately
+    if (workspace) grillPersistenceController.notifyTerminal(workspace, ideaId, 'cancelled')
+  })
+
+  // ── grill:listPlannedIdeas — idea IDs in a workspace that have a saved plan ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.GRILL_LIST_PLANNED_IDEAS,
+    (event, args: { workspaceId: string }): string[] => {
+      validateSender(event)
+      if (!args?.workspaceId) return []
+      return grillSessionRepository.findIdeaIdsWithPlan(args.workspaceId)
     }
   )
 
@@ -208,8 +359,6 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
       grillLog.info(`[grill:condense] Condensing requirement document (${text.length} chars)`)
 
       try {
-        const { execFileSync } = await import('node:child_process')
-
         const systemPrompt = [
           'You are a technical requirement condensation assistant.',
           'Condense the following requirement document into a clear, structured summary.',
@@ -223,16 +372,24 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
           '- Output plain markdown — no code fences around the result'
         ].join('\n')
 
-        const condensed = execFileSync('claude', [
-          '-p', text,
-          '--model', 'claude-haiku-4-5-20251001',
-          '--system-prompt', systemPrompt,
-          '--permission-mode', 'plan',
-          '--max-turns', '1',
-          '--output-format', 'text'
-        ], {
-          encoding: 'utf-8',
-          timeout: 60_000
+        const { text: condensed } = await runOneShotClaude({
+          feature: 'condense',
+          model: 'claude-haiku-4-5-20251001',
+          args: [
+            '-p',
+            text,
+            '--model',
+            'claude-haiku-4-5-20251001',
+            '--system-prompt',
+            systemPrompt,
+            '--permission-mode',
+            'plan',
+            '--max-turns',
+            '1'
+          ],
+          cli: {
+            timeout: 60_000
+          }
         })
 
         grillLog.info(
@@ -250,126 +407,80 @@ export function registerGrillIpc(mainWindow: BrowserWindow): void {
 
 // ── Event forwarding ─────────────────────────────────────────────────────
 
-/**
- * Wire one-time event listeners for the current grill evaluation.
- * Transforms stream chunks, then routes through the persistence controller
- * which both persists to DB and forwards to the renderer.
- */
-/** Whether global listeners have been wired (only once). */
-let grillListenersWired = false
+const grillCleanup = createTimedCleanupMap('grill')
 
 /**
- * Wire persistent event listeners for grill evaluations.
- * Called once on first evaluation — listeners persist across evaluations
- * to support concurrent per-workspace sessions.
+ * Wire per-workspace event listeners for the current grill evaluation.
+ * Transforms stream chunks, then routes through the persistence controller
+ * which both persists to DB and forwards to the renderer via SessionEventRouter.
  */
-function wireGrillEvents(mainWindow: BrowserWindow, workspacePath: string): void {
-  if (grillListenersWired) return
-  grillListenersWired = true
+function wireGrillEvents(workspaceId: string, workspacePath: string): void {
+  const cleanups = grillCleanup.prepareCleanups(workspaceId)
+  const router = getSessionEventRouter()
 
   // ── stream — transform chunk + route through persistence ──
-  grillAgentService.on('stream', (data: { workspaceId?: string; chunk: StreamChunk }) => {
-    const { chunk } = data
+  grillCleanup.addListener<{ workspaceId?: string; chunk: StreamChunk }>(
+    cleanups,
+    grillAgentService,
+    'stream',
+    (data) => {
+      const { chunk } = data
 
-    if (chunk.type === 'text' && chunk.content) {
-      grillPersistenceController.handleStreamChunk(
-        { type: 'text', content: chunk.content },
-        mainWindow
-      )
-    } else if (chunk.type === 'tool_use') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-      let inputSummary: string | undefined
-      if (chunk.toolInput) {
-        try {
-          const parsed = JSON.parse(chunk.toolInput) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          inputSummary = chunk.toolInput.slice(0, 120)
+      if (chunk.type === 'text' && chunk.content) {
+        grillPersistenceController.handleStreamChunk(
+          { type: 'text', content: chunk.content },
+          workspaceId,
+          router
+        )
+      } else if (
+        chunk.type === 'tool_use' ||
+        chunk.type === 'tool_result' ||
+        chunk.type === 'tool_progress'
+      ) {
+        const result = processToolChunk(chunk, {
+          workspacePath,
+          agentType: 'grill',
+          formatTagsToSkip: ['grill-evaluation']
+        })
+        if (result) {
+          grillPersistenceController.handleStreamChunk(result, workspaceId, router)
         }
       }
-
-      grillPersistenceController.handleStreamChunk(
-        {
-          type: 'tool_activity',
-          toolActivity: {
-            id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            toolName: chunk.toolName ?? 'Unknown',
-            status: 'running' as const,
-            input: inputSummary,
-            startedAt: Date.now()
-          }
-        },
-        mainWindow
-      )
-    } else if (chunk.type === 'tool_result') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-      const isToolError =
-        typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-
-      // Skip reporting prompt-format artifacts that the model sometimes emits as tool calls.
-      // grill-evaluation is a fenced-block language tag, not a real tool.
-      const GRILL_FORMAT_TAGS = new Set(['grill-evaluation'])
-
-      // Auto-capture tool errors to the bug tracker (skip known format tags)
-      if (isToolError && chunk.content && !GRILL_FORMAT_TAGS.has(chunk.toolName ?? '')) {
-        reportToolError(chunk.toolName ?? 'Unknown', chunk.content, { agentType: 'grill' })
-      }
-
-      const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
-      const resultSummary = resultSummaryObj?.result
-      const resultDetail = resultSummaryObj?.resultDetail
-
-      let inputSummary: string | undefined
-      if (chunk.content) {
-        try {
-          const parsed = JSON.parse(chunk.content) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          // Non-JSON content — skip input summary
-        }
-      }
-
-      const toolActivity: Record<string, unknown> = {
-        id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: isToolError ? 'error' : 'completed',
-        completedAt: Date.now()
-      }
-      if (inputSummary) toolActivity.input = inputSummary
-      if (resultSummary) toolActivity.result = resultSummary
-      if (resultDetail) toolActivity.resultDetail = resultDetail
-
-      grillPersistenceController.handleStreamChunk(
-        { type: 'tool_activity', toolActivity },
-        mainWindow
-      )
-    } else if (chunk.type === 'tool_progress') {
-      grillPersistenceController.handleStreamChunk(
-        {
-          type: 'tool_activity',
-          toolActivity: {
-            id: chunk.toolId ?? `tool-${Date.now()}`,
-            toolName: chunk.toolName ?? 'Unknown',
-            status: 'running' as const,
-            elapsedSeconds: chunk.elapsedSeconds
-          }
-        },
-        mainWindow
-      )
     }
-  })
+  )
+
+  // ── status — forward live token/context counters to the renderer ──
+  grillCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
+    cleanups,
+    grillAgentService,
+    'status',
+    (data) => {
+      if (data.workspaceId && data.workspaceId !== workspaceId) return
+      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+    }
+  )
 
   // ── evaluation — through persistence controller ──
-  grillAgentService.on('evaluation', (data: GrillEvaluation & { workspaceId?: string }) => {
-    grillPersistenceController.handleEvaluationResult(data, mainWindow)
-  })
+  grillCleanup.addListener<GrillEvaluation & { workspaceId?: string }>(
+    cleanups,
+    grillAgentService,
+    'evaluation',
+    (data) => {
+      grillPersistenceController.handleEvaluationResult(data, workspaceId, router)
+    }
+  )
 
   // ── complete — through persistence controller ──
-  grillAgentService.on('complete', (_data?: { workspaceId?: string }) => {
-    grillPersistenceController.handleComplete(mainWindow)
-  })
+  grillCleanup.addListener<{ workspaceId?: string } | undefined>(
+    cleanups,
+    grillAgentService,
+    'complete',
+    () => {
+      grillPersistenceController.handleComplete(workspaceId, router)
+      grillCleanup.runCleanup(workspaceId)
+    }
+  )
+
+  // Safety net: auto-clean listeners after 60 min (max adapter timeout is 45 min)
+  grillCleanup.scheduleAutoCleanup(workspaceId, cleanups, 60 * 60_000)
 }

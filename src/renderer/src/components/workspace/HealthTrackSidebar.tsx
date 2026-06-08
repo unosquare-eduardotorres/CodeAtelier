@@ -18,11 +18,12 @@ import {
   XCircle,
   Loader2,
   Clock,
-  Ban
+  Ban,
+  LayoutDashboard
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditTrackId, AuditResult } from '../../../../shared/types'
-import { AUDIT_TRACKS } from '../../../../shared/constants'
+import { AUDIT_TRACKS, deriveApplicability } from '../../../../shared/constants'
 
 const ICON_MAP: Record<string, LucideIcon> = {
   Database,
@@ -69,6 +70,10 @@ interface HealthTrackSidebarProps {
   isRunning: boolean
   allSelected: boolean
   onToggleAll: () => void
+  /** Whether any track has completed — enables the Overview entry */
+  hasResults: boolean
+  /** Switch the detail panel back to the Overview dashboard */
+  onShowOverview: () => void
 }
 
 export default function HealthTrackSidebar({
@@ -79,10 +84,29 @@ export default function HealthTrackSidebar({
   results,
   isRunning,
   allSelected,
-  onToggleAll
+  onToggleAll,
+  hasResults,
+  onShowOverview
 }: HealthTrackSidebarProps): React.JSX.Element {
   return (
     <div className="w-72 flex-shrink-0 border-r border-border-subtle bg-surface-raised overflow-y-auto">
+      {/* Overview entry — shown once a run has results */}
+      {hasResults && (
+        <button
+          onClick={onShowOverview}
+          className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-all duration-200 border-b border-border-subtle ${
+            activeTrackId === null
+              ? 'bg-primary-muted/30 border-l-2 border-l-primary'
+              : 'border-l-2 border-l-transparent hover:bg-surface-overlay/50'
+          }`}
+        >
+          <LayoutDashboard
+            size={18}
+            className={activeTrackId === null ? 'text-primary-text' : 'text-text-muted'}
+          />
+          <span className="text-xs font-semibold text-text-primary">Overview</span>
+        </button>
+      )}
       {/* Select All / Deselect All header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle">
         <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
@@ -108,6 +132,8 @@ export default function HealthTrackSidebar({
           const status = result?.status
           const score = result?.score ?? null
           const isTrackRunning = status === 'running'
+          const applicability = result ? deriveApplicability(result) : 'ok'
+          const excluded = applicability !== 'ok'
 
           return (
             <button
@@ -160,9 +186,25 @@ export default function HealthTrackSidebar({
 
               {/* Score + status indicator (right-aligned) */}
               <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
-                {status === 'completed' && score !== null && (
-                  <span className={`text-[11px] font-bold ${getScoreColor(score)}`}>{score}</span>
-                )}
+                {status === 'completed' &&
+                  (excluded ? (
+                    <span
+                      className="text-[10px] font-semibold text-text-muted px-1.5 py-0.5 rounded bg-surface-overlay"
+                      title={
+                        applicability === 'not-applicable'
+                          ? 'Not applicable — no files of this kind found'
+                          : 'Insufficient coverage — excluded from overall score'
+                      }
+                    >
+                      N/A
+                    </span>
+                  ) : (
+                    score !== null && (
+                      <span className={`text-[11px] font-bold ${getScoreColor(score)}`}>
+                        {score}
+                      </span>
+                    )
+                  ))}
                 {status && <StatusIndicator status={status} />}
               </div>
             </button>

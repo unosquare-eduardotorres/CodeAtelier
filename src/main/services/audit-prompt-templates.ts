@@ -231,9 +231,11 @@ export interface AuditPromptParams {
 export function renderAuditPrompt(params: AuditPromptParams): string {
   const track = AUDIT_TRACKS[params.trackId]
   const verbosity = resolvePromptVerbosity(params.model ?? '')
-  const domainPrompt = (verbosity === 'lean' && AUDITOR_DOMAIN_PROMPTS_LEAN[params.trackId])
-    || AUDITOR_DOMAIN_PROMPTS[params.trackId]
-  const template = verbosity === 'lean' ? AUDIT_SYSTEM_PROMPT_TEMPLATE_LEAN : AUDIT_SYSTEM_PROMPT_TEMPLATE
+  const domainPrompt =
+    (verbosity === 'lean' && AUDITOR_DOMAIN_PROMPTS_LEAN[params.trackId]) ||
+    AUDITOR_DOMAIN_PROMPTS[params.trackId]
+  const template =
+    verbosity === 'lean' ? AUDIT_SYSTEM_PROMPT_TEMPLATE_LEAN : AUDIT_SYSTEM_PROMPT_TEMPLATE
 
   const stackSummary =
     params.detectedTechs.length > 0
@@ -244,7 +246,8 @@ export function renderAuditPrompt(params: AuditPromptParams): string {
 
   const skillsSection = params.skillContent ? `## Reference Skills\n${params.skillContent}` : ''
 
-  let prompt = template.replace('{{auditorName}}', `${track.name} Auditor`)
+  let prompt = template
+    .replace('{{auditorName}}', `${track.name} Auditor`)
     .replace('{{description}}', domainPrompt)
     .replace('{{workspaceName}}', params.workspaceName)
     .replace('{{stackSummary}}', stackSummary)

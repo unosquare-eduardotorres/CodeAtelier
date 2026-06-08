@@ -10,14 +10,11 @@ export function registerUserProfileIpc(): void {
     return userProfileRepository.getProfile()
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.USER_PROFILE_UPSERT,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.USER_PROFILE_UPSERT)
-      const displayName = requireString(args, 'displayName', IPC_CHANNELS.USER_PROFILE_UPSERT)
-      const avatarKey = requireString(args, 'avatarKey', IPC_CHANNELS.USER_PROFILE_UPSERT)
-      return userProfileRepository.upsertProfile(displayName.trim(), avatarKey.trim())
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.USER_PROFILE_UPSERT, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.USER_PROFILE_UPSERT)
+    const displayName = requireString(args, 'displayName', IPC_CHANNELS.USER_PROFILE_UPSERT)
+    const avatarKey = requireString(args, 'avatarKey', IPC_CHANNELS.USER_PROFILE_UPSERT)
+    return userProfileRepository.upsertProfile(displayName.trim(), avatarKey.trim())
+  })
 }

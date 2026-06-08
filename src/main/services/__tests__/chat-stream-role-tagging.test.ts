@@ -15,37 +15,50 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { chatAgentService } from '../chat-agent.service'
-import { DaVinciRoleAdapter } from '../role-adapters/da-vinci.adapter'
 import { ProjectSpecialistRoleAdapter } from '../role-adapters/project-specialist.adapter'
 import { trySetupTestDb } from '../../db/repositories/__tests__/db-test-helper'
 
 describe('ChatStreamService role tagging', () => {
   test('getActiveMessageRole_returns_da-vinci_for_DaVinciRoleAdapter', () => {
-    const adapter = new DaVinciRoleAdapter()
-    // Manually swap the singleton's adapter to exercise the accessor.
-    // NOTE: the field is private — we cast through an unknown record. This
-    // mirrors how chat-stream.service queries the singleton at runtime.
-    const svc = chatAgentService as unknown as { adapter: unknown }
-    const original = svc.adapter
-    svc.adapter = adapter
+    // When no workspace session is active, getActiveAdapter() falls back to
+    // the built-in daVinciAdapter. Clear _activeWorkspaceId to ensure fallback.
+    const svc = chatAgentService as unknown as { _activeWorkspaceId: string | null }
+    const originalActiveId = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
     try {
       assert.equal(chatAgentService.getActiveMessageRole(), 'da-vinci')
       assert.equal(chatAgentService.getActiveAgentId(), 'da-vinci')
     } finally {
-      svc.adapter = original
+      svc._activeWorkspaceId = originalActiveId
     }
   })
 
   test('getActiveMessageRole_returns_specialist_for_ProjectSpecialistRoleAdapter', () => {
     const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-xyz' })
-    const svc = chatAgentService as unknown as { adapter: unknown }
-    const original = svc.adapter
-    svc.adapter = adapter
+    // Inject via the sessions map + _activeWorkspaceId so getActiveAdapter() resolves it.
+    const svc = chatAgentService as unknown as {
+      sessions: Map<
+        string,
+        { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }
+      >
+      _activeWorkspaceId: string | null
+    }
+    const originalActiveId = svc._activeWorkspaceId
+    const hadEntry = svc.sessions.has('ws-xyz')
+
+    svc._activeWorkspaceId = 'ws-xyz'
+    svc.sessions.set('ws-xyz', {
+      adapter,
+      session: {} as unknown,
+      forwarderCleanups: [],
+      workspacePath: '/tmp/ws-xyz'
+    })
     try {
       assert.equal(chatAgentService.getActiveMessageRole(), 'specialist')
       assert.equal(chatAgentService.getActiveAgentId(), 'workspace-specialist-ws-xyz')
     } finally {
-      svc.adapter = original
+      svc._activeWorkspaceId = originalActiveId
+      if (!hadEntry) svc.sessions.delete('ws-xyz')
     }
   })
 

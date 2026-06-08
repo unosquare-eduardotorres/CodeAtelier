@@ -4,7 +4,7 @@
  * Launches Electron, connects via Chrome DevTools Protocol WebSocket,
  * and captures screenshots using Page.captureScreenshot.
  *
- * This bypasses Playwright's connectOverCDP which is incompatible with Electron 40.
+ * This bypasses Playwright's connectOverCDP which is incompatible with Electron 41.
  *
  * Usage:
  *   npx tsx e2e/capture-screenshots.ts
@@ -25,11 +25,16 @@ const BOOTSTRAP = resolve(__dirname, 'helpers/electron-bootstrap.js')
 const CDP_PORT = 19222
 
 // ── CDP Client ────────────────────────────────────────────────────
+interface CdpResponse {
+  data?: string
+  result?: { value?: unknown }
+}
+
 let ws: WebSocket
 let msgId = 0
-const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>()
+const pending = new Map<number, { resolve: (v: CdpResponse) => void; reject: (e: Error) => void }>()
 
-function cdpSend(method: string, params: Record<string, unknown> = {}): Promise<any> {
+function cdpSend(method: string, params: Record<string, unknown> = {}): Promise<CdpResponse> {
   return new Promise((resolve, reject) => {
     const id = ++msgId
     pending.set(id, { resolve, reject })
@@ -63,7 +68,7 @@ function connectCDP(url: string): Promise<void> {
 // ── Screenshot helper ─────────────────────────────────────────────
 async function snap(name: string): Promise<void> {
   const result = await cdpSend('Page.captureScreenshot', { format: 'png', fromSurface: true })
-  const buffer = Buffer.from(result.data, 'base64')
+  const buffer = Buffer.from(result.data ?? '', 'base64')
   writeFileSync(join(SCREENSHOT_DIR, `${name}.png`), buffer)
   console.log(`  📸 ${name}.png (${(buffer.length / 1024).toFixed(0)}KB)`)
 }

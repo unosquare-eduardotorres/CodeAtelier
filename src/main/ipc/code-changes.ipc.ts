@@ -1,22 +1,14 @@
-import { spawn } from 'node:child_process'
 import { ipcMain } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { repoService } from '../services/repo.service'
 import { githubService } from '../services/github.service'
 import { workspaceRepository, conversationRepository, messageRepository } from '../db/repositories'
+import { runOneShotClaude } from '../services/one-shot-claude'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
-
-/** Build env with PATH so spawned processes can find `claude` CLI */
-function buildEnvWithPath(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PATH: `${process.env.PATH ?? ''}:/usr/local/bin:/opt/homebrew/bin`
-  }
-}
 
 /** Resolve workspace repoPath from conversationId */
 function resolveRepoPath(conversationId: string): { repoPath: string; workspaceId: string } {
@@ -31,50 +23,41 @@ function resolveRepoPath(conversationId: string): { repoPath: string; workspaceI
 
 export function registerCodeChangesIpc(): void {
   // Get detailed file status for uncommitted changes
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_GET_FILE_DETAILS,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DETAILS)
-      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DETAILS)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_FILE_DETAILS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DETAILS)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DETAILS)
 
-      const { repoPath } = resolveRepoPath(conversationId)
-      return repoService.getUncommittedFileDetails(repoPath)
-    }
-  )
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getUncommittedFileDetails(repoPath)
+  })
 
   // Get old/new content for side-by-side diff
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_GET_FILE_DIFF,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DIFF)
-      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DIFF)
-      const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_FILE_DIFF, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DIFF)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DIFF)
+    const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
 
-      const { repoPath } = resolveRepoPath(conversationId)
-      return repoService.getFileDiff(repoPath, filePath)
-    }
-  )
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getFileDiff(repoPath, filePath)
+  })
 
   // Stage specific files and commit
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_COMMIT_FILES,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_COMMIT_FILES)
-      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_COMMIT_FILES)
-      const message = requireString(args, 'message', IPC_CHANNELS.REPO_COMMIT_FILES)
-      const filePaths = args.filePaths as string[]
-      if (!Array.isArray(filePaths) || filePaths.length === 0) {
-        throw new Error(`${IPC_CHANNELS.REPO_COMMIT_FILES}: filePaths must be a non-empty array`)
-      }
-
-      const { repoPath } = resolveRepoPath(conversationId)
-      const result = await repoService.commitFiles(repoPath, filePaths, message)
-      return result
+  ipcMain.handle(IPC_CHANNELS.REPO_COMMIT_FILES, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_COMMIT_FILES)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_COMMIT_FILES)
+    const message = requireString(args, 'message', IPC_CHANNELS.REPO_COMMIT_FILES)
+    const filePaths = args.filePaths as string[]
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      throw new Error(`${IPC_CHANNELS.REPO_COMMIT_FILES}: filePaths must be a non-empty array`)
     }
-  )
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    const result = await repoService.commitFiles(repoPath, filePaths, message)
+    return result
+  })
 
   // Push current branch to origin
   ipcMain.handle(IPC_CHANNELS.REPO_PUSH, async (event, rawArgs: unknown) => {
@@ -87,33 +70,34 @@ export function registerCodeChangesIpc(): void {
   })
 
   // Get push status (commits ahead, branch, hasRemote)
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_GET_PUSH_STATUS,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_PUSH_STATUS)
-      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_PUSH_STATUS)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_PUSH_STATUS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_PUSH_STATUS)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_PUSH_STATUS)
 
-      const { repoPath } = resolveRepoPath(conversationId)
-      return repoService.getPushStatus(repoPath)
-    }
-  )
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getPushStatus(repoPath)
+  })
 
   // Generate commit message from conversation context + changed files
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE)
-      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE)
-      const filePaths = args.filePaths as string[]
-      if (!Array.isArray(filePaths) || filePaths.length === 0) {
-        throw new Error(`${IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE}: filePaths must be a non-empty array`)
-      }
+  ipcMain.handle(IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE)
+    const conversationId = requireString(
+      args,
+      'conversationId',
+      IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE
+    )
+    const filePaths = args.filePaths as string[]
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      throw new Error(
+        `${IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE}: filePaths must be a non-empty array`
+      )
+    }
 
-      const messages = messageRepository.findByConversation(conversationId)
+    const messages = messageRepository.findByConversation(conversationId)
 
-      const prompt = `You are generating a concise git commit message. Follow conventional commit style.
+    const prompt = `You are generating a concise git commit message. Follow conventional commit style.
 
 Based on this conversation context and file changes, generate a single-line commit message (max 72 chars) followed by optionally a blank line and a body (max 3 lines).
 
@@ -128,95 +112,69 @@ ${filePaths.map((fp) => `- ${fp}`).join('\n')}
 
 Respond with ONLY the commit message, no preamble or explanation.`
 
+    try {
+      let workspaceId: string | null = null
       try {
-        const env = buildEnvWithPath()
-        const result = await new Promise<string>((resolve, reject) => {
-          const child = spawn('claude', ['-p', prompt, '--output-format', 'text'], {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            env
-          })
-
-          let stdout = ''
-          child.stdout?.on('data', (data: Buffer) => {
-            stdout += data.toString()
-          })
-
-          let stderr = ''
-          child.stderr?.on('data', (data: Buffer) => {
-            stderr += data.toString()
-          })
-
-          child.on('close', (code) => {
-            if (code === 0) {
-              resolve(stdout.trim())
-            } else {
-              reject(new Error(`claude exited with code ${code}: ${stderr}`))
-            }
-          })
-
-          child.on('error', reject)
-
-          // Timeout after 30 seconds
-          setTimeout(() => {
-            child.kill('SIGTERM')
-            reject(new Error('Commit message generation timed out'))
-          }, 30_000)
-        })
-
-        return { message: result }
-      } catch (e) {
-        logger.warn('AI commit message generation failed, falling back to simple message:', e)
-        // Fallback: generate a simple message from file paths
-        const fileNames = filePaths.map((fp) => fp.split('/').pop()).join(', ')
-        return {
-          message:
-            `update ${filePaths.length} file${filePaths.length > 1 ? 's' : ''}: ${fileNames}`.slice(
-              0,
-              72
-            )
-        }
-      }
-    }
-  )
-
-  // Create a pull request via GitHub API
-  ipcMain.handle(
-    IPC_CHANNELS.REPO_CREATE_PR,
-    async (event, rawArgs: unknown) => {
-      validateSender(event)
-      const args = requireObject(rawArgs, IPC_CHANNELS.REPO_CREATE_PR)
-      const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_CREATE_PR)
-      const title = requireString(args, 'title', IPC_CHANNELS.REPO_CREATE_PR)
-      const head = requireString(args, 'head', IPC_CHANNELS.REPO_CREATE_PR)
-      const base = requireString(args, 'base', IPC_CHANNELS.REPO_CREATE_PR)
-      const body = optionalString(args, 'body', IPC_CHANNELS.REPO_CREATE_PR) ?? ''
-
-      const { repoPath, workspaceId } = resolveRepoPath(conversationId)
-
-      if (!githubService.isConfigured(workspaceId)) {
-        throw new Error(
-          'GitHub is not configured for this workspace. Please add a GitHub token in workspace settings.'
-        )
+        workspaceId = resolveRepoPath(conversationId).workspaceId
+      } catch {
+        /* best-effort attribution */
       }
 
-      const result = await githubService.createPullRequest({
+      const { text: result } = await runOneShotClaude({
+        feature: 'commit_message',
         workspaceId,
-        repoPath,
-        head,
-        base,
-        title,
-        body
+        conversationId,
+        args: ['-p', prompt],
+        cli: {
+          timeout: 30_000
+        }
       })
 
-      // Store PR info on conversation
-      conversationRepository.updatePrInfo(
-        conversationId,
-        result.prUrl,
-        result.prNumber,
-        head
-      )
-
-      return { url: result.prUrl, number: result.prNumber }
+      return { message: result.trim() }
+    } catch (e) {
+      logger.warn('AI commit message generation failed, falling back to simple message:', e)
+      // Fallback: generate a simple message from file paths
+      const fileNames = filePaths.map((fp) => fp.split('/').pop()).join(', ')
+      return {
+        message:
+          `update ${filePaths.length} file${filePaths.length > 1 ? 's' : ''}: ${fileNames}`.slice(
+            0,
+            72
+          )
+      }
     }
-  )
+  })
+
+  // Create a pull request via GitHub API
+  ipcMain.handle(IPC_CHANNELS.REPO_CREATE_PR, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_CREATE_PR)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_CREATE_PR)
+    const title = requireString(args, 'title', IPC_CHANNELS.REPO_CREATE_PR)
+    const head = requireString(args, 'head', IPC_CHANNELS.REPO_CREATE_PR)
+    const base = requireString(args, 'base', IPC_CHANNELS.REPO_CREATE_PR)
+    const body = optionalString(args, 'body', IPC_CHANNELS.REPO_CREATE_PR) ?? ''
+
+    const { repoPath, workspaceId } = resolveRepoPath(conversationId)
+
+    if (!githubService.isConfigured(workspaceId)) {
+      throw new Error(
+        'GitHub is not configured for this workspace. Please add a GitHub token in workspace settings.'
+      )
+    }
+
+    const result = await githubService.createPullRequest({
+      workspaceId,
+      repoPath,
+      head,
+      base,
+      title,
+      body
+    })
+
+    // Store PR info on conversation
+    conversationRepository.updatePrInfo(conversationId, result.prUrl, result.prNumber, head)
+
+    return { url: result.prUrl, number: result.prNumber }
+  })
 }

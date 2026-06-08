@@ -9,7 +9,8 @@ import {
   Pencil,
   Check,
   X,
-  MessageCircle
+  MessageCircle,
+  FileText
 } from 'lucide-react'
 import type { Idea } from '../../../../../shared/types'
 
@@ -107,11 +108,14 @@ function GrillSummaryPreview({ summary }: { summary: string }): React.JSX.Elemen
 interface IdeaCardProps {
   idea: Idea
   grillStatus: GrillStatus | null
+  /** Whether this idea has a persisted grill plan (enables Review Plan) */
+  hasPlan?: boolean
   onStartGrill: (idea: Idea) => void
   onContinueGrill: (idea: Idea) => void
   onConvertDirect: (idea: Idea) => void
   onGoToConversation: (conversationId: string) => void
   onCreatePlan: (idea: Idea) => void
+  onReviewPlan: (idea: Idea) => void
   onDelete: (ideaId: string) => void
   onEdit: (idea: Idea, title: string, description: string) => Promise<void>
 }
@@ -119,11 +123,13 @@ interface IdeaCardProps {
 export default function IdeaCard({
   idea,
   grillStatus,
+  hasPlan,
   onStartGrill,
   onContinueGrill,
   onConvertDirect,
   onGoToConversation,
   onCreatePlan,
+  onReviewPlan,
   onDelete,
   onEdit
 }: IdeaCardProps): React.JSX.Element {
@@ -201,12 +207,7 @@ export default function IdeaCard({
           <div className="flex items-start justify-between gap-3 mb-1">
             <div className="flex items-center gap-2 min-w-0">
               <GrillStatusIcon idea={idea} grillStatus={grillStatus} />
-              <span
-                className="text-base font-normal text-text-primary truncate"
-                style={{ fontFamily: 'var(--ca-font-display)', letterSpacing: '0.01em' }}
-              >
-                {idea.title}
-              </span>
+              <span className="text-base font-normal text-text-primary truncate">{idea.title}</span>
               {idea.status !== 'completed' && (
                 <button
                   onClick={startEditing}
@@ -237,6 +238,7 @@ export default function IdeaCard({
             <>
               <button
                 onClick={() => onStartGrill(idea)}
+                title="Launch a structured Q&A session where an AI analyst evaluates your idea across 8 specialist tracks, scoring gaps and asking clarifying questions."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
               >
                 <Flame size={12} />
@@ -244,29 +246,34 @@ export default function IdeaCard({
               </button>
               <button
                 onClick={() => onConvertDirect(idea)}
+                title="Skip the grill and send this idea straight to a new chat conversation to start working on it immediately."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
               >
                 <Play size={12} />
-                Convert Directly
+                Start Building
               </button>
             </>
           )}
 
           {idea.status === 'grilling' && (
             <>
-              <button
-                onClick={() => onContinueGrill(idea)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
-              >
-                <Flame size={12} />
-                Continue Grill
-              </button>
+              {!hasPlan && (
+                <button
+                  onClick={() => onContinueGrill(idea)}
+                  title="Resume the grill Q&A session where you left off."
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
+                >
+                  <Flame size={12} />
+                  Continue Grill
+                </button>
+              )}
               <button
                 onClick={() => onConvertDirect(idea)}
+                title="End the grill and send this idea to a new chat conversation to start building."
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-primary-text bg-primary-muted border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
               >
                 <Play size={12} />
-                Convert Directly
+                Start Building
               </button>
             </>
           )}
@@ -303,6 +310,18 @@ export default function IdeaCard({
             </button>
           )}
 
+          {/* Review Plan — read-only re-open of the generated plan (any status) */}
+          {hasPlan && (
+            <button
+              onClick={() => onReviewPlan(idea)}
+              title="Re-open this idea's completed grill to review the full generated plan — requirement document, decisions and items — and re-trigger a handoff."
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-accent bg-accent-muted border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
+            >
+              <FileText size={12} />
+              Review Plan
+            </button>
+          )}
+
           {/* Delete button — always available */}
           <button
             onClick={() => onDelete(idea.id)}
@@ -313,6 +332,15 @@ export default function IdeaCard({
             <Trash2 size={12} />
           </button>
         </div>
+      )}
+
+      {/* Inline hint for draft ideas */}
+      {!editing && idea.status === 'draft' && (
+        <p className="text-[10px] text-text-muted ml-[22px] mt-1.5">
+          <span className="text-accent font-medium">Grill Me</span> = AI-led deep-dive interview
+          {' · '}
+          <span className="text-primary-text font-medium">Start Building</span> = jump to chat now
+        </p>
       )}
 
       {/* Grill summary — expandable */}

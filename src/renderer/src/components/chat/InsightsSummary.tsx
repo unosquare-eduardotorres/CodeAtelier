@@ -88,29 +88,13 @@ export default function InsightsSummary({
         </span>
       </div>
       <div className="flex gap-2 flex-wrap">
-        <StatPill
-          icon={MessageSquare}
-          value={String(insights.messageCount.user)}
-          label="turns"
-        />
-        <StatPill
-          icon={FileText}
-          value={formatTokens(totalTokens)}
-          label="tokens"
-        />
+        <StatPill icon={MessageSquare} value={String(insights.messageCount.user)} label="turns" />
+        <StatPill icon={FileText} value={formatTokens(totalTokens)} label="tokens" />
         {filesChanged !== undefined && (
-          <StatPill
-            icon={FileText}
-            value={String(filesChanged)}
-            label="files"
-          />
+          <StatPill icon={FileText} value={String(filesChanged)} label="files" />
         )}
         <StatPill icon={Coins} value={formatCost(insights.costCents)} label="cost" />
-        <StatPill
-          icon={Clock}
-          value={formatDuration(insights.durationMs)}
-          label="duration"
-        />
+        <StatPill icon={Clock} value={formatDuration(insights.durationMs)} label="duration" />
       </div>
     </div>
   )

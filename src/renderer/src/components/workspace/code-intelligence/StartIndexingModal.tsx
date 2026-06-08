@@ -25,7 +25,21 @@ interface StartIndexingModalProps {
  *   - Embedding (WASM, single-threaded): ~5 chunks/second → 300 chunks/minute
  *   - AI Descriptions (Claude Haiku): ~100 chunks/minute (batched)
  */
-function estimateTime(symbolCount: number, aiDescriptions: boolean) {
+function estimateTime(
+  symbolCount: number,
+  aiDescriptions: boolean
+): {
+  preprocessMinutes: number
+  embeddingMinutes: number
+  aiDescMinutes: number
+  totalMinutes: number
+  formatted: {
+    preprocessing: string
+    embedding: string
+    aiDescriptions: string | null
+    total: string
+  }
+} {
   const preprocessMinutes = Math.max(1, Math.ceil(symbolCount / 500 / 60))
   const embeddingMinutes = Math.max(1, Math.ceil(symbolCount / 300))
   const aiDescMinutes = aiDescriptions ? Math.max(1, Math.ceil(symbolCount / 100)) : 0

@@ -13,10 +13,8 @@
  * GrillAgentService and AuditAgentService.
  */
 
-import { execFile } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import os from 'node:os'
-import { promisify } from 'node:util'
 import log from 'electron-log'
 import type {
   CouncilAdvisorRole,
@@ -28,22 +26,19 @@ import type {
   CouncilMemberStatus,
   CouncilInputType,
   LLMProvider,
-  StructuredPlan
+  StructuredPlan,
+  AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
+import { runOneShotClaude } from './one-shot-claude'
 import { AgentSessionService } from './agent-session.service'
 import { CouncilMemberRoleAdapter } from './role-adapters/council-member.adapter'
 import { CouncilChairmanRoleAdapter } from './role-adapters/council-chairman.adapter'
 import { COUNCIL_ADVISOR_ROLES } from '../../shared/constants'
-import {
-  parseCouncilReview,
-  parsePeerReview,
-  parseCouncilVerdict
-} from './council-parser'
+import { parseCouncilReview, parsePeerReview, parseCouncilVerdict } from './council-parser'
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
 
 const councilLog = log.scope('council')
-const execFileAsync = promisify(execFile)
 
 /** Collect non-null fulfilled values from Promise.allSettled results. */
 function collectSettled<T>(results: PromiseSettledResult<T | null>[]): T[] {
@@ -120,7 +115,9 @@ export class CouncilService extends EventEmitter {
     workspaceContext: string
     filesInScope: string[]
     conversationId?: string
+    grillSessionId?: string
     llmProvider?: LLMProvider
+    dbSessionId?: string
   }): Promise<void> {
     councilLog.info(`[council] evaluate called — workspace=${params.workspaceId}`)
 
@@ -164,19 +161,25 @@ export class CouncilService extends EventEmitter {
 
     this.sessions.set(params.workspaceId, entry)
 
-    // Create DB session for persistence + resume
-    try {
-      const dbSession = councilSessionRepository.createSession({
-        workspaceId: params.workspaceId,
-        inputType: params.inputType,
-        inputContent: params.planContent,
-        grillSessionId: (params as { grillSessionId?: string }).grillSessionId,
-        structuredPlanJson: params.structuredPlan ? JSON.stringify(params.structuredPlan) : undefined,
-        conversationId: params.conversationId
-      })
-      entry.dbSessionId = dbSession.id
-    } catch (err) {
-      councilLog.warn('[council] Failed to create DB session (non-fatal):', err)
+    // Use pre-created DB session ID if provided (from IPC handler), otherwise create one
+    if (params.dbSessionId) {
+      entry.dbSessionId = params.dbSessionId
+    } else {
+      try {
+        const dbSession = councilSessionRepository.createSession({
+          workspaceId: params.workspaceId,
+          inputType: params.inputType,
+          inputContent: params.planContent,
+          grillSessionId: params.grillSessionId,
+          structuredPlanJson: params.structuredPlan
+            ? JSON.stringify(params.structuredPlan)
+            : undefined,
+          conversationId: params.conversationId
+        })
+        entry.dbSessionId = dbSession.id
+      } catch (err) {
+        councilLog.warn('[council] Failed to create DB session (non-fatal):', err)
+      }
     }
 
     try {
@@ -198,7 +201,8 @@ export class CouncilService extends EventEmitter {
       if (!entry.running) return // Cancelled
 
       // Persist peer reviews
-      if (entry.dbSessionId) councilSessionRepository.savePeerReviews(entry.dbSessionId, peerReviews)
+      if (entry.dbSessionId)
+        councilSessionRepository.savePeerReviews(entry.dbSessionId, peerReviews)
 
       // Step 4: Chairman synthesis
       this.setPhase(entry, 'synthesizing')
@@ -226,17 +230,24 @@ export class CouncilService extends EventEmitter {
       // Defensive cleanup — stop any sessions still held by advisors
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {
-          try { await advisor.session.stop() } catch { /* non-fatal */ }
+          try {
+            await advisor.session.stop()
+          } catch {
+            /* non-fatal */
+          }
         }
       }
       this.sessions.delete(params.workspaceId)
-      this.emit('complete', { workspaceId: params.workspaceId })
+      // Signal session teardown (NOT 'complete' — that's phase-specific via setPhase)
+      this.emit('session-ended', { workspaceId: params.workspaceId })
     }
   }
 
   /** Cancel the running council for a specific workspace. */
   cancel(workspaceId?: string): void {
-    councilLog.info(`[council] Cancel requested${workspaceId ? ` for workspace ${workspaceId}` : ''}`)
+    councilLog.info(
+      `[council] Cancel requested${workspaceId ? ` for workspace ${workspaceId}` : ''}`
+    )
 
     if (workspaceId) {
       const entry = this.sessions.get(workspaceId)
@@ -290,6 +301,7 @@ export class CouncilService extends EventEmitter {
     const advisorPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
       const advisor = entry.advisors.get(role)!
       advisor.status = 'running'
+      let session: AgentSessionService | null = null
 
       try {
         const adapter = new CouncilMemberRoleAdapter({
@@ -299,7 +311,7 @@ export class CouncilService extends EventEmitter {
           llmProvider: entry.llmProvider
         })
 
-        const session = new AgentSessionService(adapter)
+        session = new AgentSessionService(adapter)
         advisor.session = session
 
         // Wire streaming events — tagged with advisor role
@@ -309,6 +321,9 @@ export class CouncilService extends EventEmitter {
             advisorRole: role,
             chunk
           })
+        })
+        session.on('statusUpdate', (status: AgentStatus) => {
+          this.emit('status', { workspaceId: entry.workspaceId, status })
         })
 
         // Start session in plan mode (read-only)
@@ -327,8 +342,11 @@ export class CouncilService extends EventEmitter {
           councilLog.info(`[council:${role}] completed — score=${review.score}`)
           // Persist review incrementally
           if (entry.dbSessionId) {
-            try { councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review) }
-            catch (e) { councilLog.warn(`[council:${role}] DB persist failed (non-fatal):`, e) }
+            try {
+              councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review)
+            } catch (e) {
+              councilLog.warn(`[council:${role}] DB persist failed (non-fatal):`, e)
+            }
           }
         } else {
           advisor.status = 'completed'
@@ -352,7 +370,11 @@ export class CouncilService extends EventEmitter {
         })
         return null
       } finally {
-        try { await session.stop() } catch { /* non-fatal */ }
+        try {
+          if (session) await session.stop()
+        } catch {
+          /* non-fatal */
+        }
       }
     })
 
@@ -409,16 +431,25 @@ Respond ONLY with a JSON block:
 
     const peerPromises = COUNCIL_ADVISOR_ROLES.map(async (role) => {
       try {
-        const { stdout } = await execFileAsync('claude', [
-          '-p', `Review these advisor responses:\n\n${anonymizedText}`,
-          '--model', 'claude-haiku-4-5-20251001',
-          '--system-prompt', systemPrompt,
-          '--permission-mode', 'plan',
-          '--max-turns', '1',
-          '--output-format', 'text'
-        ], {
-          encoding: 'utf-8',
-          timeout: 120_000 // 2 min timeout
+        const { text: stdout } = await runOneShotClaude({
+          feature: 'council_peer_review',
+          model: 'claude-haiku-4-5-20251001',
+          workspaceId: entry.workspaceId,
+          args: [
+            '-p',
+            `Review these advisor responses:\n\n${anonymizedText}`,
+            '--model',
+            'claude-haiku-4-5-20251001',
+            '--system-prompt',
+            systemPrompt,
+            '--permission-mode',
+            'plan',
+            '--max-turns',
+            '1'
+          ],
+          cli: {
+            timeout: 120_000 // 2 min timeout
+          }
         })
 
         const parsed = parsePeerReview(stdout, role)
@@ -451,6 +482,8 @@ Respond ONLY with a JSON block:
     reviews: CouncilReview[],
     peerReviews: CouncilPeerReview[]
   ): Promise<CouncilVerdict | null> {
+    let session: AgentSessionService | null = null
+
     try {
       const adapter = new CouncilChairmanRoleAdapter({
         workspaceId: entry.workspaceId,
@@ -460,7 +493,7 @@ Respond ONLY with a JSON block:
         llmProvider: entry.llmProvider
       })
 
-      const session = new AgentSessionService(adapter)
+      session = new AgentSessionService(adapter)
 
       // Wire streaming events
       session.on('chunk', (chunk: StreamChunk) => {
@@ -469,6 +502,9 @@ Respond ONLY with a JSON block:
           advisorRole: 'chairman' as string,
           chunk
         })
+      })
+      session.on('statusUpdate', (status: AgentStatus) => {
+        this.emit('status', { workspaceId: entry.workspaceId, status })
       })
 
       // Use OS temp dir as working directory (chairman has no tools)
@@ -492,7 +528,11 @@ Respond ONLY with a JSON block:
       councilLog.error('[council:chairman] failed:', err)
       return null
     } finally {
-      try { await session.stop() } catch { /* non-fatal */ }
+      try {
+        if (session) await session.stop()
+      } catch {
+        /* non-fatal */
+      }
     }
   }
 
@@ -502,8 +542,16 @@ Respond ONLY with a JSON block:
     entry.running = false
     for (const advisor of entry.advisors.values()) {
       if (advisor.session) {
-        try { advisor.session.cancelCurrentQuery() } catch { /* non-fatal */ }
-        try { advisor.session.stop() } catch { /* non-fatal — stop() may be sync or already stopped */ }
+        try {
+          advisor.session.cancelCurrentQuery()
+        } catch {
+          /* non-fatal */
+        }
+        try {
+          advisor.session.stop()
+        } catch {
+          /* non-fatal — stop() may be sync or already stopped */
+        }
       }
     }
     this.setPhase(entry, 'cancelled')
@@ -534,7 +582,7 @@ Respond ONLY with a JSON block:
 
     // Reconstruct framed input from persisted data
     const structuredPlan = dbSession.structuredPlanJson
-      ? JSON.parse(dbSession.structuredPlanJson) as StructuredPlan
+      ? (JSON.parse(dbSession.structuredPlanJson) as StructuredPlan)
       : null
 
     const framedInput: CouncilFramedInput = {
@@ -552,7 +600,7 @@ Respond ONLY with a JSON block:
     const completedRoles = new Set(dbSession.completedAdvisors)
 
     for (const role of COUNCIL_ADVISOR_ROLES) {
-      const existingReview = existingReviews.find(r => r.advisorRole === role) ?? null
+      const existingReview = existingReviews.find((r) => r.advisorRole === role) ?? null
       advisors.set(role, {
         role,
         session: null,
@@ -585,79 +633,29 @@ Respond ONLY with a JSON block:
       switch (dbSession.phase) {
         case 'framing':
         case 'deliberating': {
-          // Re-run only incomplete advisors, then continue
+          // Re-run only incomplete advisors, then continue through remaining stages
           this.setPhase(entry, 'deliberating')
           councilSessionRepository.updatePhase(params.sessionId, 'deliberating')
           const reviews = await this.runAdvisorsWithExisting(entry, existingReviews)
-
           if (!entry.running) return
-
-          this.setPhase(entry, 'peer-review')
-          councilSessionRepository.updatePhase(params.sessionId, 'peer-review')
-          const peerReviews = await this.runPeerReviews(entry, reviews)
-
-          if (!entry.running) return
-          councilSessionRepository.savePeerReviews(params.sessionId, peerReviews)
-
-          this.setPhase(entry, 'synthesizing')
-          councilSessionRepository.updatePhase(params.sessionId, 'synthesizing')
-          const verdict = await this.runChairman(entry, reviews, peerReviews)
-
-          if (!entry.running) return
-          entry.verdict = verdict
-          if (verdict) {
-            councilSessionRepository.saveVerdict(params.sessionId, verdict)
-            this.emit('verdict', { workspaceId: params.workspaceId, verdict })
-          }
-
-          this.setPhase(entry, 'complete')
-          councilSessionRepository.updateStatus(params.sessionId, 'completed')
+          await this.runRemainingStages(entry, params.sessionId, reviews)
           break
         }
 
-        case 'peer-review': {
-          // Skip deliberation — reviews exist. Re-run peer review + chairman
-          this.setPhase(entry, 'peer-review')
-          councilSessionRepository.updatePhase(params.sessionId, 'peer-review')
-          const peerReviews = await this.runPeerReviews(entry, existingReviews)
-
-          if (!entry.running) return
-          councilSessionRepository.savePeerReviews(params.sessionId, peerReviews)
-
-          this.setPhase(entry, 'synthesizing')
-          councilSessionRepository.updatePhase(params.sessionId, 'synthesizing')
-          const verdict = await this.runChairman(entry, existingReviews, peerReviews)
-
-          if (!entry.running) return
-          entry.verdict = verdict
-          if (verdict) {
-            councilSessionRepository.saveVerdict(params.sessionId, verdict)
-            this.emit('verdict', { workspaceId: params.workspaceId, verdict })
-          }
-
-          this.setPhase(entry, 'complete')
-          councilSessionRepository.updateStatus(params.sessionId, 'completed')
+        case 'peer-review':
+          // Reviews exist — re-run peer review + chairman
+          await this.runRemainingStages(entry, params.sessionId, existingReviews)
           break
-        }
 
-        case 'synthesizing': {
-          // Skip deliberation + peer review — re-run chairman only
-          this.setPhase(entry, 'synthesizing')
-          councilSessionRepository.updatePhase(params.sessionId, 'synthesizing')
-          const peerReviews = dbSession.peerReviews
-          const verdict = await this.runChairman(entry, existingReviews, peerReviews)
-
-          if (!entry.running) return
-          entry.verdict = verdict
-          if (verdict) {
-            councilSessionRepository.saveVerdict(params.sessionId, verdict)
-            this.emit('verdict', { workspaceId: params.workspaceId, verdict })
-          }
-
-          this.setPhase(entry, 'complete')
-          councilSessionRepository.updateStatus(params.sessionId, 'completed')
+        case 'synthesizing':
+          // Peer reviews exist — re-run chairman only
+          await this.runRemainingStages(
+            entry,
+            params.sessionId,
+            existingReviews,
+            dbSession.peerReviews
+          )
           break
-        }
 
         case 'complete':
           throw new Error('Session already complete')
@@ -673,12 +671,58 @@ Respond ONLY with a JSON block:
       entry.running = false
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {
-          try { await advisor.session.stop() } catch { /* non-fatal */ }
+          try {
+            await advisor.session.stop()
+          } catch {
+            /* non-fatal */
+          }
         }
       }
       this.sessions.delete(params.workspaceId)
       this.emit('complete', { workspaceId: params.workspaceId })
     }
+  }
+
+  /**
+   * Run the peer-review → synthesizing → complete pipeline from a given point.
+   * If existingPeerReviews is provided, peer-review is skipped (chairman only).
+   * Shared by all resume switch branches to avoid duplication.
+   */
+  private async runRemainingStages(
+    entry: CouncilSessionEntry,
+    sessionId: string,
+    reviews: CouncilReview[],
+    existingPeerReviews?: CouncilPeerReview[]
+  ): Promise<void> {
+    let peerReviews: CouncilPeerReview[]
+
+    if (existingPeerReviews) {
+      // Skip peer-review — already have results
+      peerReviews = existingPeerReviews
+    } else {
+      // Run peer reviews
+      this.setPhase(entry, 'peer-review')
+      councilSessionRepository.updatePhase(sessionId, 'peer-review')
+      peerReviews = await this.runPeerReviews(entry, reviews)
+
+      if (!entry.running) return
+      councilSessionRepository.savePeerReviews(sessionId, peerReviews)
+    }
+
+    // Chairman synthesis
+    this.setPhase(entry, 'synthesizing')
+    councilSessionRepository.updatePhase(sessionId, 'synthesizing')
+    const verdict = await this.runChairman(entry, reviews, peerReviews)
+
+    if (!entry.running) return
+    entry.verdict = verdict
+    if (verdict) {
+      councilSessionRepository.saveVerdict(sessionId, verdict)
+      this.emit('verdict', { workspaceId: entry.workspaceId, verdict })
+    }
+
+    this.setPhase(entry, 'complete')
+    councilSessionRepository.updateStatus(sessionId, 'completed')
   }
 
   /**
@@ -697,14 +741,16 @@ Respond ONLY with a JSON block:
     }
 
     // Only run advisors that don't have completed reviews
-    const pendingRoles = COUNCIL_ADVISOR_ROLES.filter(role => !reviewsMap.has(role))
+    const pendingRoles = COUNCIL_ADVISOR_ROLES.filter((role) => !reviewsMap.has(role))
 
     if (pendingRoles.length === 0) {
       councilLog.info('[council:resume] All advisors already completed')
       return existingReviews
     }
 
-    councilLog.info(`[council:resume] Running ${pendingRoles.length} pending advisor(s): ${pendingRoles.join(', ')}`)
+    councilLog.info(
+      `[council:resume] Running ${pendingRoles.length} pending advisor(s): ${pendingRoles.join(', ')}`
+    )
 
     const advisorPromises = pendingRoles.map(async (role) => {
       const advisor = entry.advisors.get(role)!
@@ -728,6 +774,9 @@ Respond ONLY with a JSON block:
             chunk
           })
         })
+        session.on('statusUpdate', (status: AgentStatus) => {
+          this.emit('status', { workspaceId: entry.workspaceId, status })
+        })
 
         await session.start(entry.workspacePath, 'plan')
         const syntheticConvId = `council-resume-${role}-${Date.now()}`
@@ -741,8 +790,11 @@ Respond ONLY with a JSON block:
           advisor.status = 'completed'
           reviewsMap.set(role, review)
           if (entry.dbSessionId) {
-            try { councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review) }
-            catch (e) { councilLog.warn(`[council:resume:${role}] DB persist failed:`, e) }
+            try {
+              councilSessionRepository.appendAdvisorReview(entry.dbSessionId, review)
+            } catch (e) {
+              councilLog.warn(`[council:resume:${role}] DB persist failed:`, e)
+            }
           }
         } else {
           advisor.status = 'completed'
@@ -765,7 +817,11 @@ Respond ONLY with a JSON block:
         })
         return null
       } finally {
-        try { await advisor.session?.stop() } catch { /* non-fatal */ }
+        try {
+          await advisor.session?.stop()
+        } catch {
+          /* non-fatal */
+        }
       }
     })
 

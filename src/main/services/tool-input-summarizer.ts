@@ -46,15 +46,46 @@ function resolveStrategy(
 
 const STRATEGIES: Record<string, Strategy> = {
   // Built-in SDK tools
-  Bash: { type: 'fields', fields: ['description', 'command'] },
-  Read: { type: 'field', field: 'file_path', transform: 'path' },
-  Write: { type: 'field', field: 'file_path', transform: 'path' },
-  Edit: { type: 'field', field: 'file_path', transform: 'path' },
+  Bash: { type: 'field', field: 'command' },
+  Read: {
+    type: 'template',
+    fn: (i, wp) => {
+      const path = toRelativePath((i.file_path as string) || '', wp)
+      const offset = i.offset as number | undefined
+      const limit = i.limit as number | undefined
+      if (offset && limit) return `${path} (lines ${offset}–${offset + limit - 1})`
+      if (offset) return `${path} (from line ${offset})`
+      return path
+    }
+  },
+  Write: {
+    type: 'template',
+    fn: (i, wp) => {
+      const path = toRelativePath((i.file_path as string) || '', wp)
+      const content = i.content as string | undefined
+      const lineCount = content?.split('\n').length ?? 0
+      return lineCount > 0 ? `${path} (${lineCount} lines)` : path
+    }
+  },
+  Edit: {
+    type: 'template',
+    fn: (i, wp) => {
+      const path = toRelativePath((i.file_path as string) || '', wp)
+      const edits = i.edits as Array<{ old_string?: string }> | undefined
+      const editCount = edits?.length ?? 0
+      if (editCount > 1) return `${path} (${editCount} edits)`
+      const oldStr = edits?.[0]?.old_string
+      if (oldStr) {
+        const preview = oldStr.replace(/\n/g, '↵').slice(0, 30)
+        return `${path} → "${preview}${oldStr.length > 30 ? '…' : ''}"`
+      }
+      return path
+    }
+  },
   Grep: {
     type: 'template',
     fn: (i, wp) =>
-      `/${i.pattern as string}/` +
-      (i.path ? ` in ${toRelativePath(i.path as string, wp)}` : '')
+      `/${i.pattern as string}/` + (i.path ? ` in ${toRelativePath(i.path as string, wp)}` : '')
   },
   Glob: { type: 'field', field: 'pattern' },
   WebSearch: { type: 'field', field: 'query' },
@@ -144,13 +175,11 @@ const STRATEGIES: Record<string, Strategy> = {
   // MCP tools: Git Context
   [MCP_TOOLS.GIT_CONTEXT.GIT_LOG.name]: {
     type: 'template',
-    fn: (i, wp) =>
-      `git log${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
+    fn: (i, wp) => `git log${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
   },
   [MCP_TOOLS.GIT_CONTEXT.GIT_DIFF.name]: {
     type: 'template',
-    fn: (i, wp) =>
-      `git diff${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
+    fn: (i, wp) => `git diff${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
   },
   [MCP_TOOLS.GIT_CONTEXT.GIT_BLAME.name]: {
     type: 'template',

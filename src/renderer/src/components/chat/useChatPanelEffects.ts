@@ -7,7 +7,9 @@ import { useProjectSpecialistStore } from '@renderer/store/project-specialist.st
  * and the Generate-Specialist modal auto-open/dismiss lifecycle.
  */
 export function useChatPanelEffects(): {
-  projectSpecialist: ReturnType<typeof useProjectSpecialistStore.getState>['byWorkspace'][string] | null
+  projectSpecialist:
+    | ReturnType<typeof useProjectSpecialistStore.getState>['byWorkspace'][string]
+    | null
   generateModalOpen: boolean
   handleDismissGenerate: () => void
 } {

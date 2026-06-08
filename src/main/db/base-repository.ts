@@ -63,9 +63,7 @@ export abstract class BaseRepository<Row, Model> {
    * Delete rows by column value. Returns the number of deleted rows.
    */
   deleteBy(column: string, value: unknown): number {
-    return this.db()
-      .prepare(`DELETE FROM ${this.tableName} WHERE ${column} = ?`)
-      .run(value).changes
+    return this.db().prepare(`DELETE FROM ${this.tableName} WHERE ${column} = ?`).run(value).changes
   }
 
   /**

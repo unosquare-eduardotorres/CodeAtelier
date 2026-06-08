@@ -6,11 +6,43 @@ import type {
   MpaPhase,
   MpaArtifact,
   MpaPlanArtifact,
-  MpaClassifyResult,
   MpaPreloadedGoal,
-  MpaGoalType,
-  MpaPhaseType
+  MpaPhaseType,
+  MeasurableGoal,
+  MpaCampaign,
+  MpaCampaignStatus,
+  MpaCampaignGoalStatus,
+  MpaCampaignPauseAction
 } from '../../../shared/mpa-types'
+
+// ── Campaign (renderer-side runtime) ──
+
+/** Transient draft built in the 3-step campaign panel before launch. */
+export interface CampaignDraft {
+  originalPlanText: string
+  goals: MeasurableGoal[]
+}
+
+/** Per-goal runtime status tracked while a campaign runs. */
+export interface CampaignGoalRuntime {
+  goalId: string
+  title: string
+  orderIndex: number
+  status: MpaCampaignGoalStatus
+  successCriteria: string[]
+}
+
+export interface ActiveCampaign {
+  id: string
+  /** Workspace this campaign belongs to — used to ignore cross-workspace events. */
+  workspaceId: string
+  title: string
+  totalGoals: number
+  currentIndex: number
+  status: MpaCampaignStatus
+  goals: CampaignGoalRuntime[]
+  paused: { orderIndex: number; goalId: string; reason: string } | null
+}
 
 // ── Store Interface ──
 
@@ -36,30 +68,22 @@ interface MpaState {
     artifact: MpaPlanArtifact
   } | null
 
-  // Pre-flight classification
-  classifyResult: MpaClassifyResult | null
-
   // Pre-loaded goal (from Grill → Goals flow)
   preloadedGoal: MpaPreloadedGoal | null
+
+  // Campaign draft (3-step panel) + active campaign runtime
+  campaignDraft: CampaignDraft | null
+  activeCampaign: ActiveCampaign | null
+
+  // Persisted campaign history (grouped goal runs)
+  campaignHistory: MpaCampaign[]
 
   // Run history
   history: MpaRun[]
 
   // ── Actions ──
 
-  startGoal: (params: {
-    workspaceId: string
-    goal: string
-    title: string
-    goalType: MpaGoalType
-    phases: MpaPhaseType[]
-    grillSessionId?: string
-    grillDecisions?: Array<{ header: string; selectedOption: string; reason: string }>
-  }) => Promise<void>
-
   cancelGoal: () => Promise<void>
-
-  classifyGoal: (goal: string) => Promise<MpaClassifyResult>
 
   respondToApproval: (approved: boolean, feedback?: string) => Promise<void>
 
@@ -70,6 +94,19 @@ interface MpaState {
   loadHistory: (workspaceId: string) => Promise<void>
 
   setPreloadedGoal: (goal: MpaPreloadedGoal | null) => void
+
+  // ── Campaign actions ──
+  setCampaignDraft: (draft: CampaignDraft | null) => void
+  decomposeGoals: (workspaceId: string, input: string) => Promise<MeasurableGoal[]>
+  startCampaign: (params: {
+    workspaceId: string
+    title: string
+    originalPlanMd: string
+    goals: MeasurableGoal[]
+  }) => Promise<void>
+  respondToCampaign: (workspaceId: string, action: MpaCampaignPauseAction) => Promise<void>
+  cancelCampaign: (workspaceId: string) => Promise<void>
+  loadCampaignHistory: (workspaceId: string) => Promise<void>
 
   // IPC event handlers
   registerListeners: () => () => void
@@ -96,22 +133,13 @@ export const useMpaStore = create<MpaState>((set, get) => ({
   artifacts: [],
   phaseStreamText: {},
   pendingApproval: null,
-  classifyResult: null,
   preloadedGoal: null,
+  campaignDraft: null,
+  activeCampaign: null,
+  campaignHistory: [],
   history: [],
 
   // ── Actions ──
-
-  startGoal: async (params) => {
-    try {
-      set({ isRunning: true, phaseStreamText: {}, pendingApproval: null, configuredPhases: params.phases })
-      await window.api.mpaStart(params)
-    } catch (error) {
-      rendererLog.error('Failed to start MPA goal:', error)
-      set({ isRunning: false })
-      throw error
-    }
-  },
 
   cancelGoal: async () => {
     try {
@@ -119,17 +147,6 @@ export const useMpaStore = create<MpaState>((set, get) => ({
       set({ isRunning: false, pendingApproval: null })
     } catch (error) {
       rendererLog.error('Failed to cancel MPA goal:', error)
-    }
-  },
-
-  classifyGoal: async (goal: string) => {
-    try {
-      const result = (await window.api.mpaClassifyGoal({ goal })) as MpaClassifyResult
-      set({ classifyResult: result })
-      return result
-    } catch (error) {
-      rendererLog.error('Failed to classify goal:', error)
-      throw error
     }
   },
 
@@ -191,8 +208,96 @@ export const useMpaStore = create<MpaState>((set, get) => ({
 
   setPreloadedGoal: (goal) => set({ preloadedGoal: goal }),
 
+  // ── Campaign actions ──
+
+  setCampaignDraft: (draft) => set({ campaignDraft: draft }),
+
+  decomposeGoals: async (workspaceId, input) => {
+    const result = await window.api.mpaDecomposeGoals({ workspaceId, input })
+    return result.goals as MeasurableGoal[]
+  },
+
+  startCampaign: async (params) => {
+    try {
+      // Seed runtime state from the draft goals so the UI can render the rail
+      // before the first campaign event arrives.
+      set({
+        isRunning: true,
+        phaseStreamText: {},
+        pendingApproval: null,
+        campaignDraft: null,
+        activeCampaign: {
+          id: '',
+          workspaceId: params.workspaceId,
+          title: params.title,
+          totalGoals: params.goals.length,
+          currentIndex: 0,
+          status: 'running',
+          goals: params.goals.map((g, orderIndex) => ({
+            goalId: g.id,
+            title: g.title,
+            orderIndex,
+            status: 'pending',
+            successCriteria: g.successCriteria
+          })),
+          paused: null
+        }
+      })
+      await window.api.mpaCampaignStart(params)
+    } catch (error) {
+      rendererLog.error('Failed to start campaign:', error)
+      set({ isRunning: false, activeCampaign: null })
+      throw error
+    }
+  },
+
+  respondToCampaign: async (workspaceId, action) => {
+    try {
+      await window.api.mpaCampaignRespond({ workspaceId, action })
+      set((state) =>
+        state.activeCampaign
+          ? { activeCampaign: { ...state.activeCampaign, status: 'running', paused: null } }
+          : {}
+      )
+    } catch (error) {
+      rendererLog.error('Failed to respond to campaign:', error)
+    }
+  },
+
+  cancelCampaign: async (workspaceId) => {
+    try {
+      await window.api.mpaCampaignCancel({ workspaceId })
+    } catch (error) {
+      rendererLog.error('Failed to cancel campaign:', error)
+    }
+  },
+
+  loadCampaignHistory: async (workspaceId) => {
+    try {
+      const campaigns = (await window.api.mpaCampaignGetHistory({ workspaceId })) as MpaCampaign[]
+      set({ campaignHistory: campaigns })
+    } catch (error) {
+      rendererLog.error('Failed to load campaign history:', error)
+    }
+  },
+
   registerListeners: () => {
     const cleanups: Array<() => void> = []
+
+    // Guard every IPC subscription: a missing preload binding (version skew)
+    // must NOT throw during store init and white-screen the renderer. Logs a
+    // warning and disables live updates for that one event instead.
+    const safeSubscribe = <A extends unknown[]>(
+      fn: ((...args: A) => () => void) | undefined,
+      label: string,
+      ...args: A
+    ): void => {
+      if (typeof fn !== 'function') {
+        rendererLog.warn(`[mpa] window.api.${label} unavailable — live updates disabled for it`)
+        return
+      }
+      cleanups.push(fn(...args))
+    }
 
     // Streaming buffer — accumulates chunks between RAF flushes to reduce
     // store updates from 100s/sec to ~60/sec (one spread per flush).
@@ -200,91 +305,178 @@ export const useMpaStore = create<MpaState>((set, get) => ({
     let flushScheduled = false
     let rafId: number | null = null
 
-    cleanups.push(
-      window.api.onMpaPhaseStart((data) => {
-        rendererLog.info(`[mpa] Phase started: ${data.phaseType} (iteration ${data.iteration})`)
-        set((state) => ({
-          status: {
-            ...state.status,
-            status: 'running',
-            runId: data.runId,
-            currentPhase: data.phaseType as MpaPhaseType,
-            iteration: data.iteration,
-            awaitingApproval: false
-          }
-        }))
-      })
-    )
+    safeSubscribe(window.api.onMpaPhaseStart, 'onMpaPhaseStart', (data) => {
+      rendererLog.info(`[mpa] Phase started: ${data.phaseType} (iteration ${data.iteration})`)
+      set((state) => ({
+        status: {
+          ...state.status,
+          status: 'running',
+          runId: data.runId,
+          currentPhase: data.phaseType as MpaPhaseType,
+          iteration: data.iteration,
+          awaitingApproval: false
+        }
+      }))
+    })
 
-    cleanups.push(
-      window.api.onMpaPhaseProgress((data) => {
-        streamBuffer[data.phaseId] = (streamBuffer[data.phaseId] ?? '') + data.streamChunk
+    safeSubscribe(window.api.onMpaPhaseProgress, 'onMpaPhaseProgress', (data) => {
+      streamBuffer[data.phaseId] = (streamBuffer[data.phaseId] ?? '') + data.streamChunk
 
-        if (!flushScheduled) {
-          flushScheduled = true
-          rafId = requestAnimationFrame(() => {
-            const buffered = streamBuffer
-            streamBuffer = {}
-            flushScheduled = false
-            rafId = null
-            set((state) => {
-              const updated = { ...state.phaseStreamText }
-              for (const [phaseId, chunk] of Object.entries(buffered)) {
-                updated[phaseId] = (updated[phaseId] ?? '') + chunk
-              }
-              return { phaseStreamText: updated }
-            })
+      if (!flushScheduled) {
+        flushScheduled = true
+        rafId = requestAnimationFrame(() => {
+          const buffered = streamBuffer
+          streamBuffer = {}
+          flushScheduled = false
+          rafId = null
+          set((state) => {
+            const updated = { ...state.phaseStreamText }
+            for (const [phaseId, chunk] of Object.entries(buffered)) {
+              updated[phaseId] = (updated[phaseId] ?? '') + chunk
+            }
+            return { phaseStreamText: updated }
           })
+        })
+      }
+    })
+
+    safeSubscribe(window.api.onMpaPhaseComplete, 'onMpaPhaseComplete', (data) => {
+      rendererLog.info(`[mpa] Phase complete: ${data.phaseType} — ${data.status}`)
+    })
+
+    safeSubscribe(window.api.onMpaFeedbackLoop, 'onMpaFeedbackLoop', (data) => {
+      rendererLog.info(
+        `[mpa] Feedback loop: ${data.fromPhase} → ${data.toPhase} (iteration ${data.iteration})`
+      )
+    })
+
+    safeSubscribe(window.api.onMpaApprovalNeeded, 'onMpaApprovalNeeded', (data) => {
+      rendererLog.info(`[mpa] Approval needed for run ${data.runId}`)
+      set({
+        pendingApproval: {
+          runId: data.runId,
+          phaseId: data.phaseId,
+          artifactId: data.artifactId,
+          artifact: data.artifact as MpaPlanArtifact
+        },
+        status: {
+          ...get().status,
+          status: 'paused',
+          awaitingApproval: true
         }
       })
-    )
+    })
 
-    cleanups.push(
-      window.api.onMpaPhaseComplete((data) => {
-        rendererLog.info(`[mpa] Phase complete: ${data.phaseType} — ${data.status}`)
+    safeSubscribe(window.api.onMpaPipelineComplete, 'onMpaPipelineComplete', (data) => {
+      rendererLog.info(`[mpa] Pipeline complete: ${data.status}`)
+      const { activeCampaign } = get()
+      // Mid-campaign: a single goal finished but the campaign continues — keep
+      // isRunning true so the active view stays mounted for the next goal.
+      if (activeCampaign && activeCampaign.status === 'running') {
+        set({
+          phaseStreamText: {},
+          pendingApproval: null,
+          status: { ...INITIAL_STATUS, status: 'running' }
+        })
+        return
+      }
+      set({
+        isRunning: false,
+        status: {
+          ...INITIAL_STATUS,
+          status: data.status as MpaStatus['status']
+        },
+        pendingApproval: null
       })
-    )
+    })
 
-    cleanups.push(
-      window.api.onMpaFeedbackLoop((data) => {
-        rendererLog.info(
-          `[mpa] Feedback loop: ${data.fromPhase} → ${data.toPhase} (iteration ${data.iteration})`
+    // ── Campaign events ──
+    // Every campaign listener ignores events from a different workspace so a
+    // campaign in workspace A never mutates the active view of workspace B.
+    const isForActiveCampaign = (workspaceId: string): boolean =>
+      get().activeCampaign?.workspaceId === workspaceId
+
+    safeSubscribe(window.api.onMpaCampaignStarted, 'onMpaCampaignStarted', (data) => {
+      if (!isForActiveCampaign(data.workspaceId)) return
+      rendererLog.info(`[campaign] started: ${data.title} (${data.totalGoals} goals)`)
+      set((state) =>
+        state.activeCampaign
+          ? { activeCampaign: { ...state.activeCampaign, id: data.campaignId } }
+          : {}
+      )
+    })
+
+    safeSubscribe(window.api.onMpaCampaignGoalStart, 'onMpaCampaignGoalStart', (data) => {
+      if (!isForActiveCampaign(data.workspaceId)) return
+      rendererLog.info(`[campaign] goalStart: #${data.orderIndex} ${data.title}`)
+      set((state) => {
+        if (!state.activeCampaign) return {}
+        const goals = state.activeCampaign.goals.map((g) =>
+          g.orderIndex === data.orderIndex ? { ...g, status: 'running' as const } : g
         )
+        return {
+          isRunning: true,
+          phaseStreamText: {},
+          activeCampaign: { ...state.activeCampaign, currentIndex: data.orderIndex, goals }
+        }
       })
-    )
+    })
 
-    cleanups.push(
-      window.api.onMpaApprovalNeeded((data) => {
-        rendererLog.info(`[mpa] Approval needed for run ${data.runId}`)
-        set({
-          pendingApproval: {
-            runId: data.runId,
-            phaseId: data.phaseId,
-            artifactId: data.artifactId,
-            artifact: data.artifact as MpaPlanArtifact
-          },
-          status: {
-            ...get().status,
-            status: 'paused',
-            awaitingApproval: true
-          }
-        })
+    safeSubscribe(window.api.onMpaCampaignGoalComplete, 'onMpaCampaignGoalComplete', (data) => {
+      if (!isForActiveCampaign(data.workspaceId)) return
+      rendererLog.info(`[campaign] goalComplete: #${data.orderIndex} ${data.status}`)
+      set((state) => {
+        if (!state.activeCampaign) return {}
+        const goals = state.activeCampaign.goals.map((g) =>
+          g.orderIndex === data.orderIndex
+            ? { ...g, status: data.status as MpaCampaignGoalStatus }
+            : g
+        )
+        return { activeCampaign: { ...state.activeCampaign, goals } }
       })
-    )
+    })
 
-    cleanups.push(
-      window.api.onMpaPipelineComplete((data) => {
-        rendererLog.info(`[mpa] Pipeline complete: ${data.status}`)
-        set({
-          isRunning: false,
-          status: {
-            ...INITIAL_STATUS,
-            status: data.status as MpaStatus['status']
-          },
-          pendingApproval: null
-        })
-      })
-    )
+    safeSubscribe(window.api.onMpaCampaignPaused, 'onMpaCampaignPaused', (data) => {
+      if (!isForActiveCampaign(data.workspaceId)) return
+      rendererLog.info(`[campaign] paused: #${data.orderIndex} ${data.reason}`)
+      set((state) =>
+        state.activeCampaign
+          ? {
+              activeCampaign: {
+                ...state.activeCampaign,
+                status: 'paused',
+                paused: {
+                  orderIndex: data.orderIndex,
+                  goalId: data.goalId,
+                  reason: data.reason
+                }
+              }
+            }
+          : {}
+      )
+    })
+
+    safeSubscribe(window.api.onMpaCampaignComplete, 'onMpaCampaignComplete', (data) => {
+      // Cross-workspace guard: don't overwrite another workspace's history if the
+      // user switched workspaces mid-campaign.
+      if (!isForActiveCampaign(data.workspaceId)) return
+      rendererLog.info(`[campaign] complete: ${data.status}`)
+      set((state) => ({
+        isRunning: false,
+        status: { ...INITIAL_STATUS },
+        pendingApproval: null,
+        activeCampaign: state.activeCampaign
+          ? {
+              ...state.activeCampaign,
+              status: data.status as MpaCampaignStatus,
+              paused: null
+            }
+          : null
+      }))
+      // Refresh persisted history + grouped campaigns now that it's done.
+      void get().loadCampaignHistory(data.workspaceId)
+      void get().loadHistory(data.workspaceId)
+    })
 
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId)
@@ -302,7 +494,9 @@ export const useMpaStore = create<MpaState>((set, get) => ({
       artifacts: [],
       phaseStreamText: {},
       pendingApproval: null,
-      classifyResult: null,
-      preloadedGoal: null
+      preloadedGoal: null,
+      campaignDraft: null,
+      activeCampaign: null,
+      campaignHistory: []
     })
 }))

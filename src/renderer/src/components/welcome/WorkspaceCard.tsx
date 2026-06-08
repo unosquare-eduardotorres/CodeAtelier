@@ -67,10 +67,9 @@ function DescriptionSkeleton(): React.JSX.Element {
 
 /** Inline badge showing pending permission count for a workspace card. */
 function PermissionBadgeCard({ workspaceId }: { workspaceId: string }): React.JSX.Element | null {
-  const count = useBackgroundSessionStore((s) =>
-    s.pendingPermissions.filter(
-      (p) => p.workspaceId === workspaceId && p.badgeFallback
-    ).length
+  const count = useBackgroundSessionStore(
+    (s) =>
+      s.pendingPermissions.filter((p) => p.workspaceId === workspaceId && p.badgeFallback).length
   )
 
   if (count === 0) return null

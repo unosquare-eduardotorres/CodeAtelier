@@ -47,7 +47,9 @@ function toModel(row: TurnUsageRow): TurnUsage {
 
 export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage> {
   protected readonly tableName = 'turn_usage'
-  protected mapRow(row: TurnUsageRow): TurnUsage { return toModel(row) }
+  protected mapRow(row: TurnUsageRow): TurnUsage {
+    return toModel(row)
+  }
 
   /** Record token usage for a single turn */
   record(opts: {

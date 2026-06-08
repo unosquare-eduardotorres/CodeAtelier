@@ -1,5 +1,5 @@
 import { Settings, Trash2 } from 'lucide-react'
-import type { Workspace, PendingPermission } from '../../../../shared/types'
+import type { Workspace } from '../../../../shared/types'
 import { useBackgroundSessionStore } from '@renderer/store'
 import WorkspaceStatusIndicator from './WorkspaceStatusIndicator'
 
@@ -104,12 +104,9 @@ export default function WorkspaceItem({
 
 /** Badge showing count of pending permission requests for a workspace. */
 function PermissionBadge({ workspaceId }: { workspaceId: string }): React.JSX.Element | null {
-  const count = useBackgroundSessionStore((s) =>
-    s.pendingPermissions.filter(
-      (p) =>
-        p.workspaceId === workspaceId &&
-        p.badgeFallback
-    ).length
+  const count = useBackgroundSessionStore(
+    (s) =>
+      s.pendingPermissions.filter((p) => p.workspaceId === workspaceId && p.badgeFallback).length
   )
 
   if (count === 0) return null

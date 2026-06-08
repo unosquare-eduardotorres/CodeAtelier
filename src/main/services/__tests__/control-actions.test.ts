@@ -4,11 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
-import {
-  planSchema,
-  askUserSchema,
-  emitMemorySchema
-} from '../control-actions.tool'
+import { planSchema, askUserSchema, emitMemorySchema } from '../control-actions.tool'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 
 // -- Schema validation tests --
@@ -29,8 +25,8 @@ describe('planSchema', () => {
       decisions: [{ what: 'Use middleware', why: 'Centralized' }],
       sections: [
         {
-          title: 'Phase 1',
-          steps: [{ description: 'Create module', file: 'src/auth.ts' }]
+          heading: 'Phase 1',
+          content: 'Create auth module in `src/auth.ts`'
         }
       ],
       files: ['src/auth.ts'],
@@ -74,7 +70,7 @@ describe('planSchema', () => {
       planSchema.parse({
         title: 'Bad',
         summary: 'Bad',
-        risks: [{ risk: 'x', severity: 'critical' }]
+        risks: [{ risk: 'x', severity: 'extreme' }]
       })
     )
   })
@@ -178,21 +174,28 @@ describe('Control action callbacks', () => {
     assert.equal((receivedPlan as Record<string, unknown>).summary, 'Plan summary')
   })
 
-  test('onAskUser callback receives question array', () => {
+  test('onAskUser callback receives question array and requestId', () => {
     let receivedQuestions: unknown = null
+    let receivedRequestId: string | undefined
     const callbacks: ControlActionCallbacks = {
       onPlan: () => {},
-      onAskUser: (questions) => {
+      onAskUser: (questions, _action, requestId) => {
         receivedQuestions = questions
+        receivedRequestId = requestId
       },
       onMemory: () => {}
     }
     const { questions } = askUserSchema.parse({
       questions: [{ question: 'Which approach?' }]
     })
-    callbacks.onAskUser(questions as Parameters<ControlActionCallbacks['onAskUser']>[0])
+    callbacks.onAskUser(
+      questions as Parameters<ControlActionCallbacks['onAskUser']>[0],
+      undefined,
+      'req-123'
+    )
     assert.ok(receivedQuestions)
     assert.equal((receivedQuestions as Array<unknown>).length, 1)
+    assert.equal(receivedRequestId, 'req-123')
   })
 
   test('onMemory callback receives memory data', () => {

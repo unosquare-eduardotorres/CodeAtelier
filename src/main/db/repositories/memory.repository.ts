@@ -36,7 +36,9 @@ function mapRow(row: MemoryRow): Memory {
 
 export class MemoryRepository extends BaseRepository<MemoryRow, Memory> {
   protected readonly tableName = 'memories'
-  protected mapRow(row: MemoryRow): Memory { return mapRow(row) }
+  protected mapRow(row: MemoryRow): Memory {
+    return mapRow(row)
+  }
 
   findByWorkspace(workspaceId: string): Memory[] {
     const rows = this.db()
@@ -152,9 +154,11 @@ export class MemoryRepository extends BaseRepository<MemoryRow, Memory> {
   touchMemories(ids: string[]): void {
     if (ids.length === 0) return
     const placeholders = ids.map(() => '?').join(',')
-    this.db().prepare(
-      `UPDATE memories SET last_accessed_at = datetime('now') WHERE id IN (${placeholders})`
-    ).run(...ids)
+    this.db()
+      .prepare(
+        `UPDATE memories SET last_accessed_at = datetime('now') WHERE id IN (${placeholders})`
+      )
+      .run(...ids)
   }
 
   /**

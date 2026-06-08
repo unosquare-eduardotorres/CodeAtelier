@@ -12,7 +12,7 @@
  *   5. Stack drift banner appears when tech stack changes between builds.
  *
  * Uses the same CDP approach as investigation-flow.e2e.ts because
- * Playwright's _electron.launch() is incompatible with Electron 40+.
+ * Playwright's _electron.launch() is incompatible with Electron 41+.
  *
  * Prerequisites:
  *   1. Build the app first: npx electron-vite build

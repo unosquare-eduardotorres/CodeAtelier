@@ -44,7 +44,10 @@ describe('Lean Mode Blocks', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('emit_plan'), 'Missing emit_plan reference')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('type'), 'Missing type field reference')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('diagrams'), 'Missing diagrams reference')
-    assert.ok(PLAN_MODE_SECTION_LEAN.includes('Operational Requests'), 'Missing Operational Requests')
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN.includes('Operational Requests'),
+      'Missing Operational Requests'
+    )
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('read-only'), 'Missing read-only indicator')
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('Phased Plans'), 'Missing Phased Plans section')
   })
@@ -72,6 +75,28 @@ describe('Lean Mode Blocks', () => {
     assert.ok(
       BUILD_MODE_SECTION_LEAN.includes('EACCES'),
       'Missing EACCES permission check reference'
+    )
+  })
+
+  test('full plan forbids Write/Edit for authoring a plan', () => {
+    assert.ok(
+      /never\s+call\s+write\s+or\s+edit/i.test(PLAN_MODE_SECTION),
+      'Full plan should forbid Write/Edit for authoring a plan'
+    )
+    assert.ok(
+      PLAN_MODE_SECTION.includes('emit_plan'),
+      'Full plan should point to emit_plan as the only plan output path'
+    )
+  })
+
+  test('lean plan forbids Write/Edit for a plan', () => {
+    assert.ok(
+      /write\/edit/i.test(PLAN_MODE_SECTION_LEAN),
+      'Lean plan should mention Write/Edit are blocked for plans'
+    )
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN.includes('emit_plan'),
+      'Lean plan should point to emit_plan'
     )
   })
 

@@ -9,7 +9,6 @@
  * Follows the same pattern as GrillPersistenceController.
  */
 
-import type { BrowserWindow } from 'electron'
 import log from 'electron-log'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
@@ -18,29 +17,34 @@ import type {
   CouncilReview,
   CouncilPeerReview,
   CouncilVerdict,
-  CouncilPhase,
-  CouncilMemberStatus
+  CouncilPhase
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
-import { summarizeToolInput } from './agent-base.service'
-import { extractResultSummary, reportToolError } from '../ipc/chat-shared'
-import { IPC_CHANNELS, MCP_TOOLS } from '../../shared/constants'
+import { processToolChunk } from '../ipc/tool-chunk-processor'
+import { TextDeltaBatcher } from '../ipc/text-delta-batcher'
+import { IPC_CHANNELS } from '../../shared/constants'
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
+import type { SessionEventRouter } from './session-event-router'
 
 const ctrlLog = log.scope('council-persistence')
 
 export class CouncilPersistenceController {
   private activeSessionId: string | null = null
-  private activeWorkspaceId: string | null = null
   private activeWorkspacePath: string | null = null
   private transcriptParts: string[] = []
+  /** Batches renderer-bound text at ~30fps (per advisor) so council streams smoothly. */
+  private textBatcher = new TextDeltaBatcher()
+
+  /** Batch key — keeps each advisor's stream separate within a workspace. */
+  private batchKey(workspaceId: string, advisorRole: string): string {
+    return `${workspaceId}:${advisorRole}`
+  }
 
   // ── Public API ────────────────────────────────────────────────────────
 
   /** Start tracking a council session */
-  startTracking(sessionId: string, workspaceId: string, workspacePath: string): void {
+  startTracking(sessionId: string, _workspaceId: string, workspacePath: string): void {
     this.activeSessionId = sessionId
-    this.activeWorkspaceId = workspaceId
     this.activeWorkspacePath = workspacePath
     this.transcriptParts = []
     ctrlLog.info(`[council-persistence] Tracking session=${sessionId}`)
@@ -49,98 +53,57 @@ export class CouncilPersistenceController {
   /** Handle phase change — forward to renderer */
   handlePhaseChanged(
     data: { workspaceId: string; phase: CouncilPhase },
-    mainWindow: BrowserWindow
+    router: SessionEventRouter
   ): void {
-    mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_PHASE_CHANGED, data)
+    router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_PHASE_CHANGED, data.workspaceId, {
+      phase: data.phase
+    })
   }
 
   /** Handle stream chunk from an advisor — transform and forward to renderer */
   handleMemberStream(
     data: { workspaceId: string; advisorRole: string; chunk: StreamChunk },
-    mainWindow: BrowserWindow,
-    workspacePath: string
+    workspacePath: string,
+    router: SessionEventRouter
   ): void {
-    const { chunk, advisorRole } = data
+    const { chunk, advisorRole, workspaceId } = data
+    const key = this.batchKey(workspaceId, advisorRole)
 
     if (chunk.type === 'text' && chunk.content) {
-      mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, {
-        advisorRole,
-        type: 'text',
-        content: chunk.content
+      // Batch text at ~30fps (matching chat) per advisor.
+      this.textBatcher.push(key, chunk.content, (text) => {
+        router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, workspaceId, {
+          advisorRole,
+          type: 'text',
+          content: text
+        })
       })
-    } else if (chunk.type === 'tool_use') {
-      // Skip control tools
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-      let inputSummary: string | undefined
-      if (chunk.toolInput) {
-        try {
-          const parsed = JSON.parse(chunk.toolInput) as Record<string, unknown>
-          inputSummary = summarizeToolInput(chunk.toolName ?? '', parsed, workspacePath)
-        } catch {
-          inputSummary = chunk.toolInput.slice(0, 120)
-        }
+    } else if (
+      chunk.type === 'tool_use' ||
+      chunk.type === 'tool_result' ||
+      chunk.type === 'tool_progress'
+    ) {
+      const result = processToolChunk(chunk, { workspacePath, agentType: 'council' })
+      if (result) {
+        // Flush pending text before the tool block so ordering is preserved.
+        this.textBatcher.flush(key)
+        router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, workspaceId, {
+          advisorRole,
+          ...result
+        })
       }
-
-      mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, {
-        advisorRole,
-        type: 'tool_activity',
-        toolActivity: {
-          id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running' as const,
-          input: inputSummary,
-          startedAt: Date.now()
-        }
-      })
-    } else if (chunk.type === 'tool_result') {
-      if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return
-
-      const isToolError =
-        typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
-
-      if (isToolError && chunk.content) {
-        reportToolError(chunk.toolName ?? 'Unknown', chunk.content, { agentType: 'council' })
-      }
-
-      const resultSummaryObj = extractResultSummary(chunk.toolName ?? '', chunk.content)
-      const resultSummary = resultSummaryObj?.result
-      const resultDetail = resultSummaryObj?.resultDetail
-
-      const toolActivity: Record<string, unknown> = {
-        id: chunk.toolId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        toolName: chunk.toolName ?? 'Unknown',
-        status: isToolError ? 'error' : 'completed',
-        completedAt: Date.now()
-      }
-      if (resultSummary) toolActivity.result = resultSummary
-      if (resultDetail) toolActivity.resultDetail = resultDetail
-
-      mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, {
-        advisorRole,
-        type: 'tool_activity',
-        toolActivity
-      })
-    } else if (chunk.type === 'tool_progress') {
-      mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_MEMBER_STREAM, {
-        advisorRole,
-        type: 'tool_activity',
-        toolActivity: {
-          id: chunk.toolId ?? `tool-${Date.now()}`,
-          toolName: chunk.toolName ?? 'Unknown',
-          status: 'running' as const,
-          elapsedSeconds: chunk.elapsedSeconds
-        }
-      })
     }
   }
 
   /** Handle advisor completion — forward to renderer */
   handleMemberComplete(
     data: { workspaceId: string; advisorRole: CouncilAdvisorRole; review: CouncilReview | null },
-    mainWindow: BrowserWindow
+    router: SessionEventRouter
   ): void {
-    mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_MEMBER_COMPLETE, {
+    // Flush trailing narration before completion, then forget the advisor flusher.
+    this.textBatcher.reset(this.batchKey(data.workspaceId, data.advisorRole))
+
+    router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_MEMBER_COMPLETE, data.workspaceId, {
       advisorRole: data.advisorRole,
       review: data.review
     })
@@ -158,9 +121,9 @@ export class CouncilPersistenceController {
   /** Handle peer review completion — forward to renderer */
   handlePeerReviewComplete(
     data: { workspaceId: string; peerReviews: CouncilPeerReview[] },
-    mainWindow: BrowserWindow
+    router: SessionEventRouter
   ): void {
-    mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_PEER_REVIEW_COMPLETE, {
+    router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_PEER_REVIEW_COMPLETE, data.workspaceId, {
       peerReviews: data.peerReviews
     })
   }
@@ -168,24 +131,22 @@ export class CouncilPersistenceController {
   /** Handle verdict — forward to renderer */
   handleVerdict(
     data: { workspaceId: string; verdict: CouncilVerdict },
-    mainWindow: BrowserWindow
+    router: SessionEventRouter
   ): void {
-    mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_VERDICT, {
+    router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_VERDICT, data.workspaceId, {
       verdict: data.verdict
     })
   }
 
-  /** Handle session complete — save transcript to filesystem + DB */
-  async handleComplete(
+  /** Handle session teardown — save transcript, clean up internal state. No renderer events. */
+  async handleSessionEnded(
     _data: { workspaceId: string },
-    mainWindow: BrowserWindow
+    _router: SessionEventRouter
   ): Promise<void> {
-    mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_COMPLETE, {})
-
     // Save transcript to workspace filesystem
     await this.saveTranscript()
 
-    // Also persist transcript to DB for resume/history
+    // Persist transcript to DB
     if (this.activeSessionId && this.transcriptParts.length > 0) {
       try {
         const transcriptMd = this.transcriptParts.join('\n')
@@ -195,20 +156,20 @@ export class CouncilPersistenceController {
       }
     }
 
-    ctrlLog.info(`[council-persistence] Session complete — session=${this.activeSessionId}`)
-    this.clearTracking()
+    ctrlLog.info(`[council-persistence] Session ended — session=${this.activeSessionId}`)
+    this.resetTrackingState()
   }
 
-  /** Clear active tracking (on cancel) */
-  clearTracking(mainWindow?: BrowserWindow): void {
-    if (mainWindow) {
-      mainWindow.webContents.send(IPC_CHANNELS.COUNCIL_PHASE_CHANGED, {
-        workspaceId: this.activeWorkspaceId,
-        phase: 'cancelled'
-      })
-    }
+  /** Clear tracking on explicit cancel — state cleanup only.
+   *  The 'cancelled' phase is already emitted by councilService.cancel() → setPhase(). */
+  clearTracking(): void {
+    this.resetTrackingState()
+  }
+
+  /** Internal state cleanup — no renderer events */
+  private resetTrackingState(): void {
+    this.textBatcher.reset()
     this.activeSessionId = null
-    this.activeWorkspaceId = null
     this.activeWorkspacePath = null
     this.transcriptParts = []
   }

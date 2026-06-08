@@ -10,12 +10,12 @@ import { summarizeToolInput } from '../agent-base.service'
 // ── summarizeToolInput ──────────────────────────────────────
 
 describe('summarizeToolInput', () => {
-  test('Bash — returns description when available', () => {
+  test('Bash — returns command (data-driven strategy ignores description)', () => {
     const result = summarizeToolInput('Bash', {
       command: 'ls -la',
       description: 'List files'
     })
-    assert.equal(result, 'List files')
+    assert.equal(result, 'ls -la')
   })
 
   test('Bash — falls back to command when no description', () => {
@@ -37,6 +37,24 @@ describe('summarizeToolInput', () => {
     assert.equal(result, 'src/index.ts')
   })
 
+  test('Read — includes line range when offset and limit provided', () => {
+    const result = summarizeToolInput(
+      'Read',
+      { file_path: '/proj/src/index.ts', offset: 50, limit: 71 },
+      '/proj'
+    )
+    assert.equal(result, 'src/index.ts (lines 50–120)')
+  })
+
+  test('Read — shows from line when only offset provided', () => {
+    const result = summarizeToolInput(
+      'Read',
+      { file_path: '/proj/src/index.ts', offset: 100 },
+      '/proj'
+    )
+    assert.equal(result, 'src/index.ts (from line 100)')
+  })
+
   test('Read — returns absolute path when no workspace', () => {
     const result = summarizeToolInput('Read', {
       file_path: '/home/user/project/src/index.ts'
@@ -49,12 +67,42 @@ describe('summarizeToolInput', () => {
     assert.equal(result, '')
   })
 
-  test('Write — returns relative path', () => {
+  test('Write — returns relative path with line count', () => {
+    const result = summarizeToolInput(
+      'Write',
+      { file_path: '/proj/src/foo.ts', content: 'line1\nline2\nline3' },
+      '/proj'
+    )
+    assert.equal(result, 'src/foo.ts (3 lines)')
+  })
+
+  test('Write — returns relative path without content', () => {
     const result = summarizeToolInput('Write', { file_path: '/proj/src/foo.ts' }, '/proj')
     assert.equal(result, 'src/foo.ts')
   })
 
-  test('Edit — returns relative path', () => {
+  test('Edit — returns relative path with edit preview', () => {
+    const result = summarizeToolInput(
+      'Edit',
+      { file_path: '/proj/src/bar.ts', edits: [{ old_string: 'const x = 1' }] },
+      '/proj'
+    )
+    assert.equal(result, 'src/bar.ts → "const x = 1"')
+  })
+
+  test('Edit — shows edit count for multiple edits', () => {
+    const result = summarizeToolInput(
+      'Edit',
+      {
+        file_path: '/proj/src/bar.ts',
+        edits: [{ old_string: 'a' }, { old_string: 'b' }, { old_string: 'c' }]
+      },
+      '/proj'
+    )
+    assert.equal(result, 'src/bar.ts (3 edits)')
+  })
+
+  test('Edit — returns plain path without edits', () => {
     const result = summarizeToolInput('Edit', { file_path: '/proj/src/bar.ts' }, '/proj')
     assert.equal(result, 'src/bar.ts')
   })

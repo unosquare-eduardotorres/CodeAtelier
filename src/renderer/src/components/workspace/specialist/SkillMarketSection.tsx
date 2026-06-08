@@ -4,21 +4,13 @@
 
 import { RefreshCw, Download, Star } from 'lucide-react'
 import { SkillCard } from '@renderer/components/specialist'
+import type { Skill } from '../../../../../shared/types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface SkillWithMeta {
-  id: string
-  name: string
-  description?: string
-  relevance?: number
-  rationale?: string
-  [key: string]: unknown
-}
-
 interface SkillMarketSectionProps {
-  recommendedSkills: SkillWithMeta[]
-  otherSkills: SkillWithMeta[]
+  recommendedSkills: Array<Skill & { relevance: number; rationale: string }>
+  otherSkills: Skill[]
   attachedSkillIds: Set<string>
   specialistSkills?: Array<{ id: string; isEnabled: boolean }> | null
   refreshingRecs: boolean

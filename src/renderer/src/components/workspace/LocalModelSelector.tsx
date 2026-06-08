@@ -28,7 +28,7 @@ interface LocalModelSelectorProps {
   onSelect: (modelId: string) => void
   onPull: (modelId: string) => void
   /** Load a downloaded model into memory (oMLX admin API) */
-  onLoadModel?: (modelId: string) => Promise<void>
+  onLoadModel?: (modelId: string) => void | Promise<void>
   /** For oMLX: copy model name to clipboard + open downloader tab */
   onCopyAndOpenDownloader?: (modelName: string) => void
 }

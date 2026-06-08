@@ -87,8 +87,8 @@ export default function CloseDialog({
           <div className="flex items-start gap-2 text-warning text-sm">
             <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
             <span>
-              This will permanently delete this conversation, all messages, and tracked file changes.
-              Uncommitted changes in your workspace will NOT be affected.
+              This will permanently delete this conversation, all messages, and tracked file
+              changes. Uncommitted changes in your workspace will NOT be affected.
             </span>
           </div>
         </div>

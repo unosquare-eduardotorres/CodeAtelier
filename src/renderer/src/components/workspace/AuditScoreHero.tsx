@@ -3,9 +3,9 @@
  * Extracted from HealthDetailPanel completed state.
  */
 
-import { AlertTriangle, ShieldCheck } from 'lucide-react'
+import { MinusCircle, AlertTriangle, ShieldCheck } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { AuditFinding } from '../../../../shared/types'
+import type { AuditApplicability } from '../../../../shared/types'
 import { getAvatarImage } from '@renderer/assets/avatars'
 import { useAppTheme } from '@renderer/store'
 import ScoreGauge from './ScoreGauge'
@@ -15,7 +15,7 @@ interface AuditScoreHeroProps {
   TrackIcon: LucideIcon
   score: number | null | undefined
   summary: string | null | undefined
-  coverageSufficient: boolean | undefined
+  applicability: AuditApplicability
   coverageFileCount: number
   issueCount: number
   passedCount: number
@@ -26,7 +26,7 @@ export default function AuditScoreHero({
   TrackIcon,
   score,
   summary,
-  coverageSufficient,
+  applicability,
   coverageFileCount,
   issueCount,
   passedCount
@@ -47,12 +47,21 @@ export default function AuditScoreHero({
 
         {/* Score + track info */}
         <div className="flex-1 min-w-0 flex flex-col items-center">
-          {coverageSufficient === false ? (
+          {applicability === 'not-applicable' ? (
+            <div className="flex flex-col items-center gap-2 py-2">
+              <MinusCircle size={24} className="text-text-muted" />
+              <span className="text-xs text-text-secondary font-semibold">Not applicable</span>
+              <span className="text-[10px] text-text-muted text-center">
+                No {trackName.toLowerCase()} files found in this workspace
+              </span>
+            </div>
+          ) : applicability === 'insufficient' ? (
             <div className="flex flex-col items-center gap-2 py-2">
               <AlertTriangle size={24} className="text-warning" />
-              <span className="text-xs text-warning font-semibold">Insufficient Data</span>
-              <span className="text-[10px] text-text-muted">
-                {coverageFileCount} files inspected
+              <span className="text-xs text-warning font-semibold">Insufficient data</span>
+              <span className="text-[10px] text-text-muted text-center">
+                Only {coverageFileCount} file{coverageFileCount !== 1 ? 's' : ''} inspected — not
+                enough to score
               </span>
             </div>
           ) : score != null ? (

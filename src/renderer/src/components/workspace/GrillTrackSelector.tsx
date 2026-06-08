@@ -41,13 +41,19 @@ interface GrillTrackSelectorProps {
   trackScores: GrillTrackScore[]
   suggestedNextTrack: { trackId: GrillTrackId; reason: string } | null
   onSelectTrack: (trackId: GrillTrackId) => void
+  /** Optional filter — when set, only these tracks are shown */
+  visibleTracks?: GrillTrackId[]
 }
 
 export function GrillTrackSelector({
   trackScores,
   suggestedNextTrack,
-  onSelectTrack
+  onSelectTrack,
+  visibleTracks
 }: GrillTrackSelectorProps): React.JSX.Element {
+  const tracks = visibleTracks
+    ? visibleTracks.map((id) => GRILL_TRACKS[id])
+    : Object.values(GRILL_TRACKS)
   return (
     <>
       {/* Radar chart — show when 2+ tracks completed */}
@@ -72,7 +78,7 @@ export function GrillTrackSelector({
 
       {/* Track selector grid */}
       <div className="grid grid-cols-2 gap-3">
-        {Object.values(GRILL_TRACKS).map((track) => {
+        {tracks.map((track) => {
           const existingScore = trackScores.find((ts) => ts.trackId === track.id)
           const isSuggested = suggestedNextTrack?.trackId === track.id
           const IconComponent = TRACK_ICONS[track.icon] ?? Code

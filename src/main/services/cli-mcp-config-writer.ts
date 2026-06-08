@@ -125,7 +125,13 @@ export class CliMcpConfigWriter {
           'main',
           'mcp-servers'
         )
-      : join(__dirname, '..', 'mcp-servers')
+      : join(__dirname, 'mcp-servers')
+
+    // DB-backed MCP servers run as plain `node` (no Electron app global), so they can't
+    // resolve app.getPath('userData'). Pass the userData dir explicitly via DB_PATH.
+    const dbDir = app.getPath('userData')
+
+    log.info(`[cli-mcp-config] serverBasePath=${serverBasePath} isPackaged=${app.isPackaged}`)
 
     // ── Code Graph ──
     if (featureFlags.repomapEnabled && workspaceId) {
@@ -134,7 +140,8 @@ export class CliMcpConfigWriter {
         args: [join(serverBasePath, 'code-graph-server.js')],
         env: {
           WORKSPACE_ID: workspaceId,
-          WORKSPACE_PATH: workspacePath
+          WORKSPACE_PATH: workspacePath,
+          DB_PATH: dbDir
         }
       }
     }
@@ -144,7 +151,7 @@ export class CliMcpConfigWriter {
       servers['semantic-search'] = {
         command: 'node',
         args: [join(serverBasePath, 'semantic-search-server.js')],
-        env: { WORKSPACE_ID: workspaceId }
+        env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
       }
     }
 

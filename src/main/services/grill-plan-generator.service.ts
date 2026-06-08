@@ -7,9 +7,10 @@
  */
 
 import log from 'electron-log'
+import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { grillSessionRepository } from '../db/repositories/grill-session.repository'
-import type { GrillStructuredPlan } from '../../shared/types'
+import type { GrillStructuredPlan, GrillDecision, GrillTrackScore } from '../../shared/types'
 import type { GrillSession } from '../db/repositories/grill-session.repository'
 
 const planLog = log.scope('grill-plan-generator')
@@ -59,15 +60,24 @@ class GrillPlanGeneratorService {
    */
   async generate(params: {
     sessionId: string
+    ideaId?: string
     workspaceId: string
     workspacePath?: string
   }): Promise<GrillStructuredPlan> {
-    planLog.info(`[plan-gen] Generating plan for session=${params.sessionId}`)
+    planLog.info(
+      `[plan-gen] Generating plan for idea=${params.ideaId ?? 'n/a'} session=${params.sessionId}`
+    )
 
-    // 1. Load grill session from DB
-    const session = grillSessionRepository.findById(params.sessionId)
+    // 1. Load grill session from DB.
+    // The persisted row's PK is a fresh UUID — NOT the conversation id passed as
+    // sessionId — so resolve by ideaId first, falling back to findById for back-compat.
+    const session =
+      (params.ideaId ? grillSessionRepository.findByIdeaId(params.ideaId) : null) ??
+      grillSessionRepository.findById(params.sessionId)
     if (!session) {
-      throw new Error(`Grill session not found: ${params.sessionId}`)
+      throw new Error(
+        `Grill session not found: idea=${params.ideaId ?? 'n/a'} session=${params.sessionId}`
+      )
     }
 
     // 2. Build prompt from session data
@@ -77,19 +87,106 @@ class GrillPlanGeneratorService {
     const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
 
     // 4. Call Opus via CLI one-shot
-    const responseText = await this.callClaude(prompt, model)
+    const responseText = await this.callClaude(prompt, model, params.workspaceId)
 
     // 5. Parse structured plan from response
-    const plan = this.parsePlan(responseText, session)
+    const plan = this.parsePlan(responseText, session.feedback ?? '')
     if (!plan) {
       throw new Error('Failed to parse structured plan from Opus response')
     }
 
-    // 6. Persist to DB
-    grillSessionRepository.savePlan(params.sessionId, plan)
+    // 6. Persist to DB (use the resolved row id, not the conversation id)
+    grillSessionRepository.savePlan(session.id, plan)
 
-    planLog.info(`[plan-gen] ✓ Plan generated: ${plan.items.length} items, ${plan.risks.length} risks`)
+    planLog.info(
+      `[plan-gen] ✓ Plan generated: ${plan.items.length} items, ${plan.risks.length} risks`
+    )
     return plan
+  }
+
+  /**
+   * Generate a structured plan directly from grill decisions/scores, without a
+   * persisted grill session. Mirrors {@link generate} but skips the DB load and
+   * savePlan steps — used by the greenfield Create Project wizard, which runs
+   * session-less. Returns the synthesized GrillStructuredPlan for handoff.
+   */
+  async generateFromDecisions(params: {
+    projectName: string
+    description: string
+    grillDecisions: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+    workspaceId: string
+  }): Promise<GrillStructuredPlan> {
+    planLog.info(
+      `[plan-gen] Generating plan from decisions for project="${params.projectName}" (${params.grillDecisions.length} decisions)`
+    )
+
+    // 1. Build prompt from passed-in data
+    const prompt = this.buildPromptFromDecisions(params)
+
+    // 2. Resolve model (reuse the grill:plan model config)
+    const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
+
+    // 3. Call Claude via CLI one-shot
+    const responseText = await this.callClaude(prompt, model, params.workspaceId)
+
+    // 4. Parse structured plan from response
+    const plan = this.parsePlan(responseText, params.description.trim())
+    if (!plan) {
+      throw new Error('Failed to parse structured plan from Claude response')
+    }
+
+    planLog.info(
+      `[plan-gen] ✓ Plan generated from decisions: ${plan.items.length} items, ${plan.risks.length} risks`
+    )
+    return plan
+  }
+
+  /** Build the user prompt from passed-in grill decisions/scores (session-less) */
+  private buildPromptFromDecisions(params: {
+    projectName: string
+    description: string
+    grillDecisions: GrillDecision[]
+    trackScores?: GrillTrackScore[]
+  }): string {
+    const sections: string[] = []
+
+    sections.push(`# Grill Session: Plan Generation\n`)
+
+    // Idea context
+    sections.push(`## Idea\n`)
+    sections.push(`- **Project Name**: ${params.projectName.trim() || 'Untitled'}`)
+    if (params.description.trim()) {
+      sections.push(`- **Description**: ${params.description.trim()}`)
+    }
+    sections.push('')
+
+    // Track scores
+    if (params.trackScores && params.trackScores.length > 0) {
+      sections.push(`## Track Scores\n`)
+      for (const track of params.trackScores) {
+        sections.push(
+          `- **${track.trackId}**: ${track.score}/10${track.scoreLabel ? ` (${track.scoreLabel})` : ''}`
+        )
+      }
+      sections.push('')
+    }
+
+    // Decisions
+    if (params.grillDecisions.length > 0) {
+      sections.push(`## Current Decisions\n`)
+      for (const d of params.grillDecisions) {
+        const answer = d.selectedOption + (d.otherText ? ` (${d.otherText})` : '')
+        sections.push(`- **${d.questionText}**: ${answer}`)
+      }
+      sections.push('')
+    }
+
+    sections.push(
+      `\n---\nGenerate a comprehensive GrillStructuredPlan based on the above grill decisions.`
+    )
+
+    return sections.join('\n')
   }
 
   /** Build the user prompt from grill session data */
@@ -110,8 +207,14 @@ class GrillPlanGeneratorService {
     // Track scores
     if (session.trackScores && (session.trackScores as unknown[]).length > 0) {
       sections.push(`## Track Scores\n`)
-      for (const track of session.trackScores as Array<{ trackId: string; score: number; label?: string }>) {
-        sections.push(`- **${track.trackId}**: ${track.score}/10${track.label ? ` (${track.label})` : ''}`)
+      for (const track of session.trackScores as Array<{
+        trackId: string
+        score: number
+        label?: string
+      }>) {
+        sections.push(
+          `- **${track.trackId}**: ${track.score}/10${track.label ? ` (${track.label})` : ''}`
+        )
       }
       sections.push('')
     }
@@ -126,13 +229,26 @@ class GrillPlanGeneratorService {
     // Iteration history
     if (session.history && (session.history as unknown[]).length > 0) {
       sections.push(`## Iteration History\n`)
-      for (const entry of session.history as Array<{ trackId?: string; score?: number; feedback?: string; decisions?: unknown[] }>) {
-        sections.push(`### Iteration (${entry.trackId ?? 'unknown'}) — Score: ${entry.score ?? 'N/A'}`)
+      for (const entry of session.history as Array<{
+        trackId?: string
+        score?: number
+        feedback?: string
+        decisions?: unknown[]
+      }>) {
+        sections.push(
+          `### Iteration (${entry.trackId ?? 'unknown'}) — Score: ${entry.score ?? 'N/A'}`
+        )
         if (entry.feedback) sections.push(entry.feedback)
         if (entry.decisions && Array.isArray(entry.decisions)) {
           sections.push(`\nDecisions:`)
-          for (const d of entry.decisions as Array<{ question?: string; answer?: string; rationale?: string }>) {
-            sections.push(`- Q: ${d.question ?? '?'}\n  A: ${d.answer ?? '?'}${d.rationale ? `\n  Rationale: ${d.rationale}` : ''}`)
+          for (const d of entry.decisions as Array<{
+            question?: string
+            answer?: string
+            rationale?: string
+          }>) {
+            sections.push(
+              `- Q: ${d.question ?? '?'}\n  A: ${d.answer ?? '?'}${d.rationale ? `\n  Rationale: ${d.rationale}` : ''}`
+            )
           }
         }
         sections.push('')
@@ -142,10 +258,15 @@ class GrillPlanGeneratorService {
     // Question states (current iteration answers)
     if (session.questionStates) {
       sections.push(`## Current Decisions\n`)
-      const states = session.questionStates as Record<string, { question?: string; answer?: string; rationale?: string }>
+      const states = session.questionStates as Record<
+        string,
+        { question?: string; answer?: string; rationale?: string }
+      >
       for (const [key, state] of Object.entries(states)) {
         if (state.answer) {
-          sections.push(`- **${state.question ?? key}**: ${state.answer}${state.rationale ? ` (${state.rationale})` : ''}`)
+          sections.push(
+            `- **${state.question ?? key}**: ${state.answer}${state.rationale ? ` (${state.rationale})` : ''}`
+          )
         }
       }
       sections.push('')
@@ -164,30 +285,38 @@ class GrillPlanGeneratorService {
       }
     }
 
-    sections.push(`\n---\nGenerate a comprehensive GrillStructuredPlan based on the above grill session data.`)
+    sections.push(
+      `\n---\nGenerate a comprehensive GrillStructuredPlan based on the above grill session data.`
+    )
 
     return sections.join('\n')
   }
 
   /** Call Claude CLI in one-shot mode */
-  private async callClaude(prompt: string, model: string): Promise<string> {
-    const { execFileSync } = await import('node:child_process')
-
+  private async callClaude(prompt: string, model: string, workspaceId?: string): Promise<string> {
     try {
-      const result = execFileSync('claude', [
-        '-p', prompt,
-        '--model', model,
-        '--system-prompt', PLAN_GENERATION_SYSTEM_PROMPT,
-        '--permission-mode', 'plan',
-        '--max-turns', '1',
-        '--output-format', 'text'
-      ], {
-        encoding: 'utf-8',
-        timeout: 180_000, // 3 minutes — plan generation is heavier
-        maxBuffer: 1024 * 1024 * 10 // 10MB buffer for large plans
+      const { text } = await runOneShotClaude({
+        feature: 'grill_plan',
+        model,
+        workspaceId: workspaceId || null,
+        args: [
+          '-p',
+          prompt,
+          '--model',
+          model,
+          '--system-prompt',
+          PLAN_GENERATION_SYSTEM_PROMPT,
+          '--permission-mode',
+          'plan',
+          '--max-turns',
+          '1'
+        ],
+        cli: {
+          timeout: 180_000, // 3 minutes — plan generation is heavier
+          maxBuffer: 1024 * 1024 * 10 // 10MB buffer for large plans
+        }
       })
-
-      return result
+      return text
     } catch (err) {
       planLog.error('[plan-gen] Claude CLI call failed:', err)
       throw new Error(`Plan generation failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -195,7 +324,7 @@ class GrillPlanGeneratorService {
   }
 
   /** Parse the grill-plan JSON block from Claude's response */
-  private parsePlan(text: string, session: GrillSession): GrillStructuredPlan | null {
+  private parsePlan(text: string, fallbackDescription: string): GrillStructuredPlan | null {
     const regex = /```grill-plan\n([\s\S]*?)```/g
     let lastMatch: RegExpExecArray | null = null
     let match: RegExpExecArray | null
@@ -221,9 +350,9 @@ class GrillPlanGeneratorService {
       // Ensure version is set
       parsed.version = 1
 
-      // Ensure originalDescription is populated from session if missing
+      // Ensure originalDescription is populated from the fallback if missing
       if (!parsed.originalDescription) {
-        parsed.originalDescription = session.feedback ?? ''
+        parsed.originalDescription = fallbackDescription
       }
 
       return parsed

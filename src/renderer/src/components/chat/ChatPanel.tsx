@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { Search, X, Bot, ClipboardList, Hammer, Skull } from 'lucide-react'
-import { useChatStore, useChatActions, useWorkspaceStore, useCodeChangesStore } from '@renderer/store'
+import {
+  useChatStore,
+  useChatActions,
+  useWorkspaceStore,
+  useCodeChangesStore
+} from '@renderer/store'
 import {
   MessageList,
   MessageInput,
@@ -17,7 +22,11 @@ import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
 import TodoTaskBar from './TodoTaskBar'
-import { StackDriftBanner, BuildProgressInline, GenerateSpecialistModal } from '@renderer/components/specialist'
+import {
+  StackDriftBanner,
+  BuildProgressInline,
+  GenerateSpecialistModal
+} from '@renderer/components/specialist'
 import type { ConversationMode } from '../../../../shared/types'
 import { useChatPanelEffects } from './useChatPanelEffects'
 import { useRateLimitState } from './useRateLimitState'
@@ -222,7 +231,7 @@ export default function ChatPanel({
         )}
 
         {/* Rate limit warning banner */}
-        {rateLimitState && rateLimitState.status !== 'allowed' && (
+        {rateLimitState && (
           <div className="px-6 py-2 border-b border-border-subtle">
             <RateLimitBadge
               utilization={rateLimitState.utilization ?? 0}
@@ -364,9 +373,7 @@ export default function ChatPanel({
               </div>
             )}
 
-            {activeConversation && (
-              <TodoTaskBar conversationId={activeConversation.id} />
-            )}
+            {activeConversation && <TodoTaskBar conversationId={activeConversation.id} />}
 
             <div className="flex-shrink-0 px-6 pb-4 pt-2">
               <AttachmentDropzone

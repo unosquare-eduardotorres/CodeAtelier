@@ -33,7 +33,9 @@ function mapRow(row: IdeaRow): Idea {
 
 export class IdeaRepository extends BaseRepository<IdeaRow, Idea> {
   protected readonly tableName = 'ideas'
-  protected mapRow(row: IdeaRow): Idea { return mapRow(row) }
+  protected mapRow(row: IdeaRow): Idea {
+    return mapRow(row)
+  }
 
   create(workspaceId: string, title: string, description: string): Idea {
     const stmt = this.db().prepare(`
@@ -85,7 +87,9 @@ export class IdeaRepository extends BaseRepository<IdeaRow, Idea> {
   /** Helper for single-field updates that return the updated row */
   private updateField(id: string, column: string, value: unknown): Idea | undefined {
     const row = this.db()
-      .prepare(`UPDATE ideas SET ${column} = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`)
+      .prepare(
+        `UPDATE ideas SET ${column} = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`
+      )
       .get(value, id) as IdeaRow | undefined
     return row ? this.mapRow(row) : undefined
   }
@@ -108,6 +112,11 @@ export class IdeaRepository extends BaseRepository<IdeaRow, Idea> {
 
   saveGrillDecisions(id: string, decisions: string): Idea | undefined {
     return this.updateField(id, 'grill_decisions', decisions)
+  }
+
+  /** Clear the grill decisions snapshot (on completion handoff or discard). */
+  clearGrillDecisions(id: string): Idea | undefined {
+    return this.updateField(id, 'grill_decisions', null)
   }
 
   delete(id: string): void {

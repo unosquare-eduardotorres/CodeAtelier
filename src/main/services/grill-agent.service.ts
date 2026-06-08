@@ -10,7 +10,7 @@
 
 import { EventEmitter } from 'node:events'
 import log from 'electron-log'
-import type { GrillTrackId, GrillEvaluation } from '../../shared/types'
+import type { GrillTrackId, GrillEvaluation, AgentStatus } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
 import { AgentSessionService } from './agent-session.service'
 import { GrillRoleAdapter } from './role-adapters/grill.adapter'
@@ -86,6 +86,12 @@ export class GrillAgentService extends EventEmitter {
       this.emit('stream', { workspaceId: params.workspaceId, chunk })
     })
 
+    // Re-emit inner-session status (token/context counters) so the live token
+    // usage modal reflects grill activity, not just chat.
+    session.on('statusUpdate', (status: AgentStatus) => {
+      this.emit('status', { workspaceId: params.workspaceId, status })
+    })
+
     try {
       // Start session in plan mode (read-only)
       await session.start(params.workspacePath, 'plan')
@@ -157,6 +163,12 @@ export class GrillAgentService extends EventEmitter {
     // Wire streaming events for live output
     session.on('chunk', (chunk: StreamChunk) => {
       this.emit('stream', { chunk })
+    })
+
+    // Wire status updates so the modal's live counters move during a greenfield grill.
+    // No workspaceId exists yet; the IPC status listener's guard passes when undefined.
+    session.on('statusUpdate', (status: AgentStatus) => {
+      this.emit('status', { status })
     })
 
     try {

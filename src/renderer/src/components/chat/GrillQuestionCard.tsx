@@ -29,7 +29,18 @@ export function QuestionItem({
   state: QuestionState
   onChange: (state: QuestionState) => void
 }): React.JSX.Element {
-  const otherInputRef = useRef<HTMLInputElement>(null)
+  const otherInputRef = useRef<HTMLTextAreaElement>(null)
+
+  const autoResize = useCallback(() => {
+    const el = otherInputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
+
+  useEffect(() => {
+    autoResize()
+  }, [state.otherText, autoResize])
 
   const handleOptionToggle = (label: string): void => {
     if (state.skipped) return
@@ -194,10 +205,10 @@ export function QuestionItem({
               </button>
               <div className="flex-1 cursor-pointer" onClick={handleOtherSelect}>
                 <span className="text-sm text-text-muted">Other:</span>
-                <input
+                <textarea
                   ref={otherInputRef}
-                  type="text"
                   value={state.otherText}
+                  rows={1}
                   onChange={(e) => {
                     const newState = { ...state, otherText: e.target.value, otherSelected: true }
                     if (!question.multiSelect) {
@@ -208,7 +219,7 @@ export function QuestionItem({
                   onClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => e.stopPropagation()}
                   placeholder="Type your answer..."
-                  className="mt-1 w-full bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-primary transition-colors"
+                  className="mt-1 w-full resize-none overflow-y-auto max-h-60 bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-primary transition-colors leading-relaxed"
                 />
               </div>
             </div>

@@ -24,6 +24,8 @@ interface MpaRunRow {
   created_at: string
   completed_at: string | null
   total_tokens: number
+  campaign_id: string | null
+  order_index: number | null
 }
 
 interface MpaPhaseRow {
@@ -64,7 +66,9 @@ function mapRunRow(row: MpaRunRow): MpaRun {
     configJson,
     createdAt: row.created_at,
     completedAt: row.completed_at,
-    totalTokens: row.total_tokens
+    totalTokens: row.total_tokens,
+    campaignId: row.campaign_id ?? null,
+    orderIndex: row.order_index ?? null
   }
 }
 
@@ -90,7 +94,9 @@ function mapPhaseRow(row: MpaPhaseRow): MpaPhase {
 
 export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
   protected readonly tableName = 'mpa_runs'
-  protected mapRow(row: MpaRunRow): MpaRun { return mapRunRow(row) }
+  protected mapRow(row: MpaRunRow): MpaRun {
+    return mapRunRow(row)
+  }
 
   createRun(params: {
     workspaceId: string
@@ -99,11 +105,13 @@ export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
     goalType: MpaGoalType
     grillSessionId?: string
     configJson?: Record<string, unknown>
+    campaignId?: string
+    orderIndex?: number
   }): MpaRun {
     const row = this.db()
       .prepare(
-        `INSERT INTO mpa_runs (workspace_id, title, goal, goal_type, grill_session_id, config_json)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO mpa_runs (workspace_id, title, goal, goal_type, grill_session_id, config_json, campaign_id, order_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -112,20 +120,44 @@ export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
         params.goal,
         params.goalType,
         params.grillSessionId ?? null,
-        JSON.stringify(params.configJson ?? {})
+        JSON.stringify(params.configJson ?? {}),
+        params.campaignId ?? null,
+        params.orderIndex ?? null
       ) as MpaRunRow
     return mapRunRow(row)
+  }
+
+  /** Runs belonging to a campaign, in execution order. */
+  findByCampaign(campaignId: string): MpaRun[] {
+    return this.findManyBy('campaign_id', campaignId, { orderBy: 'order_index ASC' })
+  }
+
+  /** Delete any prior run(s) for a campaign's order index. Called before a retry
+   *  re-runs that goal so campaign history shows a single attempt per goal
+   *  instead of the failed run plus the retry. Cascades to the run's phases +
+   *  artifacts via ON DELETE CASCADE. Returns the number of rows removed. */
+  deleteByCampaignOrder(campaignId: string, orderIndex: number): number {
+    return this.db()
+      .prepare('DELETE FROM mpa_runs WHERE campaign_id = ? AND order_index = ?')
+      .run(campaignId, orderIndex).changes
   }
 
   override findById(id: string): MpaRun | undefined {
     return this.findOneBy('id', id)
   }
 
+  /** Standalone (non-campaign) runs for a workspace. Campaign goals are listed
+   *  under their campaign group, so they are excluded here to avoid duplication. */
   findByWorkspace(workspaceId: string, limit = 20): MpaRun[] {
-    return this.findManyBy('workspace_id', workspaceId, {
-      orderBy: 'created_at DESC',
-      limit
-    })
+    const rows = this.db()
+      .prepare(
+        `SELECT * FROM mpa_runs
+         WHERE workspace_id = ? AND campaign_id IS NULL
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(workspaceId, limit) as MpaRunRow[]
+    return rows.map(mapRunRow)
   }
 
   updateRun(
@@ -254,18 +286,19 @@ export class MpaRunRepository extends BaseRepository<MpaRunRow, MpaRun> {
   }
 
   appendStreamContent(id: string, chunk: string): void {
-    this.db().prepare('UPDATE mpa_phases SET stream_content = stream_content || ? WHERE id = ?').run(
-      chunk,
-      id
-    )
+    this.db()
+      .prepare('UPDATE mpa_phases SET stream_content = stream_content || ? WHERE id = ?')
+      .run(chunk, id)
   }
 
   /** Mark all 'running' runs as 'failed' (for stale detection on app restart) */
   markStaleAsFailed(): number {
-    return this.db().prepare(
-      `UPDATE mpa_runs SET status = 'failed', completed_at = datetime('now')
+    return this.db()
+      .prepare(
+        `UPDATE mpa_runs SET status = 'failed', completed_at = datetime('now')
        WHERE status = 'running'`
-    ).run().changes
+      )
+      .run().changes
   }
 
   /** Find the latest resumable run for a workspace (failed or cancelled) */

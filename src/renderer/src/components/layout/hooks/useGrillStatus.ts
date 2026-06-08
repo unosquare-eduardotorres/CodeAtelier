@@ -14,14 +14,28 @@ export function useGrillStatus(workspaceId: string | undefined): GrillStatusInfo
   const [grillStatus, setGrillStatus] = useState<GrillStatusInfo | null>(null)
 
   useEffect(() => {
-    if (!workspaceId) {
-      setGrillStatus(null)
-      return
+    if (!workspaceId) return
+
+    let cancelled = false
+    let gotLiveEvent = false
+
+    // Fetch initial status — but don't clobber a live event that arrived first
+    window.api.grillGetStatus({ workspaceId }).then((s) => {
+      if (!cancelled && !gotLiveEvent) setGrillStatus(s)
+    })
+
+    // Live events always win over the initial fetch
+    const unsub = window.api.onGrillStatusChanged((s) => {
+      gotLiveEvent = true
+      setGrillStatus(s)
+    })
+
+    return () => {
+      cancelled = true
+      unsub()
     }
-    window.api.grillGetStatus({ workspaceId }).then(setGrillStatus)
-    const unsub = window.api.onGrillStatusChanged(setGrillStatus)
-    return unsub
   }, [workspaceId])
 
-  return grillStatus
+  // No workspace → no status (derived, avoids synchronous setState in effect)
+  return workspaceId ? grillStatus : null
 }
