@@ -248,7 +248,11 @@ export function finalizeStreamAction(
         toolActivities: taskId ? state.toolActivities : [],
         streamingTaskId: null,
         streamingSpecialist: taskId ? state.streamingSpecialist : null,
-        streamingConversationIds: newStreamingIds
+        streamingConversationIds: newStreamingIds,
+        // Clear stale ask-question state on final complete
+        ...(!taskId
+          ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
+          : {})
       }
     })
   } else if (taskId) {
@@ -267,7 +271,11 @@ export function finalizeStreamAction(
         activeRequestId: null,
         toolActivities: [],
         streamingTaskId: null,
-        streamingConversationIds: newStreamingIds
+        streamingConversationIds: newStreamingIds,
+        // Clear stale ask-question state
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
       }
     })
     // Reload messages from DB asynchronously.

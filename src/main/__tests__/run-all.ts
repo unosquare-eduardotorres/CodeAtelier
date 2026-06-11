@@ -181,6 +181,13 @@ import '../services/__tests__/workspace-deploy-parsing.test'
 // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
 import '../services/__tests__/chat-stream-lifecycle.test'
 
+// ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
+import '../services/__tests__/telemetry-recorder.test'
+import '../ipc/__tests__/listener-cleanup.test'
+import '../services/__tests__/prompt-builder.test'
+import '../services/__tests__/skill-prompt-composer.test'
+import '../services/__tests__/sandbox-config.test'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────

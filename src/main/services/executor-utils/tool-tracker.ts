@@ -28,6 +28,11 @@ export class ToolTracker {
   /** Current structured output schema name (set during json_delta streaming) */
   currentSchemaName: string | null = null
 
+  /** Number of tool calls that have been registered but not yet consumed (pending results). */
+  get pendingToolCount(): number {
+    return this.toolIdToName.size
+  }
+
   /**
    * Register a tool use mapping (id → name).
    */

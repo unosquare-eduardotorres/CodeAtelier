@@ -158,6 +158,13 @@ import './workspace-deploy-parsing.test'
 // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
 import './chat-stream-lifecycle.test'
 
+// ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
+import './telemetry-recorder.test'
+import '../../ipc/__tests__/listener-cleanup.test'
+import './prompt-builder.test'
+import './skill-prompt-composer.test'
+import './sandbox-config.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

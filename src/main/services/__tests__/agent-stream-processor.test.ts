@@ -179,6 +179,94 @@ describe('AgentStreamProcessor.processContentChunk', () => {
   })
 })
 
+// ── Expanded coverage (Round 4) ──
+
+describe('AgentStreamProcessor.processContentChunk — plan-mode tool block detection', () => {
+  const ctx = { conversationId: 'c2', isBuildMode: false, streamState: {} as never }
+
+  test('tool_result with Write block in plan mode sets planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean }
+    const r = proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'Write',
+        content: '<tool_use_error>No such tool available: Write</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(r, 'next')
+    assert.equal(streamState.planModeToolBlock, true)
+  })
+
+  test('tool_result without Write/Edit does NOT set planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean }
+    proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'Read',
+        content: '<tool_use_error>No such tool available: Read</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.planModeToolBlock, undefined)
+  })
+})
+
+describe('AgentStreamProcessor.checkCompaction — decision.level undefined', () => {
+  test('no event emitted when below all thresholds', () => {
+    const host = makeHost({ compactSuggestThreshold: 1000, compactAutoThreshold: 2000 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(10) // way below warning band
+    const hasCompactNeeded = host.emit.calls.some((c) => c[0] === 'compactNeeded')
+    assert.equal(hasCompactNeeded, false)
+  })
+})
+
+describe('AgentStreamProcessor.processContentChunk — text accumulation', () => {
+  const ctx = { conversationId: 'c3', isBuildMode: true, streamState: {} as never }
+
+  test('text chunk sets hasTextAfterLastTool flag', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { hasTextAfterLastTool: false } as { hasTextAfterLastTool: boolean }
+    proc.processContentChunk(
+      { type: 'text', content: 'some text' } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.hasTextAfterLastTool, true)
+  })
+
+  test('text chunk with empty content still returns next', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk(
+      { type: 'text', content: '' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(r, 'next')
+  })
+})
+
+describe('AgentStreamProcessor.processContentChunk — status updates', () => {
+  const ctx = { conversationId: 'c4', isBuildMode: true, streamState: {} as never }
+
+  test('text chunk sets currentStatus to writing', () => {
+    const host = makeHost({ currentStatus: 'idle' })
+    const proc = new AgentStreamProcessor(host)
+    proc.processContentChunk(
+      { type: 'text', content: 'hi' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(host.currentStatus, 'writing')
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

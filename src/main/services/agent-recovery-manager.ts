@@ -210,6 +210,26 @@ export class AgentRecoveryManager {
     )
 
     // ── Auto-continue on max_turns (also triggered by local plan circuit breaker) ──
+    // BUT: skip if the underlying cause was API overload — retrying is pointless
+    if (streamState.overloadDetected && streamState.lastTerminalReason === 'max_turns') {
+      this.s.log.warn(
+        `[PIPELINE:overload-skip-continue] Skipping auto-continue — API overload detected for conversationId=${conversationId}`
+      )
+      this.s.emit('chunk', {
+        type: 'text',
+        content:
+          '\n\n---\n\n' +
+          '⚠️ **Claude is temporarily overloaded** — the API returned 529 errors during this session. ' +
+          'This is a server-side issue and not a problem with your request.\n\n' +
+          'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).'
+      } as StreamChunk)
+      this.s.currentStatus = 'idle'
+      this.s.flushTokenUsage()
+      this.s.emit('statusUpdate', this.s.getStatus())
+      this.s.emit('complete')
+      return
+    }
+
     if (
       streamState.lastTerminalReason === 'max_turns' &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
@@ -407,6 +427,29 @@ export class AgentRecoveryManager {
         /* non-fatal */
       }
       this.saveCurrentPlanState(this.s.currentConversationId)
+    }
+
+    // ── Detect API overload errors — don't auto-continue ──
+    const isOverload =
+      !timedOut &&
+      error.name !== 'AbortError' &&
+      /529|overloaded|server_is_overloaded|503 Service/i.test(error.message)
+
+    if (isOverload) {
+      this.s.log.warn(`[PIPELINE:overload-error] API overload error: ${error.message}`)
+      this.s.emit('chunk', {
+        type: 'text',
+        content:
+          '\n\n---\n\n' +
+          '⚠️ **Claude is temporarily overloaded** — the API returned server errors during this session. ' +
+          'This is a server-side issue and not a problem with your request.\n\n' +
+          'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).'
+      } as StreamChunk)
+      this.s.currentStatus = 'idle'
+      this.s.flushTokenUsage()
+      this.s.emit('statusUpdate', this.s.getStatus())
+      this.s.emit('complete')
+      return
     }
 
     // ── Auto-continue on max_turns error ──

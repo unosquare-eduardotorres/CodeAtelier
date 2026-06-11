@@ -134,7 +134,11 @@ export interface CLIExecuteResult {
 
 // ── CLIExecutor class ──
 
-/** Per-message timeout for iterator.next() — prevents indefinite hangs when CLI stalls. */
+/**
+ * Per-message timeout for iterator.next() — prevents indefinite hangs when
+ * the CLI stalls with no tool call pending. Disabled during pending tool
+ * calls (e.g., ask_user waiting for human interaction).
+ */
 const MESSAGE_TIMEOUT_MS = 5 * 60_000 // 5 minutes
 
 /** Regex for stderr patterns that indicate real errors (not progress info). */
@@ -230,23 +234,36 @@ export class CLIExecutor {
       try {
         while (true) {
           // Per-message timeout prevents indefinite hangs when CLI stalls
-          // (e.g., MCP tool deadlock). Global session timeout is 10-30 min;
-          // this provides faster detection at the message level.
-          let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-          const iterResult = await Promise.race([
-            this.ndjsonIterator.next(),
-            new Promise<never>((_, reject) => {
-              timeoutHandle = setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
-                    )
-                  ),
-                MESSAGE_TIMEOUT_MS
-              )
-            })
-          ]).finally(() => clearTimeout(timeoutHandle))
+          // (e.g., MCP tool deadlock). DISABLED when a tool call is pending —
+          // the CLI is legitimately blocked waiting for the MCP tool result
+          // (e.g., ask_user waiting for human input). The process exit (stream
+          // close) is the only termination signal during tool-pending waits.
+          let iterResult: IteratorResult<Record<string, unknown>>
+          if (tools.pendingToolCount > 0) {
+            // Tool call in flight — no timeout. If the process dies, the
+            // stream closes and iterator.next() returns { done: true }.
+            executorLog.debug(
+              `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — timeout suspended`
+            )
+            iterResult = await this.ndjsonIterator.next()
+          } else {
+            // No tools pending — use normal timeout to detect CLI stalls
+            let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+            iterResult = await Promise.race([
+              this.ndjsonIterator.next(),
+              new Promise<never>((_, reject) => {
+                timeoutHandle = setTimeout(
+                  () =>
+                    reject(
+                      new Error(
+                        `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
+                      )
+                    ),
+                  MESSAGE_TIMEOUT_MS
+                )
+              })
+            ]).finally(() => clearTimeout(timeoutHandle))
+          }
           if (iterResult.done) {
             executorLog.info('[CLI:stream] Iterator exhausted (process ended)')
             this.ndjsonIterator = null

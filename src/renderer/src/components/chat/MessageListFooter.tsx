@@ -147,7 +147,7 @@ export default function MessageListFooter({
       )}
 
       {/* Thinking indicator (shared primitive — chat keeps no live-text bubble) */}
-      {isStreaming && (
+      {isStreaming && !hasPendingQuestions && (
         <ThinkingIndicator
           identity={{
             name: thinkingIdentity.name,

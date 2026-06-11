@@ -80,6 +80,8 @@ interface StreamLoopState {
   hasTextAfterLastTool: boolean
   lastTerminalReason: string | undefined
   sessionRecoveryNeeded: boolean
+  /** Set when api_retry chunks indicate server overload (529/503/overloaded) */
+  overloadDetected?: boolean
 }
 
 /** Options bag for the executeStream orchestrator. */
@@ -968,7 +970,8 @@ export class AgentSessionService extends AgentBaseService {
         messageStopReceived: false,
         hasTextAfterLastTool: true,
         lastTerminalReason: undefined,
-        sessionRecoveryNeeded: false
+        sessionRecoveryNeeded: false,
+        overloadDetected: false
       }
 
       // ── Select executor backend ──

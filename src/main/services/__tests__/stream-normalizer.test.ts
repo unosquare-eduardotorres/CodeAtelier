@@ -498,7 +498,7 @@ describe('normalizeMessage — result', () => {
 
   test('captures terminal_reason, session_title, and origin', () => {
     const state = makeState()
-    const chunks = [...normalizeMessage(
+    ;[...normalizeMessage(
       {
         type: 'result',
         result: 'done',
@@ -521,7 +521,7 @@ describe('normalizeMessage — result', () => {
     // Re-run with proper state
     const tools = new ToolTracker()
     const s = makeState()
-    const chunks = [...normalizeMessage(
+    ;[...normalizeMessage(
       { type: 'result', result: 'done', sessionTitle: 'CamelTitle' },
       tools, new TokenAccountant(), s, '/ws'
     )]
@@ -541,7 +541,7 @@ describe('normalizeMessage — result', () => {
 
   test('structured_output string fallback', () => {
     const state = makeState()
-    const chunks = [...normalizeMessage(
+    ;[...normalizeMessage(
       { type: 'result', structured_output: 'raw text output' },
       new ToolTracker(), new TokenAccountant(), state, '/ws'
     )]

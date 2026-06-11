@@ -27,6 +27,16 @@
     "test:cov:html": "c8 --reporter=html --reporter=text node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:check": "c8 --check-coverage --lines 33 --functions 50 --branches 75 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts"
   },
+  "dependencies": {
+    "@electron-toolkit/utils": "^4.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opencode-ai/sdk": "^1.15.3",
+    "better-sqlite3": "^12.10.0",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.3",
+    "jsdom": "^29.0.1",
+    "repomap-mcp": "^0.1.1"
+  },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
