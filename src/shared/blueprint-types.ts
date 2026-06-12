@@ -1,0 +1,249 @@
+/**
+ * Blueprint types — shared between main and renderer processes.
+ *
+ * A Blueprint is a structured specification pipeline that takes a feature idea
+ * through 7 phases: specify → clarify → plan → tasks → review → build → verify.
+ */
+
+// ── Phase & Status Enums ──
+
+export type BlueprintPhaseType =
+  | 'specify'
+  | 'clarify'
+  | 'plan'
+  | 'tasks'
+  | 'review'
+  | 'build'
+  | 'verify'
+
+export type BlueprintStatus =
+  | 'draft'
+  | 'specifying'
+  | 'clarifying'
+  | 'planning'
+  | 'tasking'
+  | 'reviewing'
+  | 'building'
+  | 'verifying'
+  | 'complete'
+  | 'failed'
+  | 'cancelled'
+
+export type BlueprintPhaseStatus = 'pending' | 'active' | 'complete' | 'skipped' | 'failed'
+
+export type BlueprintPriority = 'P1' | 'P2' | 'P3'
+
+export type BlueprintTaskStatus = 'pending' | 'running' | 'complete' | 'failed'
+
+// ── Core Entities ──
+
+export interface Blueprint {
+  id: string
+  workspaceId: string
+  title: string
+  shortName: string
+  description: string
+  status: BlueprintStatus
+  currentPhase: BlueprintPhaseType
+  priority: BlueprintPriority
+  sourceIdeaId: string | null
+  constitutionSnapshot: string | null
+  settingsJson: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BlueprintPhase {
+  id: string
+  blueprintId: string
+  phase: BlueprintPhaseType
+  status: BlueprintPhaseStatus
+  conversationId: string | null
+  artifactsJson: BlueprintArtifact[]
+  contextSnapshot: string | null
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface BlueprintArtifact {
+  type: string
+  filePath?: string
+  contentMd?: string
+  contentJson?: Record<string, unknown>
+}
+
+export interface BlueprintTask {
+  id: string
+  blueprintId: string
+  taskId: string
+  wave: number
+  userStory: string | null
+  description: string
+  filePathsJson: string[]
+  isParallel: boolean
+  dependsOnJson: string[]
+  status: BlueprintTaskStatus
+  executorRunId: string | null
+  startedAt: string | null
+  completedAt: string | null
+}
+
+// ── Composite / Joined Types ──
+
+export interface BlueprintWithPhases extends Blueprint {
+  phases: BlueprintPhase[]
+}
+
+export interface BlueprintWithDetails extends BlueprintWithPhases {
+  tasks: BlueprintTask[]
+}
+
+// ── Create / Update Params ──
+
+export interface CreateBlueprintParams {
+  workspaceId: string
+  title: string
+  description?: string
+  priority?: BlueprintPriority
+  sourceIdeaId?: string
+  settingsJson?: Record<string, unknown>
+}
+
+export interface CreateFromIdeaParams {
+  ideaId: string
+  workspaceId: string
+}
+
+// ── Phase Context (assembled for prompt injection) ──
+
+export interface PhaseContext {
+  blueprint: {
+    id: string
+    title: string
+    shortName: string
+    description: string
+    priority: BlueprintPriority
+    currentPhase: BlueprintPhaseType
+    settings: Record<string, unknown>
+  }
+  constitution: string | null
+  previousArtifacts: BlueprintArtifact[]
+  specFilePath: string
+  blueprintDir: string
+  grillDecisions?: GrillDecisionForBlueprint[]
+}
+
+export interface GrillDecisionForBlueprint {
+  header: string
+  selectedOption: string
+  reason: string
+}
+
+// ── Phase Completion (parsed from agent output) ──
+
+export interface BlueprintPhaseCompletion {
+  phase: BlueprintPhaseType
+  status: 'complete' | 'needs_clarification'
+  artifacts?: Array<{ type: string; path: string }>
+  [key: string]: unknown
+}
+
+// ── IPC Event Payloads ──
+
+export interface BlueprintPhaseStartPayload {
+  blueprintId: string
+  workspaceId: string
+  phase: BlueprintPhaseType
+}
+
+export interface BlueprintPhaseProgressPayload {
+  blueprintId: string
+  workspaceId: string
+  phase: BlueprintPhaseType
+  text: string
+}
+
+export interface BlueprintPhaseCompletePayload {
+  blueprintId: string
+  workspaceId: string
+  phase: BlueprintPhaseType
+  status: BlueprintPhaseStatus
+  completion?: BlueprintPhaseCompletion
+}
+
+export interface BlueprintPhaseArtifactPayload {
+  blueprintId: string
+  workspaceId: string
+  phase: BlueprintPhaseType
+  artifact: BlueprintArtifact
+}
+
+export interface BlueprintApprovalNeededPayload {
+  blueprintId: string
+  workspaceId: string
+  phase: BlueprintPhaseType
+  planSummary: string
+}
+
+export interface BlueprintWaveStartPayload {
+  blueprintId: string
+  workspaceId: string
+  wave: number
+  taskCount: number
+}
+
+export interface BlueprintWaveTaskStartPayload {
+  blueprintId: string
+  workspaceId: string
+  wave: number
+  taskId: string
+  description: string
+}
+
+export interface BlueprintWaveTaskCompletePayload {
+  blueprintId: string
+  workspaceId: string
+  wave: number
+  taskId: string
+  status: BlueprintTaskStatus
+}
+
+export interface BlueprintWaveCompletePayload {
+  blueprintId: string
+  workspaceId: string
+  wave: number
+  status: 'complete' | 'failed'
+}
+
+// ── Pipeline Status (for UI) ──
+
+export interface BlueprintPipelineStatus {
+  status: 'idle' | 'running' | 'paused' | 'complete' | 'failed'
+  blueprintId: string | null
+  currentPhase: BlueprintPhaseType | null
+  activeWave: number | null
+  awaitingApproval: boolean
+}
+
+// ── Ordered phases (useful for iteration) ──
+
+export const BLUEPRINT_PHASE_ORDER: readonly BlueprintPhaseType[] = [
+  'specify',
+  'clarify',
+  'plan',
+  'tasks',
+  'review',
+  'build',
+  'verify'
+] as const
+
+/** Map blueprint phase → active status name for the blueprint record */
+export const PHASE_TO_STATUS: Record<BlueprintPhaseType, BlueprintStatus> = {
+  specify: 'specifying',
+  clarify: 'clarifying',
+  plan: 'planning',
+  tasks: 'tasking',
+  review: 'reviewing',
+  build: 'building',
+  verify: 'verifying'
+}

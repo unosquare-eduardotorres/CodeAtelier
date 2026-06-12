@@ -62,7 +62,8 @@ import type {
   UpdateConfig,
   GrillDecision,
   GrillTrackScore,
-  GrillStructuredPlan
+  GrillStructuredPlan,
+  PlanRecord
 } from '../shared/types'
 
 interface Api {
@@ -920,6 +921,7 @@ interface Api {
   }) => Promise<void>
   auditResume: (args: { workspaceId: string }) => Promise<AuditRun | null>
   auditExportMarkdown: (args: { workspaceId: string }) => Promise<void>
+  auditExportPlanMarkdown: (args: { workspaceId: string }) => Promise<void>
   auditGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<AuditRun[]>
   auditDeleteRun: (args: { runId: string }) => Promise<{ deleted: boolean }>
   auditGeneratePlan: (args: {
@@ -928,6 +930,26 @@ interface Api {
     findings: AuditFinding[]
   }) => Promise<AuditPlanRecord>
   auditGetPlans: (args: { runId: string }) => Promise<AuditPlanRecord[]>
+
+  // Plan Hub (unified plan registry)
+  planGetAll: (args: {
+    workspaceId: string
+    filters?: { status?: string | string[]; source?: string; search?: string }
+  }) => Promise<PlanRecord[]>
+  planGetById: (args: { planId: string }) => Promise<PlanRecord | null>
+  planUpdateStatus: (args: {
+    planId: string
+    status: string
+    linkedConversationId?: string
+    linkedMpaRunId?: string
+    linkedCouncilSessionId?: string
+  }) => Promise<{ success: boolean }>
+  planDelete: (args: { planId: string }) => Promise<{ deleted: boolean }>
+  planImport: (args: {
+    planId: string
+    workspaceId: string
+  }) => Promise<{ conversationId: string; planId: string }>
+
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
   onAuditComplete: (cb: (data: AuditRun) => void) => () => void
@@ -1148,6 +1170,140 @@ interface Api {
       status: string
       completedGoals: number
       totalGoals: number
+    }) => void
+  ) => () => void
+
+  // Blueprint Pipeline (Specify + Clarify)
+  blueprintCreate: (args: {
+    workspaceId: string
+    title: string
+    description?: string
+    priority?: string
+    settingsJson?: Record<string, unknown>
+  }) => Promise<unknown>
+  blueprintCreateFromIdea: (args: {
+    ideaId: string
+    workspaceId: string
+  }) => Promise<unknown>
+  blueprintStartSpecify: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintStartClarify: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintClarifyAnswer: (args: {
+    blueprintId: string
+    workspaceId: string
+    message: string
+  }) => Promise<{ sent: boolean }>
+  blueprintSkipClarify: (args: {
+    blueprintId: string
+  }) => Promise<{ skipped: boolean }>
+  blueprintStartPlan: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintStartTasks: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintStartReview: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintStartBuild: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintStartVerify: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ started: boolean }>
+  blueprintGet: (args: { id: string }) => Promise<unknown>
+  blueprintGetDetails: (args: { id: string }) => Promise<unknown>
+  blueprintList: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
+  blueprintCancel: (args: { workspaceId: string }) => Promise<{ cancelled: boolean }>
+  blueprintGetConstitution: (args: {
+    workspaceId: string
+  }) => Promise<{ constitutionMd: string | null; constitutionVersion: string } | null>
+  blueprintSaveConstitution: (args: {
+    workspaceId: string
+    constitutionMd: string
+    version?: string
+  }) => Promise<{ saved: boolean }>
+  blueprintGetPipelineStatus: (args: {
+    workspaceId: string
+  }) => Promise<{ running: boolean; blueprintId: string | null; currentPhase: string | null }>
+  onBlueprintPhaseStart: (
+    cb: (data: { blueprintId: string; workspaceId: string; phase: string }) => void
+  ) => () => void
+  onBlueprintPhaseProgress: (
+    cb: (data: { blueprintId: string; workspaceId: string; phase: string; text: string }) => void
+  ) => () => void
+  onBlueprintPhaseComplete: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      status: string
+      completion?: unknown
+    }) => void
+  ) => () => void
+  onBlueprintPhaseArtifact: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      artifact: { type: string; contentMd?: string; contentJson?: unknown }
+    }) => void
+  ) => () => void
+  blueprintApprovalRespond: (args: {
+    blueprintId: string
+    approved: boolean
+    feedback?: string
+  }) => Promise<{ responded: boolean }>
+  onBlueprintApprovalNeeded: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      planSummary: string
+    }) => void
+  ) => () => void
+  onBlueprintWaveStart: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      taskCount: number
+    }) => void
+  ) => () => void
+  onBlueprintWaveTaskStart: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      taskId: string
+      description: string
+    }) => void
+  ) => () => void
+  onBlueprintWaveTaskComplete: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      taskId: string
+      status: string
+    }) => void
+  ) => () => void
+  onBlueprintWaveComplete: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      status: string
     }) => void
   ) => () => void
 

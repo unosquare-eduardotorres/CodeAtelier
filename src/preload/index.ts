@@ -59,7 +59,8 @@ import type {
   SemanticSearchResult,
   GrillDecision,
   GrillTrackScore,
-  GrillStructuredPlan
+  GrillStructuredPlan,
+  PlanRecord
 } from '../shared/types'
 
 const api = {
@@ -1719,6 +1720,9 @@ const api = {
   auditExportMarkdown: (args: { workspaceId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_EXPORT_MARKDOWN, args),
 
+  auditExportPlanMarkdown: (args: { workspaceId: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_EXPORT_PLAN_MARKDOWN, args),
+
   auditGetHistory: (args: { workspaceId: string; limit?: number }): Promise<AuditRun[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_HISTORY, args),
 
@@ -1733,6 +1737,33 @@ const api = {
 
   auditGetPlans: (args: { runId: string }): Promise<AuditPlanRecord[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_PLANS, args),
+
+  // ── Plan Hub (unified plan registry) ──
+  planGetAll: (args: {
+    workspaceId: string
+    filters?: { status?: string | string[]; source?: string; search?: string }
+  }): Promise<PlanRecord[]> => ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_ALL, args),
+
+  planGetById: (args: { planId: string }): Promise<PlanRecord | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_BY_ID, args),
+
+  planUpdateStatus: (args: {
+    planId: string
+    status: string
+    linkedConversationId?: string
+    linkedMpaRunId?: string
+    linkedCouncilSessionId?: string
+  }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_UPDATE_STATUS, args),
+
+  planDelete: (args: { planId: string }): Promise<{ deleted: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_DELETE, args),
+
+  planImport: (args: {
+    planId: string
+    workspaceId: string
+  }): Promise<{ conversationId: string; planId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -2309,6 +2340,279 @@ const api = {
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COMPLETION_NOTIFICATION, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.COMPLETION_NOTIFICATION, handler)
+  },
+
+  // ── Blueprint Pipeline (Specify + Clarify) ──
+
+  blueprintCreate: (args: {
+    workspaceId: string
+    title: string
+    description?: string
+    priority?: string
+    settingsJson?: Record<string, unknown>
+  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE, args),
+
+  blueprintCreateFromIdea: (args: {
+    ideaId: string
+    workspaceId: string
+  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
+
+  blueprintStartSpecify: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, args),
+
+  blueprintStartClarify: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_CLARIFY, args),
+
+  blueprintClarifyAnswer: (args: {
+    blueprintId: string
+    workspaceId: string
+    message: string
+  }): Promise<{ sent: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ANSWER, args),
+
+  blueprintSkipClarify: (args: {
+    blueprintId: string
+  }): Promise<{ skipped: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY, args),
+
+  blueprintStartPlan: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_PLAN, args),
+
+  blueprintStartTasks: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_TASKS, args),
+
+  blueprintStartReview: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_REVIEW, args),
+
+  blueprintStartBuild: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_BUILD, args),
+
+  blueprintStartVerify: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_VERIFY, args),
+
+  blueprintGet: (args: { id: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET, args),
+
+  blueprintGetDetails: (args: { id: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_DETAILS, args),
+
+  blueprintList: (args: {
+    workspaceId: string
+    limit?: number
+  }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_LIST, args),
+
+  blueprintCancel: (args: {
+    workspaceId: string
+  }): Promise<{ cancelled: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
+
+  blueprintGetConstitution: (args: {
+    workspaceId: string
+  }): Promise<{ constitutionMd: string | null; constitutionVersion: string } | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_CONSTITUTION, args),
+
+  blueprintSaveConstitution: (args: {
+    workspaceId: string
+    constitutionMd: string
+    version?: string
+  }): Promise<{ saved: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION, args),
+
+  blueprintGetPipelineStatus: (args: {
+    workspaceId: string
+  }): Promise<{ running: boolean; blueprintId: string | null; currentPhase: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_PIPELINE_STATUS, args),
+
+  onBlueprintPhaseStart: (
+    cb: (data: { blueprintId: string; workspaceId: string; phase: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { blueprintId: string; workspaceId: string; phase: string }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_START, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PHASE_START, handler)
+  },
+
+  onBlueprintPhaseProgress: (
+    cb: (data: { blueprintId: string; workspaceId: string; phase: string; text: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { blueprintId: string; workspaceId: string; phase: string; text: string }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS, handler)
+  },
+
+  onBlueprintPhaseComplete: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      status: string
+      completion?: unknown
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        phase: string
+        status: string
+        completion?: unknown
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, handler)
+  },
+
+  onBlueprintPhaseArtifact: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      artifact: { type: string; contentMd?: string; contentJson?: unknown }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        phase: string
+        artifact: { type: string; contentMd?: string; contentJson?: unknown }
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, handler)
+  },
+
+  blueprintApprovalRespond: (args: {
+    blueprintId: string
+    approved: boolean
+    feedback?: string
+  }): Promise<{ responded: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND, args),
+
+  onBlueprintApprovalNeeded: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      planSummary: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        phase: string
+        planSummary: string
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, handler)
+  },
+
+  onBlueprintWaveStart: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      taskCount: number
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        wave: number
+        taskCount: number
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_WAVE_START, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_WAVE_START, handler)
+  },
+
+  onBlueprintWaveTaskStart: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      taskId: string
+      description: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        wave: number
+        taskId: string
+        description: string
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_WAVE_TASK_START, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_WAVE_TASK_START, handler)
+  },
+
+  onBlueprintWaveTaskComplete: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      taskId: string
+      status: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        wave: number
+        taskId: string
+        status: string
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_WAVE_TASK_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_WAVE_TASK_COMPLETE, handler)
+  },
+
+  onBlueprintWaveComplete: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      wave: number
+      status: string
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        wave: number
+        status: string
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE, handler)
   },
 
   // ── Council (LLM Council — multi-advisor review) ──

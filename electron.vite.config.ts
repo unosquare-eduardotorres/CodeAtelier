@@ -48,6 +48,10 @@ export default defineConfig({
           cpSync(resolve('node_modules/repomap-mcp/queries'), resolve('out/queries'), {
             recursive: true
           })
+          // Blueprint prompt/template markdown files — needed at runtime by blueprint-prompt-loader
+          cpSync(resolve('src/main/blueprints'), resolve('out/main/blueprints'), {
+            recursive: true
+          })
         }
       }
     ]

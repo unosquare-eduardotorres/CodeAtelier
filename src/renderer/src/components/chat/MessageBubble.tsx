@@ -292,7 +292,7 @@ function MessageBubbleInner({
       <div
         className={`flex flex-col min-w-0 ${
           isUser
-            ? `${sizeClasses.userMax} items-end`
+            ? `${planContent ? 'max-w-[95%]' : sizeClasses.userMax} items-end`
             : `${planContent ? 'max-w-[95%]' : sizeClasses.aiMax} items-start`
         }`}
       >

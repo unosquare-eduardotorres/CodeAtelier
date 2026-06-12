@@ -11,6 +11,7 @@ import log from 'electron-log'
 import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { auditPlanRepository } from '../db/repositories/audit-plan.repository'
+import { planRegistryService } from './plan-registry.service'
 import type { AuditPlan, AuditPlanRecord, AuditFinding } from '../../shared/types'
 
 const planLog = log.scope('audit-plan-generator')
@@ -95,6 +96,18 @@ class AuditPlanGeneratorService {
 
     // 5. Persist
     const record = auditPlanRepository.savePlan(params.runId, plan)
+
+    // 6. Dual-write: register in Plan Hub registry (non-critical)
+    try {
+      planRegistryService.registerAuditPlan({
+        workspaceId: params.workspaceId,
+        auditPlanId: record.id,
+        plan
+      })
+    } catch (err) {
+      planLog.warn('[audit-plan] Plan registry write failed (non-critical):', err)
+    }
+
     planLog.info(`[audit-plan] ✓ Plan generated: ${plan.items.length} items, id=${record.id}`)
     return record
   }

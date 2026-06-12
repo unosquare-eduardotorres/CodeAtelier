@@ -165,6 +165,16 @@ import './prompt-builder.test'
 import './skill-prompt-composer.test'
 import './sandbox-config.test'
 
+// ─── Run 30: Blueprint pipeline — parsers, conditions, review service, build service ───
+import './blueprint-parsers-conditions.test'
+import './blueprint-review.service.test'
+import './blueprint-build.service.test'
+import './blueprint-verify-conditions.test'
+
+// ─── Run 31: Plan Hub — unified plan registry ───
+import './audit-plan-mapper.test'
+import './plan-registry.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

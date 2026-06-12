@@ -28,6 +28,13 @@ export type AgentRole =
   | 'mpa-verifier'
   | 'council-member'
   | 'council-chairman'
+  | 'blueprint-specify'
+  | 'blueprint-clarify'
+  | 'blueprint-plan'
+  | 'blueprint-tasks'
+  | 'blueprint-review'
+  | 'blueprint-build'
+  | 'blueprint-verify'
 
 /** Communication tone for AI responses — workspace default + per-conversation override */
 export type CommunicationTone = 'default' | 'calm' | 'optimistic' | 'brutal' | 'caveman'
@@ -69,6 +76,8 @@ export interface Workspace {
   lastOpenedAt: string
   settingsJson: string
   isGitRepo: boolean
+  constitutionMd?: string
+  constitutionVersion?: string
 }
 
 export interface Conversation {
@@ -507,6 +516,13 @@ export type ModelAction =
   | 'council-chairman'
   | 'grill:plan'
   | 'mpa:decompose'
+  | 'blueprint:specify'
+  | 'blueprint:clarify'
+  | 'blueprint:plan'
+  | 'blueprint:tasks'
+  | 'blueprint:review'
+  | 'blueprint:build'
+  | 'blueprint:verify'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -1548,6 +1564,40 @@ export interface GrillStructuredPlan {
   originalDescription: string
   /** Full requirement document (markdown) */
   requirementDocument: string
+}
+
+// ── Plan Hub (Unified Plan Registry) ──
+
+export type PlanSource = 'chat' | 'grill' | 'audit' | 'council' | 'mpa' | 'blueprint'
+export type PlanStatus = 'saved' | 'handed_off' | 'in_progress' | 'completed' | 'archived'
+
+/** A plan record in the unified plans registry. */
+export interface PlanRecord {
+  id: string
+  workspaceId: string
+  source: PlanSource
+  sourceId: string
+  title: string
+  summary: string
+  planType: PlanType | null
+  structuredPlan: StructuredPlan
+  sourcePlanJson: string | null
+  requirementDocument: string | null
+  status: PlanStatus
+  linkedConversationId: string | null
+  linkedMpaRunId: string | null
+  linkedCouncilSessionId: string | null
+  fileCount: number
+  phaseCount: number
+  riskCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PlanFilters {
+  status?: PlanStatus | PlanStatus[]
+  source?: PlanSource
+  search?: string
 }
 
 /** Framed input passed to all council members */

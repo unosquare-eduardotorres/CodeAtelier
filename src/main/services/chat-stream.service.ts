@@ -28,6 +28,7 @@ import { IntentRouter } from './intent-router'
 import { conversationStateMachine } from './conversation-state-machine'
 import { conversationLifecycle } from './conversation-lifecycle'
 import { hookEngine } from './hook-engine.service'
+import { planRegistryService } from './plan-registry.service'
 
 const log = chatIpcLogger
 
@@ -789,6 +790,22 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
+      // Dual-write: register plan in Plan Hub registry (non-critical)
+      try {
+        const workspaceId = chatAgentService.activeWorkspaceId
+        if (workspaceId && data.structuredPlan) {
+          planRegistryService.registerChatPlan({
+            workspaceId,
+            conversationId: ctx.conversationId,
+            messageId: ctx.requestId,
+            plan: data.structuredPlan,
+            rawContent: data.rawContent
+          })
+        }
+      } catch (err) {
+        log.warn('[PIPELINE:plan-registry-failed] Non-critical:', err)
+      }
+
       log.info(
         '[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer'
       )

@@ -15,6 +15,8 @@ import IntegrationsPage from './IntegrationsPage'
 import SpecialistPage from './SpecialistPage'
 import HealthPage from './HealthPage'
 import GoalPage from './GoalPage'
+import PlansPage from './PlansPage'
+import BlueprintPage from './BlueprintPage'
 import { CouncilLanding } from './council'
 import { SkillDetailPage } from '@renderer/components/settings'
 import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
@@ -216,6 +218,14 @@ export default function WorkspaceSettingsContent({
             />
           </div>
         ))}
+      {tab === 'plans' && (
+        <PlansPage
+          onNavigateToChat={onNavigateToChat}
+          onNavigateToGoals={() => onSettingsTabChange?.('goals')}
+          onNavigateToCouncil={() => onSettingsTabChange?.('council')}
+        />
+      )}
+      {tab === 'blueprints' && <BlueprintPage onNavigateToChat={onNavigateToChat} />}
       {tab === 'memory' && <MemorySettingsPage />}
       {tab === 'documents' && <DocumentsPage />}
       {tab === 'tokens' && <TokenUsagePage />}

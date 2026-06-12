@@ -96,6 +96,9 @@ export interface MpaRun {
   /** Campaign linkage (null for standalone/legacy runs). */
   campaignId: string | null
   orderIndex: number | null
+  /** Blueprint linkage (null for non-blueprint runs). */
+  blueprintId: string | null
+  blueprintPhaseId: string | null
 }
 
 /** Persisted campaign record (sequential measurable-goal run group). */

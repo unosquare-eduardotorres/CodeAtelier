@@ -17,13 +17,16 @@ import type {
   CouncilReview,
   CouncilPeerReview,
   CouncilVerdict,
-  CouncilPhase
+  CouncilPhase,
+  StructuredPlan
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
 import { processToolChunk } from '../ipc/tool-chunk-processor'
 import { TextDeltaBatcher } from '../ipc/text-delta-batcher'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
+import { planRegistryService } from './plan-registry.service'
+import { safeParseJSON } from '../db/json-utils'
 import type { SessionEventRouter } from './session-event-router'
 
 const ctrlLog = log.scope('council-persistence')
@@ -128,7 +131,7 @@ export class CouncilPersistenceController {
     })
   }
 
-  /** Handle verdict — forward to renderer */
+  /** Handle verdict — forward to renderer + dual-write to Plan Hub */
   handleVerdict(
     data: { workspaceId: string; verdict: CouncilVerdict },
     router: SessionEventRouter
@@ -136,6 +139,26 @@ export class CouncilPersistenceController {
     router.sendWorkspaceEvent(IPC_CHANNELS.COUNCIL_VERDICT, data.workspaceId, {
       verdict: data.verdict
     })
+
+    // Dual-write: register the council-reviewed plan in the Plan Hub
+    if (this.activeSessionId) {
+      try {
+        const session = councilSessionRepository.findById(this.activeSessionId)
+        if (session?.structuredPlanJson) {
+          const originalPlan = safeParseJSON<StructuredPlan | null>(session.structuredPlanJson, null)
+          if (originalPlan) {
+            planRegistryService.registerCouncilVerdict({
+              workspaceId: data.workspaceId,
+              councilSessionId: this.activeSessionId,
+              verdict: data.verdict,
+              originalPlan
+            })
+          }
+        }
+      } catch (err) {
+        ctrlLog.warn('[council:verdict] Plan registry write failed (non-critical):', err)
+      }
+    }
   }
 
   /** Handle session teardown — save transcript, clean up internal state. No renderer events. */

@@ -75,7 +75,7 @@ export function useMessageContent(
     }
 
     // Detect plan blocks
-    const pMatch = !isUser ? contentMd.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/) : null
+    const pMatch = contentMd.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/)
     const pContent = pMatch ? pMatch[1] : null
     const bPlan = pMatch ? contentMd.substring(0, pMatch.index!) : null
     const aPlan = pMatch ? contentMd.substring(pMatch.index! + pMatch[0].length) : null

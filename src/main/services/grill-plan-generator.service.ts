@@ -10,6 +10,7 @@ import log from 'electron-log'
 import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { grillSessionRepository } from '../db/repositories/grill-session.repository'
+import { planRegistryService } from './plan-registry.service'
 import type { GrillStructuredPlan, GrillDecision, GrillTrackScore } from '../../shared/types'
 import type { GrillSession } from '../db/repositories/grill-session.repository'
 
@@ -97,6 +98,17 @@ class GrillPlanGeneratorService {
 
     // 6. Persist to DB (use the resolved row id, not the conversation id)
     grillSessionRepository.savePlan(session.id, plan)
+
+    // 7. Dual-write: register in Plan Hub registry (non-critical)
+    try {
+      planRegistryService.registerGrillPlan({
+        workspaceId: params.workspaceId,
+        grillSessionId: session.id,
+        plan
+      })
+    } catch (err) {
+      planLog.warn('[plan-gen] Plan registry write failed (non-critical):', err)
+    }
 
     planLog.info(
       `[plan-gen] ✓ Plan generated: ${plan.items.length} items, ${plan.risks.length} risks`

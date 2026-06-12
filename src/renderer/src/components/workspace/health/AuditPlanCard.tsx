@@ -42,7 +42,7 @@ export default function AuditPlanCard({
 }: AuditPlanCardProps): React.JSX.Element {
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-6 py-6 space-y-5">
+      <div className="max-w-5xl mx-auto px-6 py-6 space-y-5">
         {/* Header */}
         <div className="rounded-xl border border-primary/30 bg-primary-muted/15 p-5">
           <div className="flex items-center gap-2 mb-2">
@@ -69,9 +69,14 @@ export default function AuditPlanCard({
               key={item.id}
               className="rounded-xl border border-border-subtle bg-surface-raised p-4"
             >
+              {/* Top row: number badge + title + severity + scope */}
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-mono text-text-muted">{i + 1}.</span>
-                <span className="text-sm font-semibold text-text-primary">{item.title}</span>
+                <span className="flex items-center justify-center w-5 h-5 text-[10px] font-bold text-text-muted bg-surface-overlay rounded-full">
+                  {i + 1}
+                </span>
+                <span className="text-sm font-semibold text-text-primary flex-1 min-w-0">
+                  {item.title}
+                </span>
                 {item.severity && (
                   <span
                     className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded ${SEVERITY_COLORS[item.severity] ?? SEVERITY_COLORS.info}`}
@@ -83,26 +88,49 @@ export default function AuditPlanCard({
                   {item.scope}
                 </span>
               </div>
+
+              {/* Description */}
               {item.description && (
-                <p className="text-xs text-text-secondary mt-1.5 leading-relaxed">
+                <p className="text-xs text-text-secondary mt-2 leading-relaxed">
                   {item.description}
                 </p>
               )}
+
+              {/* Recommendation */}
               {item.recommendation && (
-                <p className="text-[11px] text-text-muted mt-1.5 italic">
-                  💡 {item.recommendation}
-                </p>
+                <div className="mt-2 pl-3 border-l-2 border-primary/30">
+                  <p className="text-[11px] text-text-muted leading-relaxed">
+                    💡 {item.recommendation}
+                  </p>
+                </div>
               )}
-              {item.files.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {item.files.map((f) => (
-                    <span
-                      key={f}
-                      className="px-1.5 py-0.5 text-[10px] font-mono bg-surface-overlay text-text-muted rounded truncate max-w-full"
-                    >
-                      {f}
+
+              {/* Bottom row: files + dependencies */}
+              {(item.files.length > 0 || (item.dependsOn && item.dependsOn.length > 0)) && (
+                <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-2">
+                  {item.files.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {item.files.map((f) => (
+                        <span
+                          key={f}
+                          className="px-1.5 py-0.5 text-[10px] font-mono bg-surface-overlay text-text-muted rounded truncate max-w-[280px]"
+                        >
+                          {f}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {item.dependsOn && item.dependsOn.length > 0 && (
+                    <span className="text-[10px] text-text-muted italic">
+                      depends on:{' '}
+                      {item.dependsOn
+                        .map((dep) => {
+                          const depIndex = plan.items.findIndex((it) => it.id === dep)
+                          return depIndex >= 0 ? `#${depIndex + 1}` : dep
+                        })
+                        .join(', ')}
                     </span>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
@@ -130,7 +158,7 @@ export default function AuditPlanCard({
 
       {/* Route bar */}
       <div className="sticky bottom-0 border-t border-border-subtle bg-surface-raised px-4 py-3">
-        <div className="max-w-3xl mx-auto flex items-center justify-between gap-2 flex-wrap">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2 flex-wrap">
           <span className="text-[11px] text-text-muted">Send this plan to:</span>
           <div className="flex items-center gap-2 flex-wrap">
             <RouteButton icon={MessageSquare} label="Chat" onClick={onSendToChat} />
