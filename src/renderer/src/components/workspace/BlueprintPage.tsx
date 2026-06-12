@@ -1,98 +1,20 @@
 import { useState, useEffect, useCallback, type JSX } from 'react'
-import {
-  BookOpen,
-  StopCircle,
-  Plus,
-  Clock,
-  CheckCircle2,
-  XCircle,
-  ChevronRight
-} from 'lucide-react'
+import { BookOpen, StopCircle, Plus, Clock, CheckCircle2, XCircle } from 'lucide-react'
 import { useBlueprintStore } from '@renderer/store/blueprint.store'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import {
   BlueprintPhaseTimeline,
   BlueprintPhaseStream,
   BlueprintApprovalGate,
-  BlueprintWaveProgress
+  BlueprintWaveProgress,
+  StatusBadge,
+  BlueprintHistoryItem,
+  formatTimeAgo
 } from './blueprints'
-import type { Blueprint } from '../../../../shared/blueprint-types'
 
 // ── View States ──
 
 type ViewState = 'landing' | 'input' | 'active' | 'detail'
-
-// ── Status Badge ──
-
-function StatusBadge({ status }: { status: string }): JSX.Element {
-  const config: Record<string, { color: string; label: string }> = {
-    draft: { color: 'text-text-muted bg-surface-hover', label: 'Draft' },
-    specifying: { color: 'text-emerald-400 bg-emerald-500/10', label: 'Specifying' },
-    clarifying: { color: 'text-cyan-400 bg-cyan-500/10', label: 'Clarifying' },
-    planning: { color: 'text-blue-400 bg-blue-500/10', label: 'Planning' },
-    tasking: { color: 'text-purple-400 bg-purple-500/10', label: 'Creating Tasks' },
-    reviewing: { color: 'text-indigo-400 bg-indigo-500/10', label: 'Reviewing' },
-    building: { color: 'text-emerald-400 bg-emerald-500/10', label: 'Building' },
-    verifying: { color: 'text-teal-400 bg-teal-500/10', label: 'Verifying' },
-    complete: { color: 'text-success bg-success/10', label: 'Complete' },
-    failed: { color: 'text-danger bg-danger/10', label: 'Failed' },
-    cancelled: { color: 'text-text-muted bg-surface-hover', label: 'Cancelled' }
-  }
-  const c = config[status] ?? config.draft
-  return (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${c.color}`}>{c.label}</span>
-  )
-}
-
-// ── History Item ──
-
-function HistoryItem({
-  blueprint,
-  onSelect
-}: {
-  blueprint: Blueprint
-  onSelect: () => void
-}): JSX.Element {
-  const created = new Date(blueprint.createdAt)
-  const timeAgo = formatTimeAgo(created)
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-surface-base border border-border-subtle hover:border-emerald-500/30 hover:bg-surface-hover transition-colors text-left"
-    >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-text-primary truncate">{blueprint.title}</span>
-          <StatusBadge status={blueprint.status} />
-        </div>
-        {blueprint.description && (
-          <p className="text-xs text-text-muted mt-0.5 truncate">{blueprint.description}</p>
-        )}
-        <div className="flex items-center gap-2 mt-1">
-          <Clock size={10} className="text-text-muted" />
-          <span className="text-[10px] text-text-muted">{timeAgo}</span>
-          <span className="text-[10px] text-text-muted">·</span>
-          <span className="text-[10px] text-text-muted capitalize">{blueprint.priority}</span>
-        </div>
-      </div>
-      <ChevronRight size={14} className="text-text-muted flex-shrink-0" />
-    </button>
-  )
-}
-
-function formatTimeAgo(date: Date): string {
-  const now = Date.now()
-  const diffMs = now - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  if (diffMins < 1) return 'just now'
-  if (diffMins < 60) return `${diffMins}m ago`
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
-  const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays}d ago`
-}
 
 // ── Blueprint Page ──
 
@@ -321,7 +243,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                 </div>
                 <div className="space-y-2">
                   {history.map((bp) => (
-                    <HistoryItem
+                    <BlueprintHistoryItem
                       key={bp.id}
                       blueprint={bp}
                       onSelect={() => handleSelectBlueprint(bp.id)}

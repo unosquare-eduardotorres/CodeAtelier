@@ -112,7 +112,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       })
     } catch (error) {
       rendererLog.error('Failed to start blueprint:', error)
-      set({ isRunning: false })
+      set({ isRunning: false, activeWorkspaceId: null })
       throw error
     }
   },
@@ -122,10 +122,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       await window.api.blueprintCancel({ workspaceId })
       set({
         isRunning: false,
+        activeWorkspaceId: null,
         pendingApproval: null,
         currentWave: null,
         waveTasks: {}
       })
+      void get().loadHistory(workspaceId)
     } catch (error) {
       rendererLog.error('Failed to cancel blueprint:', error)
     }
@@ -232,10 +234,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       rendererLog.info(`[blueprint] Phase complete: ${data.phase} — ${data.status}`)
       // If the pipeline-level status is 'complete' or 'failed', mark as not running
       if (data.status === 'complete' && data.phase === 'verify') {
-        set({ isRunning: false })
+        const wsId = get().activeWorkspaceId
+        set({ isRunning: false, activeWorkspaceId: null })
+        if (wsId) void get().loadHistory(wsId)
       }
       if (data.status === 'failed') {
-        set({ isRunning: false })
+        const wsId = get().activeWorkspaceId
+        set({ isRunning: false, activeWorkspaceId: null })
+        if (wsId) void get().loadHistory(wsId)
       }
     })
 
@@ -287,7 +293,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (!isForActiveWorkspace(data.workspaceId)) return
       rendererLog.info(`[blueprint] Wave ${data.wave} complete — ${data.status}`)
       if (data.status === 'failed') {
-        set({ isRunning: false })
+        const wsId = get().activeWorkspaceId
+        set({ isRunning: false, activeWorkspaceId: null })
+        if (wsId) void get().loadHistory(wsId)
       }
     })
 

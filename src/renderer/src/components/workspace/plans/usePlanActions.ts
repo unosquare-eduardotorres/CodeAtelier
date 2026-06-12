@@ -11,31 +11,45 @@ interface PlanNavigation {
   onNavigateToCouncil?: () => void
 }
 
-export function usePlanActions(workspaceId: string | undefined, navigation: PlanNavigation) {
+interface PlanActions {
+  handleOpenInChat: (plan: PlanRecord) => void
+  handleStartGoal: (plan: PlanRecord) => void
+  handleCouncilReview: (plan: PlanRecord) => void
+  handleCopyPlan: (plan: PlanRecord) => void
+  handleArchive: (plan: PlanRecord) => void
+  handleRestore: (plan: PlanRecord) => void
+  handleDelete: (plan: PlanRecord) => void
+  handleOpenConversation: (conversationId: string) => void
+}
+
+export function usePlanActions(
+  workspaceId: string | undefined,
+  navigation: PlanNavigation
+): PlanActions {
   const { updateStatus, deletePlan, importPlan } = usePlanStore()
+  const { onNavigateToChat, onNavigateToGoals, onNavigateToCouncil } = navigation
 
   const handleOpenInChat = useCallback(
     async (plan: PlanRecord) => {
       if (!workspaceId) return
       try {
         await importPlan(plan.id, workspaceId)
-        navigation.onNavigateToChat()
+        onNavigateToChat()
       } catch (err) {
         console.error('Failed to import plan:', err)
       }
     },
-    [workspaceId, importPlan, navigation.onNavigateToChat]
+    [workspaceId, importPlan, onNavigateToChat]
   )
 
   const handleStartGoal = useCallback(
     (plan: PlanRecord) => {
-      const planContent = plan.requirementDocument
-        || `# ${plan.title}\n\n${plan.summary}`
+      const planContent = plan.requirementDocument || `# ${plan.title}\n\n${plan.summary}`
       useMpaStore.getState().setPreloadedGoal({ text: planContent })
       updateStatus(plan.id, 'handed_off')
-      navigation.onNavigateToGoals?.()
+      onNavigateToGoals?.()
     },
-    [updateStatus, navigation.onNavigateToGoals]
+    [updateStatus, onNavigateToGoals]
   )
 
   const handleCouncilReview = useCallback(
@@ -45,8 +59,7 @@ export function usePlanActions(workspaceId: string | undefined, navigation: Plan
       const councilStore = useCouncilStore.getState()
       councilStore.startCouncil()
 
-      const planContent = plan.requirementDocument
-        || `# ${plan.title}\n\n${plan.summary}`
+      const planContent = plan.requirementDocument || `# ${plan.title}\n\n${plan.summary}`
 
       window.api
         .councilStart({
@@ -64,14 +77,15 @@ export function usePlanActions(workspaceId: string | undefined, navigation: Plan
         })
         .catch(() => councilStore.reset())
 
-      navigation.onNavigateToCouncil?.()
+      onNavigateToCouncil?.()
     },
-    [workspaceId, updateStatus, navigation.onNavigateToCouncil]
+    [workspaceId, updateStatus, onNavigateToCouncil]
   )
 
   const handleCopyPlan = useCallback(async (plan: PlanRecord) => {
-    const content = plan.requirementDocument
-      || `# ${plan.title}\n\n${plan.summary}\n\n${JSON.stringify(plan.structuredPlan, null, 2)}`
+    const content =
+      plan.requirementDocument ||
+      `# ${plan.title}\n\n${plan.summary}\n\n${JSON.stringify(plan.structuredPlan, null, 2)}`
     try {
       await navigator.clipboard.writeText(content)
     } catch {
@@ -89,10 +103,7 @@ export function usePlanActions(workspaceId: string | undefined, navigation: Plan
     [updateStatus]
   )
 
-  const handleDelete = useCallback(
-    (plan: PlanRecord) => deletePlan(plan.id),
-    [deletePlan]
-  )
+  const handleDelete = useCallback((plan: PlanRecord) => deletePlan(plan.id), [deletePlan])
 
   const handleOpenConversation = useCallback(
     async (conversationId: string) => {
@@ -101,9 +112,9 @@ export function usePlanActions(workspaceId: string | undefined, navigation: Plan
       } catch (err) {
         console.error('Failed to select conversation:', err)
       }
-      navigation.onNavigateToChat()
+      onNavigateToChat()
     },
-    [navigation.onNavigateToChat]
+    [onNavigateToChat]
   )
 
   return {
