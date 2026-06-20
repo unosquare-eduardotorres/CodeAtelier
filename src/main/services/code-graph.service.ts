@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { statSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { execSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import log from 'electron-log/main'
 import { codeGraphTagRepository } from '../db/repositories'
 import { codeGraphEdgeRepository } from '../db/repositories'
@@ -754,6 +756,255 @@ class CodeGraphService extends EventEmitter {
     }
 
     return cycles
+  }
+
+  // ── Co-Change Mining ──────────────────────────────────────────────────────
+
+  /**
+   * Mine git history to find files that are frequently committed together.
+   * Reveals logical coupling invisible to the import graph.
+   */
+  findCoChangePairs(
+    workspacePath: string,
+    options: {
+      maxCommits?: number
+      minCoChanges?: number
+      path?: string
+      filePath?: string
+      maxResults?: number
+    } = {}
+  ): { fileA: string; fileB: string; coChangeCount: number; commitsAnalyzed: number }[] {
+    const maxCommits = Math.min(options.maxCommits ?? 200, 500)
+    const minCoChanges = options.minCoChanges ?? 3
+    const maxResults = options.maxResults ?? 30
+
+    let gitOutput: string
+    try {
+      gitOutput = execSync(`git log --name-only --format=%H -n ${maxCommits}`, {
+        cwd: workspacePath,
+        encoding: 'utf-8',
+        timeout: 15_000,
+        maxBuffer: 5 * 1024 * 1024
+      }).trim()
+    } catch {
+      return []
+    }
+
+    // Parse commits: split on blank lines, each block = hash + file list
+    const commitBlocks = gitOutput.split(/\n\n+/)
+    const pairCounts = new Map<string, number>()
+    let commitCount = 0
+
+    for (const block of commitBlocks) {
+      const lines = block.split('\n').filter(Boolean)
+      if (lines.length < 2) continue
+      commitCount++
+
+      let files = lines.slice(1)
+
+      if (options.path) {
+        files = files.filter((f) => f.startsWith(options.path!))
+      }
+
+      // Skip commits with too many files (merges) or too few
+      if (files.length < 2 || files.length > 30) continue
+
+      for (let i = 0; i < files.length; i++) {
+        for (let j = i + 1; j < files.length; j++) {
+          const key = files[i] < files[j] ? `${files[i]}\0${files[j]}` : `${files[j]}\0${files[i]}`
+          pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1)
+        }
+      }
+    }
+
+    let pairs = Array.from(pairCounts.entries())
+      .filter(([, count]) => count >= minCoChanges)
+      .map(([key, count]) => {
+        const [fileA, fileB] = key.split('\0')
+        return { fileA, fileB, coChangeCount: count, commitsAnalyzed: commitCount }
+      })
+
+    if (options.filePath) {
+      pairs = pairs.filter(
+        (p) => p.fileA === options.filePath || p.fileB === options.filePath
+      )
+    }
+
+    return pairs
+      .sort((a, b) => b.coChangeCount - a.coChangeCount)
+      .slice(0, maxResults)
+  }
+
+  // ── Hotspot Scoring ────────────────────────────────────────────────────────
+
+  /**
+   * Composite risk ranking: coupling (reference count) × git churn.
+   * Surfaces the most dangerous files to touch during refactoring.
+   */
+  findHotspots(
+    workspaceId: string,
+    workspacePath: string,
+    options: { maxResults?: number; path?: string } = {}
+  ): {
+    file: string
+    referenceCount: number
+    gitChurn: number
+    hotspotScore: number
+  }[] {
+    const maxResults = options.maxResults ?? 20
+
+    // 1. Get per-file reference counts from symbol hotspots
+    const symbolHotspots = codeGraphTagRepository.findSymbolHotspots(workspaceId, {
+      maxResults: 500,
+      path: options.path
+    })
+
+    const fileRefCounts = new Map<string, number>()
+    for (const h of symbolHotspots) {
+      const file = (h as { file?: string }).file ?? ''
+      if (!file) continue
+      fileRefCounts.set(file, (fileRefCounts.get(file) ?? 0) + ((h as { refCount?: number }).refCount ?? 1))
+    }
+
+    // 2. Get git churn per file
+    const churnMap = new Map<string, number>()
+    try {
+      const churnOutput = execSync(
+        `git log --format= --name-only -n 500 | sort | uniq -c | sort -rn | head -200`,
+        { cwd: workspacePath, encoding: 'utf-8', timeout: 15_000, maxBuffer: 2 * 1024 * 1024 }
+      ).trim()
+
+      for (const line of churnOutput.split('\n')) {
+        const match = line.trim().match(/^(\d+)\s+(.+)$/)
+        if (match) {
+          churnMap.set(match[2], parseInt(match[1], 10))
+        }
+      }
+    } catch {
+      // Git not available — churn stays at 0
+    }
+
+    // 3. Compute hotspot score
+    const allFiles = new Set([...fileRefCounts.keys(), ...churnMap.keys()])
+    const hotspots: {
+      file: string
+      referenceCount: number
+      gitChurn: number
+      hotspotScore: number
+    }[] = []
+
+    for (const file of allFiles) {
+      if (options.path && !file.startsWith(options.path)) continue
+      const refCount = fileRefCounts.get(file) ?? 0
+      const churn = churnMap.get(file) ?? 0
+      const score = refCount * (1 + Math.log2(churn + 1))
+      if (score > 0) {
+        hotspots.push({
+          file,
+          referenceCount: refCount,
+          gitChurn: churn,
+          hotspotScore: Math.round(score * 100) / 100
+        })
+      }
+    }
+
+    return hotspots
+      .sort((a, b) => b.hotspotScore - a.hotspotScore)
+      .slice(0, maxResults)
+  }
+
+  // ── Code Clone Detection ──────────────────────────────────────────────────
+
+  /**
+   * Detect structurally duplicated code via normalized source hashing.
+   * Uses the code_chunks table (requires semantic search indexing).
+   * Normalizes identifiers, literals, and comments, then groups by SHA-256.
+   */
+  findCodeClones(
+    workspaceId: string,
+    _workspacePath: string,
+    options: { minBodyLines?: number; path?: string; maxResults?: number } = {}
+  ): { hash: string; clones: { file: string; symbol: string; line: number; lines: number }[] }[] {
+    const minBodyLines = options.minBodyLines ?? 5
+    const maxResults = options.maxResults ?? 20
+
+    // Use code_chunks table which has body text + line ranges
+    let chunks: { filePath: string; symbolName: string; startLine: number; endLine: number; body: string }[]
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { codeChunkRepository } = require('../db/repositories') as {
+        codeChunkRepository: { db: () => import('better-sqlite3').Database }
+      }
+      const db = codeChunkRepository.db()
+      const rows = db
+        .prepare(
+          `SELECT file_path, symbol_name, start_line, end_line, body
+           FROM code_chunks
+           WHERE workspace_id = ? AND (end_line - start_line) >= ?`
+        )
+        .all(workspaceId, minBodyLines) as {
+          file_path: string; symbol_name: string; start_line: number; end_line: number; body: string
+        }[]
+      chunks = rows.map((r) => ({
+        filePath: r.file_path,
+        symbolName: r.symbol_name,
+        startLine: r.start_line,
+        endLine: r.end_line,
+        body: r.body
+      }))
+    } catch {
+      return [] // code_chunks table not available or empty
+    }
+
+    if (options.path) {
+      chunks = chunks.filter((c) => c.filePath.startsWith(options.path!))
+    }
+
+    const hashGroups = new Map<string, { file: string; symbol: string; line: number; lines: number }[]>()
+
+    for (const chunk of chunks) {
+      const lineCount = chunk.endLine - chunk.startLine + 1
+      if (lineCount < minBodyLines) continue
+
+      const normalized = this.normalizeForCloneDetection(chunk.body)
+      if (normalized.length < 20) continue
+
+      const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 16)
+
+      const entry = hashGroups.get(hash) ?? []
+      entry.push({
+        file: chunk.filePath,
+        symbol: chunk.symbolName,
+        line: chunk.startLine,
+        lines: lineCount
+      })
+      hashGroups.set(hash, entry)
+    }
+
+    return Array.from(hashGroups.entries())
+      .filter(([, group]) => group.length >= 2)
+      .map(([hash, clones]) => ({ hash, clones }))
+      .sort((a, b) => b.clones.length - a.clones.length)
+      .slice(0, maxResults)
+  }
+
+  /**
+   * Normalize source code for structural clone detection.
+   * Strips comments, replaces literals and identifiers, collapses whitespace.
+   */
+  private normalizeForCloneDetection(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+      .replace(/`[^`]*`/g, 'STR')
+      .replace(/"(?:[^"\\]|\\.)*"/g, 'STR')
+      .replace(/'(?:[^'\\]|\\.)*'/g, 'STR')
+      .replace(/\b0x[0-9a-fA-F]+\b/g, 'NUM')
+      .replace(/\b\d+\.\d+\b/g, 'NUM')
+      .replace(/\b\d+\b/g, 'NUM')
+      .replace(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\b/g, 'IDENT')
+      .replace(/\s+/g, ' ')
+      .trim()
   }
 
   private emitProgress(state: CodeGraphIndexingState): void {

@@ -1,14 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquarePlus } from 'lucide-react'
-import {
-  useChatStore,
-  useChatActions,
-  useSpecialistStore,
-  useWorkspaceStore
-} from '@renderer/store'
-import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
-import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
-import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
+import { useChatStore, useChatActions, useSpecialistStore } from '@renderer/store'
 import { MessageBubble } from '@renderer/components/chat'
 import type { MessageBubbleActions } from './MessageBubble'
 import type { StructuredPlan } from '../../../../shared/types'
@@ -17,6 +9,7 @@ import ScrollToBottomButton from './ScrollToBottomButton'
 import MessageListFooter from './MessageListFooter'
 import { useAutoScroll } from './useAutoScroll'
 import { useMessageVirtualizer } from './useMessageVirtualizer'
+import { useThinkingIdentity } from './useThinkingIdentity'
 
 interface MessageListProps {
   searchQuery?: string
@@ -26,8 +19,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const messages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
   const streamingSegments = useChatStore((s) => s.streamingSegments)
-  const streamingRole = useChatStore((s) => s.streamingRole)
-  const streamingSpecialist = useChatStore((s) => s.streamingSpecialist)
   const isStreaming = useChatStore((s) => s.isStreaming)
   const toolActivities = useChatStore((s) => s.toolActivities)
 
@@ -68,76 +59,13 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     [updateMode, sendMessage, appendLocalMessage, handleSaveAsIdea, handleBuildFromPlan]
   )
 
-  // ── Specialist identity resolution ──
-  const generalistSpec = useSpecialistStore(
-    (s) => s.specialists.find((sp) => sp.agentId === 'da-vinci') ?? null
-  )
-  const generalistAlias =
-    generalistSpec?.alias ??
-    generalistSpec?.displayName ??
-    CORE_AGENT_DEFAULTS['da-vinci'].displayName
-  const thinkingAvatarKey = CORE_AGENT_DEFAULTS['da-vinci'].avatarKey
-  const thinkingAccentColor = generalistSpec?.color ?? CORE_AGENT_DEFAULTS['da-vinci'].color
+  // ── Specialist identity resolution (extracted hook) ──
+  const thinkingIdentity = useThinkingIdentity()
 
-  const streamingSpecialistData = useSpecialistStore((s) =>
-    streamingSpecialist
-      ? (s.specialists.find((sp) => sp.agentId === streamingSpecialist) ?? null)
-      : null
-  )
-
-  const activeConversationWorkspaceId = useChatStore(
-    (s) => s.activeConversation?.workspaceId ?? null
-  )
-  const workspaces = useWorkspaceStore((s) => s.workspaces)
-
-  const projectSpecialist = useProjectSpecialistStore((s) =>
-    activeConversationWorkspaceId ? s.byWorkspace[activeConversationWorkspaceId] : null
-  )
-  const specialistMannequinKey = useMemo(
-    () =>
-      activeConversationWorkspaceId
-        ? getWorkspaceMannequin(activeConversationWorkspaceId, workspaces)
-        : 'mannequin-main',
-    [activeConversationWorkspaceId, workspaces]
-  )
-
-  const thinkingIdentity = useMemo(() => {
-    if (streamingRole === 'specialist' && streamingSpecialistData) {
-      return {
-        name: streamingSpecialistData.alias ?? streamingSpecialistData.displayName,
-        avatarKey: specialistMannequinKey,
-        accentColor: streamingSpecialistData.color ?? '#F59E0B'
-      }
-    }
-    if (streamingRole === 'specialist' && streamingSpecialist) {
-      return {
-        name: streamingSpecialist,
-        avatarKey: specialistMannequinKey,
-        accentColor: '#F59E0B'
-      }
-    }
-    if (projectSpecialist?.buildStatus === 'ready') {
-      return {
-        name: projectSpecialist.displayName,
-        avatarKey: specialistMannequinKey,
-        accentColor: projectSpecialist.color ?? '#F59E0B'
-      }
-    }
-    return {
-      name: generalistAlias,
-      avatarKey: thinkingAvatarKey,
-      accentColor: thinkingAccentColor
-    }
-  }, [
-    streamingRole,
-    streamingSpecialistData,
-    streamingSpecialist,
-    specialistMannequinKey,
-    generalistAlias,
-    thinkingAvatarKey,
-    thinkingAccentColor,
-    projectSpecialist
-  ])
+  const generalistAlias = useSpecialistStore((s) => {
+    const spec = s.specialists.find((sp) => sp.agentId === 'da-vinci')
+    return spec?.alias ?? spec?.displayName ?? 'da Vinci'
+  })
 
   // Aggregate all tool activities for the thinking indicator
   const allStreamingTools = useMemo(() => {

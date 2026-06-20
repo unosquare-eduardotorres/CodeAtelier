@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { BrowserWindow } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
+import { safeWindowSend } from '../ipc/safe-send'
 
 export type ConversationState = 'idle' | 'chat-agent-streaming' | 'error' | 'stopped'
 
@@ -97,8 +98,8 @@ export class ConversationStateMachine extends EventEmitter {
     this.emit('stateChange', statePayload)
 
     // Forward state transitions to renderer for state mirror
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+    if (this.mainWindow) {
+      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
     }
     return true
   }
@@ -125,8 +126,8 @@ export class ConversationStateMachine extends EventEmitter {
     this.emit('stateChange', statePayload)
 
     // Forward force reset to renderer
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+    if (this.mainWindow) {
+      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
     }
   }
 }

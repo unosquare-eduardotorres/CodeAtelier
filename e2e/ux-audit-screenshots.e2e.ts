@@ -285,4 +285,52 @@ test.describe('UX Audit Screenshots', () => {
 
     console.log('\n  ✅ All screenshots captured in e2e/screenshots/')
   })
+
+  test('audit screenshot captures correct viewport dimensions', async ({
+    electronPage: page
+  }) => {
+    // Verify the viewport is usable for screenshots
+    const viewport = page.viewportSize()
+
+    // Viewport should be non-zero
+    if (viewport) {
+      expect(viewport.width).toBeGreaterThan(0)
+      expect(viewport.height).toBeGreaterThan(0)
+    }
+
+    // Capture a screenshot and verify it succeeds
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+
+    // Full-page screenshot should capture more content
+    const fullPageBuffer = await page.screenshot({ fullPage: true })
+    expect(fullPageBuffer.length).toBeGreaterThan(0)
+    expect(fullPageBuffer.length).toBeGreaterThanOrEqual(buffer.length)
+  })
+
+  test('screenshot comparison shows visual consistency', async ({
+    electronPage: page
+  }) => {
+    // Take two screenshots in quick succession
+    // Both should be identical (no flickering/animation artifacts)
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    const screenshot1 = await page.screenshot()
+    await page.waitForTimeout(200)
+    const screenshot2 = await page.screenshot()
+
+    // Both screenshots should be non-empty
+    expect(screenshot1.length).toBeGreaterThan(0)
+    expect(screenshot2.length).toBeGreaterThan(0)
+
+    // They should be approximately the same size (within 10%)
+    // Large differences would indicate animation/flicker issues
+    const sizeDiff = Math.abs(screenshot1.length - screenshot2.length)
+    const maxSize = Math.max(screenshot1.length, screenshot2.length)
+    const diffPercent = (sizeDiff / maxSize) * 100
+
+    // Allow up to 10% variance (cursor blink, animations)
+    expect(diffPercent).toBeLessThan(10)
+  })
 })

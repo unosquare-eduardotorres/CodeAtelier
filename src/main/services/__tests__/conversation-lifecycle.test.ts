@@ -41,7 +41,7 @@ describe('ConversationLifecycle — begin/complete basics', () => {
     assert.equal(lc.isActive, true)
     assert.equal(lc.conversationId, 'conv-1')
     assert.notEqual(lc.requestId, null)
-    assert.match(lc.requestId!, /^req-\d+-[a-z0-9]+$/)
+    assert.match(lc.requestId!, /^req-[0-9a-f-]+$/)
     assert.ok(signal instanceof AbortSignal, 'returns an AbortSignal')
     assert.equal(signal.aborted, false)
   })

@@ -451,6 +451,29 @@ export class AuditAgentService extends EventEmitter {
     }
 
     // Phase 3: Compute final result with coverage gate
+    return this.computeFinalAuditResult(
+      params.trackId,
+      allFindings,
+      modelScore,
+      modelSummary,
+      coverageTracker,
+      discovery,
+      roundNumber
+    )
+  }
+
+  // ── Private: final result computation ────────────────────────────────
+
+  /** Compute the final gated score, summary, and applicability for an audit track. */
+  private computeFinalAuditResult(
+    trackId: AuditTrackId,
+    allFindings: AuditFinding[],
+    modelScore: number | null,
+    modelSummary: string,
+    coverageTracker: AuditCoverageTracker,
+    discovery: { totalFiles: number },
+    roundNumber: number
+  ): AuditResultPayload {
     const stats = coverageTracker.getStats()
     let finalScore: number
     if (modelScore != null) {
@@ -483,7 +506,7 @@ export class AuditAgentService extends EventEmitter {
           : 'insufficient'
 
     return {
-      trackId: params.trackId,
+      trackId,
       score: gated.score,
       status: 'completed',
       findings: gated.findings,

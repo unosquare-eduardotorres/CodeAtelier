@@ -175,6 +175,14 @@ import './blueprint-verify-conditions.test'
 import './audit-plan-mapper.test'
 import './plan-registry.test'
 
+// ─── Run 32: Code Graph enhancements — blast_radius, co_change, hotspot_score, code_clones ───
+import './code-graph-enhancements.test'
+
+// ─── Run 33: Phase 10 Coverage Push — 57% → 60% ───
+import './repo-service-utils.test'
+import './base-adapter.test'
+import './specialist-builder-logic.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

@@ -8,6 +8,7 @@ import { memoryService } from '../services/memory.service'
 import { memoryFeedService } from '../services/memory-feed.service'
 import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 export function registerMemoryIpc(mainWindow: BrowserWindow): void {
   // ── Memory CRUD ──
 
@@ -105,7 +106,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       validateSender(event)
       if (!args.filePath) throw new Error('File path is required')
       return memoryFeedService.feedFromDocument(args.workspacePath, args.filePath, (progress) => {
-        mainWindow.webContents.send(IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
+        safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
       })
     }
   )
@@ -140,7 +141,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       }
 
       const result = await memoryFeedService.regenerateClaudeMd(args.workspacePath, (progress) => {
-        mainWindow.webContents.send(IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
+        safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
       })
       return { ...result, existing }
     }

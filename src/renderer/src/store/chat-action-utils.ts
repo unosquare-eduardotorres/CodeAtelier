@@ -82,7 +82,7 @@ export function createStoppedMessage(
   segments: StreamSegment[]
 ): Message {
   return {
-    id: `stopped-${Date.now()}`,
+    id: `stopped-${crypto.randomUUID().slice(0, 8)}`,
     conversationId,
     role,
     ...(role === 'specialist' && specialist ? { agentId: specialist } : {}),
@@ -106,7 +106,7 @@ export function createOptimisticUserMessage(
   attachments?: string[]
 ): Message {
   return {
-    id: `temp-${Date.now()}`,
+    id: `temp-${crypto.randomUUID().slice(0, 8)}`,
     conversationId,
     role: 'user',
     contentMd: text,

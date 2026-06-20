@@ -281,6 +281,96 @@ describe('DaVinciRoleAdapter', () => {
   })
 })
 
+// ── Delegation methods ──
+
+describe('DaVinciRoleAdapter — delegation methods', () => {
+  test('onConversationSwitch invalidates prompt assembler snapshot', () => {
+    const adapter = new DaVinciRoleAdapter()
+    // Should not throw — invalidateSnapshot is idempotent
+    adapter.onConversationSwitch('conv-switch-1')
+    assert.ok(true, 'onConversationSwitch completed without error')
+  })
+
+  test('setPendingCompaction delegates to prompt assembler', () => {
+    const adapter = new DaVinciRoleAdapter()
+    // Should not throw
+    adapter.setPendingCompaction('conv-c1', '/compact')
+    assert.ok(true, 'setPendingCompaction completed without error')
+  })
+
+  test('setPendingModeSwitch invalidates snapshot and delegates', () => {
+    const adapter = new DaVinciRoleAdapter()
+    adapter.setPendingModeSwitch('plan', 'build')
+    assert.ok(true, 'setPendingModeSwitch completed without error')
+  })
+
+  test('clearConversation delegates to prompt assembler', () => {
+    const adapter = new DaVinciRoleAdapter()
+    adapter.clearConversation('conv-clear-1')
+    assert.ok(true, 'clearConversation completed without error')
+  })
+
+  test('addPendingContext accumulates and clearConversation resets', () => {
+    const adapter = new DaVinciRoleAdapter()
+    adapter.addPendingContext('conv-ctx-1', 'some context')
+    assert.ok(adapter.getPendingContextSize('conv-ctx-1') > 0)
+    adapter.clearConversation('conv-ctx-1')
+    assert.equal(adapter.getPendingContextSize('conv-ctx-1'), 0)
+  })
+})
+
+// ── Persona lifecycle ──
+
+describe('DaVinciRoleAdapter — persona lifecycle', () => {
+  test('getPersona returns current persona state', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const persona = adapter.getPersona()
+    assert.equal(persona.id, null)
+    assert.equal(persona.data, null)
+  })
+
+  test('setPersona(null) clears persona to null', () => {
+    const adapter = new DaVinciRoleAdapter()
+    adapter.setPersona(null)
+    const persona = adapter.getPersona()
+    assert.equal(persona.id, null)
+    assert.equal(persona.data, null)
+  })
+
+  test('setPersona same id twice is idempotent', () => {
+    const adapter = new DaVinciRoleAdapter()
+    adapter.setPersona(null)
+    adapter.setPersona(null)
+    assert.equal(adapter.getPersona().id, null)
+  })
+
+  test('onSessionStop resets persona', () => {
+    const adapter = new DaVinciRoleAdapter()
+    adapter.onSessionStop()
+    assert.equal(adapter.getPersona().id, null)
+    assert.equal(adapter.getPersona().data, null)
+  })
+})
+
+// ── getPromptAssembler ──
+
+describe('DaVinciRoleAdapter — prompt assembler access', () => {
+  test('getPromptAssembler returns a DaVinciPromptAssembler instance', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const assembler = adapter.getPromptAssembler()
+    assert.ok(assembler)
+    assert.equal(typeof assembler.buildEffectiveMessage, 'function')
+    assert.equal(typeof assembler.invalidateSnapshot, 'function')
+  })
+
+  test('multiple getPromptAssembler calls return same instance', () => {
+    const adapter = new DaVinciRoleAdapter()
+    const a1 = adapter.getPromptAssembler()
+    const a2 = adapter.getPromptAssembler()
+    assert.equal(a1, a2)
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

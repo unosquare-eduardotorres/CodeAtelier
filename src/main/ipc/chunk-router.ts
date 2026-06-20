@@ -505,8 +505,9 @@ export function routeChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 /**
  * Flush any pending batched text deltas immediately.
- * Call at stream end to ensure no text is left in the buffer.
+ * STREAM-04: Pass a conversation key to flush only that stream's buffer.
+ * Without a key, resets ALL conversations' buffers (cross-conversation data race).
  */
-export function flushTextBatcher(): void {
-  textBatcher.reset()
+export function flushTextBatcher(key?: string): void {
+  textBatcher.reset(key)
 }

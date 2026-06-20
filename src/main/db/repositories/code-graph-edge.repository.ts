@@ -263,6 +263,46 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
       }))
       .sort((a, b) => a.ratio - b.ratio) // worst cohesion first
   }
+
+  /**
+   * BFS-based transitive blast radius — finds ALL files transitively affected
+   * by changing the given file, with depth tracking.
+   * Unlike findDependentsOf (direct only), this follows the reverse import graph
+   * to the full transitive closure.
+   */
+  findTransitiveDependents(
+    workspaceId: string,
+    filePath: string,
+    maxDepth: number = 5
+  ): { file: string; depth: number }[] {
+    const db = this.db()
+    const stmt = db.prepare(
+      `SELECT DISTINCT source_file
+       FROM code_graph_edges
+       WHERE workspace_id = ? AND target_file = ? AND source_file != target_file`
+    )
+
+    const visited = new Set<string>([filePath])
+    const result: { file: string; depth: number }[] = []
+    let frontier = [filePath]
+
+    for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
+      const nextFrontier: string[] = []
+      for (const file of frontier) {
+        const rows = stmt.all(workspaceId, file) as { source_file: string }[]
+        for (const row of rows) {
+          if (!visited.has(row.source_file)) {
+            visited.add(row.source_file)
+            result.push({ file: row.source_file, depth })
+            nextFrontier.push(row.source_file)
+          }
+        }
+      }
+      frontier = nextFrontier
+    }
+
+    return result
+  }
 }
 
 export const codeGraphEdgeRepository = new CodeGraphEdgeRepository()

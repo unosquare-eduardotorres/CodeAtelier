@@ -2,11 +2,12 @@
 /**
  * Code Graph MCP Server — externalized for CLI interactive mode.
  *
- * Exposes 13 tools for codebase navigation via the persisted SQLite code graph:
+ * Exposes 17 tools for codebase navigation via the persisted SQLite code graph:
  *   graph_map, search_identifiers, find_dead_code, file_outline,
  *   find_callers, find_callees, find_references, file_dependencies,
  *   file_dependents, symbol_hotspots, coupling_analysis,
- *   circular_dependencies, module_boundary_health
+ *   circular_dependencies, module_boundary_health, blast_radius,
+ *   co_change, hotspot_score, code_clones
  *
  * Environment variables:
  *   WORKSPACE_ID   — Workspace UUID for DB queries
@@ -23,6 +24,7 @@
  * Uses @modelcontextprotocol/sdk (the standard MCP SDK, NOT the Agent SDK).
  */
 
+import path from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -36,6 +38,26 @@ const CONTEXT_TIER = process.env.CONTEXT_TIER as 'small' | 'medium' | 'large' | 
 if (!WORKSPACE_ID) {
   console.error('[code-graph-server] ERROR: WORKSPACE_ID is required')
   process.exit(1)
+}
+
+/**
+ * SEC-02: Validate that a file path is relative and within the workspace.
+ * Prevents path traversal attacks via adversarial LLM tool calls.
+ * Returns the normalized relative path, or throws on traversal attempts.
+ */
+function validateWorkspacePath(filePath: string): string {
+  // Reject absolute paths outright
+  if (path.isAbsolute(filePath)) {
+    throw new Error(`Absolute paths are not allowed: ${filePath}`)
+  }
+  // Resolve relative to workspace and check it stays within
+  const resolved = path.resolve(WORKSPACE_PATH, filePath)
+  const normalizedWorkspace = path.resolve(WORKSPACE_PATH)
+  if (!resolved.startsWith(normalizedWorkspace + path.sep) && resolved !== normalizedWorkspace) {
+    throw new Error(`Path traversal detected: ${filePath} resolves outside workspace`)
+  }
+  // Return the original relative path for downstream use
+  return filePath
 }
 
 /**
@@ -165,6 +187,7 @@ async function registerTools(): Promise<void> {
       filePath: z.string().describe('Relative file path within the workspace')
     },
     async (args) => {
+      validateWorkspacePath(args.filePath)
       const tags = codeGraphTagRepository
         .findByFile(WORKSPACE_ID, args.filePath)
         .filter((t) => t.kind === 'def')
@@ -298,6 +321,7 @@ async function registerTools(): Promise<void> {
       filePath: z.string().describe('Relative file path to analyze')
     },
     async (args) => {
+      validateWorkspacePath(args.filePath)
       const deps = codeGraphEdgeRepository.findDependenciesOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
       for (const d of deps) {
@@ -326,6 +350,7 @@ async function registerTools(): Promise<void> {
       filePath: z.string().describe('Relative file path to find dependents of')
     },
     async (args) => {
+      validateWorkspacePath(args.filePath)
       const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
       for (const d of deps) {
@@ -431,6 +456,130 @@ async function registerTools(): Promise<void> {
             text: JSON.stringify({ modules: metrics, count: metrics.length }, null, 2)
           }
         ]
+      }
+    }
+  )
+
+  // ── blast_radius ──
+  server.tool(
+    'blast_radius',
+    'Calculate the full transitive blast radius of changing a file — all files that could be affected, with depth. Unlike file_dependents (direct only), this follows the reverse import graph to the full transitive closure.',
+    {
+      filePath: z.string().describe('Relative file path to analyze'),
+      maxDepth: z.number().optional().default(5).describe('Maximum traversal depth (1-10)'),
+    },
+    async (args) => {
+      validateWorkspacePath(args.filePath)
+      const depth = Math.min(Math.max(args.maxDepth, 1), 10)
+      const dependents = codeGraphEdgeRepository.findTransitiveDependents(
+        WORKSPACE_ID, args.filePath, depth
+      )
+      const byDepth: Record<number, string[]> = {}
+      for (const d of dependents) {
+        ;(byDepth[d.depth] ??= []).push(d.file)
+      }
+      return {
+        content: [{
+          type: 'text' as const,
+          text: truncateToolOutput(JSON.stringify({
+            file: args.filePath,
+            totalAffected: dependents.length,
+            maxDepthReached: dependents.length > 0 ? Math.max(...dependents.map(d => d.depth)) : 0,
+            byDepth,
+            dependents
+          }, null, 2))
+        }]
+      }
+    }
+  )
+
+  // ── co_change ──
+  server.tool(
+    'co_change',
+    'Find files that frequently change together in git history — reveals logical coupling invisible to the import graph.',
+    {
+      maxCommits: z.number().optional().default(200).describe('Number of recent commits to analyze (max 500)'),
+      minCoChanges: z.number().optional().default(3).describe('Minimum co-change count to report'),
+      path: z.string().optional().describe('Filter to files under this directory'),
+      filePath: z.string().optional().describe('Find co-change partners for a specific file'),
+      maxResults: z.number().optional().default(30)
+    },
+    async (args) => {
+      if (args.filePath) validateWorkspacePath(args.filePath)
+      if (args.path) validateWorkspacePath(args.path)
+      const pairs = codeGraphService.findCoChangePairs(WORKSPACE_PATH, {
+        maxCommits: args.maxCommits,
+        minCoChanges: args.minCoChanges,
+        path: args.path,
+        filePath: args.filePath,
+        maxResults: args.maxResults
+      })
+      return {
+        content: [{
+          type: 'text' as const,
+          text: truncateToolOutput(JSON.stringify({
+            pairs,
+            count: pairs.length,
+            commitsAnalyzed: pairs[0]?.commitsAnalyzed ?? args.maxCommits
+          }, null, 2))
+        }]
+      }
+    }
+  )
+
+  // ── hotspot_score ──
+  server.tool(
+    'hotspot_score',
+    'Rank files by risk: coupling (reference count) × git churn. Surfaces the most dangerous files to touch during refactoring.',
+    {
+      maxResults: z.number().optional().default(20),
+      path: z.string().optional().describe('Filter to files under this directory')
+    },
+    async (args) => {
+      const hotspots = codeGraphService.findHotspots(
+        WORKSPACE_ID, WORKSPACE_PATH, {
+          maxResults: args.maxResults,
+          path: args.path
+        }
+      )
+      return {
+        content: [{
+          type: 'text' as const,
+          text: truncateToolOutput(JSON.stringify({
+            hotspots,
+            count: hotspots.length
+          }, null, 2))
+        }]
+      }
+    }
+  )
+
+  // ── code_clones ──
+  server.tool(
+    'code_clones',
+    'Detect structurally duplicated code blocks via normalized hashing — finds copy-paste logic across files. Requires semantic search indexing to be active.',
+    {
+      minBodyLines: z.number().optional().default(5).describe('Minimum function body lines to consider'),
+      path: z.string().optional().describe('Filter to files under this directory'),
+      maxResults: z.number().optional().default(20).describe('Max clone groups to return')
+    },
+    async (args) => {
+      const clones = codeGraphService.findCodeClones(
+        WORKSPACE_ID, WORKSPACE_PATH, {
+          minBodyLines: args.minBodyLines,
+          path: args.path,
+          maxResults: args.maxResults
+        }
+      )
+      return {
+        content: [{
+          type: 'text' as const,
+          text: truncateToolOutput(JSON.stringify({
+            cloneGroups: clones,
+            totalGroups: clones.length,
+            totalDuplicates: clones.reduce((sum, g) => sum + g.clones.length, 0)
+          }, null, 2))
+        }]
       }
     }
   )

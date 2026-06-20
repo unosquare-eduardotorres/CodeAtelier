@@ -59,106 +59,7 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
       }
     ): Promise<void> => {
       validateSender(event)
-
-      grillLog.info('[grill:evaluate] Handler invoked', {
-        workspaceId: args?.workspaceId,
-        trackId: args?.trackId,
-        greenfield: args?.greenfield
-      })
-
-      const {
-        workspaceId,
-        trackId,
-        ideaTitle,
-        ideaDescription,
-        iterationHistory,
-        previousScore,
-        ideaId,
-        llmProvider: explicitProvider,
-        greenfield,
-        projectName
-      } = args
-
-      if (grillAgentService.isRunning) {
-        throw new Error('A grill evaluation is already running.')
-      }
-
-      // ── Greenfield path: no workspace lookup needed ──
-      if (greenfield) {
-        grillLog.info(
-          `[grill:evaluate:greenfield] track=${trackId} project="${(projectName ?? ideaTitle).slice(0, 40)}"`
-        )
-
-        const llmProvider: LLMProvider = explicitProvider ?? 'claude'
-
-        // Wire event forwarding (no persistence controller for greenfield)
-        wireGrillEvents(workspaceId, '')
-
-        // Emit transient 'evaluating' status so the bottom bar shows "Grilling…"
-        // immediately. The standard path gets this from startTracking, but
-        // greenfield skips the persistence controller.
-        try {
-          getSessionEventRouter().sendWorkspaceEvent(
-            IPC_CHANNELS.GRILL_STATUS_CHANGED,
-            workspaceId,
-            { status: 'evaluating', ideaId: '', trackId, score: null }
-          )
-        } catch {
-          /* router not initialized */
-        }
-
-        grillAgentService
-          .evaluateGreenfield({
-            trackId,
-            projectName: projectName ?? ideaTitle,
-            projectDescription: ideaDescription,
-            iterationHistory,
-            previousScore,
-            llmProvider
-          })
-          .catch((err) => {
-            grillLog.error('[grill:evaluate:greenfield] evaluate failed:', err)
-          })
-        return
-      }
-
-      // ── Standard path: existing workspace ──
-      // Resolve workspace path
-      const workspace = workspaceRepository.findById(workspaceId)
-      if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
-      if (!workspace.repoPath) throw new Error(`Workspace ${workspaceId} has no repo path`)
-
-      grillLog.info(
-        `[grill:evaluate] workspaceId=${workspaceId} track=${trackId} title="${ideaTitle.slice(0, 40)}"`
-      )
-
-      // Start persistence tracking (if ideaId is provided)
-      if (ideaId) {
-        await grillPersistenceController.startTracking(ideaId, workspaceId, trackId)
-      }
-
-      // Resolve LLM provider: explicit selection → workspace setting → 'claude'
-      const settings = workspaceRepository.getSettings(workspace.id)
-      const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
-
-      // Wire event forwarding (through persistence controller)
-      wireGrillEvents(workspaceId, workspace.repoPath)
-
-      // Start the evaluation (non-blocking — runs in background)
-      grillAgentService
-        .evaluate({
-          workspaceId,
-          workspacePath: workspace.repoPath,
-          trackId,
-          ideaTitle,
-          ideaDescription,
-          iterationHistory,
-          previousScore,
-          llmProvider
-        })
-        .catch((err) => {
-          grillLog.error('[grill:evaluate] evaluate failed:', err)
-        })
+      await handleGrillEvaluate(args)
     }
   )
 
@@ -405,6 +306,120 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
   )
 }
 
+// ── Evaluate handler (extracted for CC reduction) ────────────────────────
+
+async function handleGrillEvaluate(args: {
+  workspaceId: string
+  trackId: GrillTrackId
+  ideaTitle: string
+  ideaDescription: string
+  iterationHistory?: string
+  previousScore?: number
+  ideaId?: string
+  llmProvider?: LLMProvider
+  greenfield?: boolean
+  projectName?: string
+}): Promise<void> {
+  grillLog.info('[grill:evaluate] Handler invoked', {
+    workspaceId: args?.workspaceId,
+    trackId: args?.trackId,
+    greenfield: args?.greenfield
+  })
+
+  const {
+    workspaceId,
+    trackId,
+    ideaTitle,
+    ideaDescription,
+    iterationHistory,
+    previousScore,
+    ideaId,
+    llmProvider: explicitProvider,
+    greenfield,
+    projectName
+  } = args
+
+  if (grillAgentService.isRunning) {
+    throw new Error('A grill evaluation is already running.')
+  }
+
+  // ── Greenfield path: no workspace lookup needed ──
+  if (greenfield) {
+    grillLog.info(
+      `[grill:evaluate:greenfield] track=${trackId} project="${(projectName ?? ideaTitle).slice(0, 40)}"`
+    )
+
+    const llmProvider: LLMProvider = explicitProvider ?? 'claude'
+
+    // Wire event forwarding (no persistence controller for greenfield)
+    wireGrillEvents(workspaceId, '')
+
+    // Emit transient 'evaluating' status so the bottom bar shows "Grilling…"
+    // immediately. The standard path gets this from startTracking, but
+    // greenfield skips the persistence controller.
+    try {
+      getSessionEventRouter().sendWorkspaceEvent(
+        IPC_CHANNELS.GRILL_STATUS_CHANGED,
+        workspaceId,
+        { status: 'evaluating', ideaId: '', trackId, score: null }
+      )
+    } catch {
+      /* router not initialized */
+    }
+
+    grillAgentService
+      .evaluateGreenfield({
+        trackId,
+        projectName: projectName ?? ideaTitle,
+        projectDescription: ideaDescription,
+        iterationHistory,
+        previousScore,
+        llmProvider
+      })
+      .catch((err) => {
+        grillLog.error('[grill:evaluate:greenfield] evaluate failed:', err)
+      })
+    return
+  }
+
+  // ── Standard path: existing workspace ──
+  const workspace = workspaceRepository.findById(workspaceId)
+  if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
+  if (!workspace.repoPath) throw new Error(`Workspace ${workspaceId} has no repo path`)
+
+  grillLog.info(
+    `[grill:evaluate] workspaceId=${workspaceId} track=${trackId} title="${ideaTitle.slice(0, 40)}"`
+  )
+
+  // Start persistence tracking (if ideaId is provided)
+  if (ideaId) {
+    await grillPersistenceController.startTracking(ideaId, workspaceId, trackId)
+  }
+
+  // Resolve LLM provider: explicit selection → workspace setting → 'claude'
+  const settings = workspaceRepository.getSettings(workspace.id)
+  const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
+
+  // Wire event forwarding (through persistence controller)
+  wireGrillEvents(workspaceId, workspace.repoPath)
+
+  // Start the evaluation (non-blocking — runs in background)
+  grillAgentService
+    .evaluate({
+      workspaceId,
+      workspacePath: workspace.repoPath,
+      trackId,
+      ideaTitle,
+      ideaDescription,
+      iterationHistory,
+      previousScore,
+      llmProvider
+    })
+    .catch((err) => {
+      grillLog.error('[grill:evaluate] evaluate failed:', err)
+    })
+}
+
 // ── Event forwarding ─────────────────────────────────────────────────────
 
 const grillCleanup = createTimedCleanupMap('grill')
@@ -416,7 +431,7 @@ const grillCleanup = createTimedCleanupMap('grill')
  */
 function wireGrillEvents(workspaceId: string, workspacePath: string): void {
   const cleanups = grillCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // GRILL-12: resolve router lazily inside callbacks, not at wire time
 
   // ── stream — transform chunk + route through persistence ──
   grillCleanup.addListener<{ workspaceId?: string; chunk: StreamChunk }>(
@@ -430,7 +445,7 @@ function wireGrillEvents(workspaceId: string, workspacePath: string): void {
         grillPersistenceController.handleStreamChunk(
           { type: 'text', content: chunk.content },
           workspaceId,
-          router
+          getSessionEventRouter()
         )
       } else if (
         chunk.type === 'tool_use' ||
@@ -443,7 +458,7 @@ function wireGrillEvents(workspaceId: string, workspacePath: string): void {
           formatTagsToSkip: ['grill-evaluation']
         })
         if (result) {
-          grillPersistenceController.handleStreamChunk(result, workspaceId, router)
+          grillPersistenceController.handleStreamChunk(result, workspaceId, getSessionEventRouter())
         }
       }
     }
@@ -456,7 +471,7 @@ function wireGrillEvents(workspaceId: string, workspacePath: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -466,7 +481,7 @@ function wireGrillEvents(workspaceId: string, workspacePath: string): void {
     grillAgentService,
     'evaluation',
     (data) => {
-      grillPersistenceController.handleEvaluationResult(data, workspaceId, router)
+      grillPersistenceController.handleEvaluationResult(data, workspaceId, getSessionEventRouter())
     }
   )
 
@@ -476,7 +491,7 @@ function wireGrillEvents(workspaceId: string, workspacePath: string): void {
     grillAgentService,
     'complete',
     () => {
-      grillPersistenceController.handleComplete(workspaceId, router)
+      grillPersistenceController.handleComplete(workspaceId, getSessionEventRouter())
       grillCleanup.runCleanup(workspaceId)
     }
   )

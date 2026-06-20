@@ -267,6 +267,117 @@ describe('AgentStreamProcessor.processContentChunk — status updates', () => {
   })
 })
 
+// ── resolveCompactionThresholds: additional window sizes ──
+
+describe('AgentStreamProcessor.resolveCompactionThresholds — window sizes', () => {
+  test('128K window', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(128_000)
+    assert.equal(result.suggest, 128_000 * 0.6)
+    assert.equal(result.auto, 128_000 * 0.75)
+  })
+
+  test('64K window (small)', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(64_000)
+    assert.equal(result.suggest, 64_000 * 0.6)
+    assert.equal(result.auto, 64_000 * 0.75)
+  })
+
+  test('500K window (mid-range: transitions between ≤200K and 1M)', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(500_000)
+    // Between the two tiers, the policy interpolates
+    assert.ok(result.suggest > 0)
+    assert.ok(result.auto > result.suggest)
+  })
+
+  test('0 window → both thresholds are 0', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(0)
+    assert.equal(result.suggest, 0)
+    assert.equal(result.auto, 0)
+  })
+})
+
+// ── checkCompaction: debounce behavior ──
+
+describe('AgentStreamProcessor.checkCompaction — debounce behavior', () => {
+  test('suggest band sets compactSuggested and resets turnsSinceCompactSuggestion', () => {
+    const host = makeHost({ turnsSinceCompactSuggestion: 5 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(600) // suggest band
+    assert.equal(host.compactSuggested, true)
+    assert.equal(host.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('below warning band resets compactSuggested to false', () => {
+    const host = makeHost({ compactSuggested: true, turnsSinceCompactSuggestion: 3 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(10) // well below threshold
+    assert.equal(host.compactSuggested, false)
+    assert.equal(host.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('warning band does NOT change compactSuggested flag', () => {
+    const host = makeHost({ compactSuggested: false })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(450) // warning band
+    // compactSuggested should remain false (not promoted to suggest)
+    assert.equal(host.compactSuggested, false)
+  })
+})
+
+// ── processContentChunk: api_retry overload detection ──
+
+describe('AgentStreamProcessor.processContentChunk — api_retry', () => {
+  const ctx = { conversationId: 'c6', isBuildMode: true, streamState: {} as never }
+
+  test('api_retry with 529 status sets overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'retrying', retryInfo: { errorStatus: 529 } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, true)
+  })
+
+  test('api_retry with 503 status sets overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'retrying', retryInfo: { errorStatus: 503 } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, true)
+  })
+
+  test('api_retry with overloaded content sets overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'server_is_overloaded', retryInfo: { errorStatus: null } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, true)
+  })
+
+  test('api_retry with 200 status does NOT set overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'retrying request', retryInfo: { errorStatus: 200 } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, false)
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

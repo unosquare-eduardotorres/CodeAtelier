@@ -1558,7 +1558,11 @@ export const MCP_TOOLS = {
       'code-graph',
       'module_boundary_health',
       'Code Graph · module_boundary_health'
-    )
+    ),
+    BLAST_RADIUS: mcpTool('code-graph', 'blast_radius', 'Code Graph · blast_radius'),
+    CO_CHANGE: mcpTool('code-graph', 'co_change', 'Code Graph · co_change'),
+    HOTSPOT_SCORE: mcpTool('code-graph', 'hotspot_score', 'Code Graph · hotspot_score'),
+    CODE_CLONES: mcpTool('code-graph', 'code_clones', 'Code Graph · code_clones')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
     SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),
@@ -1630,10 +1634,10 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'code-graph',
     displayName: 'Code Graph',
-    description: 'AST-based navigation — callers, references, dead code, coupling',
+    description: 'AST-based navigation — callers, references, dead code, coupling, blast radius, co-change, hotspots, clones',
     icon: 'Network',
     tokenImpact: 'high',
-    toolCount: 13,
+    toolCount: 17,
     featureFlagKey: 'repomapEnabled',
     defaultEnabled: true
   },

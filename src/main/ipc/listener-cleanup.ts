@@ -39,12 +39,15 @@ export interface TimedCleanupMap {
 
 export function createTimedCleanupMap(label: string): TimedCleanupMap {
   const map = new Map<string, Array<() => void>>()
+  const autoCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   return {
     prepareCleanups(workspaceId: string): Array<() => void> {
       const existing = map.get(workspaceId)
       if (existing) {
-        for (const cleanup of existing) cleanup()
+        for (const cleanup of existing) {
+          try { cleanup() } catch (e) { cleanupLog.warn(`[${label}:stale-cleanup] Error:`, e) }
+        }
         cleanupLog.info(
           `[${label}:cleanup] Cleared ${existing.length} stale listeners for ${workspaceId}`
         )
@@ -65,23 +68,34 @@ export function createTimedCleanupMap(label: string): TimedCleanupMap {
     },
 
     scheduleAutoCleanup(workspaceId: string, cleanups: Array<() => void>, timeoutMs: number): void {
+      const existingTimer = autoCleanupTimers.get(workspaceId)
+      if (existingTimer) clearTimeout(existingTimer)
+
       const timeoutId = setTimeout(() => {
+        autoCleanupTimers.delete(workspaceId)
         if (map.has(workspaceId)) {
           cleanupLog.warn(
             `[${label}:auto-cleanup] Timer fired for ${workspaceId} — cleaning ${cleanups.length} listeners`
           )
-          for (const cleanup of cleanups) cleanup()
+          for (const cleanup of cleanups) {
+            try { cleanup() } catch (e) { cleanupLog.warn(`[${label}:auto-cleanup] Error:`, e) }
+          }
           map.delete(workspaceId)
         }
       }, timeoutMs)
-      // Clear the timer when manual cleanup runs
-      cleanups.push(() => clearTimeout(timeoutId))
+      autoCleanupTimers.set(workspaceId, timeoutId)
+      cleanups.push(() => {
+        clearTimeout(timeoutId)
+        autoCleanupTimers.delete(workspaceId)
+      })
     },
 
     runCleanup(workspaceId: string): void {
       const cleanups = map.get(workspaceId)
       if (cleanups) {
-        for (const cleanup of cleanups) cleanup()
+        for (const cleanup of cleanups) {
+          try { cleanup() } catch (e) { cleanupLog.warn(`[${label}:run-cleanup] Error:`, e) }
+        }
         map.delete(workspaceId)
       }
     }

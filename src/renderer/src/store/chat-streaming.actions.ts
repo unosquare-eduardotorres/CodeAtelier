@@ -138,10 +138,14 @@ export function appendStreamChunkAction(
   role?: 'da-vinci' | 'specialist',
   taskId?: string,
   specialist?: string,
-  requestId?: string
+  requestId?: string,
+  conversationId?: string
 ): void {
-  const activeRequestId = get().activeRequestId
+  const { activeRequestId, isStreaming } = get()
+  if (!isStreaming) return
   if (activeRequestId && requestId && requestId !== activeRequestId) return
+  // STORE-01: guard against stale chunks leaking across conversation switches
+  if (conversationId && get().activeConversation?.id !== conversationId) return
 
   // Reset safety timer — backend is still alive
   streamingInternals.resetSafetyTimer()

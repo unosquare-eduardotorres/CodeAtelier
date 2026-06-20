@@ -4,18 +4,19 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { llamafileEmbeddingProvider } from '../services/llamafile-embedding.service'
 import { llamafileDownloadService } from '../services/llamafile-download.service'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 import type { EmbeddingModelStatus } from '../../shared/types'
 
 export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
   // Forward download progress (binary + model phases) to the renderer.
   llamafileEmbeddingProvider.on('modelDownloadProgress', (progress) => {
-    mainWindow.webContents.send(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, progress)
+    safeWindowSend(mainWindow, IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, progress)
   })
   llamafileEmbeddingProvider.on('modelReady', () => {
-    mainWindow.webContents.send(IPC_CHANNELS.EMBEDDING_MODEL_READY)
+    safeWindowSend(mainWindow, IPC_CHANNELS.EMBEDDING_MODEL_READY)
   })
   llamafileEmbeddingProvider.on('modelError', (error: string) => {
-    mainWindow.webContents.send(IPC_CHANNELS.EMBEDDING_MODEL_ERROR, error)
+    safeWindowSend(mainWindow, IPC_CHANNELS.EMBEDDING_MODEL_ERROR, error)
   })
 
   ipcMain.handle(

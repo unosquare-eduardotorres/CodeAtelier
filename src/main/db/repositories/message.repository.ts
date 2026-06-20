@@ -1,4 +1,5 @@
 import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type { Message, ToolActivity } from '../../../shared/types'
 
 interface MessageRow {
@@ -23,9 +24,8 @@ function mapRow(row: MessageRow): Message {
     attachmentsJson: row.attachments_json,
     createdAt: row.created_at,
     parentMessageId: row.parent_message_id ?? undefined,
-    toolActivities: row.tool_activities_json
-      ? (JSON.parse(row.tool_activities_json) as ToolActivity[])
-      : undefined
+    // DB-01: Use safeParseJSON to prevent a corrupted row from crashing conversation load
+    toolActivities: safeParseJSON<ToolActivity[] | undefined>(row.tool_activities_json, undefined)
   }
 }
 

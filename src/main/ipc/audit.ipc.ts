@@ -604,7 +604,7 @@ const auditCleanup = createTimedCleanupMap('audit')
 
 function wireAuditEvents(runId: string, workspaceId: string, workspacePath: string): void {
   const cleanups = auditCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // Lazy router resolution
 
   // ── progress ──
   auditCleanup.addListener<AuditProgressPayload>(
@@ -623,7 +623,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
         }
       }
 
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.AUDIT_PROGRESS,
         workspaceId,
         data as unknown as Record<string, unknown>
@@ -651,7 +651,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     // Forward to renderer
     const updatedResult = resultRow ? auditRepository.findResultById(resultRow.id) : null
     if (updatedResult) {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.AUDIT_RESULT,
         workspaceId,
         updatedResult as unknown as Record<string, unknown>
@@ -676,7 +676,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
       }
 
       // Forward to renderer for live display
-      router.sendWorkspaceEvent(IPC_CHANNELS.AUDIT_INTERMEDIATE, workspaceId, {
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AUDIT_INTERMEDIATE, workspaceId, {
         trackId: data.trackId,
         findings: data.findings,
         coverageStats: data.coverageStats,
@@ -712,7 +712,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
       })
 
       if (updatedRun) {
-        router.sendWorkspaceEvent(
+        getSessionEventRouter().sendWorkspaceEvent(
           IPC_CHANNELS.AUDIT_COMPLETE,
           workspaceId,
           updatedRun as unknown as Record<string, unknown>
@@ -733,7 +733,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     auditAgentService,
     'stream',
     (data) => {
-      processAuditStreamChunk(router, workspaceId, workspacePath, data.trackId, data.chunk)
+      processAuditStreamChunk(getSessionEventRouter(), workspaceId, workspacePath, data.trackId, data.chunk)
     }
   )
 
@@ -744,7 +744,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 

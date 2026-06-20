@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 2.0
@@ -14,7 +15,7 @@ export function registerZoomIpc(mainWindow: BrowserWindow): void {
   }
 
   const notifyRenderer = (factor: number): void => {
-    mainWindow.webContents.send(IPC_CHANNELS.ZOOM_CHANGED, factor)
+    safeWindowSend(mainWindow, IPC_CHANNELS.ZOOM_CHANGED, factor)
   }
 
   ipcMain.handle(IPC_CHANNELS.ZOOM_GET, (event) => {

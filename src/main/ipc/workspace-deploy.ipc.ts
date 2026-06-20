@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import type { ActivationProgressEvent } from '../../shared/types'
 import { workspaceDeployService } from '../services/workspace-deploy.service'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 
 /** Allowed file patterns for workspace read/write — relative to workspace root */
 const ALLOWED_FILE_PATTERNS = ['.claude/', 'CLAUDE.md', 'skills/']
@@ -41,7 +42,7 @@ export function registerWorkspaceDeployIpc(): void {
       const win = BrowserWindow.fromWebContents(event.sender)
 
       const onProgress = (progressEvent: ActivationProgressEvent): void => {
-        win?.webContents.send(IPC_CHANNELS.WORKSPACE_ACTIVATION_PROGRESS, progressEvent)
+        if (win) safeWindowSend(win, IPC_CHANNELS.WORKSPACE_ACTIVATION_PROGRESS, progressEvent)
       }
 
       return workspaceDeployService.activateAgents(args.workspacePath, onProgress)
