@@ -128,7 +128,9 @@ export default function MermaidDiagram({
   // Render mermaid diagram — re-renders when definition or theme changes
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async render
     setLoading(true)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null)
 
     const diagramId = id ?? `mermaid-r-${++renderCounter}`

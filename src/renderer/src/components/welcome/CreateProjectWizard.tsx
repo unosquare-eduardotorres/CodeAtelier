@@ -412,7 +412,10 @@ export default function CreateProjectWizard({
       {/* Step content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {currentStep === 'setup' && (
-          <div data-testid="wizard-setup-step" className="flex-1 flex flex-col items-center justify-center p-8">
+          <div
+            data-testid="wizard-setup-step"
+            className="flex-1 flex flex-col items-center justify-center p-8"
+          >
             <WizardStepIndicator
               currentStep={currentStep}
               onGoToStep={goToStep}
@@ -433,7 +436,10 @@ export default function CreateProjectWizard({
         )}
 
         {currentStep === 'focus' && (
-          <div data-testid="wizard-focus-step" className="flex-1 flex flex-col items-center justify-center p-8">
+          <div
+            data-testid="wizard-focus-step"
+            className="flex-1 flex flex-col items-center justify-center p-8"
+          >
             <WizardStepIndicator
               currentStep={currentStep}
               onGoToStep={goToStep}
@@ -466,7 +472,10 @@ export default function CreateProjectWizard({
         )}
 
         {currentStep === 'create' && (
-          <div data-testid="wizard-summary-step" className="flex-1 flex flex-col items-center justify-center p-8">
+          <div
+            data-testid="wizard-summary-step"
+            className="flex-1 flex flex-col items-center justify-center p-8"
+          >
             <WizardStepIndicator
               currentStep={currentStep}
               onGoToStep={goToStep}

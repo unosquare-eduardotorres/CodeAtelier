@@ -5,7 +5,7 @@ import { docsService } from '../services/docs.service'
 import { mermaidService } from '../services/mermaid.service'
 import type { DocFile } from '../../shared/types'
 import { validateSender } from './validate-sender'
-import { requireObject, requireString } from './validate-args'
+import { requireObject, requireString, optionalString } from './validate-args'
 
 export function registerDocsIpc(): void {
   // SVC-03: Add requireObject/requireString validation to DOCS_LIST
@@ -35,11 +35,16 @@ export function registerDocsIpc(): void {
     return docsService.readFile(resolvedPath)
   })
 
+  // MCP-05: Add requireObject/requireString validation to DOCS_RENDER_MERMAID
   ipcMain.handle(
     IPC_CHANNELS.DOCS_RENDER_MERMAID,
-    async (event, args: { definition: string; id?: string }): Promise<{ svg: string }> => {
+    async (event, rawArgs: unknown): Promise<{ svg: string }> => {
       validateSender(event)
-      return mermaidService.render(args.definition, args.id)
+      const ch = IPC_CHANNELS.DOCS_RENDER_MERMAID
+      const args = requireObject(rawArgs, ch)
+      const definition = requireString(args, 'definition', ch)
+      const id = optionalString(args, 'id', ch)
+      return mermaidService.render(definition, id)
     }
   )
 }

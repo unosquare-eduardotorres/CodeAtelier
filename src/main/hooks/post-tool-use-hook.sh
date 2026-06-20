@@ -50,6 +50,15 @@ if [ "$TOOL_NAME" = "Bash" ]; then
   fi
 fi
 
+# ── ESLint MCP Tool Detection ──
+# Detect eslint_check tool results with errors
+if [ "$TOOL_NAME" = "mcp__code-analysis__eslint_check" ]; then
+  if echo "$TOOL_OUTPUT" | grep -qE '"errorCount"\s*:\s*[1-9]|\*\*[1-9][0-9]*\*\* errors'; then
+    echo "{\"decision\": \"inject\", \"message\": \"[QUALITY GATE] ESLint errors found. Run eslint_fix on the affected files, then re-run eslint_check to confirm zero errors before proceeding.\"}"
+    exit 0
+  fi
+fi
+
 # ── Persistence / Anti-abandonment Detection ──
 # Check tool output for abandonment language (applies to any tool that produces text)
 COMBINED_OUTPUT="$TOOL_OUTPUT $TOOL_ERROR"

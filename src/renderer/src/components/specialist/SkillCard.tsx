@@ -24,6 +24,22 @@ interface SkillCardProps {
  * Active cards get a primary glow ring. Detached cards appear faded
  * with an attach action. Each card shows keywords and a toggle switch.
  */
+
+/** Extracted to satisfy react-hooks/static-components — must not be created during render. */
+function SkillIconForName({
+  name,
+  size,
+  className
+}: {
+  name: string
+  size: number
+  className: string
+}): React.JSX.Element {
+  const Icon = getSkillIcon(name)
+  // eslint-disable-next-line react-hooks/static-components -- Icon is a stable component reference from a lookup table
+  return <Icon size={size} className={className} />
+}
+
 export default function SkillCard({
   skill,
   isAttached,
@@ -59,15 +75,11 @@ export default function SkillCard({
       {/* Header: icon + name + relevance badge */}
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-1.5 min-w-0">
-          {(() => {
-            const SkillIcon = getSkillIcon(skill.name)
-            return (
-              <SkillIcon
-                size={14}
-                className={`flex-shrink-0 ${isAttached && isEnabled ? 'text-primary' : 'text-text-muted'}`}
-              />
-            )
-          })()}
+          <SkillIconForName
+            name={skill.name}
+            size={14}
+            className={`flex-shrink-0 ${isAttached && isEnabled ? 'text-primary' : 'text-text-muted'}`}
+          />
           {recommendation && <Star size={10} className="text-warning flex-shrink-0" />}
           <h5 className="text-xs font-semibold text-text-primary truncate">{skill.name}</h5>
         </div>

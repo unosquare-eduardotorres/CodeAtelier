@@ -954,8 +954,15 @@ interface Api {
   // LLM Presets
   getPresets: (args: { workspaceId: string }) => Promise<unknown>
   getPreset: (args: { presetId: string }) => Promise<unknown>
-  createPreset: (args: { workspaceId: string; name: string; actionConfig: Record<string, unknown> }) => Promise<unknown>
-  updatePreset: (args: { presetId: string; changes: { name?: string; actionConfig?: Record<string, unknown> } }) => Promise<unknown>
+  createPreset: (args: {
+    workspaceId: string
+    name: string
+    actionConfig: Record<string, unknown>
+  }) => Promise<unknown>
+  updatePreset: (args: {
+    presetId: string
+    changes: { name?: string; actionConfig?: Record<string, unknown> }
+  }) => Promise<unknown>
   deletePreset: (args: { presetId: string }) => Promise<unknown>
   setDefaultPreset: (args: { workspaceId: string; presetId: string }) => Promise<unknown>
   switchConversationPreset: (args: { conversationId: string; presetId: string }) => Promise<unknown>
@@ -1191,10 +1198,7 @@ interface Api {
     priority?: string
     settingsJson?: Record<string, unknown>
   }) => Promise<unknown>
-  blueprintCreateFromIdea: (args: {
-    ideaId: string
-    workspaceId: string
-  }) => Promise<unknown>
+  blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }) => Promise<unknown>
   blueprintStartSpecify: (args: {
     blueprintId: string
     workspaceId: string
@@ -1208,9 +1212,7 @@ interface Api {
     workspaceId: string
     message: string
   }) => Promise<{ sent: boolean }>
-  blueprintSkipClarify: (args: {
-    blueprintId: string
-  }) => Promise<{ skipped: boolean }>
+  blueprintSkipClarify: (args: { blueprintId: string }) => Promise<{ skipped: boolean }>
   blueprintStartPlan: (args: {
     blueprintId: string
     workspaceId: string
@@ -1309,12 +1311,7 @@ interface Api {
     }) => void
   ) => () => void
   onBlueprintWaveComplete: (
-    cb: (data: {
-      blueprintId: string
-      workspaceId: string
-      wave: number
-      status: string
-    }) => void
+    cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ) => () => void
 
   // Council (LLM Council — multi-advisor review)

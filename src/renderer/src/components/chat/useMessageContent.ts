@@ -58,7 +58,13 @@ function extractStructuredBlock<T>(
   transform: (parsed: unknown) => T | null,
   opts?: { skipForUser?: boolean; isUser?: boolean }
 ): ExtractedBlock<T> {
-  const empty: ExtractedBlock<T> = { data: null, rawContent: null, before: null, after: null, match: null }
+  const empty: ExtractedBlock<T> = {
+    data: null,
+    rawContent: null,
+    before: null,
+    after: null,
+    match: null
+  }
 
   if (opts?.skipForUser && opts.isUser) return empty
 
@@ -105,7 +111,11 @@ function parseAttachments(json: string | undefined): {
 function processGrillActivation(
   content: string,
   isUser: boolean
-): { isGrillActivation: boolean; ideaToRefineMatch: RegExpMatchArray | null; displayContent: string } {
+): {
+  isGrillActivation: boolean
+  ideaToRefineMatch: RegExpMatchArray | null
+  displayContent: string
+} {
   const isGrillActivation = isUser && content.startsWith('[GRILL MODE ACTIVATED]')
   const ideaToRefineMatch = isGrillActivation
     ? content.match(/## Idea to Refine\n\*\*(.+?)\*\*/)
@@ -189,14 +199,36 @@ export function useMessageContent(
 ): MessageContentData {
   return useMemo(() => {
     const { imageAttachments, fileAttachments } = parseAttachments(attachmentsJson)
-    const { isGrillActivation, ideaToRefineMatch, displayContent } =
-      processGrillActivation(contentMd, isUser)
+    const { isGrillActivation, ideaToRefineMatch, displayContent } = processGrillActivation(
+      contentMd,
+      isUser
+    )
 
     const plan = extractStructuredBlock(contentMd, /`{3,4}plan\n([\s\S]*?)`{3,4}/, toStructuredPlan)
-    const grill = extractStructuredBlock(contentMd, /```grill-summary\n([\s\S]*?)```/, toGrillSummary, { skipForUser: true, isUser })
-    const grillQ = extractStructuredBlock(contentMd, /```grill-question\n([\s\S]*?)```/, toGrillQuestions, { skipForUser: true, isUser })
-    const grillE = extractStructuredBlock(contentMd, /```grill-evaluation\n([\s\S]*?)```/, toGrillEval, { skipForUser: true, isUser })
-    const buildS = extractStructuredBlock(contentMd, /```build-summary\n([\s\S]*?)```/, toBuildSummary, { skipForUser: true, isUser })
+    const grill = extractStructuredBlock(
+      contentMd,
+      /```grill-summary\n([\s\S]*?)```/,
+      toGrillSummary,
+      { skipForUser: true, isUser }
+    )
+    const grillQ = extractStructuredBlock(
+      contentMd,
+      /```grill-question\n([\s\S]*?)```/,
+      toGrillQuestions,
+      { skipForUser: true, isUser }
+    )
+    const grillE = extractStructuredBlock(
+      contentMd,
+      /```grill-evaluation\n([\s\S]*?)```/,
+      toGrillEval,
+      { skipForUser: true, isUser }
+    )
+    const buildS = extractStructuredBlock(
+      contentMd,
+      /```build-summary\n([\s\S]*?)```/,
+      toBuildSummary,
+      { skipForUser: true, isUser }
+    )
 
     return {
       imageAttachments,

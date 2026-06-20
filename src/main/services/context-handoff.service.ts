@@ -35,10 +35,7 @@ class ContextHandoffService {
       return 'No prior conversation context available.'
     }
 
-    const lines: string[] = [
-      'The following is a summary of the prior conversation context:',
-      ''
-    ]
+    const lines: string[] = ['The following is a summary of the prior conversation context:', '']
 
     let totalChars = 0
     for (const msg of recentMessages) {
@@ -47,9 +44,7 @@ class ContextHandoffService {
       if (!content) continue
 
       // Truncate individual messages that are too long
-      const truncated = content.length > 1000
-        ? content.slice(0, 1000) + '… [truncated]'
-        : content
+      const truncated = content.length > 1000 ? content.slice(0, 1000) + '… [truncated]' : content
 
       const line = `**${prefix}:** ${truncated}`
       totalChars += line.length

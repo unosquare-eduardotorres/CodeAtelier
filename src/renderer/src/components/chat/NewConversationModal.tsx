@@ -106,7 +106,16 @@ export default function NewConversationModal({
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
       presetId
     })
-  }, [title, description, mode, conversationTone, attachments, useIsolatedBranch, presetId, onSubmit])
+  }, [
+    title,
+    description,
+    mode,
+    conversationTone,
+    attachments,
+    useIsolatedBranch,
+    presetId,
+    onSubmit
+  ])
 
   const handleCreateIdea = useCallback((): void => {
     const trimmedTitle = title.trim()

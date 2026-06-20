@@ -227,7 +227,7 @@ export default function SpecialistPage(): React.JSX.Element {
 
   if (!specialist) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+      <div data-testid="specialist-page" className="flex-1 flex flex-col items-center justify-center p-12 text-center">
         <div className="w-16 h-16 rounded-2xl bg-surface-overlay border border-border-subtle flex items-center justify-center mb-4">
           <Bot size={28} className="text-text-muted" />
         </div>
@@ -243,7 +243,7 @@ export default function SpecialistPage(): React.JSX.Element {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-8 max-w-5xl mx-auto">
+    <div data-testid="specialist-page" className="p-6 space-y-8 max-w-5xl mx-auto">
       <SpecialistHeroBanner
         displayName={specialist.displayName}
         buildStatus={specialist.buildStatus}

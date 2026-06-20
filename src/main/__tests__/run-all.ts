@@ -188,6 +188,27 @@ import '../services/__tests__/prompt-builder.test'
 import '../services/__tests__/skill-prompt-composer.test'
 import '../services/__tests__/sandbox-config.test'
 
+// ─── Run 30: Blueprint pipeline — parsers, conditions, review service, build service ───
+import '../services/__tests__/blueprint-parsers-conditions.test'
+import '../services/__tests__/blueprint-review.service.test'
+import '../services/__tests__/blueprint-build.service.test'
+import '../services/__tests__/blueprint-verify-conditions.test'
+
+// ─── Run 31: Plan Hub — unified plan registry ───
+import '../services/__tests__/audit-plan-mapper.test'
+import '../services/__tests__/plan-registry.test'
+
+// ─── Run 32: Library Documentation Service (three-tier lookup) ───
+import '../services/__tests__/library-doc-service.test'
+
+// ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
+import '../services/__tests__/evaluation-mcp-config.test'
+import '../services/__tests__/mpa-base-adapter.test'
+import '../services/__tests__/grill-adapter.test'
+import '../services/__tests__/greenfield-grill-adapter.test'
+import '../services/__tests__/blueprint-service-logic.test'
+import '../services/__tests__/cli-mcp-config-writer-logic.test'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────

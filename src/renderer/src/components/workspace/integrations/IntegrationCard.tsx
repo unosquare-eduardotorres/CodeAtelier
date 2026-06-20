@@ -32,7 +32,7 @@ export default function IntegrationCard({
   const isSaving = savingId === integration.id
 
   return (
-    <div className="bg-surface-overlay rounded-lg border border-border-subtle p-4 space-y-4">
+    <div data-testid="integration-card" className="bg-surface-overlay rounded-lg border border-border-subtle p-4 space-y-4">
       {/* Header: icon + name + toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

@@ -35,7 +35,10 @@ interface ChatStreamServiceInternal {
   activeRequestId: string | null
   currentStreamingRole: 'da-vinci' | 'specialist'
   keepaliveTimer: ReturnType<typeof setInterval> | null
-  mainWindow: { webContents: { send: (channel: string, data: unknown) => void }; isDestroyed: () => boolean }
+  mainWindow: {
+    webContents: { send: (channel: string, data: unknown) => void }
+    isDestroyed: () => boolean
+  }
   callbacks: { onStopPipeline: () => Promise<void> }
   safeWindowSend(channel: string, ...args: unknown[]): void
   acquireStreamLock(conversationId: string): {
@@ -106,10 +109,11 @@ function createTestService(overrides?: {
   }
 
   // Bind the real private methods from the class prototype onto our test double.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+
   const { ChatStreamService } = require('../chat-stream.service') as {
     ChatStreamService: new (...args: unknown[]) => unknown
   }
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- test double binding requires generic Function type
   const proto = ChatStreamService.prototype as Record<string, Function>
 
   svc.safeWindowSend = proto.safeWindowSend.bind(svc)
@@ -312,9 +316,9 @@ describe('resolveStreamIdentity', () => {
 
   test('returns specialist role for ProjectSpecialistRoleAdapter', () =>
     runExclusive(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { ProjectSpecialistRoleAdapter } =
-        require('../role-adapters/project-specialist.adapter')
+      const {
+        ProjectSpecialistRoleAdapter
+      } = require('../role-adapters/project-specialist.adapter')
       const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: '__test-ws__' })
 
       const origWsId = svcInternal._activeWorkspaceId
@@ -442,9 +446,7 @@ describe('finalizeStreamMessage', () => {
       assert.equal(createArgs[2], 'Hello world', 'cleaned content')
 
       // Assert: CHAT_MESSAGE_COMPLETE sent (channel is 'chat:messageComplete')
-      const completeMsg = mainWindow.sentMessages.find(
-        (m) => m.channel === 'chat:messageComplete'
-      )
+      const completeMsg = mainWindow.sentMessages.find((m) => m.channel === 'chat:messageComplete')
       assert.ok(completeMsg, 'CHAT_MESSAGE_COMPLETE should be sent')
 
       // Assert: state machine transitioned to idle
@@ -540,9 +542,7 @@ describe('finalizeStreamMessage', () => {
       assert.ok(errorChunk, 'error chunk with DB message should be sent')
 
       // COMPLETE should still be sent (with error- messageId)
-      const completeMsg = mainWindow.sentMessages.find(
-        (m) => m.channel === 'chat:messageComplete'
-      )
+      const completeMsg = mainWindow.sentMessages.find((m) => m.channel === 'chat:messageComplete')
       assert.ok(completeMsg, 'CHAT_MESSAGE_COMPLETE should still be sent on DB failure')
     }))
 

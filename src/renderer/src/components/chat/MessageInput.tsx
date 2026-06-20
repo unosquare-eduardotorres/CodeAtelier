@@ -23,6 +23,176 @@ import {
   useSpecialistWarningFlow
 } from './message-input'
 
+// ─── Pure Helpers ─────────────────────────────────────────
+
+/** Build placeholder text based on conversation state. */
+function getPlaceholderText(
+  isInitializing: boolean,
+  activeConversation: { mode?: string } | null
+): string {
+  if (isInitializing) return 'Waiting for AI agent to initialize...'
+  if (!activeConversation) return 'Select or create a conversation...'
+  const shortcut = navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'
+  if (activeConversation.mode === 'danger') {
+    return `⚠️ Danger mode — all commands execute without checks. ${shortcut} to switch mode...`
+  }
+  const prefix = activeConversation.mode === 'plan' ? 'Ask anything' : 'Describe what to build'
+  return `${prefix} — type / for commands, ${shortcut} to switch mode...`
+}
+
+/** Append text with a space separator when needed. */
+function appendWithSeparator(existing: string, addition: string): string {
+  const separator = existing.length > 0 && !existing.endsWith(' ') ? ' ' : ''
+  return existing + separator + addition
+}
+
+// ─── Command Key Dispatch ─────────────────────────────────
+
+interface CommandContext {
+  filteredCommands: { command: string }[]
+  selectedCommandIndex: number
+  setSelectedCommandIndex: React.Dispatch<React.SetStateAction<number>>
+  setText: (value: string) => void
+  executeCommand: (command: string) => Promise<void>
+}
+
+/**
+ * Dispatch slash-command navigation keys when the dropdown is visible.
+ * Returns true if the key was consumed, false to fall through.
+ */
+function handleCommandKey(e: React.KeyboardEvent, ctx: CommandContext): boolean {
+  switch (e.key) {
+    case 'ArrowUp':
+      e.preventDefault()
+      ctx.setSelectedCommandIndex((prev) =>
+        prev > 0 ? prev - 1 : ctx.filteredCommands.length - 1
+      )
+      return true
+    case 'ArrowDown':
+      e.preventDefault()
+      ctx.setSelectedCommandIndex((prev) =>
+        prev < ctx.filteredCommands.length - 1 ? prev + 1 : 0
+      )
+      return true
+    case 'Tab': {
+      e.preventDefault()
+      const selected = ctx.filteredCommands[ctx.selectedCommandIndex]
+      if (selected) ctx.setText(selected.command)
+      return true
+    }
+    case 'Escape':
+      e.preventDefault()
+      ctx.setText('')
+      return true
+    case 'Enter': {
+      if (e.shiftKey) return false
+      e.preventDefault()
+      const selected = ctx.filteredCommands[ctx.selectedCommandIndex]
+      if (selected) {
+        ctx.setText(selected.command)
+        void ctx.executeCommand(selected.command)
+      }
+      return true
+    }
+    default:
+      return false
+  }
+}
+
+// ─── Voice Mic Button ─────────────────────────────────────
+
+function VoiceMicButton({
+  isListening,
+  isDisabled,
+  startListening,
+  stopListening
+}: {
+  isListening: boolean
+  isDisabled: boolean
+  startListening: () => void
+  stopListening: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      onMouseDown={(e) => {
+        e.preventDefault()
+        startListening()
+      }}
+      onMouseUp={stopListening}
+      onMouseLeave={() => {
+        if (isListening) stopListening()
+      }}
+      disabled={isDisabled}
+      className={`flex-shrink-0 p-2 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base ${
+        isListening
+          ? 'bg-danger-muted text-danger ring-2 ring-danger/40 animate-pulse focus-visible:ring-danger'
+          : 'text-mode-plan-text hover:bg-mode-plan-muted disabled:opacity-30 focus-visible:ring-mode-plan'
+      }`}
+      aria-label={isListening ? 'Release to stop recording' : 'Hold to speak'}
+      title={isListening ? 'Release to stop recording' : 'Hold to speak (or hold V key)'}
+    >
+      {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+    </button>
+  )
+}
+
+// ─── Dialog State Hook ────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- inferred hook return type is complex
+function useMessageInputDialogs(activeConversation: { id?: string; title?: string } | null) {
+  const [showStopConfirm, setShowStopConfirm] = useState(false)
+  const [showCompleteDialog, setShowCompleteDialog] = useState(false)
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
+  const [showRewindDialog, setShowRewindDialog] = useState(false)
+  const [showIdeaPopover, setShowIdeaPopover] = useState(false)
+  const { stopGeneration, completeConversation, closeConversation } = useChatActions()
+
+  const handleStopConfirm = useCallback(async () => {
+    await stopGeneration()
+    setShowStopConfirm(false)
+  }, [stopGeneration])
+
+  const handleCompleteConfirm = useCallback(
+    async (branchName: string, commitMessage: string, description: string) => {
+      await completeConversation(branchName, commitMessage, description)
+      setShowCompleteDialog(false)
+    },
+    [completeConversation]
+  )
+
+  const handleCloseConfirm = useCallback(async () => {
+    if (activeConversation) {
+      await closeConversation(activeConversation.id!)
+    }
+    setShowCloseConfirm(false)
+  }, [activeConversation, closeConversation])
+
+  return {
+    showStopConfirm,
+    setShowStopConfirm,
+    showCompleteDialog,
+    setShowCompleteDialog,
+    showCloseConfirm,
+    setShowCloseConfirm,
+    showRewindDialog,
+    setShowRewindDialog,
+    showIdeaPopover,
+    setShowIdeaPopover,
+    handleStopConfirm,
+    handleStopCancel: useCallback(() => setShowStopConfirm(false), []),
+    conversationTitle: activeConversation?.title ?? 'Untitled',
+    dialogConversationId: activeConversation?.id ?? '',
+    handleCompleteConfirm,
+    handleCompleteCancel: useCallback(() => setShowCompleteDialog(false), []),
+    handleCloseConfirm,
+    handleCloseCancel: useCallback(() => setShowCloseConfirm(false), []),
+    handleRewindCancel: useCallback(() => setShowRewindDialog(false), []),
+    handleRewindComplete: useCallback(() => setShowRewindDialog(false), [])
+  }
+}
+
+// ─── Component ────────────────────────────────────────────
+
 interface MessageInputProps {
   attachments: string[]
   onClearAttachments: () => void
@@ -36,23 +206,10 @@ export default function MessageInput({
 }: MessageInputProps): React.JSX.Element {
   const activeConversation = useChatStore((s) => s.activeConversation)
   const currentConversationId = activeConversation?.id ?? ''
-  const { clearDraftText } = useChatActions()
+  const { clearDraftText, sendMessage, appendLocalMessage, clearDisplay, setEffort } =
+    useChatActions()
   const { text, setText } = useDraftText(currentConversationId)
-  const [showStopConfirm, setShowStopConfirm] = useState(false)
-  const [showCompleteDialog, setShowCompleteDialog] = useState(false)
-  const [showCloseConfirm, setShowCloseConfirm] = useState(false)
-  const [showRewindDialog, setShowRewindDialog] = useState(false)
-  const [showIdeaPopover, setShowIdeaPopover] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const {
-    sendMessage,
-    stopGeneration,
-    clearDisplay,
-    appendLocalMessage,
-    completeConversation,
-    closeConversation,
-    setEffort
-  } = useChatActions()
   const isStreaming = useChatStore((s) => s.isStreaming)
   const conversationId = activeConversation?.id
   const conversationSpecialists = useConversationSpecialists(conversationId)
@@ -81,15 +238,15 @@ export default function MessageInput({
     [conversationTokenEstimates]
   )
 
+  // ── Dialogs ──
+  const dialogs = useMessageInputDialogs(activeConversation)
+
   // ── Voice input ──
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [interimText, setInterimText] = useState('')
 
   const handleTranscript = useCallback((transcript: string) => {
-    setText((prev) => {
-      const separator = prev.length > 0 && !prev.endsWith(' ') ? ' ' : ''
-      return prev + separator + transcript
-    })
+    setText((prev) => appendWithSeparator(prev, transcript))
     setInterimText('')
   }, [])
 
@@ -157,9 +314,9 @@ export default function MessageInput({
     voiceEnabled,
     isVoiceSupported,
     onClearAttachments,
-    setShowCompleteDialog,
-    setShowCloseConfirm,
-    setShowRewindDialog,
+    setShowCompleteDialog: dialogs.setShowCompleteDialog,
+    setShowCloseConfirm: dialogs.setShowCloseConfirm,
+    setShowRewindDialog: dialogs.setShowRewindDialog,
     setVoiceEnabled,
     appendLocalMessage,
     clearDisplay,
@@ -199,54 +356,28 @@ export default function MessageInput({
     const trimmed = text.trim()
     if (!trimmed || isStreaming || !activeConversation) return
 
-    // Handle slash commands
     if (trimmed.startsWith('/')) {
       setText('')
       await executeCommand(trimmed)
       return
     }
 
-    // Check if specialist warning should block this send
     const sendAttachments = attachments.length > 0 ? [...attachments] : undefined
     if (checkWarning(trimmed, sendAttachments)) return
 
     await executeSend(trimmed, sendAttachments)
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (showCommands) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSelectedCommandIndex((prev) => (prev > 0 ? prev - 1 : filteredCommands.length - 1))
-        return
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSelectedCommandIndex((prev) => (prev < filteredCommands.length - 1 ? prev + 1 : 0))
-        return
-      }
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        const selected = filteredCommands[selectedCommandIndex]
-        if (selected) setText(selected.command)
-        return
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setText('')
-        return
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        const selected = filteredCommands[selectedCommandIndex]
-        if (selected) {
-          setText(selected.command)
-          void executeCommand(selected.command)
-        }
-        return
-      }
-    }
+  const commandCtx: CommandContext = {
+    filteredCommands,
+    selectedCommandIndex,
+    setSelectedCommandIndex,
+    setText,
+    executeCommand
+  }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (showCommands && handleCommandKey(e, commandCtx)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -289,17 +420,7 @@ export default function MessageInput({
             setSelectedCommandIndex(0)
           }}
           onKeyDown={handleKeyDown}
-          placeholder={
-            isInitializing
-              ? 'Waiting for AI agent to initialize...'
-              : !activeConversation
-                ? 'Select or create a conversation...'
-                : activeConversation.mode === 'danger'
-                  ? `⚠️ Danger mode — all commands execute without checks. ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
-                  : activeConversation.mode === 'plan'
-                    ? `Ask anything — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
-                    : `Describe what to build — type / for commands, ${navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'} to switch mode...`
-          }
+          placeholder={getPlaceholderText(isInitializing, activeConversation)}
           disabled={isDisabled}
           rows={1}
           className="flex-1 bg-transparent text-text-body placeholder-text-muted resize-none outline-none text-sm leading-relaxed py-2 disabled:opacity-50"
@@ -309,7 +430,7 @@ export default function MessageInput({
         {/* Stop button */}
         {isStreaming && (
           <button
-            onClick={() => setShowStopConfirm(true)}
+            onClick={() => dialogs.setShowStopConfirm(true)}
             className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
             aria-label="Stop generation"
             title="Stop generation"
@@ -320,7 +441,7 @@ export default function MessageInput({
 
         {/* Idea capture button */}
         <button
-          onClick={() => setShowIdeaPopover(!showIdeaPopover)}
+          onClick={() => dialogs.setShowIdeaPopover(!dialogs.showIdeaPopover)}
           disabled={!activeConversation}
           className="flex-shrink-0 p-2 rounded-lg text-warning hover:bg-warning-muted disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
           aria-label="Capture an idea"
@@ -329,9 +450,9 @@ export default function MessageInput({
           <Lightbulb size={18} />
         </button>
 
-        {showIdeaPopover && (
+        {dialogs.showIdeaPopover && (
           <IdeaPopover
-            onClose={() => setShowIdeaPopover(false)}
+            onClose={() => dialogs.setShowIdeaPopover(false)}
             onSaved={() => setText('')}
             initialTitle={text.trim()}
           />
@@ -339,26 +460,12 @@ export default function MessageInput({
 
         {/* Voice mic button */}
         {voiceEnabled && isVoiceSupported && (
-          <button
-            onMouseDown={(e) => {
-              e.preventDefault()
-              startListening()
-            }}
-            onMouseUp={stopListening}
-            onMouseLeave={() => {
-              if (isListening) stopListening()
-            }}
-            disabled={isDisabled}
-            className={`flex-shrink-0 p-2 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base ${
-              isListening
-                ? 'bg-danger-muted text-danger ring-2 ring-danger/40 animate-pulse focus-visible:ring-danger'
-                : 'text-mode-plan-text hover:bg-mode-plan-muted disabled:opacity-30 focus-visible:ring-mode-plan'
-            }`}
-            aria-label={isListening ? 'Release to stop recording' : 'Hold to speak'}
-            title={isListening ? 'Release to stop recording' : 'Hold to speak (or hold V key)'}
-          >
-            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
-          </button>
+          <VoiceMicButton
+            isListening={isListening}
+            isDisabled={isDisabled}
+            startListening={startListening}
+            stopListening={stopListening}
+          />
         )}
 
         {/* Send button */}
@@ -374,31 +481,20 @@ export default function MessageInput({
       </div>
 
       <MessageInputDialogs
-        showStopConfirm={showStopConfirm}
-        onStopConfirm={async () => {
-          await stopGeneration()
-          setShowStopConfirm(false)
-        }}
-        onStopCancel={() => setShowStopConfirm(false)}
-        showCompleteDialog={showCompleteDialog}
-        conversationTitle={activeConversation?.title ?? 'Untitled'}
-        conversationId={activeConversation?.id ?? ''}
-        onCompleteConfirm={async (branchName, commitMessage, description) => {
-          await completeConversation(branchName, commitMessage, description)
-          setShowCompleteDialog(false)
-        }}
-        onCompleteCancel={() => setShowCompleteDialog(false)}
-        showCloseConfirm={showCloseConfirm}
-        onCloseConfirm={async () => {
-          if (activeConversation) {
-            await closeConversation(activeConversation.id)
-          }
-          setShowCloseConfirm(false)
-        }}
-        onCloseCancel={() => setShowCloseConfirm(false)}
-        showRewindDialog={showRewindDialog}
-        onRewindCancel={() => setShowRewindDialog(false)}
-        onRewindComplete={() => setShowRewindDialog(false)}
+        showStopConfirm={dialogs.showStopConfirm}
+        onStopConfirm={dialogs.handleStopConfirm}
+        onStopCancel={dialogs.handleStopCancel}
+        showCompleteDialog={dialogs.showCompleteDialog}
+        conversationTitle={dialogs.conversationTitle}
+        conversationId={dialogs.dialogConversationId}
+        onCompleteConfirm={dialogs.handleCompleteConfirm}
+        onCompleteCancel={dialogs.handleCompleteCancel}
+        showCloseConfirm={dialogs.showCloseConfirm}
+        onCloseConfirm={dialogs.handleCloseConfirm}
+        onCloseCancel={dialogs.handleCloseCancel}
+        showRewindDialog={dialogs.showRewindDialog}
+        onRewindCancel={dialogs.handleRewindCancel}
+        onRewindComplete={dialogs.handleRewindComplete}
         showSpecialistWarning={showSpecialistWarning}
         specialistWarningType={specialistWarningType}
         activeSpecialistCount={activeSpecialistCount}

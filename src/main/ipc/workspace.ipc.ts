@@ -300,7 +300,7 @@ export function registerWorkspaceIpc(): void {
       throw new Error(`${ch}: invalid command name`)
     }
     try {
-      const result = execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
+      execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
       // IPC-03: Don't expose filesystem path to renderer
       return { available: true }
     } catch {

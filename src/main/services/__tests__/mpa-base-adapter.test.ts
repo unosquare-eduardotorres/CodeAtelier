@@ -7,12 +7,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { MpaBaseAdapter } from '../role-adapters/mpa/mpa-base.adapter'
-import type {
-  AdapterPromptContext,
-  AdapterPromptResult,
-  AdapterMcpContext,
-  AdapterIntentContext
-} from '../agent-session.types'
+import type { AdapterMcpContext } from '../agent-session.types'
 import type { AgentRole } from '../../../shared/types'
 
 // ── Concrete subclass for testing ───────────────────────────────────────

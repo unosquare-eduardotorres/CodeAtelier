@@ -182,7 +182,9 @@ describe('ProjectSpecialistRoleAdapter', () => {
   test('resolveWorkspaceId_returns_workspaceId', () => {
     const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-resolve-test' })
     // resolveWorkspaceId is protected — access via (adapter as any)
-    const resolved = (adapter as unknown as { resolveWorkspaceId: () => string | null }).resolveWorkspaceId()
+    const resolved = (
+      adapter as unknown as { resolveWorkspaceId: () => string | null }
+    ).resolveWorkspaceId()
     assert.equal(resolved, 'ws-resolve-test')
   })
 
@@ -219,7 +221,10 @@ describe('ProjectSpecialistRoleAdapter', () => {
     adapter.onConversationSwitch('new-conv')
     // After switch, cache should be invalid
     assert.equal(
-      a.promptCache.isValid({ mode: 'plan', conversationId: 'new-conv', tone: 'default', model: null }, 1),
+      a.promptCache.isValid(
+        { mode: 'plan', conversationId: 'new-conv', tone: 'default', model: null },
+        1
+      ),
       false,
       'Prompt cache should be invalid after conversation switch'
     )

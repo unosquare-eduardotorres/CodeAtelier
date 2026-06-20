@@ -102,7 +102,10 @@ export default function CouncilMemberColumn({
   }, [segments, currentToolActivities])
 
   return (
-    <div data-testid="council-member-column" className="flex flex-col h-full min-w-0 border border-border-subtle rounded-lg bg-surface-overlay overflow-hidden">
+    <div
+      data-testid="council-member-column"
+      className="flex flex-col h-full min-w-0 border border-border-subtle rounded-lg bg-surface-overlay overflow-hidden"
+    >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle bg-surface-float/50">
         <AdvisorIcon advisor={advisor} size={20} className="text-text-secondary flex-shrink-0" />

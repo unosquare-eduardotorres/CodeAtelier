@@ -28,10 +28,12 @@ const VALID_TRANSITIONS: Record<
     userStop: 'stopped'
   },
   error: {
-    errorHandled: 'idle'
+    errorHandled: 'idle',
+    userStop: 'stopped'
   },
   stopped: {
-    cleanupComplete: 'idle'
+    cleanupComplete: 'idle',
+    streamError: 'error'
   }
 }
 
@@ -98,7 +100,11 @@ export class ConversationStateMachine extends EventEmitter {
 
     // Forward state transitions to renderer for state mirror
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+      try {
+        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+      } catch {
+        // Window destroyed between check and send — harmless
+      }
     }
     return true
   }
@@ -126,7 +132,11 @@ export class ConversationStateMachine extends EventEmitter {
 
     // Forward force reset to renderer
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+      try {
+        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+      } catch {
+        // Window destroyed between check and send — harmless
+      }
     }
   }
 }

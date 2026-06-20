@@ -83,11 +83,7 @@ class GoalDecomposerService {
     decomposeLog.info(`[decompose] Decomposing input (${input.length} chars)`)
 
     const model = modelConfigService.getModelById(params.workspaceId, 'mpa:decompose')
-    const responseText = await this.callClaude(
-      this.buildPrompt(input),
-      model,
-      params.workspaceId
-    )
+    const responseText = await this.callClaude(this.buildPrompt(input), model, params.workspaceId)
 
     const goals = this.parseGoals(responseText)
     if (!goals || goals.length === 0) {
@@ -113,11 +109,7 @@ class GoalDecomposerService {
   }
 
   /** Call Claude CLI in one-shot mode (mirrors GrillPlanGeneratorService). */
-  private async callClaude(
-    prompt: string,
-    model: string,
-    workspaceId?: string
-  ): Promise<string> {
+  private async callClaude(prompt: string, model: string, workspaceId?: string): Promise<string> {
     try {
       const { text } = await runOneShotClaude({
         feature: 'goal_decompose',

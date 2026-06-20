@@ -86,9 +86,10 @@ export class LibraryDocRepository extends BaseRepository<LibraryDocRow, LibraryD
       }
 
       // Delete old rows using direct SQL for FTS sync
-      db.prepare(
-        'DELETE FROM library_docs WHERE workspace_id = ? AND package_name = ?'
-      ).run(workspaceId, packageName)
+      db.prepare('DELETE FROM library_docs WHERE workspace_id = ? AND package_name = ?').run(
+        workspaceId,
+        packageName
+      )
 
       // Insert new sections
       const insertStmt = db.prepare(`
@@ -103,8 +104,15 @@ export class LibraryDocRepository extends BaseRepository<LibraryDocRow, LibraryD
 
       // Sync FTS5 index with newly inserted rows
       const newRows = db
-        .prepare('SELECT id, package_name, section_title, section_content FROM library_docs WHERE workspace_id = ? AND package_name = ?')
-        .all(workspaceId, packageName) as { id: number; package_name: string; section_title: string; section_content: string }[]
+        .prepare(
+          'SELECT id, package_name, section_title, section_content FROM library_docs WHERE workspace_id = ? AND package_name = ?'
+        )
+        .all(workspaceId, packageName) as {
+        id: number
+        package_name: string
+        section_title: string
+        section_content: string
+      }[]
 
       for (const row of newRows) {
         db.prepare(
@@ -167,7 +175,12 @@ export class LibraryDocRepository extends BaseRepository<LibraryDocRow, LibraryD
          GROUP BY package_name
          ORDER BY package_name`
       )
-      .all(workspaceId) as { package_name: string; version: string; source: string; section_count: number }[]
+      .all(workspaceId) as {
+      package_name: string
+      version: string
+      source: string
+      section_count: number
+    }[]
 
     return rows.map((r) => ({
       packageName: r.package_name,
@@ -198,7 +211,9 @@ export class LibraryDocRepository extends BaseRepository<LibraryDocRow, LibraryD
     this.runTransaction(() => {
       // Get all IDs to delete from FTS
       const rows = db
-        .prepare('SELECT id, package_name, section_title, section_content FROM library_docs WHERE workspace_id = ?')
+        .prepare(
+          'SELECT id, package_name, section_title, section_content FROM library_docs WHERE workspace_id = ?'
+        )
         .all(workspaceId) as LibraryDocRow[]
 
       for (const row of rows) {

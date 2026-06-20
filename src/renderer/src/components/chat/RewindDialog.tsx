@@ -46,6 +46,7 @@ export default function RewindDialog({
 
   useEffect(() => {
     if (isOpen && conversationId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
       setLoading(true)
       setError(null)
       setSelectedId(null)

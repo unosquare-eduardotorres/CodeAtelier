@@ -19,6 +19,7 @@ import {
 } from './default-prompts'
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { SkillPromptComposer } from './skill-prompt-composer'
+import { sanitizePromptInput } from './sanitize-prompt-input'
 
 // ── Prompt Builder Types ──
 
@@ -177,7 +178,7 @@ export class PromptBuilder {
     if (!workspacePath) return ''
     const projectContext = this.readProjectContext(workspacePath, 'da-vinci', mode, budgetTier)
     if (!projectContext) return ''
-    return `## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`
+    return `## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`
   }
 
   /**
@@ -196,7 +197,7 @@ export class PromptBuilder {
       `## Your Specialized Identity\n\n` +
         `You are operating with the following domain expertise. ` +
         `Apply it to all conversations and analyses.\n\n` +
-        options.personaPrompt
+        sanitizePromptInput(options.personaPrompt)
     )
     if (options.personaSkills && options.personaSkills.length > 0) {
       const filtered = this.skillComposer.filterAssignedSkills(
@@ -237,7 +238,7 @@ export class PromptBuilder {
       budgetTier
     )
     if (projectContext) {
-      layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
+      layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`)
     }
   }
 
@@ -249,7 +250,7 @@ export class PromptBuilder {
       log.warn(
         '[prompt-builder] memoryContext passed via PromptBuildOptions is deprecated (Strategy C). Memory should be in the user prompt.'
       )
-      layers.push(`## Auto Memory\n\n${options.memoryContext}`)
+      layers.push(`## Auto Memory\n\n${sanitizePromptInput(options.memoryContext)}`)
     }
   }
 
@@ -322,7 +323,7 @@ export class PromptBuilder {
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
     // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
     if (budgetTier === 'minimal') {
-      return 'Tech: Electron 41, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
+      return 'Tech: Electron 42, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
     }
 
     try {

@@ -445,7 +445,10 @@ export class AgentSessionService extends AgentBaseService {
       () => this._doSend(message, conversationId, images),
       () => this._doSend(message, conversationId, images) // Still proceed after prior error
     )
-    this.sendLocks.set(conversationId, thisLock.catch(() => {})) // Swallow for chain continuity
+    this.sendLocks.set(
+      conversationId,
+      thisLock.catch(() => {})
+    ) // Swallow for chain continuity
     return thisLock
   }
 
@@ -1438,6 +1441,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
+    presetId?: string | null
   }): CLIExecuteOptions {
     return this.executorFactory.buildCLIExecuteOptions(params)
   }

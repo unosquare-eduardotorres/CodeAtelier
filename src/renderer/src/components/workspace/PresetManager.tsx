@@ -158,9 +158,9 @@ function PresetEditor({
 }): React.JSX.Element {
   const { createPreset, updatePreset: updatePresetStore } = usePresetStore()
   const [name, setName] = useState(preset?.name ?? '')
-  const [actionConfig, setActionConfig] = useState<
-    Partial<Record<ModelAction, ActionModelConfig>>
-  >(preset?.actionConfig ?? {})
+  const [actionConfig, setActionConfig] = useState<Partial<Record<ModelAction, ActionModelConfig>>>(
+    preset?.actionConfig ?? {}
+  )
 
   const handleSave = async (): Promise<void> => {
     if (!name.trim()) return
@@ -191,8 +191,10 @@ function PresetEditor({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-surface-primary border border-border-subtle rounded-xl shadow-xl
-                      w-[600px] max-h-[80vh] overflow-y-auto p-6">
+      <div
+        className="relative bg-surface-primary border border-border-subtle rounded-xl shadow-xl
+                      w-[600px] max-h-[80vh] overflow-y-auto p-6"
+      >
         <h3 className="text-sm font-semibold text-text-primary mb-4">
           {preset ? 'Edit Preset' : 'New Preset'}
         </h3>

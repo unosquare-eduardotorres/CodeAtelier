@@ -59,6 +59,7 @@ export default function SpecialistWarningDialog({
 
   useEffect(() => {
     if (!isOpen) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on dialog open
     setDontShowAgain(false)
     void loadPreferences().catch(() => undefined)
   }, [isOpen, loadPreferences])

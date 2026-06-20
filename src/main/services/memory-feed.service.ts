@@ -263,14 +263,20 @@ ${content.substring(0, 50000)}`
 
       let stdout = ''
       let stderr = ''
+      // SVC-15: Cap buffers at 2MB to prevent unbounded memory growth
+      const MAX_OUTPUT = 2 * 1024 * 1024
 
       child.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
+        if (stdout.length < MAX_OUTPUT) {
+          stdout += data.toString().slice(0, MAX_OUTPUT - stdout.length)
+        }
       })
 
       child.stderr?.on('data', (data: Buffer) => {
         const chunk = data.toString()
-        stderr += chunk
+        if (stderr.length < MAX_OUTPUT) {
+          stderr += chunk.slice(0, MAX_OUTPUT - stderr.length)
+        }
         log.debug(`Memory feed stderr: ${chunk.slice(0, 200)}`)
       })
 

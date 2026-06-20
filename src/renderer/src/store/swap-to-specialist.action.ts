@@ -26,9 +26,7 @@ type GetState = () => SwapActionState
 // SetState mirrors zustand's `set` for the full ChatState — this action only
 // touches the SwapActionState slice, but the callback receives the full store
 // state, so the param/return must be typed against ChatState.
-type SetState = (
-  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
-) => void
+type SetState = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
 
 /**
  * Execute the swap-to-specialist flow after the user accepts the proposal.

@@ -19,6 +19,7 @@ export default function SpecialistOrder(): React.JSX.Element {
     const active = [...specialists]
       .filter((s) => s.isActive && s.agentId !== 'user')
       .sort((a, b) => a.priority - b.priority)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync ordered list from specialists prop
     setOrderedList(active)
   }, [specialists])
 

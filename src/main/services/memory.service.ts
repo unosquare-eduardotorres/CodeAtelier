@@ -1,6 +1,7 @@
 import { dbLogger } from '../logger'
 import { memoryRepository } from '../db/repositories'
 import type { Memory, MemoryType } from '../../shared/types'
+import { sanitizePromptInput } from './sanitize-prompt-input'
 
 const log = dbLogger
 
@@ -50,26 +51,30 @@ class MemoryService {
       const sections: string[] = []
 
       // User preferences first (cross-workspace)
+      // Helper: sanitize + truncate individual memory content
+      const sanitizeMem = (m: Memory): string => {
+        const truncTitle = m.title.length > 200 ? m.title.slice(0, 200) + '...' : m.title
+        const truncContent = m.content.length > 500 ? m.content.slice(0, 500) + '...' : m.content
+        return `- **${sanitizePromptInput(truncTitle)}**: ${sanitizePromptInput(truncContent)}`
+      }
+
       if (grouped.user) {
         sections.push(
-          '### User Preferences\n' +
-            grouped.user.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
+          '### User Preferences\n' + grouped.user.map(sanitizeMem).join('\n')
         )
       }
 
       // Project memories (per-workspace)
       if (grouped.project) {
         sections.push(
-          '### Project Knowledge\n' +
-            grouped.project.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
+          '### Project Knowledge\n' + grouped.project.map(sanitizeMem).join('\n')
         )
       }
 
       // Reference memories
       if (grouped.reference) {
         sections.push(
-          '### References\n' +
-            grouped.reference.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
+          '### References\n' + grouped.reference.map(sanitizeMem).join('\n')
         )
       }
 
@@ -79,7 +84,7 @@ class MemoryService {
       if (grouped.feedback) {
         sections.push(
           '### Feedback & Corrections (IMPORTANT — follow these)\n' +
-            grouped.feedback.map((m) => `- **${m.title}**: ${m.content}`).join('\n')
+            grouped.feedback.map(sanitizeMem).join('\n')
         )
       }
 

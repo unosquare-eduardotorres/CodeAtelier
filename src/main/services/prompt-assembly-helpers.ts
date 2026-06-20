@@ -15,6 +15,8 @@ import {
   CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
   CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
+  ESLINT_GUIDANCE_PROMPT,
+  ESLINT_GUIDANCE_PROMPT_LEAN,
   LIBRARY_DOCS_GUIDANCE_PROMPT,
   LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN,
   DIRECT_ANSWER_BOOST_PROMPT,
@@ -135,6 +137,12 @@ export function appendMcpToolGuidance(
   if (!basePrompt.includes('## Library Doc')) {
     appendSections.push(
       verbosity === 'lean' ? LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN : LIBRARY_DOCS_GUIDANCE_PROMPT
+    )
+  }
+
+  if (!basePrompt.includes('## ESLint')) {
+    appendSections.push(
+      verbosity === 'lean' ? ESLINT_GUIDANCE_PROMPT_LEAN : ESLINT_GUIDANCE_PROMPT
     )
   }
 

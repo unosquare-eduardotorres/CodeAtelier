@@ -228,7 +228,11 @@ export class AgentExecutorFactory {
     const { allowedTools, disallowedTools } = mcpResult
 
     const modelAction = `${this.s.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = modelConfigService.getModel(this.s.workspacePath!, modelAction, params.presetId)
+    const resolvedModel = modelConfigService.getModel(
+      this.s.workspacePath!,
+      modelAction,
+      params.presetId
+    )
 
     const supports1M = supportsContext1M(resolvedModel)
     const effectiveContextWindow = supports1M

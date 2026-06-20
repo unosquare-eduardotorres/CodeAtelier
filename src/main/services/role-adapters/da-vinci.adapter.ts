@@ -20,7 +20,11 @@ import { DA_VINCI_AGENT_ID } from '../../../shared/constants'
 import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
 import { memoryService } from '../memory.service'
 import { modelConfigService } from '../model-config.service'
-import { conversationRepository, specialistRepository, workspaceRepository } from '../../db/repositories'
+import {
+  conversationRepository,
+  specialistRepository,
+  workspaceRepository
+} from '../../db/repositories'
 import { BaseRoleAdapter } from './base.adapter'
 
 export class DaVinciRoleAdapter extends BaseRoleAdapter {

@@ -270,9 +270,7 @@ export class RecoveryNudgeService {
           opts.onChunk(chunk)
         }
       }
-      this.log.info(
-        `[PIPELINE:plan-tool-recovery-done] conversationId=${opts.conversationId}`
-      )
+      this.log.info(`[PIPELINE:plan-tool-recovery-done] conversationId=${opts.conversationId}`)
       return { attempted: true }
     } catch (err) {
       this.log.error('[PIPELINE:plan-tool-recovery-failed]', err)

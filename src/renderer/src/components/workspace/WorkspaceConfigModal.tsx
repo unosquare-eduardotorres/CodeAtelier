@@ -58,7 +58,10 @@ export default function WorkspaceConfigModal({
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
         {/* Modal */}
-        <div data-testid="workspace-config-modal" className="relative bg-surface-float border border-border-default rounded w-[480px] max-h-[600px] shadow-2xl flex flex-col">
+        <div
+          data-testid="workspace-config-modal"
+          className="relative bg-surface-float border border-border-default rounded w-[480px] max-h-[600px] shadow-2xl flex flex-col"
+        >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
             <div className="flex items-center gap-2">
@@ -82,7 +85,12 @@ export default function WorkspaceConfigModal({
               <div className="text-xs text-text-secondary uppercase tracking-wider mb-1">
                 Active Workspace
               </div>
-              <div data-testid="workspace-config-name" className="text-sm font-medium text-text-primary">{activeWorkspace.name}</div>
+              <div
+                data-testid="workspace-config-name"
+                className="text-sm font-medium text-text-primary"
+              >
+                {activeWorkspace.name}
+              </div>
               <div className="text-xs text-text-secondary truncate mt-0.5">
                 {activeWorkspace.repoPath}
               </div>

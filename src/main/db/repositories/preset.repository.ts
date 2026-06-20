@@ -57,9 +57,9 @@ export class PresetRepository extends BaseRepository<PresetRow, LLMPreset> {
 
   /** Get a single preset by ID. */
   getById(presetId: string): LLMPreset | null {
-    const row = this.db()
-      .prepare('SELECT * FROM llm_presets WHERE id = ?')
-      .get(presetId) as PresetRow | undefined
+    const row = this.db().prepare('SELECT * FROM llm_presets WHERE id = ?').get(presetId) as
+      | PresetRow
+      | undefined
     return row ? mapRow(row) : null
   }
 

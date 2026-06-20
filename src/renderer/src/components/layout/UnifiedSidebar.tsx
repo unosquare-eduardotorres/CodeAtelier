@@ -101,7 +101,10 @@ export default function UnifiedSidebar({
   // --- Collapsed view ---
   if (isCollapsed) {
     return (
-      <div data-testid="unified-sidebar" className="flex flex-col items-center w-12 h-full bg-surface-raised border-r border-border-subtle">
+      <div
+        data-testid="unified-sidebar"
+        className="flex flex-col items-center w-12 h-full bg-surface-raised border-r border-border-subtle"
+      >
         {/* Collapse toggle */}
         <div className="flex items-center justify-center w-full py-2 border-b border-border-subtle">
           <button
@@ -207,7 +210,10 @@ export default function UnifiedSidebar({
   // --- Expanded view ---
   return (
     <>
-      <div data-testid="unified-sidebar" className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
+      <div
+        data-testid="unified-sidebar"
+        className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2 min-w-0">

@@ -77,7 +77,7 @@ export default function IntegrationsPage(): React.JSX.Element {
   ]
 
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
+    <div data-testid="integrations-page" className="p-6 space-y-6 max-w-2xl">
       {/* MCP Explainer Banner */}
       <McpExplainerBanner />
 

@@ -219,11 +219,13 @@ export class OpenCodeConfigWriter {
       Buffer.from(opts.workspacePath).toString('base64url').slice(0, 32)
     )
     if (!existsSync(tempDir)) {
-      mkdirSync(tempDir, { recursive: true })
+      // OC-02: Restrict permissions — config may contain plaintext API keys
+      mkdirSync(tempDir, { recursive: true, mode: 0o700 })
     }
     const configPath = join(tempDir, 'opencode.json')
 
-    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+    // OC-02: Owner-only read/write — prevents other users from reading API keys
+    writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })
     configLog.info(
       `[opencode-config] Wrote: ${configPath} (${Object.keys(config.mcp).length} MCP servers)`
     )

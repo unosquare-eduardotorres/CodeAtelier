@@ -163,7 +163,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
   if (!activeWorkspace) return <div />
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
+    <div data-testid="code-intelligence-page" className="max-w-3xl mx-auto px-6 py-8 space-y-6">
       {/* Page header */}
       <div className="mb-2">
         <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">

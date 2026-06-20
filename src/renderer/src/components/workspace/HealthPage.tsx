@@ -161,7 +161,7 @@ export default function HealthPage({
   // ── Landing view (history / empty state) ──
   if (view === 'landing') {
     return (
-      <div className="flex flex-col h-full">
+      <div data-testid="health-page" className="flex flex-col h-full">
         <HealthLanding
           onNewAudit={actions.handleNewAudit}
           onOpenRun={actions.handleOpenRun}
@@ -194,7 +194,7 @@ export default function HealthPage({
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div data-testid="health-page" className="flex flex-col h-full">
       {/* ── Header bar ── */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle bg-surface-raised">
         {/* Left: back to history + title */}

@@ -89,12 +89,14 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
     if (workspaceId) {
       loadHistory(workspaceId)
       loadCampaignHistory(workspaceId)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on workspace switch
       setSelectedRunId(null)
     }
   }, [workspaceId, loadHistory, loadCampaignHistory])
 
   // Auto-open the campaign panel when a plan is handed off from the grill/wizard
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- auto-open panel from preloaded goal
     if (preloadedGoal) setShowCampaignPanel(true)
   }, [preloadedGoal])
 

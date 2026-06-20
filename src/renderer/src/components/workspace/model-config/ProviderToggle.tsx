@@ -12,7 +12,7 @@ export default function ProviderToggle({
   onProviderChange
 }: ProviderToggleProps): React.JSX.Element {
   return (
-    <div className="mb-8">
+    <div data-testid="provider-toggle" className="mb-8">
       <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
         Provider
       </h3>

@@ -40,7 +40,7 @@ export function SkillMarketSection({
   onDetachSkill
 }: SkillMarketSectionProps): React.JSX.Element {
   return (
-    <section>
+    <section data-testid="specialist-skills-grid">
       <div className="flex items-center justify-between mb-4">
         <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
           Skill Market

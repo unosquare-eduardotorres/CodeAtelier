@@ -67,6 +67,7 @@ export default function TokenDetailsModal({
   useEffect(() => {
     if (!isOpen || !workspaceId) return
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
     setLoading(true)
     window.api
       .getWorkspaceUsageSummary({ workspaceId })
@@ -139,7 +140,10 @@ export default function TokenDetailsModal({
       />
 
       {/* Dialog */}
-      <div data-testid="token-details-modal" className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto">
+      <div
+        data-testid="token-details-modal"
+        className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex items-start justify-between p-5 pb-3">
           <div className="flex items-center gap-3">
@@ -166,7 +170,10 @@ export default function TokenDetailsModal({
 
         {/* Live counters card */}
         <div className="px-5 pb-4">
-          <div data-testid="token-live-counters" className="rounded-lg border border-border-default bg-surface-overlay p-4 space-y-3">
+          <div
+            data-testid="token-live-counters"
+            className="rounded-lg border border-border-default bg-surface-overlay p-4 space-y-3"
+          >
             <div className="text-[10px] uppercase tracking-wide text-text-muted font-semibold">
               Live session counters
             </div>
@@ -227,7 +234,10 @@ export default function TokenDetailsModal({
           )}
 
           {!loading && workspaceId && summary && summary.byFeature.length > 0 && (
-            <div data-testid="token-feature-table" className="text-[11px] text-text-secondary space-y-1.5">
+            <div
+              data-testid="token-feature-table"
+              className="text-[11px] text-text-secondary space-y-1.5"
+            >
               {summary.byFeature.map((f) => (
                 <div key={f.feature} className="flex justify-between items-center py-0.5">
                   <span>

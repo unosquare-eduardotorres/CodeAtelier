@@ -5,6 +5,8 @@ import type { Idea, Conversation } from '../../../shared/types'
 interface IdeaState {
   ideas: Idea[]
   isLoading: boolean
+  /** STORE-02: Surface mutation errors to the UI */
+  error: string | null
 
   loadIdeas: (workspaceId: string) => Promise<void>
   createIdea: (workspaceId: string, title: string, description: string) => Promise<Idea>
@@ -25,53 +27,102 @@ interface IdeaState {
 export const useIdeaStore = create<IdeaState>((set) => ({
   ideas: [],
   isLoading: false,
+  error: null,
 
   loadIdeas: async (workspaceId) => {
-    set({ isLoading: true })
+    set({ isLoading: true, error: null })
     try {
       const ideas = await window.api.listIdeas({ workspaceId })
       set({ ideas, isLoading: false })
     } catch (error) {
       rendererLog.error('Failed to load ideas:', error)
-      set({ isLoading: false })
+      set({ isLoading: false, error: error instanceof Error ? error.message : String(error) })
     }
   },
 
   createIdea: async (workspaceId, title, description) => {
-    const idea = await window.api.createIdea({ workspaceId, title, description })
-    set((s) => ({ ideas: [idea, ...s.ideas] }))
-    return idea
+    try {
+      set({ error: null })
+      const idea = await window.api.createIdea({ workspaceId, title, description })
+      set((s) => ({ ideas: [idea, ...s.ideas] }))
+      return idea
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      rendererLog.error('Failed to create idea:', error)
+      set({ error: msg })
+      throw error
+    }
   },
 
   updateIdea: async (id, data) => {
-    const updated = await window.api.updateIdea({ id, ...data })
-    set((s) => ({ ideas: s.ideas.map((i) => (i.id === id ? updated : i)) }))
+    try {
+      set({ error: null })
+      const updated = await window.api.updateIdea({ id, ...data })
+      set((s) => ({ ideas: s.ideas.map((i) => (i.id === id ? updated : i)) }))
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      rendererLog.error('Failed to update idea:', error)
+      set({ error: msg })
+      throw error
+    }
   },
 
   deleteIdea: async (id) => {
-    await window.api.deleteIdea({ id })
-    set((s) => ({ ideas: s.ideas.filter((i) => i.id !== id) }))
+    try {
+      set({ error: null })
+      await window.api.deleteIdea({ id })
+      set((s) => ({ ideas: s.ideas.filter((i) => i.id !== id) }))
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      rendererLog.error('Failed to delete idea:', error)
+      set({ error: msg })
+      throw error
+    }
   },
 
   startGrill: async (ideaId, workspaceId) => {
-    const result = await window.api.startIdeaGrill({ ideaId, workspaceId })
-    set((s) => ({ ideas: s.ideas.map((i) => (i.id === ideaId ? result.idea : i)) }))
-    return result
+    try {
+      set({ error: null })
+      const result = await window.api.startIdeaGrill({ ideaId, workspaceId })
+      set((s) => ({ ideas: s.ideas.map((i) => (i.id === ideaId ? result.idea : i)) }))
+      return result
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      rendererLog.error('Failed to start grill:', error)
+      set({ error: msg })
+      throw error
+    }
   },
 
   convertDirect: async (ideaId, workspaceId) => {
-    const result = await window.api.convertIdeaDirect({ ideaId, workspaceId })
-    set((s) => ({ ideas: s.ideas.map((i) => (i.id === ideaId ? result.idea : i)) }))
-    return result
+    try {
+      set({ error: null })
+      const result = await window.api.convertIdeaDirect({ ideaId, workspaceId })
+      set((s) => ({ ideas: s.ideas.map((i) => (i.id === ideaId ? result.idea : i)) }))
+      return result
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      rendererLog.error('Failed to convert idea:', error)
+      set({ error: msg })
+      throw error
+    }
   },
 
   completeFromGrill: async (conversationId, summary) => {
-    const result = await window.api.completeIdeaFromGrill({ conversationId, summary })
-    if (result) {
-      set((s) => ({ ideas: s.ideas.map((i) => (i.id === result.id ? result : i)) }))
+    try {
+      set({ error: null })
+      const result = await window.api.completeIdeaFromGrill({ conversationId, summary })
+      if (result) {
+        set((s) => ({ ideas: s.ideas.map((i) => (i.id === result.id ? result : i)) }))
+      }
+      return result
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      rendererLog.error('Failed to complete idea from grill:', error)
+      set({ error: msg })
+      throw error
     }
-    return result
   },
 
-  reset: () => set({ ideas: [], isLoading: false })
+  reset: () => set({ ideas: [], isLoading: false, error: null })
 }))

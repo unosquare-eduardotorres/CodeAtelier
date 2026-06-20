@@ -15,7 +15,8 @@ import type { OllamaStatus, PullProgress } from '../../shared/types'
  */
 class OllamaManagerService extends EventEmitter {
   private defaultBaseUrl = 'http://127.0.0.1:11434'
-  private pullAbortController: AbortController | null = null
+  // SVC-13: Per-model abort controllers to prevent concurrent pulls from cancelling the wrong model
+  private readonly pullControllers = new Map<string, AbortController>()
 
   /** Build the base URL from host:port or use provided URL */
   private resolveBaseUrl(baseUrl?: string): string {
@@ -97,7 +98,8 @@ class OllamaManagerService extends EventEmitter {
    */
   async pullModel(model: string, baseUrl?: string): Promise<void> {
     const url = this.resolveBaseUrl(baseUrl)
-    this.pullAbortController = new AbortController()
+    const controller = new AbortController()
+    this.pullControllers.set(model, controller)
 
     log.info(`[OllamaManager] Pulling model: ${model} from ${url}`)
 
@@ -106,7 +108,7 @@ class OllamaManagerService extends EventEmitter {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: model, stream: true }),
-        signal: this.pullAbortController.signal
+        signal: controller.signal
       })
 
       if (!res.ok) {
@@ -175,18 +177,28 @@ class OllamaManagerService extends EventEmitter {
       this.emit('pullError', message)
       throw error
     } finally {
-      this.pullAbortController = null
+      this.pullControllers.delete(model)
     }
   }
 
   /**
    * Cancel an in-progress model pull.
+   * @param model - Optional: cancel a specific model pull. If omitted, cancels all.
    */
-  cancelPull(): void {
-    if (this.pullAbortController) {
-      this.pullAbortController.abort()
-      this.pullAbortController = null
-      log.info('[OllamaManager] Pull cancelled by user')
+  cancelPull(model?: string): void {
+    if (model) {
+      const controller = this.pullControllers.get(model)
+      if (controller) {
+        controller.abort()
+        this.pullControllers.delete(model)
+        log.info(`[OllamaManager] Pull cancelled for model: ${model}`)
+      }
+    } else {
+      for (const [m, c] of this.pullControllers) {
+        c.abort()
+        log.info(`[OllamaManager] Pull cancelled for model: ${m}`)
+      }
+      this.pullControllers.clear()
     }
   }
 
@@ -200,10 +212,12 @@ class OllamaManagerService extends EventEmitter {
     const url = this.resolveBaseUrl(baseUrl)
     log.info(`[OllamaManager] Removing model: ${model} from ${url}`)
 
+    // OC-06: Add timeout to prevent indefinite hang (matches embed() pattern)
     const res = await fetch(`${url}/api/delete`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: model })
+      body: JSON.stringify({ name: model }),
+      signal: AbortSignal.timeout(30_000)
     })
 
     if (!res.ok) {
@@ -224,10 +238,12 @@ class OllamaManagerService extends EventEmitter {
    */
   async embed(model: string, input: string[], baseUrl?: string): Promise<number[][]> {
     const url = this.resolveBaseUrl(baseUrl)
+    // SVC-14: Add timeout to prevent indefinite hangs if Ollama is unresponsive
     const res = await fetch(`${url}/api/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, input })
+      body: JSON.stringify({ model, input }),
+      signal: AbortSignal.timeout(30_000) // 30s for embedding operations
     })
 
     if (!res.ok) {
@@ -244,8 +260,9 @@ class OllamaManagerService extends EventEmitter {
    * Returns true if Ollama becomes responsive within ~8 seconds.
    */
   async startOllama(): Promise<boolean> {
-    const { exec } = await import('node:child_process')
+    const { spawn } = await import('node:child_process')
     const { promisify } = await import('node:util')
+    const { exec } = await import('node:child_process')
     const execAsync = promisify(exec)
 
     try {
@@ -253,11 +270,26 @@ class OllamaManagerService extends EventEmitter {
         // macOS: open the Ollama app (which starts the server)
         await execAsync('open -a Ollama')
       } else if (process.platform === 'win32') {
-        // Windows: try starting ollama serve in background
-        exec('start /B ollama serve', { windowsHide: true })
+        // SVC-17: Use spawn with error handler instead of fire-and-forget exec
+        const child = spawn('ollama', ['serve'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        })
+        child.on('error', (err) => {
+          log.warn('[OllamaManager] Failed to spawn ollama serve (Windows):', err)
+        })
+        child.unref()
       } else {
-        // Linux: start ollama serve in background
-        exec('nohup ollama serve > /dev/null 2>&1 &')
+        // SVC-17: Use spawn with error handler instead of fire-and-forget exec
+        const child = spawn('ollama', ['serve'], {
+          detached: true,
+          stdio: 'ignore'
+        })
+        child.on('error', (err) => {
+          log.warn('[OllamaManager] Failed to spawn ollama serve (Linux):', err)
+        })
+        child.unref()
       }
 
       // Wait up to 8 seconds for Ollama to become responsive

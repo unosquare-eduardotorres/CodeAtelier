@@ -6,7 +6,7 @@ Code Atelier is an Electron desktop application. Each workspace runs exactly one
 
 ## Tech stack
 
-- **Runtime**: Electron 41 (Chromium 146 + Node 24)
+- **Runtime**: Electron 42 (Chromium 148 + Node 24)
 - **Frontend**: React 19 + TypeScript 6
 - **Bundler**: electron-vite 5 (Vite 7 under the hood)
 - **Styling**: Tailwind CSS 4
@@ -56,7 +56,7 @@ src/
 
 | Skill                | Path                                         | Purpose                                                          |
 | -------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
-| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | Electron 41 IPC, security model, windowing, packaging            |
+| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | Electron 42 IPC, security model, windowing, packaging            |
 | `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`   | .NET solution layout, project conventions, common patterns       |
 | `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`         | Claude CLI flags, modes, output streams, exit codes              |
 | `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`   | High-level Claude integration patterns                           |

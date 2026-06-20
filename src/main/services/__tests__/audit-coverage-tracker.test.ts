@@ -198,10 +198,14 @@ describe('AuditCoverageTracker', () => {
   test('deduplicates file paths', () => {
     const tracker = new AuditCoverageTracker()
     tracker.onChunk({
-      type: 'tool_use', toolName: 'Read', toolInput: 'src/app.ts'
+      type: 'tool_use',
+      toolName: 'Read',
+      toolInput: 'src/app.ts'
     } as StreamChunk)
     tracker.onChunk({
-      type: 'tool_use', toolName: 'Read', toolInput: 'src/app.ts'
+      type: 'tool_use',
+      toolName: 'Read',
+      toolInput: 'src/app.ts'
     } as StreamChunk)
     assert.equal(tracker.getStats().fileCount, 1)
     assert.equal(tracker.getStats().toolCallCount, 2)
@@ -223,7 +227,9 @@ describe('AuditCoverageTracker', () => {
   test('reset clears all tracking state', () => {
     const tracker = new AuditCoverageTracker()
     tracker.onChunk({
-      type: 'tool_use', toolName: 'Read', toolInput: 'src/app.ts'
+      type: 'tool_use',
+      toolName: 'Read',
+      toolInput: 'src/app.ts'
     } as StreamChunk)
     tracker.reset()
     const stats = tracker.getStats()

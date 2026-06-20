@@ -81,6 +81,7 @@ export default function CouncilLanding({
   // Load history on mount + workspace change
   useEffect(() => {
     if (!workspaceId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
     setIsLoading(true)
     window.api
       .councilGetHistory({ workspaceId, limit: 50 })
@@ -246,7 +247,10 @@ export default function CouncilLanding({
   if (history.length === 0) {
     return (
       <>
-        <div data-testid="council-landing" className="flex flex-col items-center justify-center py-10 px-4">
+        <div
+          data-testid="council-landing"
+          className="flex flex-col items-center justify-center py-10 px-4"
+        >
           <div className="max-w-2xl w-full space-y-6">
             {/* Header */}
             <div className="text-center space-y-2">

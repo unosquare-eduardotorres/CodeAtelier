@@ -145,8 +145,13 @@ export class BlueprintSpecService extends EventEmitter {
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        if (abortSignal?.aborted) {
+          reject(new Error('Phase cancelled'))
+          return
+        }
+        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), {
+          once: true
+        })
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)

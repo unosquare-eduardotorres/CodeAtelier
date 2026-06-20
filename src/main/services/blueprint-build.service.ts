@@ -89,10 +89,17 @@ export class BlueprintBuildService extends EventEmitter {
 
     // 4. Emit phaseStart
     this.emit('phaseStart', {
-      blueprintId, workspaceId, phase: 'build'
+      blueprintId,
+      workspaceId,
+      phase: 'build'
     } satisfies BlueprintPhaseStartPayload)
 
-    const result: BuildResult = { tasksCompleted: 0, filesCreated: [], filesModified: [], failed: false }
+    const result: BuildResult = {
+      tasksCompleted: 0,
+      filesCreated: [],
+      filesModified: [],
+      failed: false
+    }
     let verifyTriggered = false
 
     try {
@@ -100,25 +107,48 @@ export class BlueprintBuildService extends EventEmitter {
       for (const waveNum of sortedWaves) {
         const waveTasks = waveMap.get(waveNum) ?? []
         await this.executeWave({
-          waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result
+          waveNum,
+          waveTasks,
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          phaseContext,
+          result
         })
         if (result.failed) break
       }
 
       // 6. Save build phase artifact (summary)
       if (buildPhase) {
-        const summary = this.buildArtifactSummary(result.tasksCompleted, totalTasks, result.filesCreated, result.filesModified)
+        const summary = this.buildArtifactSummary(
+          result.tasksCompleted,
+          totalTasks,
+          result.filesCreated,
+          result.filesModified
+        )
         blueprintPhaseRepository.appendArtifact(buildPhase.id, {
           type: 'build',
           contentMd: summary,
-          contentJson: { tasksCompleted: result.tasksCompleted, totalTasks, filesCreated: result.filesCreated, filesModified: result.filesModified }
+          contentJson: {
+            tasksCompleted: result.tasksCompleted,
+            totalTasks,
+            filesCreated: result.filesCreated,
+            filesModified: result.filesModified
+          }
         })
       }
 
       if (result.failed) {
         this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
       } else {
-        this.finalizeSuccess(blueprintId, workspaceId, workspacePath, buildPhase?.id ?? null, result, totalTasks)
+        this.finalizeSuccess(
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          buildPhase?.id ?? null,
+          result,
+          totalTasks
+        )
         verifyTriggered = true
       }
     } catch (err) {
@@ -151,10 +181,14 @@ export class BlueprintBuildService extends EventEmitter {
     phaseContext: import('../../shared/blueprint-types').PhaseContext
     result: BuildResult
   }): Promise<void> {
-    const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } = params
+    const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } =
+      params
 
     this.emit('waveStart', {
-      blueprintId, workspaceId, wave: waveNum, taskCount: waveTasks.length
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
+      taskCount: waveTasks.length
     } satisfies BlueprintWaveStartPayload)
 
     bpLog.info(`[executeWave] Wave ${waveNum}: ${waveTasks.length} tasks`)
@@ -171,14 +205,21 @@ export class BlueprintBuildService extends EventEmitter {
       }
 
       this.emit('waveTaskStart', {
-        blueprintId, workspaceId, wave: waveNum, taskId: task.taskId,
+        blueprintId,
+        workspaceId,
+        wave: waveNum,
+        taskId: task.taskId,
         description: task.description
       } satisfies BlueprintWaveTaskStartPayload)
 
       blueprintTaskRepository.updateStatus(task.id, 'running')
 
       const taskResult = await this.executeTask({
-        task, blueprintId, workspaceId, workspacePath, phaseContext
+        task,
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        phaseContext
       })
 
       if (taskResult.success) {
@@ -196,7 +237,10 @@ export class BlueprintBuildService extends EventEmitter {
       }
 
       this.emit('waveTaskComplete', {
-        blueprintId, workspaceId, wave: waveNum, taskId: task.taskId,
+        blueprintId,
+        workspaceId,
+        wave: waveNum,
+        taskId: task.taskId,
         status: taskResult.success ? 'complete' : 'failed'
       } satisfies BlueprintWaveTaskCompletePayload)
 
@@ -208,7 +252,10 @@ export class BlueprintBuildService extends EventEmitter {
 
     const waveStatus = waveFailed || result.failed ? 'failed' : 'complete'
     this.emit('waveComplete', {
-      blueprintId, workspaceId, wave: waveNum, status: waveStatus
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
+      status: waveStatus
     } satisfies BlueprintWaveCompletePayload)
 
     if (waveFailed) {
@@ -219,7 +266,11 @@ export class BlueprintBuildService extends EventEmitter {
 
   // ── Phase Finalization ──
 
-  private finalizeFailed(blueprintId: string, workspaceId: string, buildPhaseId: string | null): void {
+  private finalizeFailed(
+    blueprintId: string,
+    workspaceId: string,
+    buildPhaseId: string | null
+  ): void {
     if (buildPhaseId) {
       blueprintPhaseRepository.updateStatus(buildPhaseId, 'failed')
     }
@@ -231,7 +282,10 @@ export class BlueprintBuildService extends EventEmitter {
     }
 
     this.emit('phaseComplete', {
-      blueprintId, workspaceId, phase: 'build', status: 'failed'
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      status: 'failed'
     } satisfies BlueprintPhaseCompletePayload)
   }
 
@@ -250,27 +304,48 @@ export class BlueprintBuildService extends EventEmitter {
     // NOTE: DB state transitions (status='verifying', currentPhase='verify', verifyPhase='active')
     // are owned by blueprintVerifyService.startVerifyPhase() — not duplicated here.
 
-    bpLog.info(`[finalizeSuccess] Blueprint ${blueprintId} — build complete (${result.tasksCompleted}/${totalTasks} tasks), advancing to VERIFY`)
+    bpLog.info(
+      `[finalizeSuccess] Blueprint ${blueprintId} — build complete (${result.tasksCompleted}/${totalTasks} tasks), advancing to VERIFY`
+    )
 
     this.emit('phaseComplete', {
-      blueprintId, workspaceId, phase: 'build', status: 'complete',
-      completion: { tasksCompleted: result.tasksCompleted, totalTasks, filesCreated: result.filesCreated, filesModified: result.filesModified }
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      status: 'complete',
+      completion: {
+        tasksCompleted: result.tasksCompleted,
+        totalTasks,
+        filesCreated: result.filesCreated,
+        filesModified: result.filesModified
+      }
     } satisfies BlueprintPhaseCompletePayload)
 
     this.emit('phaseArtifact', {
-      blueprintId, workspaceId, phase: 'build',
+      blueprintId,
+      workspaceId,
+      phase: 'build',
       artifact: {
         type: 'build',
-        contentMd: this.buildArtifactSummary(result.tasksCompleted, totalTasks, result.filesCreated, result.filesModified)
+        contentMd: this.buildArtifactSummary(
+          result.tasksCompleted,
+          totalTasks,
+          result.filesCreated,
+          result.filesModified
+        )
       }
     } satisfies BlueprintPhaseArtifactPayload)
 
     // Auto-trigger VERIFY phase (non-blocking)
-    blueprintVerifyService.startVerifyPhase({
-      blueprintId, workspaceId, workspacePath
-    }).catch((err) => {
-      bpLog.error('[build→verify] Verify phase failed:', err)
-    })
+    blueprintVerifyService
+      .startVerifyPhase({
+        blueprintId,
+        workspaceId,
+        workspacePath
+      })
+      .catch((err) => {
+        bpLog.error('[build→verify] Verify phase failed:', err)
+      })
   }
 
   // ── Task Execution ──
@@ -295,7 +370,10 @@ export class BlueprintBuildService extends EventEmitter {
 
     // Create adapter + session
     const adapter = new BlueprintBuildAdapter({
-      workspaceId, blueprintId, phaseContext, taskContext
+      workspaceId,
+      blueprintId,
+      phaseContext,
+      taskContext
     })
     adapter.setGoalCondition(buildBuildGoalCondition(task.taskId, task.description))
 
@@ -306,7 +384,10 @@ export class BlueprintBuildService extends EventEmitter {
     const onChunk = (chunk: StreamChunk): void => {
       if (chunk.type === 'text' && chunk.content) {
         this.emit('phaseProgress', {
-          blueprintId, workspaceId, phase: 'build', text: chunk.content
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text: chunk.content
         } satisfies BlueprintPhaseProgressPayload)
       }
     }
@@ -325,13 +406,21 @@ export class BlueprintBuildService extends EventEmitter {
       // Race: send vs timeout vs abort
       let timeoutId: NodeJS.Timeout | undefined
       const timeoutPromise = new Promise<void>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`Task ${task.taskId} timeout`)), TASK_TIMEOUT_MS)
+        timeoutId = setTimeout(
+          () => reject(new Error(`Task ${task.taskId} timeout`)),
+          TASK_TIMEOUT_MS
+        )
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        if (abortSignal?.aborted) {
+          reject(new Error('Phase cancelled'))
+          return
+        }
+        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), {
+          once: true
+        })
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -346,7 +435,9 @@ export class BlueprintBuildService extends EventEmitter {
       const text = session.getStreamedContent()
       const completion = parsePhaseCompletionBlock(text)
 
-      bpLog.info(`[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`)
+      bpLog.info(
+        `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
+      )
 
       return { success: true, completion }
     } catch (err) {

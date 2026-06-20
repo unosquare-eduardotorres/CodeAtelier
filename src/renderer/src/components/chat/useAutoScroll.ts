@@ -24,6 +24,7 @@ export function useAutoScroll(
   useEffect(() => {
     if (!activeConversationId) return
     shouldAutoScroll.current = true
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on conversation switch
     setIsAtBottom(true)
     requestAnimationFrame(() => {
       if (scrollRef.current) {

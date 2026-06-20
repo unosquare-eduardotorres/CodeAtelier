@@ -71,9 +71,19 @@ describe('GreenfieldGrillRoleAdapter', () => {
     const adapter = createAdapter()
     const result = adapter.buildMcpConfig(makeMcpCtx())
     const expected = [
-      'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
-      'Agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion',
-      'TodoWrite', 'TaskCreate', 'TaskUpdate'
+      'Read',
+      'Write',
+      'Edit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'Agent',
+      'ToolSearch',
+      'ExitPlanMode',
+      'AskUserQuestion',
+      'TodoWrite',
+      'TaskCreate',
+      'TaskUpdate'
     ]
     for (const tool of expected) {
       assert.ok(result.disallowedTools.includes(tool), `Expected ${tool} in disallowedTools`)
@@ -136,10 +146,7 @@ describe('GreenfieldGrillRoleAdapter', () => {
         cid: string | null
       ) => void
     }
-    adapter.persistMemory(
-      { type: 'project', title: 'test', content: 'content' },
-      'conv-1'
-    )
+    adapter.persistMemory({ type: 'project', title: 'test', content: 'content' }, 'conv-1')
     assert.ok(true, 'persistMemory completed without error')
   })
 

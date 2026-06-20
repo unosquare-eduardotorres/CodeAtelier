@@ -684,14 +684,29 @@ export const ACTION_GROUPS: ActionGroup[] = [
     icon: '💬',
     description: 'Plan & Build mode conversations',
     providerConstrained: true,
-    actions: ['da-vinci', 'da-vinci:plan', 'da-vinci:build', 'project-specialist', 'project-specialist:plan', 'project-specialist:build']
+    actions: [
+      'da-vinci',
+      'da-vinci:plan',
+      'da-vinci:build',
+      'project-specialist',
+      'project-specialist:plan',
+      'project-specialist:build'
+    ]
   },
   {
     id: 'blueprint',
     label: 'Blueprint',
     icon: '📐',
     description: 'Specification, planning, and code generation phases',
-    actions: ['blueprint:specify', 'blueprint:clarify', 'blueprint:plan', 'blueprint:tasks', 'blueprint:review', 'blueprint:build', 'blueprint:verify']
+    actions: [
+      'blueprint:specify',
+      'blueprint:clarify',
+      'blueprint:plan',
+      'blueprint:tasks',
+      'blueprint:review',
+      'blueprint:build',
+      'blueprint:verify'
+    ]
   },
   {
     id: 'health',
@@ -729,7 +744,9 @@ export const ACTION_GROUPS: ActionGroup[] = [
  * Built-in "Full Claude" preset config — empty object means every action
  * falls through to DEFAULT_MODEL_CONFIG (all Claude models).
  */
-export const BUILTIN_FULL_CLAUDE_CONFIG: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
+export const BUILTIN_FULL_CLAUDE_CONFIG: Partial<
+  Record<import('./types').ModelAction, ActionModelConfig>
+> = {}
 
 /**
  * Build a "Full Local" preset config — every action routes to the given
@@ -1681,7 +1698,11 @@ export const MCP_TOOLS = {
       'dependency_health',
       'Analysis · dependency_health'
     ),
-    TEST_COVERAGE_MAP: mcpTool('code-analysis', 'test_coverage_map', 'Analysis · test_coverage_map'),
+    TEST_COVERAGE_MAP: mcpTool(
+      'code-analysis',
+      'test_coverage_map',
+      'Analysis · test_coverage_map'
+    ),
     RESOLVE_LIBRARY_ID: mcpTool(
       'code-analysis',
       'resolve_library_id',
@@ -1691,7 +1712,10 @@ export const MCP_TOOLS = {
       'code-analysis',
       'query_library_docs',
       'Analysis · query_library_docs'
-    )
+    ),
+    ESLINT_CHECK: mcpTool('code-analysis', 'eslint_check', 'Analysis · eslint_check'),
+    ESLINT_FIX: mcpTool('code-analysis', 'eslint_fix', 'Analysis · eslint_fix'),
+    ESLINT_RULES: mcpTool('code-analysis', 'eslint_rules', 'Analysis · eslint_rules')
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
@@ -1781,10 +1805,10 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'code-analysis',
     displayName: 'Code Analysis',
-    description: 'TODO scanning, dependency health, test coverage, and library documentation',
+    description: 'TODO scanning, dependency health, test coverage, library documentation, and ESLint',
     icon: 'BarChart3',
     tokenImpact: 'low',
-    toolCount: 5,
+    toolCount: 8,
     featureFlagKey: null,
     defaultEnabled: true
   }

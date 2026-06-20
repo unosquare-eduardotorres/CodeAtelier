@@ -40,16 +40,11 @@ export function PresetSelector({
     <div>
       <label className="block text-sm font-medium text-text-primary mb-1.5">
         <Layers size={14} className="inline mr-1.5 -mt-0.5" />
-        LLM Preset{' '}
-        <span className="text-text-muted font-normal">(optional)</span>
+        LLM Preset <span className="text-text-muted font-normal">(optional)</span>
       </label>
       <div className="flex items-center gap-1.5 flex-wrap">
         {/* None / Use defaults */}
-        <PresetPill
-          label="Default"
-          isActive={presetId === null}
-          onClick={() => onChange(null)}
-        />
+        <PresetPill label="Default" isActive={presetId === null} onClick={() => onChange(null)} />
         {presets.map((preset) => (
           <PresetPill
             key={preset.id}
@@ -60,11 +55,7 @@ export function PresetSelector({
           />
         ))}
       </div>
-      {selected && (
-        <p className="text-xs text-text-muted mt-1">
-          {summarizePreset(selected)}
-        </p>
-      )}
+      {selected && <p className="text-xs text-text-muted mt-1">{summarizePreset(selected)}</p>}
     </div>
   )
 }
@@ -91,9 +82,7 @@ function PresetPill({
         }`}
     >
       {label}
-      {isDefault && !isActive && (
-        <span className="text-[9px] text-warning ml-0.5">★</span>
-      )}
+      {isDefault && !isActive && <span className="text-[9px] text-warning ml-0.5">★</span>}
     </button>
   )
 }

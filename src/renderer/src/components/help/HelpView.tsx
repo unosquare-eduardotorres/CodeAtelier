@@ -80,7 +80,7 @@ export default function HelpView({ onBack }: HelpViewProps): React.JSX.Element {
   }, [])
 
   return (
-    <div className="flex flex-col h-full w-full bg-surface-base">
+    <div data-testid="help-view" className="flex flex-col h-full w-full bg-surface-base">
       {/* Help sub-header */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border-subtle bg-surface-base flex-shrink-0">
         <button

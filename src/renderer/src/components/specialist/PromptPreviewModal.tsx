@@ -25,6 +25,7 @@ export default function PromptPreviewModal({
 
   // Sync draft when modal opens or prompt changes externally
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync draft from prop when modal opens
     if (open) setDraft(prompt)
   }, [open, prompt])
 

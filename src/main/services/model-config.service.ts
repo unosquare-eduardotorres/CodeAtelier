@@ -54,7 +54,11 @@ class ModelConfigService {
    * @param workspacePath - The workspace repo path (or undefined for default)
    * @param action - The model action to resolve
    */
-  getModel(workspacePath: string | undefined, action: ModelAction, presetId?: string | null): string {
+  getModel(
+    workspacePath: string | undefined,
+    action: ModelAction,
+    presetId?: string | null
+  ): string {
     // Preset-first resolution: if a preset is active, use its config
     if (presetId) {
       const actionConfig = this.resolveActionConfig(action, presetId)
@@ -87,7 +91,11 @@ class ModelConfigService {
   // ── Provider awareness ──
 
   /** Get the LLM provider for a workspace (or per-action via preset) */
-  getProvider(workspacePath: string | undefined, action?: ModelAction, presetId?: string | null): LLMProvider {
+  getProvider(
+    workspacePath: string | undefined,
+    action?: ModelAction,
+    presetId?: string | null
+  ): LLMProvider {
     // Preset per-action provider resolution
     if (presetId && action) {
       const actionConfig = this.resolveActionConfig(action, presetId)

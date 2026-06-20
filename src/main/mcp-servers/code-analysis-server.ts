@@ -4,7 +4,7 @@
  *
  * Exposes: analyze_complexity, analyze_dependencies, analyze_test_coverage,
  *          find_code_smells, suggest_refactoring, resolve_library_id,
- *          query_library_docs
+ *          query_library_docs, eslint_check, eslint_fix, eslint_rules
  *
  * Environment variables:
  *   WORKSPACE_PATH    — Absolute workspace path
@@ -15,10 +15,10 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { execSync } from 'node:child_process'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
 import { LibraryDocService } from '../services/library-doc.service'
-import { libraryDocRepository } from '../db/repositories/library-doc.repository'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
@@ -38,7 +38,14 @@ async function registerTools(): Promise<void> {
     'Analyze code complexity metrics for a file or directory.',
     {
       path: z.string().describe('File or directory path to analyze'),
-      threshold: z.number().int().min(1).max(100).optional().default(10).describe('Cyclomatic complexity threshold')
+      threshold: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(10)
+        .describe('Cyclomatic complexity threshold')
     },
     async (args) => {
       // Delegate to in-process service
@@ -139,10 +146,12 @@ async function registerTools(): Promise<void> {
     async (args) => {
       if (!WORKSPACE_ID) {
         return {
-          content: [{
-            type: 'text' as const,
-            text: '[resolve_library_id] WORKSPACE_ID not set — cannot access library doc cache'
-          }]
+          content: [
+            {
+              type: 'text' as const,
+              text: '[resolve_library_id] WORKSPACE_ID not set — cannot access library doc cache'
+            }
+          ]
         }
       }
       try {
@@ -154,20 +163,24 @@ async function registerTools(): Promise<void> {
           args.query
         )
         return {
-          content: [{
-            type: 'text' as const,
-            text: truncateToolOutput(
-              JSON.stringify({ matches: results, count: results.length }, null, 2),
-              15_000
-            )
-          }]
+          content: [
+            {
+              type: 'text' as const,
+              text: truncateToolOutput(
+                JSON.stringify({ matches: results, count: results.length }, null, 2),
+                15_000
+              )
+            }
+          ]
         }
       } catch (err) {
         return {
-          content: [{
-            type: 'text' as const,
-            text: `[resolve_library_id] Error: ${err instanceof Error ? err.message : String(err)}`
-          }]
+          content: [
+            {
+              type: 'text' as const,
+              text: `[resolve_library_id] Error: ${err instanceof Error ? err.message : String(err)}`
+            }
+          ]
         }
       }
     }
@@ -179,15 +192,24 @@ async function registerTools(): Promise<void> {
     {
       packageName: z.string().describe('Package name (exact match)'),
       query: z.string().describe('Specific question or topic to search for'),
-      maxSections: z.number().int().min(1).max(50).optional().default(5).describe('Max doc sections to return')
+      maxSections: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .default(5)
+        .describe('Max doc sections to return')
     },
     async (args) => {
       if (!WORKSPACE_ID) {
         return {
-          content: [{
-            type: 'text' as const,
-            text: '[query_library_docs] WORKSPACE_ID not set — cannot access library doc cache'
-          }]
+          content: [
+            {
+              type: 'text' as const,
+              text: '[query_library_docs] WORKSPACE_ID not set — cannot access library doc cache'
+            }
+          ]
         }
       }
       try {
@@ -200,25 +222,431 @@ async function registerTools(): Promise<void> {
           args.maxSections
         )
         return {
-          content: [{
-            type: 'text' as const,
-            text: truncateToolOutput(JSON.stringify(result, null, 2), 15_000)
-          }]
+          content: [
+            {
+              type: 'text' as const,
+              text: truncateToolOutput(JSON.stringify(result, null, 2), 15_000)
+            }
+          ]
         }
       } catch (err) {
         return {
-          content: [{
-            type: 'text' as const,
-            text: `[query_library_docs] Error: ${err instanceof Error ? err.message : String(err)}`
-          }]
+          content: [
+            {
+              type: 'text' as const,
+              text: `[query_library_docs] Error: ${err instanceof Error ? err.message : String(err)}`
+            }
+          ]
         }
       }
     }
   )
 }
 
+// ── ESLint helpers ────────────────────────────────────────────────────
+
+interface EslintDiagnostic {
+  filePath: string
+  messages: Array<{
+    ruleId: string | null
+    severity: number
+    message: string
+    line: number
+    column: number
+  }>
+  errorCount: number
+  warningCount: number
+  fixableErrorCount: number
+  fixableWarningCount: number
+}
+
+/** Reject paths with shell metacharacters to prevent injection via execSync */
+function sanitizePath(p: string): string {
+  if (/["'`$\\;|&(){}]/.test(p)) {
+    throw new Error(`Path contains unsafe characters: ${p.slice(0, 80)}`)
+  }
+  return p
+}
+
+function runEslint(args: string[], cwd: string): { stdout: string; exitCode: number } {
+  try {
+    const stdout = execSync(`npx eslint ${args.join(' ')}`, {
+      cwd,
+      timeout: 60_000,
+      maxBuffer: 4 * 1024 * 1024,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    return { stdout, exitCode: 0 }
+  } catch (err: unknown) {
+    const execErr = err as { status?: number; stdout?: string; stderr?: string }
+    // Exit 1 = lint errors found (not a crash). Exit 2 = fatal config/parse error.
+    if (execErr.status === 1 && execErr.stdout) {
+      return { stdout: execErr.stdout, exitCode: 1 }
+    }
+    if (execErr.status === 2) {
+      const msg = execErr.stderr || execErr.stdout || 'ESLint fatal error (exit code 2)'
+      throw new Error(`ESLint fatal: ${String(msg).slice(0, 500)}`)
+    }
+    // ESLint not found or other spawn errors
+    const message = err instanceof Error ? err.message : String(err)
+    if (message.includes('ENOENT') || message.includes('not found')) {
+      throw new Error('ESLint not found in workspace. Ensure eslint is installed (npm install eslint).')
+    }
+    throw err
+  }
+}
+
+function getGitChangedFiles(cwd: string): string[] {
+  try {
+    const diffOutput = execSync('git diff --name-only HEAD', {
+      cwd,
+      timeout: 10_000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    // Also include staged files
+    const stagedOutput = execSync('git diff --name-only --cached', {
+      cwd,
+      timeout: 10_000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    const allFiles = `${diffOutput}\n${stagedOutput}`
+    const unique = [...new Set(
+      allFiles.split('\n')
+        .map(f => f.trim())
+        .filter(f => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
+    )]
+    return unique
+  } catch {
+    return []
+  }
+}
+
+function summarizeDiagnostics(diagnostics: EslintDiagnostic[]): string {
+  const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
+  const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
+  const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+
+  const lines: string[] = [
+    `## ESLint Results`,
+    ``,
+    `**${diagnostics.length}** files checked · **${totalErrors}** errors · **${totalWarnings}** warnings`,
+    ``
+  ]
+
+  if (filesWithIssues.length === 0) {
+    lines.push('✅ All files pass — zero errors, zero warnings.')
+    return lines.join('\n')
+  }
+
+  // Aggregate by rule
+  const ruleCounts = new Map<string, { errors: number; warnings: number }>()
+  for (const file of filesWithIssues) {
+    for (const msg of file.messages) {
+      const rule = msg.ruleId ?? '(unknown)'
+      const entry = ruleCounts.get(rule) ?? { errors: 0, warnings: 0 }
+      if (msg.severity === 2) entry.errors++
+      else entry.warnings++
+      ruleCounts.set(rule, entry)
+    }
+  }
+
+  // Top 10 rules by total count
+  const topRules = [...ruleCounts.entries()]
+    .sort((a, b) => (b[1].errors + b[1].warnings) - (a[1].errors + a[1].warnings))
+    .slice(0, 10)
+
+  lines.push('### Top Issues by Rule')
+  lines.push('')
+  lines.push('| Rule | Errors | Warnings |')
+  lines.push('|------|--------|----------|')
+  for (const [rule, counts] of topRules) {
+    lines.push(`| ${rule} | ${counts.errors} | ${counts.warnings} |`)
+  }
+
+  // Files with errors (up to 15)
+  const errorFiles = filesWithIssues
+    .filter(f => f.errorCount > 0)
+    .sort((a, b) => b.errorCount - a.errorCount)
+    .slice(0, 15)
+
+  if (errorFiles.length > 0) {
+    lines.push('')
+    lines.push('### Files with Errors')
+    lines.push('')
+    for (const f of errorFiles) {
+      lines.push(`- **${f.filePath}** — ${f.errorCount} errors, ${f.warningCount} warnings`)
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function formatFullDiagnostics(diagnostics: EslintDiagnostic[]): string {
+  const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+  const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
+  const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
+
+  const lines: string[] = [
+    `## ESLint Results (Full)`,
+    ``,
+    `**${diagnostics.length}** files checked · **${totalErrors}** errors · **${totalWarnings}** warnings`,
+    ``
+  ]
+
+  if (filesWithIssues.length === 0) {
+    lines.push('✅ All files pass — zero errors, zero warnings.')
+    return lines.join('\n')
+  }
+
+  for (const file of filesWithIssues) {
+    lines.push(`### ${file.filePath}`)
+    lines.push('')
+    for (const msg of file.messages) {
+      const sev = msg.severity === 2 ? '❌' : '⚠️'
+      lines.push(`- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+// ── ESLint tool handlers (extracted for reduced cyclomatic complexity) ──
+
+function quotePaths(paths: string[]): string {
+  return paths.map((p) => `"${sanitizePath(p)}"`).join(' ')
+}
+
+async function handleEslintCheck(args: {
+  paths?: string[]
+  format: 'summary' | 'full'
+}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  try {
+    let targetPaths = args.paths ?? []
+    let fromGit = false
+    if (targetPaths.length === 0) {
+      targetPaths = getGitChangedFiles(WORKSPACE_PATH)
+      fromGit = true
+      if (targetPaths.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No changed files to lint.' }] }
+      }
+    }
+
+    const { stdout } = runEslint(['--format', 'json', quotePaths(targetPaths)], WORKSPACE_PATH)
+    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+
+    const prefix = fromGit ? `_Scanned ${targetPaths.length} git-changed file(s)._\n\n` : ''
+    const output =
+      args.format === 'full'
+        ? formatFullDiagnostics(diagnostics)
+        : summarizeDiagnostics(diagnostics)
+
+    return {
+      content: [{ type: 'text' as const, text: truncateToolOutput(prefix + output, 15_000) }]
+    }
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `[eslint_check] Error: ${err instanceof Error ? err.message : String(err)}`
+        }
+      ]
+    }
+  }
+}
+
+async function handleEslintFix(args: {
+  paths: string[]
+}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  try {
+    const quoted = quotePaths(args.paths)
+
+    // Run --fix, then re-run without --fix to get remaining issues
+    runEslint(['--fix', '--format', 'json', quoted], WORKSPACE_PATH)
+    const { stdout } = runEslint(['--format', 'json', quoted], WORKSPACE_PATH)
+    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+
+    const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
+    const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
+    const filesWithIssues = diagnostics.filter((d) => d.errorCount + d.warningCount > 0)
+
+    const lines: string[] = [
+      `## ESLint Fix Results`,
+      ``,
+      `Auto-fix applied to **${args.paths.length}** path(s).`,
+      `**Remaining:** ${totalErrors} errors, ${totalWarnings} warnings across ${filesWithIssues.length} file(s).`,
+      ``
+    ]
+
+    if (filesWithIssues.length === 0) {
+      lines.push('✅ All auto-fixable issues resolved — zero remaining errors.')
+    } else {
+      lines.push('### Remaining Issues (cannot auto-fix)')
+      lines.push('')
+      for (const file of filesWithIssues.slice(0, 15)) {
+        lines.push(`**${file.filePath}** — ${file.errorCount} errors, ${file.warningCount} warnings`)
+        for (const msg of file.messages.slice(0, 10)) {
+          const sev = msg.severity === 2 ? '❌' : '⚠️'
+          lines.push(`  ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`)
+        }
+      }
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 15_000) }]
+    }
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `[eslint_fix] Error: ${err instanceof Error ? err.message : String(err)}`
+        }
+      ]
+    }
+  }
+}
+
+function resolveRuleSeverity(raw: unknown): 'error' | 'warn' | 'off' {
+  return raw === 2 || raw === 'error'
+    ? 'error'
+    : raw === 1 || raw === 'warn'
+      ? 'warn'
+      : 'off'
+}
+
+function resolveTargetFile(filePath?: string): string {
+  if (filePath) return filePath
+  try {
+    const found = execSync('find src -name "*.ts" -not -path "*/node_modules/*" | head -1', {
+      cwd: WORKSPACE_PATH,
+      timeout: 5_000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim()
+    return found || 'src/index.ts'
+  } catch {
+    return 'src/index.ts'
+  }
+}
+
+function formatRulesOutput(
+  targetFile: string,
+  rules: Record<string, unknown>
+): string {
+  const activeRules: Array<{ rule: string; severity: string; options: unknown }> = []
+  for (const [rule, value] of Object.entries(rules)) {
+    const arr = Array.isArray(value) ? value : [value]
+    const severity = resolveRuleSeverity(arr[0])
+    if (severity === 'off') continue
+    activeRules.push({ rule, severity, options: arr.length > 1 ? arr.slice(1) : undefined })
+  }
+
+  // Group by prefix (e.g. @typescript-eslint, import, etc.)
+  const groups = new Map<string, typeof activeRules>()
+  for (const entry of activeRules) {
+    const prefix = entry.rule.includes('/') ? entry.rule.split('/')[0] : 'core'
+    const list = groups.get(prefix) ?? []
+    list.push(entry)
+    groups.set(prefix, list)
+  }
+
+  const lines: string[] = [
+    `## Active ESLint Rules for \`${targetFile}\``,
+    ``,
+    `**${activeRules.length}** active rules (${activeRules.filter((r) => r.severity === 'error').length} errors, ${activeRules.filter((r) => r.severity === 'warn').length} warnings)`,
+    ``
+  ]
+
+  for (const [group, groupRules] of [...groups.entries()].sort()) {
+    lines.push(`### ${group} (${groupRules.length})`)
+    lines.push('')
+    for (const r of groupRules.sort((a, b) => a.rule.localeCompare(b.rule))) {
+      const sev = r.severity === 'error' ? '❌' : '⚠️'
+      lines.push(`- ${sev} \`${r.rule}\``)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+async function handleEslintRules(args: {
+  filePath?: string
+}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  try {
+    const targetFile = resolveTargetFile(args.filePath)
+    const { stdout } = runEslint(['--print-config', `"${sanitizePath(targetFile)}"`], WORKSPACE_PATH)
+    const config = JSON.parse(stdout)
+    const output = formatRulesOutput(targetFile, config.rules ?? {})
+
+    return {
+      content: [{ type: 'text' as const, text: truncateToolOutput(output, 15_000) }]
+    }
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `[eslint_rules] Error: ${err instanceof Error ? err.message : String(err)}`
+        }
+      ]
+    }
+  }
+}
+
+// ── ESLint tool registration ──────────────────────────────────────────
+
+function registerEslintTools(): void {
+  server.tool(
+    'eslint_check',
+    'Run ESLint on specified files or directories and return structured results. Defaults to changed files (git diff) if no paths given.',
+    {
+      paths: z
+        .array(z.string())
+        .optional()
+        .describe('File/dir paths to lint. Omit to lint git-changed files only.'),
+      format: z
+        .enum(['summary', 'full'])
+        .optional()
+        .default('summary')
+        .describe('summary = counts + top issues; full = all diagnostics')
+    },
+    handleEslintCheck
+  )
+
+  server.tool(
+    'eslint_fix',
+    'Run ESLint with --fix on specified files. Auto-fixes what it can, returns remaining issues.',
+    {
+      paths: z
+        .array(z.string())
+        .min(1)
+        .describe('File/dir paths to fix (required — no implicit git diff for writes)')
+    },
+    handleEslintFix
+  )
+
+  server.tool(
+    'eslint_rules',
+    'List active ESLint rules and their severity for a file. Useful for understanding which rules are enforced.',
+    {
+      filePath: z
+        .string()
+        .optional()
+        .describe('File to check config for (default: first .ts file found or src/index.ts)')
+    },
+    handleEslintRules
+  )
+}
+
 async function main(): Promise<void> {
   await registerTools()
+  registerEslintTools()
   const transport = new StdioServerTransport()
   await server.connect(transport)
   console.error(`[code-analysis-server] Started (workspace=${WORKSPACE_PATH})`)

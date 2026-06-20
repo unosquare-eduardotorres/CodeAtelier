@@ -38,7 +38,6 @@ const bpLog = log.scope('blueprint-verify')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintVerifyService extends EventEmitter {
-
   async startVerifyPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -72,14 +71,19 @@ export class BlueprintVerifyService extends EventEmitter {
 
     // 4. Emit phaseStart
     this.emit('phaseStart', {
-      blueprintId, workspaceId, phase: 'verify'
+      blueprintId,
+      workspaceId,
+      phase: 'verify'
     } satisfies BlueprintPhaseStartPayload)
 
     // 5. Wire streaming — named handlers for cleanup
     const onChunk = (chunk: StreamChunk): void => {
       if (chunk.type === 'text' && chunk.content) {
         this.emit('phaseProgress', {
-          blueprintId, workspaceId, phase: 'verify', text: chunk.content
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          text: chunk.content
         } satisfies BlueprintPhaseProgressPayload)
       }
     }
@@ -102,8 +106,13 @@ export class BlueprintVerifyService extends EventEmitter {
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        if (abortSignal?.aborted) {
+          reject(new Error('Phase cancelled'))
+          return
+        }
+        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), {
+          once: true
+        })
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -130,7 +139,9 @@ export class BlueprintVerifyService extends EventEmitter {
       }
 
       const overallStatus = (completion?.overallStatus as string) ?? 'unknown'
-      bpLog.info(`[startVerifyPhase] Blueprint ${blueprintId} — verify complete, overallStatus: ${overallStatus}`)
+      bpLog.info(
+        `[startVerifyPhase] Blueprint ${blueprintId} — verify complete, overallStatus: ${overallStatus}`
+      )
 
       // 9. Determine final blueprint status
       if (overallStatus === 'gaps_found') {
@@ -142,16 +153,21 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 10. Emit phaseComplete
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'verify', status: 'complete', completion
+        blueprintId,
+        workspaceId,
+        phase: 'verify',
+        status: 'complete',
+        completion
       } satisfies BlueprintPhaseCompletePayload)
 
       if (verifyPhase) {
         this.emit('phaseArtifact', {
-          blueprintId, workspaceId, phase: 'verify',
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
           artifact: { type: 'verify', contentMd: text }
         } satisfies BlueprintPhaseArtifactPayload)
       }
-
     } catch (err) {
       bpLog.error(`[startVerifyPhase] VERIFY phase failed:`, err)
 
@@ -173,7 +189,10 @@ export class BlueprintVerifyService extends EventEmitter {
       }
 
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'verify', status: 'failed'
+        blueprintId,
+        workspaceId,
+        phase: 'verify',
+        status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       session.removeListener('chunk', onChunk)

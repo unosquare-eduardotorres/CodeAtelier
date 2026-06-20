@@ -154,7 +154,10 @@ export default function IdeaCard({
   }
 
   return (
-    <div data-testid="idea-card" className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm">
+    <div
+      data-testid="idea-card"
+      className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm"
+    >
       {editing ? (
         /* Inline editing mode */
         <div className="space-y-2">

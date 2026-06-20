@@ -180,6 +180,12 @@ export class OpenCodeExecutor {
 
       openCodeLog.info(`[opencode] Starting server in ${cwd}`)
 
+      // OC-01: Clear stale env vars from any prior workspace to prevent
+      // cross-workspace contamination when start() is called without stop()
+      delete process.env.OPENCODE_CONFIG
+      delete process.env.OPENCODE_EXPERIMENTAL_LSP_TOOL
+      delete process.env.OPENCODE_ENABLE_EXA
+
       // Set OPENCODE_CONFIG env var so OpenCode reads from the temp dir
       // instead of looking for opencode.json in the workspace root.
       if (config?.configPath) {
@@ -316,7 +322,8 @@ export class OpenCodeExecutor {
           /* non-fatal: session title is cosmetic — does not affect execution */
         })
 
-      // Fire and forget the prompt — events come via SSE
+      // OC-04: Track prompt promise to surface send errors to the stream consumer
+      let promptSendError: Error | null = null
       this.client.session
         .prompt({
           path: { id: openCodeSessionId },
@@ -324,6 +331,7 @@ export class OpenCodeExecutor {
         })
         .catch((err) => {
           openCodeLog.error('[opencode] Prompt send error:', err)
+          promptSendError = err instanceof Error ? err : new Error(String(err))
         })
 
       // Stream events → StreamChunks
@@ -399,6 +407,12 @@ export class OpenCodeExecutor {
             break
           }
         }
+      }
+
+      // OC-04: If prompt send failed before/during streaming, surface the error
+      if (promptSendError) {
+        yield { type: 'error', error: `Prompt send failed: ${promptSendError.message}` }
+        return
       }
 
       // Success — reset consecutive error counter

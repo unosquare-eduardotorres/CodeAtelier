@@ -45,12 +45,18 @@ export class IntentRouter {
         log.info(
           `[IntentRouter:askUser] conversationId=${conversationId} questions=${intent.questions.length} action=${intent.action ?? 'none'}`
         )
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
-          conversationId,
-          questions: intent.questions,
-          action: intent.action,
-          requestId: intent.requestId
-        })
+        if (!this.mainWindow.isDestroyed()) {
+          try {
+            this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+              conversationId,
+              questions: intent.questions,
+              action: intent.action,
+              requestId: intent.requestId
+            })
+          } catch {
+            // Window destroyed between check and send — harmless
+          }
+        }
         break
 
       case 'grillQuestion':

@@ -65,7 +65,10 @@ export default function EmbeddingModelSetupModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div data-testid="embedding-setup-modal" className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4">
+      <div
+        data-testid="embedding-setup-modal"
+        className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Embedding Model Setup</h2>
@@ -81,7 +84,10 @@ export default function EmbeddingModelSetupModal({
         {/* Content */}
         <div className="px-5 py-5 space-y-4">
           {state === 'checking' && (
-            <div data-testid="embedding-status" className="flex items-center gap-3 text-text-secondary">
+            <div
+              data-testid="embedding-status"
+              className="flex items-center gap-3 text-text-secondary"
+            >
               <Loader2 size={16} className="animate-spin" />
               <span className="text-sm">Checking embedding model status…</span>
             </div>

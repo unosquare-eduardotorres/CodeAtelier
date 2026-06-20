@@ -51,7 +51,14 @@ async function registerTools(): Promise<void> {
       query: z.string().describe('Natural language search query'),
       language: z.string().optional().describe('Filter by programming language'),
       directory: z.string().optional().describe('Filter by directory path prefix'),
-      nResults: z.number().int().min(1).max(100).optional().default(10).describe('Number of results to return')
+      nResults: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(10)
+        .describe('Number of results to return')
     },
     async (args) => {
       // Build where clause from optional filters

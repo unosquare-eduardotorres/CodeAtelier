@@ -77,7 +77,35 @@ function CheckRow({
   )
 }
 
-export default function AISubscriptionsSection(): React.JSX.Element {
+// ── Status derivation helper ──
+
+function deriveRowStatus(
+  isValidating: boolean,
+  hasResult: boolean,
+  passed: boolean,
+  successLabel: string,
+  failLabel: string,
+  failStatus: CheckStatus = 'error'
+): { status: CheckStatus; statusLabel: string } {
+  if (isValidating) return { status: 'checking', statusLabel: 'Checking...' }
+  if (!hasResult) return { status: 'idle', statusLabel: 'Pending' }
+  return passed
+    ? { status: 'success', statusLabel: successLabel }
+    : { status: failStatus, statusLabel: failLabel }
+}
+
+// ── Subscription state hook ──
+
+interface SubscriptionChecksState {
+  result: SubscriptionCheckResult | null
+  isValidating: boolean
+  isConfiguring: boolean
+  configureError: string | null
+  runValidation: () => Promise<void>
+  handleAutoConfigure: () => Promise<void>
+}
+
+function useSubscriptionChecks(): SubscriptionChecksState {
   const [result, setResult] = useState<SubscriptionCheckResult | null>(null)
   const [isValidating, setIsValidating] = useState(false)
   const [isConfiguring, setIsConfiguring] = useState(false)
@@ -98,6 +126,7 @@ export default function AISubscriptionsSection(): React.JSX.Element {
 
   // Auto-validate on mount
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- runValidation sets state internally; intentional on mount
     runValidation()
   }, [runValidation])
 
@@ -107,7 +136,6 @@ export default function AISubscriptionsSection(): React.JSX.Element {
     try {
       const res = await window.api.autoConfigureClaude()
       if (res.success) {
-        // Re-validate after successful install
         await runValidation()
       } else {
         setConfigureError(res.error ?? 'Installation failed')
@@ -119,42 +147,18 @@ export default function AISubscriptionsSection(): React.JSX.Element {
     }
   }, [runValidation])
 
-  // Derive row statuses
-  const cliStatus: CheckStatus = isValidating
-    ? 'checking'
-    : result
-      ? result.claudeCli.installed
-        ? 'success'
-        : 'error'
-      : 'idle'
+  return { result, isValidating, isConfiguring, configureError, runValidation, handleAutoConfigure }
+}
 
-  const authStatus: CheckStatus = isValidating
-    ? 'checking'
-    : result
-      ? result.claudeAuth.authenticated
-        ? 'success'
-        : result.claudeCli.installed
-          ? 'error'
-          : 'warning'
-      : 'idle'
+export default function AISubscriptionsSection(): React.JSX.Element {
+  const { result, isValidating, isConfiguring, configureError, runValidation, handleAutoConfigure } =
+    useSubscriptionChecks()
 
-  const maxStatus: CheckStatus = isValidating
-    ? 'checking'
-    : result
-      ? result.claudeMax.active
-        ? 'success'
-        : result.claudeAuth.authenticated
-          ? 'warning'
-          : 'warning'
-      : 'idle'
-
-  const codexStatus: CheckStatus = isValidating
-    ? 'checking'
-    : result
-      ? result.codexCli.installed
-        ? 'success'
-        : 'warning'
-      : 'idle'
+  const hasResult = !!result
+  const cli = deriveRowStatus(isValidating, hasResult, result?.claudeCli.installed ?? false, 'Installed', 'Not Found')
+  const auth = deriveRowStatus(isValidating, hasResult, result?.claudeAuth.authenticated ?? false, 'Logged In', 'Not Authenticated', result?.claudeCli.installed ? 'error' : 'warning')
+  const max = deriveRowStatus(isValidating, hasResult, result?.claudeMax.active ?? false, 'Active', 'Inactive', 'warning')
+  const codex = deriveRowStatus(isValidating, hasResult, result?.codexCli.installed ?? false, 'Installed', 'Not Found', 'warning')
 
   const showAutoConfigureButton = result && !result.claudeCli.installed
 
@@ -174,64 +178,32 @@ export default function AISubscriptionsSection(): React.JSX.Element {
           icon={<Terminal size={14} />}
           label="Claude CLI"
           detail={result?.claudeCli.version ?? null}
-          status={cliStatus}
-          statusLabel={
-            isValidating
-              ? 'Checking...'
-              : result
-                ? result.claudeCli.installed
-                  ? 'Installed'
-                  : 'Not Found'
-                : 'Pending'
-          }
+          status={cli.status}
+          statusLabel={cli.statusLabel}
           error={result?.claudeCli.error ?? null}
         />
         <CheckRow
           icon={<KeyRound size={14} />}
           label="Claude Auth"
           detail={result?.claudeAuth.accountEmail ?? null}
-          status={authStatus}
-          statusLabel={
-            isValidating
-              ? 'Checking...'
-              : result
-                ? result.claudeAuth.authenticated
-                  ? 'Logged In'
-                  : 'Not Authenticated'
-                : 'Pending'
-          }
+          status={auth.status}
+          statusLabel={auth.statusLabel}
           error={result?.claudeAuth.error ?? null}
         />
         <CheckRow
           icon={<CreditCard size={14} />}
           label="Claude Max"
           detail={result?.claudeMax.plan ?? null}
-          status={maxStatus}
-          statusLabel={
-            isValidating
-              ? 'Checking...'
-              : result
-                ? result.claudeMax.active
-                  ? 'Active'
-                  : 'Inactive'
-                : 'Pending'
-          }
+          status={max.status}
+          statusLabel={max.statusLabel}
           error={result?.claudeMax.error ?? null}
         />
         <CheckRow
           icon={<Code2 size={14} />}
           label="Codex CLI"
           detail={result?.codexCli.version ?? null}
-          status={codexStatus}
-          statusLabel={
-            isValidating
-              ? 'Checking...'
-              : result
-                ? result.codexCli.installed
-                  ? 'Installed'
-                  : 'Not Found'
-                : 'Pending'
-          }
+          status={codex.status}
+          statusLabel={codex.statusLabel}
           error={result?.codexCli.error ?? null}
         />
       </div>

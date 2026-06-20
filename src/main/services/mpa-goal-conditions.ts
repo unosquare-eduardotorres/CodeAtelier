@@ -22,7 +22,8 @@ export function buildBuilderGoalCondition(plan: MpaPlanArtifact): string {
     `All plan items (${itemIds}) are fully implemented`,
     'No TODO or placeholder implementations in new code',
     'Tests written for items with includesTests: true',
-    'All tests pass when run via the project test command'
+    'All tests pass when run via the project test command',
+    'ESLint check passes with zero errors on all changed files'
   ].join('. ')
 }
 
@@ -34,6 +35,7 @@ export function buildVerifierGoalCondition(plan: MpaPlanArtifact): string {
     `All ${plan.items.length} plan items verified against the codebase`,
     'Each item has a goal-verify-item block with status',
     'A final goal-verify-report JSON block is produced',
-    'The project test command was run and results included'
+    'The project test command was run and results included',
+    'ESLint check was run on changed files and results included'
   ].join('. ')
 }

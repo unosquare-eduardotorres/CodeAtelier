@@ -266,7 +266,11 @@ describe('isExpectedPlanModeBlock', () => {
 
   test('false for a genuine Write error (not a permission block)', () => {
     assert.equal(
-      isExpectedPlanModeBlock('Write', '<tool_use_error>EACCES: permission denied</tool_use_error>', 'plan'),
+      isExpectedPlanModeBlock(
+        'Write',
+        '<tool_use_error>EACCES: permission denied</tool_use_error>',
+        'plan'
+      ),
       false
     )
   })

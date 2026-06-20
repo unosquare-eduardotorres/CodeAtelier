@@ -119,13 +119,20 @@ describe('LibraryDocService — Context7 API (mocked)', () => {
       let capturedHeaders: Record<string, string> = {}
 
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : (input as Request).url
         if (url.includes('context7.com')) {
           capturedHeaders = Object.fromEntries(
             Object.entries(init?.headers ?? {}).map(([k, v]) => [k, String(v)])
           )
           return new Response(
-            JSON.stringify({ results: [{ id: 'zod', title: 'Zod', version: '3.22.0', snippetCount: 5 }] }),
+            JSON.stringify({
+              results: [{ id: 'zod', title: 'Zod', version: '3.22.0', snippetCount: 5 }]
+            }),
             { status: 200, headers: { 'Content-Type': 'application/json' } }
           )
         }
@@ -133,20 +140,30 @@ describe('LibraryDocService — Context7 API (mocked)', () => {
       }) as typeof globalThis.fetch
 
       // resolveLibrary: tier 1 (cache) will fail silently, then tier 2 (Context7) should fire
-      const results = await service.resolveLibrary('test-ws', '/tmp/nonexistent', 'zod', 'test-api-key', 'validation')
+      const results = await service.resolveLibrary(
+        'test-ws',
+        '/tmp/nonexistent',
+        'zod',
+        'test-api-key',
+        'validation'
+      )
 
       assert.equal(capturedHeaders['Authorization'], 'Bearer test-api-key')
       assert.ok(results.length > 0, 'Should return Context7 results')
       assert.equal(results[0].source, 'context7')
-    })
-  )
+    }))
 
   test('npm registry fallback fetches correct URL', async () =>
     runExclusive(async () => {
       let fetchedUrl = ''
 
       globalThis.fetch = (async (input: string | URL | Request) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : (input as Request).url
         fetchedUrl = url
         if (url.includes('registry.npmjs.org')) {
           return new Response(
@@ -170,8 +187,7 @@ describe('LibraryDocService — Context7 API (mocked)', () => {
       assert.ok(results.length > 0, 'Should return npm results')
       assert.equal(results[0].source, 'npm_registry')
       assert.equal(results[0].version, '1.2.3')
-    })
-  )
+    }))
 })
 
 // ── Three-tier fallback order verification ──
@@ -185,7 +201,12 @@ describe('LibraryDocService — tier fallback order', () => {
       let npmCalled = false
 
       globalThis.fetch = (async (input: string | URL | Request) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : (input as Request).url
         if (url.includes('registry.npmjs.org')) {
           npmCalled = true
           return new Response(
@@ -209,8 +230,7 @@ describe('LibraryDocService — tier fallback order', () => {
       globalThis.fetch = originalFetch
       assert.ok(npmCalled, 'npm registry should be called as fallback')
       assert.ok(results.length > 0, 'Should return npm results')
-    })
-  )
+    }))
 
   test('queryDocs with no cache and no key tries npm', async () =>
     runExclusive(async () => {
@@ -218,7 +238,12 @@ describe('LibraryDocService — tier fallback order', () => {
       let npmCalled = false
 
       globalThis.fetch = (async (input: string | URL | Request) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : (input as Request).url
         if (url.includes('registry.npmjs.org')) {
           npmCalled = true
           return new Response(
@@ -244,8 +269,7 @@ describe('LibraryDocService — tier fallback order', () => {
       assert.ok(npmCalled, 'npm registry should be called when no cache exists')
       assert.equal(result.source, 'npm_registry')
       assert.ok(result.sections.length > 0, 'Should return doc sections')
-    })
-  )
+    }))
 })
 
 // ── npm response parsing ──
@@ -274,8 +298,7 @@ describe('LibraryDocService — npm README extraction', () => {
       }
 
       globalThis.fetch = originalFetch
-    })
-  )
+    }))
 })
 
 // ── Edge cases ──

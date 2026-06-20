@@ -32,7 +32,7 @@ export default function BugTrackerPage({ onBack }: BugTrackerPageProps): React.J
   const selectedBug = bugs.find((b) => b.id === selectedBugId) ?? null
 
   return (
-    <div className="flex flex-col h-full bg-surface-base">
+    <div data-testid="bug-tracker-page" className="flex flex-col h-full bg-surface-base">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle">
         <button
@@ -57,7 +57,7 @@ export default function BugTrackerPage({ onBack }: BugTrackerPageProps): React.J
       {/* Content */}
       <div className="flex flex-1 min-h-0">
         {/* Bug list */}
-        <div className="w-[380px] flex-shrink-0 border-r border-border-subtle overflow-y-auto p-2 flex flex-col gap-1.5">
+        <div data-testid="bug-card" className="w-[380px] flex-shrink-0 border-r border-border-subtle overflow-y-auto p-2 flex flex-col gap-1.5">
           {isLoading ? (
             <div className="flex items-center justify-center py-12 text-text-muted text-sm">
               Loading...
@@ -83,7 +83,7 @@ export default function BugTrackerPage({ onBack }: BugTrackerPageProps): React.J
         </div>
 
         {/* Detail panel */}
-        <div className="flex-1 min-w-0">
+        <div data-testid="bug-detail" className="flex-1 min-w-0">
           {selectedBug ? (
             <BugDetail
               key={selectedBug.id}

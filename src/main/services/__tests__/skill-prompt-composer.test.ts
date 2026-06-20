@@ -102,7 +102,10 @@ describe('SkillPromptComposer.skillRelevanceScore (private)', () => {
       name: 'Electron',
       tier1Json: JSON.stringify({ keywords: ['ipc', 'main-process', 'preload'] })
     })
-    const score = (composer as any).skillRelevanceScore(skill, 'fix the ipc handler in main-process')
+    const score = (composer as any).skillRelevanceScore(
+      skill,
+      'fix the ipc handler in main-process'
+    )
     assert.ok(score >= 2, `expected score >= 2 for two keyword matches, got ${score}`)
   })
 

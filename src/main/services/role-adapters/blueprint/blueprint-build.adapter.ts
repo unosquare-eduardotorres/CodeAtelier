@@ -44,12 +44,7 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
     const basePrompt = buildPhaseSystemPrompt('build', this.phaseContext)
 
     // Append task-specific context so the agent knows exactly which task to implement
-    const taskSection = [
-      '',
-      '## Current Task',
-      '',
-      this.taskContext
-    ].join('\n')
+    const taskSection = ['', '## Current Task', '', this.taskContext].join('\n')
 
     // Append TOOL_PRIORITY_DIRECTIVE_BUILDER (write-mode variant).
     // The base class's appendToolGuidance() will skip the generic directive

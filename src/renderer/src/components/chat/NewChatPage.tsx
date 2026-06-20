@@ -31,6 +31,7 @@ import {
 import type { ExternalMcpDefinition, LocalMcpDefinition } from '../../../../shared/constants'
 import ToggleButtonGroup from './ToggleButtonGroup'
 import McpToolsSection from './McpToolsSection'
+import { PresetSelector } from './PresetSelector'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -45,6 +46,7 @@ interface NewChatPageProps {
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
+    presetId?: string | null
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -73,6 +75,7 @@ export default function NewChatPage({
   const [localModelInfo, setLocalModelInfo] = useState<{ backend: string; model: string } | null>(
     null
   )
+  const [presetId, setPresetId] = useState<string | null>(null)
   const [mcpOverrides, setMcpOverrides] = useState<Record<string, boolean>>({})
   const [showMcpTools, setShowMcpTools] = useState(false)
   const [mcpSubTab, setMcpSubTab] = useState<McpSubTab>('external')
@@ -125,6 +128,7 @@ export default function NewChatPage({
 
   useEffect(() => {
     if (pendingFixContext) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- consuming pending fix context on mount
       setTitle(pendingFixContext.title)
       setDescription(pendingFixContext.description)
       setMode('plan') // Fixes default to plan mode
@@ -159,7 +163,8 @@ export default function NewChatPage({
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
       llmProvider,
-      mcpOverrides: mcpOverridesPayload
+      mcpOverrides: mcpOverridesPayload,
+      presetId
     })
   }, [
     title,
@@ -172,6 +177,7 @@ export default function NewChatPage({
     mcpOverrides,
     availableLocalMcps,
     availableIntegrations,
+    presetId,
     onCreateChat
   ])
 
@@ -201,7 +207,10 @@ export default function NewChatPage({
   const isValid = title.trim().length > 0
 
   return (
-    <div data-testid="new-chat-page" className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0 overflow-y-auto">
+    <div
+      data-testid="new-chat-page"
+      className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0 overflow-y-auto"
+    >
       <div className="flex-1 flex flex-col items-center justify-start px-8 py-10 max-w-3xl mx-auto w-full">
         {/* Greeting */}
         <h1 className="text-2xl font-bold text-text-primary mb-1 text-center">
@@ -265,6 +274,17 @@ export default function NewChatPage({
               : 'Build mode — the agent can create and modify files in your workspace'
           }
         />
+
+        {/* LLM Preset */}
+        {activeWorkspace && (
+          <div className="w-full mb-5">
+            <PresetSelector
+              workspaceId={activeWorkspace.id}
+              presetId={presetId}
+              onChange={setPresetId}
+            />
+          </div>
+        )}
 
         {/* Communication Tone */}
         <div data-testid="new-chat-tone-selector" className="w-full mb-5">

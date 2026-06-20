@@ -18,22 +18,16 @@ const presetLog = log.scope('preset-ipc')
 
 export function registerPresetIpc(): void {
   // ── preset:get-all — List all presets for a workspace ──
-  ipcMain.handle(
-    IPC_CHANNELS.PRESET_GET_ALL,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      return presetService.getAllPresets(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PRESET_GET_ALL, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    return presetService.getAllPresets(args.workspaceId)
+  })
 
   // ── preset:get-by-id — Fetch a single preset ──
-  ipcMain.handle(
-    IPC_CHANNELS.PRESET_GET_BY_ID,
-    (event, args: { presetId: string }) => {
-      validateSender(event)
-      return presetService.getPreset(args.presetId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PRESET_GET_BY_ID, (event, args: { presetId: string }) => {
+    validateSender(event)
+    return presetService.getPreset(args.presetId)
+  })
 
   // ── preset:create — Create a custom preset ──
   ipcMain.handle(
@@ -55,7 +49,9 @@ export function registerPresetIpc(): void {
       }
 
       const preset = presetService.createPreset(args.workspaceId, args.name, args.actionConfig)
-      presetLog.info(`[preset:create] ${preset.id} "${preset.name}" for workspace ${args.workspaceId}`)
+      presetLog.info(
+        `[preset:create] ${preset.id} "${preset.name}" for workspace ${args.workspaceId}`
+      )
       return preset
     }
   )
@@ -90,16 +86,13 @@ export function registerPresetIpc(): void {
   )
 
   // ── preset:delete — Delete a custom preset ──
-  ipcMain.handle(
-    IPC_CHANNELS.PRESET_DELETE,
-    (event, args: { presetId: string }) => {
-      validateSender(event)
-      const deleted = presetService.deletePreset(args.presetId)
-      if (!deleted) return { error: 'Cannot delete built-in presets' }
-      presetLog.info(`[preset:delete] ${args.presetId}`)
-      return { deleted: true }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PRESET_DELETE, (event, args: { presetId: string }) => {
+    validateSender(event)
+    const deleted = presetService.deletePreset(args.presetId)
+    if (!deleted) return { error: 'Cannot delete built-in presets' }
+    presetLog.info(`[preset:delete] ${args.presetId}`)
+    return { deleted: true }
+  })
 
   // ── preset:set-default — Set workspace default preset ──
   ipcMain.handle(

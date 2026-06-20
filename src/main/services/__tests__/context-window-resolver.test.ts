@@ -38,10 +38,7 @@ describe('context-window-resolver › fromKnownModels', () => {
   })
 
   test('hits on a known omlxId', () => {
-    assert.equal(
-      resolver.fromKnownModels('mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'),
-      32768
-    )
+    assert.equal(resolver.fromKnownModels('mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'), 32768)
   })
 
   test('misses on an unknown model → null', () => {
@@ -128,7 +125,9 @@ describe('context-window-resolver › queryOllamaContext field mapping', () => {
       const original = globalThis.fetch
       try {
         globalThis.fetch = (async () =>
-          jsonRes({ models: [{ name: 'other:latest', details: { context_length: 4096 } }] })) as FetchFn
+          jsonRes({
+            models: [{ name: 'other:latest', details: { context_length: 4096 } }]
+          })) as FetchFn
         const value = await resolver.queryOllamaContext(cfg({ localModel: 'llama3' }))
         assert.equal(value, null)
       } finally {

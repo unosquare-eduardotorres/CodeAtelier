@@ -162,7 +162,7 @@ export default function DocumentsPage(): React.JSX.Element {
   if (docs.length === 0) return <EmptyState />
 
   return (
-    <div className="flex flex-1 min-h-0">
+    <div data-testid="documents-page" className="flex flex-1 min-h-0">
       {/* File list sidebar */}
       <div className="w-[220px] border-r border-border-subtle p-3 overflow-y-auto flex-shrink-0">
         <div className="text-xs text-text-muted uppercase tracking-wider font-semibold px-3 mb-2">

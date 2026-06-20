@@ -21,7 +21,9 @@ export default function AgentYamlEditor({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync local state from prop
     setContent(initialContent)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHasChanges(false)
   }, [initialContent])
 

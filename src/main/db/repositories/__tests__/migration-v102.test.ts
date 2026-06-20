@@ -16,12 +16,12 @@ interface BareEnv {
 function trySetup(): BareEnv | null {
   try {
     process.env.NODE_ENV = 'test'
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     const Database = require('better-sqlite3')
     // Probe-construct a DB so an ABI mismatch (NODE_MODULE_VERSION) surfaces here
     // and the suite skips gracefully under bare Node — it runs under Electron's ABI.
     new Database(':memory:').close()
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     const { migrations } = require('../../index')
     return { Database, migrations }
   } catch (err) {

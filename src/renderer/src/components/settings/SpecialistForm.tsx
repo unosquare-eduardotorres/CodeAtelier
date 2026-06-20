@@ -48,6 +48,7 @@ export default function SpecialistForm({
         .replace(/\s+/g, '-')
         .replace(/-+/g, '-')
         .trim()
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- derive slug from display name
       setAgentId(slug)
     }
   }, [displayName, isEditing])

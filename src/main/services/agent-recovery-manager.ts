@@ -272,25 +272,30 @@ export class AgentRecoveryManager {
       !this.s.controlToolState.plan &&
       !timedOut
     ) {
-      const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
-        cliExecutor: this.s.cliExecutor,
-        systemPrompt,
-        workspacePath: this.s.workspacePath!,
-        model: modelConfigService.getModel(
-          this.s.workspacePath!,
-          this.s.adapter.role as ModelAction
-        ),
-        sessionId: this.s.sessionMap.get(conversationId),
-        conversationId,
-        workspaceId: this.s.workspaceId,
-        mcpConfigPath: this.s.getCliMcpConfigPath(),
-        onSessionCapture: (sid) => this.s.sessionMap.set(conversationId, sid),
-        onChunk: (chunk) => this.s.emit('chunk', chunk),
-        onTokens: (tokens) => {
-          this.s.tokenUsage += tokens
-        }
-      })
-      planRecoveryAttempted = result.attempted
+      try {
+        const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
+          cliExecutor: this.s.cliExecutor,
+          systemPrompt,
+          workspacePath: this.s.workspacePath!,
+          model: modelConfigService.getModel(
+            this.s.workspacePath!,
+            this.s.adapter.role as ModelAction
+          ),
+          sessionId: this.s.sessionMap.get(conversationId),
+          conversationId,
+          workspaceId: this.s.workspaceId,
+          mcpConfigPath: this.s.getCliMcpConfigPath(),
+          onSessionCapture: (sid) => this.s.sessionMap.set(conversationId, sid),
+          onChunk: (chunk) => this.s.emit('chunk', chunk),
+          onTokens: (tokens) => {
+            this.s.tokenUsage += tokens
+          }
+        })
+        planRecoveryAttempted = result.attempted
+      } catch (err) {
+        this.s.log.warn('[PIPELINE:plan-recovery-failed] Non-critical:', err)
+        // Continue finalization without plan tool recovery
+      }
     }
 
     const skipNudgeReasons = new Set([

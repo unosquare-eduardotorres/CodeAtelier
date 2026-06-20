@@ -37,7 +37,7 @@ function git(args: string[]): string {
 }
 
 /** Validate that a git ref contains only safe characters */
-const SAFE_REF_RE = /^[a-zA-Z0-9._\/@{}\-~^:]+$/
+const SAFE_REF_RE = /^[a-zA-Z0-9._/@{}\-~^:]+$/
 
 // git_log
 server.tool(
@@ -80,8 +80,17 @@ server.tool(
   'git_diff',
   'Show diff between commits, branches, or working tree changes.',
   {
-    ref: z.string().regex(SAFE_REF_RE, 'Invalid characters in git ref').optional().default('HEAD').describe('Commit/branch to diff from'),
-    ref2: z.string().regex(SAFE_REF_RE, 'Invalid characters in git ref').optional().describe('Second ref to diff to (default: working tree)'),
+    ref: z
+      .string()
+      .regex(SAFE_REF_RE, 'Invalid characters in git ref')
+      .optional()
+      .default('HEAD')
+      .describe('Commit/branch to diff from'),
+    ref2: z
+      .string()
+      .regex(SAFE_REF_RE, 'Invalid characters in git ref')
+      .optional()
+      .describe('Second ref to diff to (default: working tree)'),
     path: z.string().optional().describe('Filter to specific file/directory'),
     stat: z.boolean().optional().default(false).describe('Show diffstat only (no patch)')
   },
@@ -129,15 +138,14 @@ server.tool(
   'git_show',
   'Show details of a specific commit.',
   {
-    ref: z.string().regex(SAFE_REF_RE, 'Invalid characters in git ref').describe('Commit hash or reference'),
+    ref: z
+      .string()
+      .regex(SAFE_REF_RE, 'Invalid characters in git ref')
+      .describe('Commit hash or reference'),
     stat: z.boolean().optional().default(true).describe('Include diffstat')
   },
   async (args) => {
-    const gitArgs = [
-      'show',
-      ...(args.stat ? ['--stat'] : []),
-      args.ref
-    ]
+    const gitArgs = ['show', ...(args.stat ? ['--stat'] : []), args.ref]
     const output = git(gitArgs)
     return { content: [{ type: 'text' as const, text: truncateToolOutput(output) }] }
   }

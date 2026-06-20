@@ -208,18 +208,17 @@ function ToolRow({ activity, isExpanded, onToggleExpand }: ToolRowProps): React.
       {isExpanded && (
         <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
           {/* Input/Command section — always show for shell, length-gated for others */}
-          {activity.input &&
-            (activity.operationType === 'shell' || activity.input.length > 30) && (
-              <div className="px-3 py-2 border-b border-border-subtle/50">
-                <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
-                  {activity.operationType === 'shell' ? 'Command' : 'Input'}
-                  <CopyButton text={activity.input} />
-                </span>
-                <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
-                  {activity.input}
-                </pre>
-              </div>
-            )}
+          {activity.input && (activity.operationType === 'shell' || activity.input.length > 30) && (
+            <div className="px-3 py-2 border-b border-border-subtle/50">
+              <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+                {activity.operationType === 'shell' ? 'Command' : 'Input'}
+                <CopyButton text={activity.input} />
+              </span>
+              <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
+                {activity.input}
+              </pre>
+            </div>
+          )}
           {/* Output section */}
           {(activity.resultDetail || activity.result) && (
             <div className="px-3 py-2 max-h-64 overflow-y-auto">

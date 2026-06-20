@@ -9,7 +9,11 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { parsePhaseCompletionBlock, parseBlueprintTasks, parseBlueprintPlan } from '../blueprint-artifact-parsers'
+import {
+  parsePhaseCompletionBlock,
+  parseBlueprintTasks,
+  parseBlueprintPlan
+} from '../blueprint-artifact-parsers'
 import {
   buildSpecifyGoalCondition,
   buildClarifyGoalCondition,
@@ -24,7 +28,8 @@ import {
 
 describe('parsePhaseCompletionBlock', () => {
   test('parses valid blueprint-phase-complete block', () => {
-    const text = 'Some text\n```blueprint-phase-complete\n{"phase":"review","status":"complete","recommendation":"proceed"}\n```\nMore text'
+    const text =
+      'Some text\n```blueprint-phase-complete\n{"phase":"review","status":"complete","recommendation":"proceed"}\n```\nMore text'
     const result = parsePhaseCompletionBlock(text)
     assert.ok(result)
     assert.equal(result.phase, 'review')
@@ -48,7 +53,8 @@ describe('parsePhaseCompletionBlock', () => {
 
 describe('parseBlueprintTasks', () => {
   test('parses valid blueprint-tasks block', () => {
-    const text = '```blueprint-tasks\n{"waves":[{"wave":1,"tasks":[{"taskId":"T001","description":"test"}]}]}\n```'
+    const text =
+      '```blueprint-tasks\n{"waves":[{"wave":1,"tasks":[{"taskId":"T001","description":"test"}]}]}\n```'
     const result = parseBlueprintTasks(text)
     assert.ok(result)
     assert.ok(Array.isArray((result as any).waves))

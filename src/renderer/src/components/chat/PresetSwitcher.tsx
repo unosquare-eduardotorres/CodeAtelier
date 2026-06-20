@@ -85,8 +85,10 @@ export function PresetSwitcher({
         </button>
 
         {open && (
-          <div className="absolute bottom-full mb-1 left-0 w-48 bg-surface-primary border border-border-subtle
-                          rounded-lg shadow-lg overflow-hidden z-50">
+          <div
+            className="absolute bottom-full mb-1 left-0 w-48 bg-surface-primary border border-border-subtle
+                          rounded-lg shadow-lg overflow-hidden z-50"
+          >
             {presets.map((preset) => {
               const isActive = preset.id === conversation.presetId
               return (
@@ -114,8 +116,10 @@ export function PresetSwitcher({
       {confirming && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => setConfirming(null)} />
-          <div className="relative bg-surface-primary border border-border-subtle rounded-xl
-                          shadow-xl p-5 w-[400px]">
+          <div
+            className="relative bg-surface-primary border border-border-subtle rounded-xl
+                          shadow-xl p-5 w-[400px]"
+          >
             <div className="flex items-start gap-3">
               <AlertTriangle size={20} className="text-warning shrink-0 mt-0.5" />
               <div>
@@ -123,9 +127,9 @@ export function PresetSwitcher({
                   Provider Change Detected
                 </h4>
                 <p className="text-xs text-text-secondary leading-relaxed">
-                  Switching to &ldquo;{confirming.name}&rdquo; will change the chat provider.
-                  A handoff context summary will be generated so the new provider can continue
-                  the conversation.
+                  Switching to &ldquo;{confirming.name}&rdquo; will change the chat provider. A
+                  handoff context summary will be generated so the new provider can continue the
+                  conversation.
                 </p>
               </div>
             </div>

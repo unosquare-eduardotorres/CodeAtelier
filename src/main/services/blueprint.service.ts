@@ -32,10 +32,7 @@ import type {
   BlueprintPhaseCompletion,
   GrillDecisionForBlueprint
 } from '../../shared/blueprint-types'
-import {
-  BLUEPRINT_PHASE_ORDER,
-  PHASE_TO_STATUS
-} from '../../shared/blueprint-types'
+import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../shared/blueprint-types'
 
 const bpLog = log.scope('blueprint')
 
@@ -53,7 +50,9 @@ function parseGrillDecisions(raw: unknown): GrillDecisionForBlueprint[] | undefi
       typeof item.reason === 'string'
   )
   if (!valid) {
-    bpLog.warn('[parseGrillDecisions] Malformed grill decisions — expected {header, selectedOption, reason}[]')
+    bpLog.warn(
+      '[parseGrillDecisions] Malformed grill decisions — expected {header, selectedOption, reason}[]'
+    )
     return undefined
   }
   return raw as GrillDecisionForBlueprint[]

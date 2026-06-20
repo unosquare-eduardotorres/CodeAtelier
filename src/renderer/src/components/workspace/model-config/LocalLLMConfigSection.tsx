@@ -12,6 +12,208 @@ import type {
 import LocalModelSelector from '../LocalModelSelector'
 import OllamaSetupModal from '../OllamaSetupModal'
 
+// ─── Connection Status Badge ──────────────────────────────
+
+function ConnectionStatusBadge({
+  localStatus,
+  backend,
+  localHost,
+  localPort,
+  localModel: _localModel,
+  modelLoading,
+  isRemoteServer,
+  onLoadOmlxModel
+}: {
+  localStatus: OmlxExtendedStatus | OllamaStatus | null
+  backend: LocalLLMBackend
+  localHost: string
+  localPort: number
+  localModel: string
+  modelLoading: string | null
+  isRemoteServer: boolean
+  onLoadOmlxModel: (modelId: string) => void
+}): React.JSX.Element | null {
+  if (!localStatus) return null
+
+  if (!localStatus.running) {
+    return localStatus.installed ? (
+      <span className="inline-flex items-center gap-1.5 text-xs text-yellow-500">
+        <span className="w-2 h-2 rounded-full bg-yellow-500" />
+        Installed but not running
+      </span>
+    ) : (
+      <span className="inline-flex items-center gap-1.5 text-xs text-red-400">
+        <span className="w-2 h-2 rounded-full bg-red-400" />
+        {isRemoteServer ? 'Cannot reach server' : 'Not installed'}
+      </span>
+    )
+  }
+
+  const versionSuffix =
+    backend === 'ollama' && localStatus.version
+      ? ` — Ollama v${localStatus.version}`
+      : backend === 'omlx'
+        ? ' — oMLX'
+        : ''
+  const modelCount = localStatus.models.length
+  const allModels =
+    'allModels' in localStatus && localStatus.allModels ? localStatus.allModels : null
+
+  return (
+    <>
+      <span className="inline-flex items-center gap-1.5 text-xs text-green-400">
+        <span className="w-2 h-2 rounded-full bg-green-400" />
+        Connected{versionSuffix}
+        {modelCount > 0 && ` · ${modelCount} model${modelCount !== 1 ? 's' : ''}`}
+      </span>
+
+      {/* No-models warning — show actionable list when admin API has downloaded models */}
+      {modelCount === 0 && allModels && allModels.length > 0 ? (
+        <div className="mt-2 p-2.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5">
+          <p className="text-xs text-yellow-500 mb-2">
+            {allModels.length} model{allModels.length !== 1 ? 's' : ''} downloaded but none loaded
+            into memory. Select one to load:
+          </p>
+          <div className="space-y-1">
+            {allModels.map((model) => (
+              <div
+                key={model.id}
+                className="flex items-center justify-between px-2 py-1.5 rounded border border-border-subtle"
+              >
+                <div>
+                  <span className="text-xs text-text-primary font-medium">{model.id}</span>
+                  <span className="text-[10px] text-text-muted ml-2">{model.estimatedSize}</span>
+                </div>
+                <button
+                  onClick={() => onLoadOmlxModel(model.id)}
+                  disabled={model.isLoading || modelLoading === model.id}
+                  className="text-xs px-2.5 py-1 rounded border border-primary text-primary hover:bg-primary-muted transition-colors disabled:opacity-50"
+                >
+                  {model.isLoading || modelLoading === model.id ? (
+                    <>
+                      <Loader2 size={10} className="animate-spin inline mr-1" />
+                      Loading…
+                    </>
+                  ) : (
+                    'Load'
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        modelCount === 0 && (
+          <p className="text-xs text-yellow-500 mt-1.5">
+            ⚠ No models loaded — load a model in{' '}
+            {backend === 'omlx' ? (
+              <a
+                href={`http://${localHost}:${localPort}/admin`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-yellow-400"
+              >
+                oMLX admin panel
+              </a>
+            ) : (
+              'Ollama'
+            )}{' '}
+            before starting a chat or audit.
+          </p>
+        )
+      )}
+    </>
+  )
+}
+
+// ─── Context Window Override Hook ─────────────────────────
+
+function useContextWindowOverride(
+  activeWorkspaceId: string,
+  localContextWindow: number | undefined,
+  onContextWindowChange: (value: number | undefined) => void
+): {
+  onChange: React.ChangeEventHandler<HTMLInputElement>
+  onBlur: () => Promise<void>
+  onClear: () => Promise<void>
+} {
+  const addToast = useToastStore((s) => s.addToast)
+
+  async function persistContextWindow(value: number | undefined): Promise<void> {
+    try {
+      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspaceId })
+      await window.api.updateWorkspaceSettings({
+        workspaceId: activeWorkspaceId,
+        settings: { ...settings, localContextWindow: value ?? null }
+      })
+    } catch (err) {
+      console.error('Failed to save context window override:', err)
+    }
+  }
+
+  return {
+    onChange: (e) => {
+      const raw = e.target.value
+      if (raw === '') {
+        onContextWindowChange(undefined)
+      } else {
+        const parsed = parseInt(raw, 10)
+        if (!isNaN(parsed) && parsed > 0) {
+          onContextWindowChange(parsed)
+        }
+      }
+    },
+    onBlur: async () => {
+      await persistContextWindow(localContextWindow)
+      if (localContextWindow) {
+        addToast({
+          message: `Context window override set to ${localContextWindow.toLocaleString()} tokens`,
+          type: 'success'
+        })
+      }
+    },
+    onClear: async () => {
+      onContextWindowChange(undefined)
+      await persistContextWindow(undefined)
+      addToast({ message: 'Context window override cleared', type: 'info' })
+    }
+  }
+}
+
+// ─── OllamaSetupModal Close Handler ──────────────────────
+
+/** Handles post-close re-check of connection and auto-provider switch. */
+function handleOllamaSetupClose(
+  onShowOllamaSetupChange: (show: boolean) => void,
+  backend: LocalLLMBackend,
+  localHost: string,
+  localPort: number,
+  localApiKey: string,
+  localModel: string,
+  setProvider: (provider: LLMProvider) => void,
+  saveProviderSettings: (provider: LLMProvider) => Promise<void>
+): void {
+  onShowOllamaSetupChange(false)
+  const baseUrl = `http://${localHost}:${localPort}`
+  const check =
+    backend === 'ollama'
+      ? window.api.ollamaCheckStatus({ baseUrl })
+      : window.api.omlxCheckStatus({ baseUrl, apiKey: localApiKey || undefined })
+  check.then((status) => {
+    if (status?.running) {
+      const hasModel = status.models.some(
+        (m: string) => m === localModel || m.startsWith(`${localModel}:`)
+      )
+      if (hasModel) {
+        setProvider('local-llm')
+        saveProviderSettings('local-llm')
+      }
+    }
+  })
+}
+
+// ─── Component ────────────────────────────────────────────
+
 interface LocalLLMConfigSectionProps {
   backend: LocalLLMBackend
   platformInfo: PlatformInfo | null
@@ -81,6 +283,11 @@ export default function LocalLLMConfigSection({
   setLocalModel
 }: LocalLLMConfigSectionProps): React.JSX.Element {
   const addToast = useToastStore((s) => s.addToast)
+  const ctxWindow = useContextWindowOverride(
+    activeWorkspaceId,
+    localContextWindow,
+    onContextWindowChange
+  )
 
   return (
     <div className="space-y-6">
@@ -95,7 +302,6 @@ export default function LocalLLMConfigSection({
             <div>
               <label className="text-xs font-medium text-text-secondary">Backend</label>
               <div className="flex gap-2 mt-1">
-                {/* Always show Ollama */}
                 <button
                   onClick={() => onBackendChange('ollama')}
                   className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
@@ -111,7 +317,6 @@ export default function LocalLLMConfigSection({
                   </div>
                 </button>
 
-                {/* Show oMLX only on macOS Apple Silicon */}
                 {platformInfo?.isAppleSilicon && (
                   <button
                     onClick={() => onBackendChange('omlx')}
@@ -165,98 +370,18 @@ export default function LocalLLMConfigSection({
                 </button>
               </div>
               {/* Connection status badge */}
-              {localStatus && (
-                <div className="mt-2">
-                  {localStatus.running ? (
-                    <>
-                      <span className="inline-flex items-center gap-1.5 text-xs text-green-400">
-                        <span className="w-2 h-2 rounded-full bg-green-400" />
-                        Connected
-                        {backend === 'ollama' && localStatus.version
-                          ? ` — Ollama v${localStatus.version}`
-                          : backend === 'omlx'
-                            ? ' — oMLX'
-                            : ''}
-                        {localStatus.models.length > 0 &&
-                          ` · ${localStatus.models.length} model${localStatus.models.length !== 1 ? 's' : ''}`}
-                      </span>
-                      {/* No-models warning — show actionable list when admin API has downloaded models */}
-                      {localStatus.models.length === 0 &&
-                      'allModels' in localStatus &&
-                      localStatus.allModels &&
-                      localStatus.allModels.length > 0 ? (
-                        <div className="mt-2 p-2.5 rounded-lg border border-yellow-500/20 bg-yellow-500/5">
-                          <p className="text-xs text-yellow-500 mb-2">
-                            {localStatus.allModels.length} model
-                            {localStatus.allModels.length !== 1 ? 's' : ''} downloaded but none
-                            loaded into memory. Select one to load:
-                          </p>
-                          <div className="space-y-1">
-                            {localStatus.allModels.map((model) => (
-                              <div
-                                key={model.id}
-                                className="flex items-center justify-between px-2 py-1.5 rounded border border-border-subtle"
-                              >
-                                <div>
-                                  <span className="text-xs text-text-primary font-medium">
-                                    {model.id}
-                                  </span>
-                                  <span className="text-[10px] text-text-muted ml-2">
-                                    {model.estimatedSize}
-                                  </span>
-                                </div>
-                                <button
-                                  onClick={() => onLoadOmlxModel(model.id)}
-                                  disabled={model.isLoading || modelLoading === model.id}
-                                  className="text-xs px-2.5 py-1 rounded border border-primary text-primary hover:bg-primary-muted transition-colors disabled:opacity-50"
-                                >
-                                  {model.isLoading || modelLoading === model.id ? (
-                                    <>
-                                      <Loader2 size={10} className="animate-spin inline mr-1" />
-                                      Loading…
-                                    </>
-                                  ) : (
-                                    'Load'
-                                  )}
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        localStatus.models.length === 0 && (
-                          <p className="text-xs text-yellow-500 mt-1.5">
-                            ⚠ No models loaded — load a model in{' '}
-                            {backend === 'omlx' ? (
-                              <a
-                                href={`http://${localHost}:${localPort}/admin`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="underline hover:text-yellow-400"
-                              >
-                                oMLX admin panel
-                              </a>
-                            ) : (
-                              'Ollama'
-                            )}{' '}
-                            before starting a chat or audit.
-                          </p>
-                        )
-                      )}
-                    </>
-                  ) : localStatus.installed ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-yellow-500">
-                      <span className="w-2 h-2 rounded-full bg-yellow-500" />
-                      Installed but not running
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-red-400">
-                      <span className="w-2 h-2 rounded-full bg-red-400" />
-                      {isRemoteServer ? 'Cannot reach server' : 'Not installed'}
-                    </span>
-                  )}
-                </div>
-              )}
+              <div className="mt-2">
+                <ConnectionStatusBadge
+                  localStatus={localStatus}
+                  backend={backend}
+                  localHost={localHost}
+                  localPort={localPort}
+                  localModel={localModel}
+                  modelLoading={modelLoading}
+                  isRemoteServer={isRemoteServer}
+                  onLoadOmlxModel={onLoadOmlxModel}
+                />
+              </div>
             </div>
 
             {/* API Key (oMLX only — for authenticated admin API access) */}
@@ -347,60 +472,15 @@ export default function LocalLLMConfigSection({
             <div className="flex items-center gap-2">
               <input
                 value={localContextWindow ?? ''}
-                onChange={(e) => {
-                  const raw = e.target.value
-                  if (raw === '') {
-                    onContextWindowChange(undefined)
-                  } else {
-                    const parsed = parseInt(raw, 10)
-                    if (!isNaN(parsed) && parsed > 0) {
-                      onContextWindowChange(parsed)
-                    }
-                  }
-                }}
-                onBlur={async () => {
-                  try {
-                    const settings = await window.api.getWorkspaceSettings({
-                      workspaceId: activeWorkspaceId
-                    })
-                    await window.api.updateWorkspaceSettings({
-                      workspaceId: activeWorkspaceId,
-                      settings: {
-                        ...settings,
-                        localContextWindow: localContextWindow ?? null
-                      }
-                    })
-                    if (localContextWindow) {
-                      addToast({
-                        message: `Context window override set to ${localContextWindow.toLocaleString()} tokens`,
-                        type: 'success'
-                      })
-                    }
-                  } catch (err) {
-                    console.error('Failed to save context window override:', err)
-                  }
-                }}
+                onChange={ctxWindow.onChange}
+                onBlur={ctxWindow.onBlur}
                 type="number"
                 placeholder="Auto-detect"
                 className="w-36 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
               {localContextWindow && (
                 <button
-                  onClick={async () => {
-                    onContextWindowChange(undefined)
-                    try {
-                      const settings = await window.api.getWorkspaceSettings({
-                        workspaceId: activeWorkspaceId
-                      })
-                      await window.api.updateWorkspaceSettings({
-                        workspaceId: activeWorkspaceId,
-                        settings: { ...settings, localContextWindow: null }
-                      })
-                      addToast({ message: 'Context window override cleared', type: 'info' })
-                    } catch {
-                      /* non-fatal */
-                    }
-                  }}
+                  onClick={ctxWindow.onClear}
                   className="text-xs text-text-muted hover:text-text-secondary transition-colors"
                   title="Clear override"
                 >
@@ -418,26 +498,18 @@ export default function LocalLLMConfigSection({
           model={localModel}
           baseUrl={localBaseUrl}
           isRemote={isRemoteServer}
-          onClose={() => {
-            onShowOllamaSetupChange(false)
-            // Re-test connection after modal close
-            const baseUrl = `http://${localHost}:${localPort}`
-            const check =
-              backend === 'ollama'
-                ? window.api.ollamaCheckStatus({ baseUrl })
-                : window.api.omlxCheckStatus({ baseUrl, apiKey: localApiKey || undefined })
-            check.then((status) => {
-              if (status?.running) {
-                const hasModel = status.models.some(
-                  (m: string) => m === localModel || m.startsWith(`${localModel}:`)
-                )
-                if (hasModel) {
-                  setProvider('local-llm')
-                  saveProviderSettings('local-llm')
-                }
-              }
-            })
-          }}
+          onClose={() =>
+            handleOllamaSetupClose(
+              onShowOllamaSetupChange,
+              backend,
+              localHost,
+              localPort,
+              localApiKey,
+              localModel,
+              setProvider,
+              saveProviderSettings
+            )
+          }
         />
       )}
     </div>

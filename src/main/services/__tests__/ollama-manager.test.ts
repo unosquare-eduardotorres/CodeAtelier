@@ -41,73 +41,74 @@ describe('OllamaManagerService', () => {
 
   test('fetch-backed flows (sequential)', () =>
     runExclusive(async () => {
-    const originalFetch = globalThis.fetch
-    try {
-      // ── checkStatus: running with models ──
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const u = String(input)
-        if (u.includes('/api/version')) return jsonRes({ version: '0.5.1' })
-        if (u.includes('/api/tags')) return jsonRes({ models: [{ name: 'qwen3' }, { name: 'llama3' }] })
-        throw new Error(`unexpected url ${u}`)
-      }) as FetchFn
-      const status = await ollamaManager.checkStatus()
-      assert.equal(status.running, true)
-      assert.equal(status.installed, true)
-      assert.equal(status.version, '0.5.1')
-      assert.deepEqual(status.models, ['qwen3', 'llama3'])
+      const originalFetch = globalThis.fetch
+      try {
+        // ── checkStatus: running with models ──
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const u = String(input)
+          if (u.includes('/api/version')) return jsonRes({ version: '0.5.1' })
+          if (u.includes('/api/tags'))
+            return jsonRes({ models: [{ name: 'qwen3' }, { name: 'llama3' }] })
+          throw new Error(`unexpected url ${u}`)
+        }) as FetchFn
+        const status = await ollamaManager.checkStatus()
+        assert.equal(status.running, true)
+        assert.equal(status.installed, true)
+        assert.equal(status.version, '0.5.1')
+        assert.deepEqual(status.models, ['qwen3', 'llama3'])
 
-      // ── checkStatus: server down (remote URL skips PATH/execSync probe) ──
-      globalThis.fetch = (async () => {
-        throw new Error('ECONNREFUSED')
-      }) as FetchFn
-      const down = await ollamaManager.checkStatus('http://192.168.9.9:11434')
-      assert.equal(down.running, false)
-      assert.equal(down.installed, false)
+        // ── checkStatus: server down (remote URL skips PATH/execSync probe) ──
+        globalThis.fetch = (async () => {
+          throw new Error('ECONNREFUSED')
+        }) as FetchFn
+        const down = await ollamaManager.checkStatus('http://192.168.9.9:11434')
+        assert.equal(down.running, false)
+        assert.equal(down.installed, false)
 
-      // ── pullModel: NDJSON progress (split across chunks) + complete ──
-      globalThis.fetch = (async () =>
-        streamRes([
-          '{"status":"pulling","completed":50,"total":100}\n{"sta',
-          'tus":"verifying"}\n'
-        ])) as FetchFn
-      const progresses: number[] = []
-      const onProgress = (p: { percent: number }): void => {
-        progresses.push(p.percent)
+        // ── pullModel: NDJSON progress (split across chunks) + complete ──
+        globalThis.fetch = (async () =>
+          streamRes([
+            '{"status":"pulling","completed":50,"total":100}\n{"sta',
+            'tus":"verifying"}\n'
+          ])) as FetchFn
+        const progresses: number[] = []
+        const onProgress = (p: { percent: number }): void => {
+          progresses.push(p.percent)
+        }
+        let completed = false
+        const onComplete = (): void => {
+          completed = true
+        }
+        ollamaManager.on('pullProgress', onProgress)
+        ollamaManager.on('pullComplete', onComplete)
+        await ollamaManager.pullModel('qwen3')
+        ollamaManager.off('pullProgress', onProgress)
+        ollamaManager.off('pullComplete', onComplete)
+        assert.ok(progresses.includes(50), 'percent = round(50/100*100)')
+        assert.equal(completed, true)
+
+        // ── pullModel: error line emits pullError ──
+        globalThis.fetch = (async () => streamRes(['{"error":"manifest not found"}\n'])) as FetchFn
+        let pullErr = ''
+        const onErr = (e: string): void => {
+          pullErr = e
+        }
+        ollamaManager.on('pullError', onErr)
+        await ollamaManager.pullModel('bad-model')
+        ollamaManager.off('pullError', onErr)
+        assert.equal(pullErr, 'manifest not found')
+
+        // ── embed: returns the embeddings array ──
+        globalThis.fetch = (async () => jsonRes({ embeddings: [[0.1, 0.2, 0.3]] })) as FetchFn
+        const vecs = await ollamaManager.embed('nomic', ['hello'])
+        assert.deepEqual(vecs, [[0.1, 0.2, 0.3]])
+
+        // ── embed: non-ok response rejects ──
+        globalThis.fetch = (async () => jsonRes({ error: 'no model' }, false, 404)) as FetchFn
+        await assert.rejects(() => ollamaManager.embed('missing', ['x']))
+      } finally {
+        globalThis.fetch = originalFetch
       }
-      let completed = false
-      const onComplete = (): void => {
-        completed = true
-      }
-      ollamaManager.on('pullProgress', onProgress)
-      ollamaManager.on('pullComplete', onComplete)
-      await ollamaManager.pullModel('qwen3')
-      ollamaManager.off('pullProgress', onProgress)
-      ollamaManager.off('pullComplete', onComplete)
-      assert.ok(progresses.includes(50), 'percent = round(50/100*100)')
-      assert.equal(completed, true)
-
-      // ── pullModel: error line emits pullError ──
-      globalThis.fetch = (async () => streamRes(['{"error":"manifest not found"}\n'])) as FetchFn
-      let pullErr = ''
-      const onErr = (e: string): void => {
-        pullErr = e
-      }
-      ollamaManager.on('pullError', onErr)
-      await ollamaManager.pullModel('bad-model')
-      ollamaManager.off('pullError', onErr)
-      assert.equal(pullErr, 'manifest not found')
-
-      // ── embed: returns the embeddings array ──
-      globalThis.fetch = (async () => jsonRes({ embeddings: [[0.1, 0.2, 0.3]] })) as FetchFn
-      const vecs = await ollamaManager.embed('nomic', ['hello'])
-      assert.deepEqual(vecs, [[0.1, 0.2, 0.3]])
-
-      // ── embed: non-ok response rejects ──
-      globalThis.fetch = (async () => jsonRes({ error: 'no model' }, false, 404)) as FetchFn
-      await assert.rejects(() => ollamaManager.embed('missing', ['x']))
-    } finally {
-      globalThis.fetch = originalFetch
-    }
     }))
 })
 

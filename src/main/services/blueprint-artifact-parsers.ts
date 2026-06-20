@@ -29,7 +29,9 @@ export function parsePhaseCompletionBlock(text: string): BlueprintPhaseCompletio
     }
 
     // Fallback: look for any JSON with "phase" and "status" keys
-    const jsonMatch = text.match(/\{[\s\S]*"phase"\s*:\s*"[\s\S]*?"[\s\S]*"status"\s*:\s*"[\s\S]*?"[\s\S]*?\}/)
+    const jsonMatch = text.match(
+      /\{[\s\S]*"phase"\s*:\s*"[\s\S]*?"[\s\S]*"status"\s*:\s*"[\s\S]*?"[\s\S]*?\}/
+    )
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
       if (parsed.phase && parsed.status) {

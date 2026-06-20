@@ -12,7 +12,7 @@ import { memoryCheckpoint } from '../indexing-diagnostics'
 function capture(fn: () => void): string {
   const original = log.info
   let captured = ''
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   ;(log as any).info = (msg: string): void => {
     captured = msg
   }

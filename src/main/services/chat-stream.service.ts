@@ -587,7 +587,14 @@ export class ChatStreamService {
       // Persist any tool activities accumulated before the error
       const errorToolActivities = getAndClearToolActivities(conversationId)
       if (errorToolActivities.length > 0) {
-        messageRepository.updateToolActivities(savedMessage.id, errorToolActivities)
+        try {
+          messageRepository.updateToolActivities(savedMessage.id, errorToolActivities)
+        } catch (toolErr) {
+          log.error(
+            `[PIPELINE:tool-activities-lost] messageId=${savedMessage.id} count=${errorToolActivities.length}:`,
+            toolErr
+          )
+        }
       }
 
       this.safeWindowSend(
@@ -647,8 +654,7 @@ export class ChatStreamService {
       const savedMessage = messageRepository.create(
         ctx.conversationId,
         ctx.streamingRole,
-        cleanedContent ||
-          '**Error:** Agent produced no response. Check the app logs for details.',
+        cleanedContent || '**Error:** Agent produced no response. Check the app logs for details.',
         ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
       )
       log.info('Agent message saved, id:', savedMessage.id)
@@ -656,10 +662,17 @@ export class ChatStreamService {
       // Persist tool activities accumulated during streaming
       const toolActivities = getAndClearToolActivities(ctx.conversationId)
       if (toolActivities.length > 0) {
-        messageRepository.updateToolActivities(savedMessage.id, toolActivities)
-        log.info(
-          `[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`
-        )
+        try {
+          messageRepository.updateToolActivities(savedMessage.id, toolActivities)
+          log.info(
+            `[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`
+          )
+        } catch (toolErr) {
+          log.error(
+            `[PIPELINE:tool-activities-lost] messageId=${savedMessage.id} count=${toolActivities.length}:`,
+            toolErr
+          )
+        }
       }
 
       // Process memory blocks
@@ -746,7 +759,14 @@ export class ChatStreamService {
     onPlanEvent: (data: PlanDetectedEvent) => void
   } {
     // Adapter for forwardChunkToRenderer which still expects { value: string }
-    const streamedContentRef = { get value() { return ctx.streamedContent }, set value(v: string) { ctx.streamedContent = v } }
+    const streamedContentRef = {
+      get value() {
+        return ctx.streamedContent
+      },
+      set value(v: string) {
+        ctx.streamedContent = v
+      }
+    }
 
     const onChunk = (chunk: StreamChunk): void => {
       try {
@@ -778,7 +798,7 @@ export class ChatStreamService {
 
     const onComplete = (): void => {
       // Flush any pending batched text deltas before finalizing
-      flushTextBatcher()
+      flushTextBatcher(ctx.conversationId)
 
       if (this.isStopped) {
         cleanupListeners()
@@ -873,8 +893,7 @@ export class ChatStreamService {
     }
 
     // Stage 3: Resolve identity
-    const { streamingRole, phase, specialistMeta, adapterAgentId } =
-      this.resolveStreamIdentity()
+    const { streamingRole, phase, specialistMeta, adapterAgentId } = this.resolveStreamIdentity()
     this.currentStreamingRole = streamingRole
 
     void signal // AbortSignal available for future cooperative cancellation
@@ -910,8 +929,11 @@ export class ChatStreamService {
       planInjected: false
     }
 
-    const { onChunk, onComplete, onIntent, onPlanEvent } =
-      this.buildStreamListeners(ctx, resolveDone, rejectDone)
+    const { onChunk, onComplete, onIntent, onPlanEvent } = this.buildStreamListeners(
+      ctx,
+      resolveDone,
+      rejectDone
+    )
 
     // Stage 8: Register disposers (needs listener refs)
     this.registerStreamDisposers(onChunk, onComplete, onIntent, onPlanEvent)
@@ -1012,10 +1034,17 @@ export class ChatStreamService {
           // Persist tool activities accumulated before user stopped
           const stopToolActivities = getAndClearToolActivities(conversationId)
           if (stopToolActivities.length > 0) {
-            messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
-            log.info(
-              `[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`
-            )
+            try {
+              messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
+              log.info(
+                `[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`
+              )
+            } catch (toolErr) {
+              log.error(
+                `[PIPELINE:tool-activities-lost] messageId=${savedMessage.id} count=${stopToolActivities.length}:`,
+                toolErr
+              )
+            }
           }
 
           this.safeWindowSend(

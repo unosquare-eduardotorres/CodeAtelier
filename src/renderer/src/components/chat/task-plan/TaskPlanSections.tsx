@@ -32,6 +32,128 @@ function shortenPath(filePath: string): string {
   return parts.length > 2 ? parts.slice(-2).join('/') : filePath
 }
 
+// ── Risk helpers ──
+
+type RiskItem = string | { risk: string; severity: string; mitigation?: string }
+
+const SEVERITY_CLASS: Record<string, string> = {
+  critical: 'text-danger bg-danger-muted ring-1 ring-danger/50',
+  high: 'text-danger bg-danger-muted',
+  low: 'text-success bg-success-muted'
+}
+
+function getSeverityClass(severity: string): string {
+  return SEVERITY_CLASS[severity] ?? 'text-warning bg-warning-muted'
+}
+
+function parseRiskItem(item: RiskItem): { risk: string; severity: string; mitigation?: string } {
+  if (typeof item === 'string') return { risk: item, severity: 'medium' }
+  return item
+}
+
+// ── Section builders ──
+
+function buildRisksSection(visibleRisks: RiskItem[]): React.ReactNode {
+  if (visibleRisks.length === 0) return false
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+        <AlertCircle size={14} className="text-danger" />
+        Risks
+      </div>
+      <div className="space-y-2">
+        {visibleRisks.map((riskItem, index) => {
+          const { risk, severity, mitigation } = parseRiskItem(riskItem)
+          return (
+            <div
+              key={`risk-${index}`}
+              className="rounded border border-border-subtle bg-surface-base/40 p-3"
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wide ${getSeverityClass(severity)}`}
+                >
+                  {severity}
+                </span>
+                <p className="text-sm text-text-body">{risk}</p>
+              </div>
+              {mitigation && (
+                <p className="mt-2 text-xs text-text-secondary">
+                  <strong>Mitigation:</strong> {mitigation}
+                </p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function buildExpectedOutcomeSection(structuredPlan: StructuredPlan | null): React.ReactNode {
+  if (
+    !structuredPlan ||
+    !('expectedOutcome' in structuredPlan) ||
+    typeof structuredPlan.expectedOutcome !== 'string' ||
+    !structuredPlan.expectedOutcome.trim()
+  ) {
+    return false
+  }
+  return (
+    <SectionCard
+      icon={CheckCircle2}
+      iconColor="text-success"
+      label="Expected Outcome"
+      labelColor="text-success"
+    >
+      <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
+    </SectionCard>
+  )
+}
+
+function buildImplementationOrderSection(
+  structuredPlan: StructuredPlan | null,
+  visiblePhases: PlanPhase[],
+  isSimplePlan: boolean
+): React.ReactNode {
+  if (
+    isSimplePlan ||
+    !structuredPlan?.implementationOrder ||
+    structuredPlan.implementationOrder.length === 0 ||
+    visiblePhases.length === 0
+  ) {
+    return false
+  }
+
+  const isNaturalOrder =
+    structuredPlan.implementationOrder.length === visiblePhases.length &&
+    structuredPlan.implementationOrder.every((phaseId, i) => phaseId === visiblePhases[i].id)
+
+  if (isNaturalOrder) return false
+
+  return (
+    <div className="rounded border-l-3 border-info bg-surface-base/20 pl-4 pr-3 py-3">
+      <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-3">
+        <ArrowRight size={14} className="text-info" />
+        Recommended Implementation Order
+      </div>
+      <div className="flex items-center gap-1.5 flex-wrap text-sm">
+        {structuredPlan.implementationOrder.map((phaseId, i) => {
+          const phase = visiblePhases.find((p) => p.id === phaseId)
+          return (
+            <span key={`order-${phaseId}`} className="flex items-center gap-1.5">
+              {i > 0 && <ArrowRight size={12} className="text-text-secondary shrink-0" />}
+              <span className="px-2 py-0.5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs font-mono">
+                {phase ? `Phase ${phaseId}` : `#${phaseId}`}
+              </span>
+            </span>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Section key type ──
 
 export type SectionKey =
@@ -215,49 +337,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
     </div>
   )
 
-  const risksSection = visibleRisks.length > 0 && (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-        <AlertCircle size={14} className="text-danger" />
-        Risks
-      </div>
-      <div className="space-y-2">
-        {visibleRisks.map((riskItem, index) => {
-          const risk = typeof riskItem === 'string' ? riskItem : riskItem.risk
-          const severity = typeof riskItem === 'string' ? 'medium' : riskItem.severity
-          const mitigation = typeof riskItem === 'string' ? undefined : riskItem.mitigation
-          const severityClass =
-            severity === 'critical'
-              ? 'text-danger bg-danger-muted ring-1 ring-danger/50'
-              : severity === 'high'
-                ? 'text-danger bg-danger-muted'
-                : severity === 'low'
-                  ? 'text-success bg-success-muted'
-                  : 'text-warning bg-warning-muted'
-          return (
-            <div
-              key={`risk-${index}`}
-              className="rounded border border-border-subtle bg-surface-base/40 p-3"
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wide ${severityClass}`}
-                >
-                  {severity}
-                </span>
-                <p className="text-sm text-text-body">{risk}</p>
-              </div>
-              {mitigation && (
-                <p className="mt-2 text-xs text-text-secondary">
-                  <strong>Mitigation:</strong> {mitigation}
-                </p>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
+  const risksSection = buildRisksSection(visibleRisks)
 
   const verificationSection = visibleVerification.length > 0 && (
     <SectionCard
@@ -274,52 +354,13 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
     </SectionCard>
   )
 
-  const expectedOutcomeSection = structuredPlan &&
-    'expectedOutcome' in structuredPlan &&
-    typeof structuredPlan.expectedOutcome === 'string' &&
-    structuredPlan.expectedOutcome.trim() && (
-      <SectionCard
-        icon={CheckCircle2}
-        iconColor="text-success"
-        label="Expected Outcome"
-        labelColor="text-success"
-      >
-        <div className="text-sm text-text-body">{structuredPlan.expectedOutcome}</div>
-      </SectionCard>
-    )
+  const expectedOutcomeSection = buildExpectedOutcomeSection(structuredPlan)
 
-  // Hide implementation order when it matches the natural phase sequence
-  const isNaturalOrder =
-    structuredPlan?.implementationOrder &&
-    visiblePhases.length > 0 &&
-    structuredPlan.implementationOrder.length === visiblePhases.length &&
-    structuredPlan.implementationOrder.every((phaseId, i) => phaseId === visiblePhases[i].id)
-
-  const implementationOrderSection = !isSimplePlan &&
-    !isNaturalOrder &&
-    structuredPlan?.implementationOrder &&
-    structuredPlan.implementationOrder.length > 0 &&
-    visiblePhases.length > 0 && (
-      <div className="rounded border-l-3 border-info bg-surface-base/20 pl-4 pr-3 py-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-3">
-          <ArrowRight size={14} className="text-info" />
-          Recommended Implementation Order
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap text-sm">
-          {structuredPlan.implementationOrder.map((phaseId, i) => {
-            const phase = visiblePhases.find((p) => p.id === phaseId)
-            return (
-              <span key={`order-${phaseId}`} className="flex items-center gap-1.5">
-                {i > 0 && <ArrowRight size={12} className="text-text-secondary shrink-0" />}
-                <span className="px-2 py-0.5 rounded bg-[var(--color-plan-card-muted)] text-[var(--color-plan-card)] text-xs font-mono">
-                  {phase ? `Phase ${phaseId}` : `#${phaseId}`}
-                </span>
-              </span>
-            )
-          })}
-        </div>
-      </div>
-    )
+  const implementationOrderSection = buildImplementationOrderSection(
+    structuredPlan,
+    visiblePhases,
+    isSimplePlan
+  )
 
   const deferredItemsSection = visibleDeferredItems.length > 0 && (
     <details className="pt-3 border-t border-border-subtle group">

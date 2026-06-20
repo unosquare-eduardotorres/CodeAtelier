@@ -47,6 +47,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
   useEffect(() => {
     if (selectedAgent) {
       const updated = agents.find((a) => a.filename === selectedAgent.filename)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync selected agent with refreshed list
       if (updated) setSelectedAgent(updated)
     }
   }, [agents, selectedAgent])

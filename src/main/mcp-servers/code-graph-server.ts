@@ -420,7 +420,14 @@ async function registerTools(): Promise<void> {
     'module_boundary_health',
     'Quantify separation of concerns by measuring intra-module vs cross-module edges.',
     {
-      depth: z.number().int().min(1).max(10).optional().default(2).describe('Directory depth for module boundaries')
+      depth: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .optional()
+        .default(2)
+        .describe('Directory depth for module boundaries')
     },
     async (args) => {
       const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(WORKSPACE_ID, args.depth)

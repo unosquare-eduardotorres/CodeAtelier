@@ -18,6 +18,8 @@ import type {
   Workspace
 } from '../../../../../shared/types'
 
+// ─── Types ────────────────────────────────────────────────
+
 export interface ModelConfigState {
   activeWorkspace: Workspace | null
   costPreference: CostPreference
@@ -75,13 +77,200 @@ export interface ModelConfigActions {
   setExecutorBackend: (backend: ExecutorBackend) => void
 }
 
-export function useModelConfig(): ModelConfigState & ModelConfigActions {
-  const { activeWorkspace } = useWorkspaceStore()
+// ─── Pure Helpers ─────────────────────────────────────────
+
+/** Persist a setting change to the workspace via IPC (read-modify-write). */
+async function persistWorkspaceSetting(
+  workspaceId: string,
+  updates: Record<string, unknown>
+): Promise<void> {
+  const settings = await window.api.getWorkspaceSettings({ workspaceId })
+  await window.api.updateWorkspaceSettings({
+    workspaceId,
+    settings: { ...settings, ...updates }
+  })
+}
+
+/** Determine if the Ollama setup modal should be shown after a backend switch. */
+function shouldShowOllamaSetup(
+  status: OllamaStatus | null,
+  localModel: string
+): boolean {
+  if (!status) return false
+  if (!status.installed || !status.running) return true
+  return !status.models.some((m) => m === localModel || m.startsWith(`${localModel}:`))
+}
+
+// ─── Connection Test Hook ─────────────────────────────────
+
+function useConnectionTest(opts: {
+  provider: LLMProvider
+  backend: LocalLLMBackend
+  localHost: string
+  localPort: number
+  localApiKey: string
+}): {
+  localStatus: OmlxExtendedStatus | OllamaStatus | null
+  connectionTesting: boolean
+  testConnection: (
+    activeBackend?: LocalLLMBackend,
+    host?: string,
+    port?: number
+  ) => Promise<OllamaStatus | null>
+} {
+  const addToast = useToastStore((s) => s.addToast)
+  const [localStatus, setLocalStatus] = useState<OmlxExtendedStatus | OllamaStatus | null>(null)
+  const [connectionTesting, setConnectionTesting] = useState(false)
+  const [autoTestDone, setAutoTestDone] = useState(false)
+
+  const testConnection = useCallback(
+    async (
+      activeBackend?: LocalLLMBackend,
+      host?: string,
+      port?: number
+    ): Promise<OllamaStatus | null> => {
+      setConnectionTesting(true)
+      const b = activeBackend ?? opts.backend
+      const h = host ?? opts.localHost
+      const p = port ?? opts.localPort
+      const label = b === 'omlx' ? 'oMLX' : 'Ollama'
+      try {
+        const baseUrl = `http://${h}:${p}`
+        const status =
+          b === 'omlx'
+            ? await window.api.omlxCheckStatus({ baseUrl, apiKey: opts.localApiKey || undefined })
+            : await window.api.ollamaCheckStatus({ baseUrl })
+        setLocalStatus(status)
+
+        if (status.running) {
+          const mc = status.models.length
+          addToast({
+            message:
+              mc > 0
+                ? `Connected to ${label} — ${mc} model${mc !== 1 ? 's' : ''} available`
+                : `Connected to ${label} — no models loaded yet`,
+            type: mc > 0 ? 'success' : 'info'
+          })
+        } else if (status.installed) {
+          addToast({
+            message: `${label} is installed but not running. Start it and try again.`,
+            type: 'error'
+          })
+        } else {
+          addToast({ message: `Could not reach ${label} at ${h}:${p}`, type: 'error' })
+        }
+
+        return status
+      } catch {
+        setLocalStatus({ installed: false, running: false, models: [] })
+        addToast({ message: `Connection failed — ${label} is not reachable at ${h}:${p}`, type: 'error' })
+        return null
+      } finally {
+        setConnectionTesting(false)
+      }
+    },
+    [opts.backend, opts.localHost, opts.localPort, opts.localApiKey, addToast]
+  )
+
+  // Auto-test connection when page loads with local-llm already selected
+  useEffect(() => {
+    if (opts.provider === 'local-llm' && !autoTestDone) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time auto-test on mount
+      setAutoTestDone(true)
+      setConnectionTesting(true)
+      const baseUrl = `http://${opts.localHost}:${opts.localPort}`
+      const check =
+        opts.backend === 'omlx'
+          ? window.api.omlxCheckStatus({ baseUrl, apiKey: opts.localApiKey || undefined })
+          : window.api.ollamaCheckStatus({ baseUrl })
+      check
+        .then((status) => setLocalStatus(status))
+        .catch(() => setLocalStatus({ installed: false, running: false, models: [] }))
+        .finally(() => setConnectionTesting(false))
+    }
+  }, [opts.provider, opts.backend, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
+
+  return { localStatus, connectionTesting, testConnection }
+}
+
+// ─── Workspace Setting Actions Hook ───────────────────────
+
+function useWorkspaceSettingActions(activeWorkspace: Workspace | null): {
+  costPreference: CostPreference
+  fastMode: boolean
+  budgetCapUsd: number | undefined
+  communicationTone: CommunicationTone
+  setCostPreference: React.Dispatch<React.SetStateAction<CostPreference>>
+  setFastMode: React.Dispatch<React.SetStateAction<boolean>>
+  setBudgetCapUsd: React.Dispatch<React.SetStateAction<number | undefined>>
+  setCommunicationTone: React.Dispatch<React.SetStateAction<CommunicationTone>>
+  handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
+  handleFastModeToggle: () => Promise<void>
+  handleBudgetCapChange: (value: string) => Promise<void>
+  handleToneChange: (tone: CommunicationTone) => Promise<void>
+} {
   const addToast = useToastStore((s) => s.addToast)
   const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
   const [fastMode, setFastMode] = useState(false)
   const [budgetCapUsd, setBudgetCapUsd] = useState<number | undefined>(undefined)
   const [communicationTone, setCommunicationTone] = useState<CommunicationTone>('default')
+
+  const handleCostPreferenceChange = async (pref: CostPreference): Promise<void> => {
+    setCostPreference(pref)
+    if (activeWorkspace) {
+      await persistWorkspaceSetting(activeWorkspace.id, { costPreference: pref })
+    }
+  }
+
+  const handleFastModeToggle = async (): Promise<void> => {
+    const newValue = !fastMode
+    setFastMode(newValue)
+    if (activeWorkspace) {
+      await persistWorkspaceSetting(activeWorkspace.id, { fastMode: newValue })
+    }
+  }
+
+  const handleBudgetCapChange = async (value: string): Promise<void> => {
+    const parsed = value ? Number(value) : undefined
+    const capValue = parsed && parsed > 0 ? parsed : undefined
+    setBudgetCapUsd(capValue)
+    if (activeWorkspace) {
+      await persistWorkspaceSetting(activeWorkspace.id, { budgetCapUsd: capValue ?? null })
+    }
+  }
+
+  const handleToneChange = async (tone: CommunicationTone): Promise<void> => {
+    setCommunicationTone(tone)
+    if (activeWorkspace) {
+      await persistWorkspaceSetting(activeWorkspace.id, { communicationTone: tone })
+      addToast({
+        message: `Communication tone set to ${COMMUNICATION_TONES.find((t) => t.id === tone)?.label ?? tone}`,
+        type: 'info'
+      })
+    }
+  }
+
+  return {
+    costPreference,
+    fastMode,
+    budgetCapUsd,
+    communicationTone,
+    setCostPreference,
+    setFastMode,
+    setBudgetCapUsd,
+    setCommunicationTone,
+    handleCostPreferenceChange,
+    handleFastModeToggle,
+    handleBudgetCapChange,
+    handleToneChange
+  }
+}
+
+// ─── Main Hook ────────────────────────────────────────────
+
+export function useModelConfig(): ModelConfigState & ModelConfigActions {
+  const { activeWorkspace } = useWorkspaceStore()
+  const addToast = useToastStore((s) => s.addToast)
 
   // ── Executor backend state ──
   const [executorBackend, setExecutorBackend] = useState<ExecutorBackend>('cli')
@@ -95,10 +284,18 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   const [localPort, setLocalPort] = useState<number>(OLLAMA_DEFAULT_PORT)
   const [localApiKey, setLocalApiKey] = useState<string>('')
   const [localContextWindow, setLocalContextWindow] = useState<number | undefined>(undefined)
-  const [localStatus, setLocalStatus] = useState<OmlxExtendedStatus | OllamaStatus | null>(null)
   const [showOllamaSetup, setShowOllamaSetup] = useState(false)
-  const [connectionTesting, setConnectionTesting] = useState(false)
   const [modelLoading, setModelLoading] = useState<string | null>(null)
+
+  // ── Sub-hooks ──
+  const wsSettings = useWorkspaceSettingActions(activeWorkspace)
+  const { localStatus, connectionTesting, testConnection } = useConnectionTest({
+    provider,
+    backend,
+    localHost,
+    localPort,
+    localApiKey
+  })
 
   // Load platform info on mount (for oMLX feature gating)
   useEffect(() => {
@@ -114,12 +311,16 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     window.api
       .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
       .then((settings) => {
-        setCostPreference((settings.costPreference as CostPreference) || 'balanced')
-        setFastMode(settings.fastMode === true)
-        setBudgetCapUsd(
+        // Workspace settings (delegated to sub-hook)
+        wsSettings.setCostPreference((settings.costPreference as CostPreference) || 'balanced')
+        wsSettings.setFastMode(settings.fastMode === true)
+        wsSettings.setBudgetCapUsd(
           typeof settings.budgetCapUsd === 'number' && settings.budgetCapUsd > 0
             ? (settings.budgetCapUsd as number)
             : undefined
+        )
+        wsSettings.setCommunicationTone(
+          (settings.communicationTone as CommunicationTone) ?? 'default'
         )
         // Executor backend setting
         setExecutorBackend((settings.executorBackend as ExecutorBackend) ?? 'cli')
@@ -143,7 +344,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
             ? (settings.localContextWindow as number)
             : undefined
         )
-        setCommunicationTone((settings.communicationTone as CommunicationTone) ?? 'default')
       })
       .catch(console.error)
   }, [activeWorkspace])
@@ -184,86 +384,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     [activeWorkspace, backend, localModel, localHost, localPort, localApiKey]
   )
 
-  /** Test connection at configured address — dispatches to correct backend */
-  const testConnection = useCallback(
-    async (
-      activeBackend?: LocalLLMBackend,
-      host?: string,
-      port?: number
-    ): Promise<OllamaStatus | null> => {
-      setConnectionTesting(true)
-      const b = activeBackend ?? backend
-      const h = host ?? localHost
-      const p = port ?? localPort
-      const label = b === 'omlx' ? 'oMLX' : 'Ollama'
-      try {
-        const baseUrl = `http://${h}:${p}`
-        const status =
-          b === 'omlx'
-            ? await window.api.omlxCheckStatus({
-                baseUrl,
-                apiKey: localApiKey || undefined
-              })
-            : await window.api.ollamaCheckStatus({ baseUrl })
-        setLocalStatus(status)
-
-        // Toast feedback
-        if (status.running) {
-          const modelCount = status.models.length
-          addToast({
-            message:
-              modelCount > 0
-                ? `Connected to ${label} — ${modelCount} model${modelCount !== 1 ? 's' : ''} available`
-                : `Connected to ${label} — no models loaded yet`,
-            type: modelCount > 0 ? 'success' : 'info'
-          })
-        } else if (status.installed) {
-          addToast({
-            message: `${label} is installed but not running. Start it and try again.`,
-            type: 'error'
-          })
-        } else {
-          addToast({
-            message: `Could not reach ${label} at ${h}:${p}`,
-            type: 'error'
-          })
-        }
-
-        return status
-      } catch {
-        const failStatus = { installed: false, running: false, models: [] }
-        setLocalStatus(failStatus)
-        addToast({
-          message: `Connection failed — ${label} is not reachable at ${h}:${p}`,
-          type: 'error'
-        })
-        return null
-      } finally {
-        setConnectionTesting(false)
-      }
-    },
-    [backend, localHost, localPort, localApiKey, addToast]
-  )
-
-  // Auto-test connection when page loads with local-llm already selected.
-  const [autoTestDone, setAutoTestDone] = useState(false)
-  useEffect(() => {
-    if (provider === 'local-llm' && !autoTestDone) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-shot auto-test on mount
-      setAutoTestDone(true)
-      setConnectionTesting(true)
-      const baseUrl = `http://${localHost}:${localPort}`
-      const check =
-        backend === 'omlx'
-          ? window.api.omlxCheckStatus({ baseUrl, apiKey: localApiKey || undefined })
-          : window.api.ollamaCheckStatus({ baseUrl })
-      check
-        .then((status) => setLocalStatus(status))
-        .catch(() => setLocalStatus({ installed: false, running: false, models: [] }))
-        .finally(() => setConnectionTesting(false))
-    }
-  }, [provider, backend, localHost, localPort, localApiKey, autoTestDone])
-
   /** Handle provider switch */
   const handleProviderChange = useCallback(
     async (newProvider: LLMProvider) => {
@@ -292,18 +412,8 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         type: 'success'
       })
       const status = await testConnection(newBackend, localHost, newPort)
-
-      if (newBackend === 'ollama' && status) {
-        if (!status.installed || !status.running) {
-          setShowOllamaSetup(true)
-          return
-        }
-        const hasModel = status.models.some(
-          (m) => m === localModel || m.startsWith(`${localModel}:`)
-        )
-        if (!hasModel) {
-          setShowOllamaSetup(true)
-        }
+      if (newBackend === 'ollama' && shouldShowOllamaSetup(status, localModel)) {
+        setShowOllamaSetup(true)
       }
     },
     [provider, localHost, localModel, saveProviderSettings, testConnection, addToast]
@@ -344,66 +454,16 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     [localHost, localPort, localApiKey, testConnection, addToast]
   )
 
-  const handleCostPreferenceChange = async (pref: CostPreference): Promise<void> => {
-    setCostPreference(pref)
-    if (activeWorkspace) {
-      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
-      await window.api.updateWorkspaceSettings({
-        workspaceId: activeWorkspace.id,
-        settings: { ...settings, costPreference: pref }
-      })
-    }
-  }
-
-  const handleFastModeToggle = async (): Promise<void> => {
-    const newValue = !fastMode
-    setFastMode(newValue)
-    if (activeWorkspace) {
-      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
-      await window.api.updateWorkspaceSettings({
-        workspaceId: activeWorkspace.id,
-        settings: { ...settings, fastMode: newValue }
-      })
-    }
-  }
-
-  const handleBudgetCapChange = async (value: string): Promise<void> => {
-    const parsed = value ? Number(value) : undefined
-    setBudgetCapUsd(parsed && parsed > 0 ? parsed : undefined)
-    if (activeWorkspace) {
-      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
-      await window.api.updateWorkspaceSettings({
-        workspaceId: activeWorkspace.id,
-        settings: { ...settings, budgetCapUsd: parsed && parsed > 0 ? parsed : null }
-      })
-    }
-  }
-
-  const handleToneChange = async (tone: CommunicationTone): Promise<void> => {
-    setCommunicationTone(tone)
-    if (activeWorkspace) {
-      const settings = await window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id })
-      await window.api.updateWorkspaceSettings({
-        workspaceId: activeWorkspace.id,
-        settings: { ...settings, communicationTone: tone }
-      })
-      addToast({
-        message: `Communication tone set to ${COMMUNICATION_TONES.find((t) => t.id === tone)?.label ?? tone}`,
-        type: 'info'
-      })
-    }
-  }
-
   const isRemoteServer = localHost !== '127.0.0.1' && localHost !== 'localhost'
   const localBaseUrl = `http://${localHost}:${localPort}`
 
   return {
     // State
     activeWorkspace,
-    costPreference,
-    fastMode,
-    budgetCapUsd,
-    communicationTone,
+    costPreference: wsSettings.costPreference,
+    fastMode: wsSettings.fastMode,
+    budgetCapUsd: wsSettings.budgetCapUsd,
+    communicationTone: wsSettings.communicationTone,
     executorBackend,
     provider,
     backend,
@@ -424,10 +484,10 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     handleBackendChange,
     handleLocalModelSelect,
     handleLoadOmlxModel,
-    handleCostPreferenceChange,
-    handleFastModeToggle,
-    handleBudgetCapChange,
-    handleToneChange,
+    handleCostPreferenceChange: wsSettings.handleCostPreferenceChange,
+    handleFastModeToggle: wsSettings.handleFastModeToggle,
+    handleBudgetCapChange: wsSettings.handleBudgetCapChange,
+    handleToneChange: wsSettings.handleToneChange,
     testConnection,
     saveProviderSettings,
     setLocalHost,

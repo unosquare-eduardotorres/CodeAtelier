@@ -134,8 +134,7 @@ export class GrillPersistenceController {
         if (!lastMsg.toolActivities) lastMsg.toolActivities = []
         // Merge tool_use → tool_result by ID
         const existingIdx = lastMsg.toolActivities.findIndex(
-          (ta: unknown) =>
-            (ta as Record<string, unknown>).id === chunkData.toolActivity!.id
+          (ta: unknown) => (ta as Record<string, unknown>).id === chunkData.toolActivity!.id
         )
         if (existingIdx >= 0) {
           lastMsg.toolActivities[existingIdx] = {

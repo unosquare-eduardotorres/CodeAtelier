@@ -11,7 +11,6 @@ import { test, describe, summaryAsync } from './test-harness'
 import { BlueprintBuildService } from '../blueprint-build.service'
 
 describe('BlueprintBuildService', () => {
-
   describe('buildTaskContext', () => {
     const buildCtx = (BlueprintBuildService.prototype as any).buildTaskContext
 

@@ -31,8 +31,7 @@ function computeIndexingProgress(state: IndexingState): IndexingProgress {
   if (state.status === 'scanning') {
     progressLabel = 'Scanning files...'
   } else if (state.status === 'preprocessing') {
-    const etaLabel =
-      state.estimatedRemaining ? ` (${state.estimatedRemaining})` : ''
+    const etaLabel = state.estimatedRemaining ? ` (${state.estimatedRemaining})` : ''
     const isDescriptionPhase =
       state.descriptionsTotal > 0 && state.descriptionsProcessed < state.descriptionsTotal
 

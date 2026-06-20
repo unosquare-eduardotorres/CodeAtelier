@@ -167,6 +167,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   // Clear suggestion when a new stream starts
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear suggestion when stream starts
     if (isStreaming) setPromptSuggestion(null)
   }, [isStreaming])
 
@@ -219,6 +220,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     )
   }
 
+  // eslint-disable-next-line react-hooks/refs -- @tanstack/react-virtual API is designed to be called during render
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
@@ -233,6 +235,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
             position: 'relative'
           }}
         >
+          {/* eslint-disable-next-line react-hooks/refs -- virtualItems is from @tanstack/react-virtual, designed for render */}
           {virtualItems.map((virtualRow) => {
             const msg = messages[virtualRow.index]
             return (

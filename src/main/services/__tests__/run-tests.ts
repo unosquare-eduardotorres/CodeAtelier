@@ -178,6 +178,17 @@ import './plan-registry.test'
 // ─── Run 32: Library Documentation Service (three-tier lookup) ───
 import './library-doc-service.test'
 
+// ─── Run 33: ESLint MCP tools (output parsing, summary formatting, error handling) ───
+import './eslint-mcp-tools.test'
+
+// ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
+import './evaluation-mcp-config.test'
+import './mpa-base-adapter.test'
+import './grill-adapter.test'
+import './greenfield-grill-adapter.test'
+import './blueprint-service-logic.test'
+import './cli-mcp-config-writer-logic.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

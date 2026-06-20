@@ -157,9 +157,7 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
 
   /** Get a single plan by ID. */
   getById(id: string): PlanRecord | null {
-    const row = this.db()
-      .prepare('SELECT * FROM plans WHERE id = ?')
-      .get(id) as PlanRow | undefined
+    const row = this.db().prepare('SELECT * FROM plans WHERE id = ?').get(id) as PlanRow | undefined
     return row ? mapRow(row) : null
   }
 
@@ -188,9 +186,7 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     }
 
     const rows = this.db()
-      .prepare(
-        `SELECT * FROM plans WHERE ${conditions.join(' AND ')} ORDER BY updated_at DESC`
-      )
+      .prepare(`SELECT * FROM plans WHERE ${conditions.join(' AND ')} ORDER BY updated_at DESC`)
       .all(...params) as PlanRow[]
     return rows.map(mapRow)
   }

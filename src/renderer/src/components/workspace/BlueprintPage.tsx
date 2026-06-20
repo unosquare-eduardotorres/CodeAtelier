@@ -339,7 +339,10 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
           <>
             {/* Approval Gate overlay */}
             {pendingApproval && (
-              <div data-testid="blueprint-approval-gate" className="bg-surface-raised rounded-xl border border-emerald-400/30 p-4">
+              <div
+                data-testid="blueprint-approval-gate"
+                className="bg-surface-raised rounded-xl border border-emerald-400/30 p-4"
+              >
                 <BlueprintApprovalGate
                   planSummary={pendingApproval.planSummary}
                   onApprove={handleApprove}
@@ -350,7 +353,10 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             )}
 
             {/* Timeline + Stream */}
-            <div data-testid="blueprint-phase-timeline" className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden">
+            <div
+              data-testid="blueprint-phase-timeline"
+              className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden"
+            >
               <div className="grid grid-cols-[200px_1fr] divide-x divide-border-subtle h-[400px]">
                 {/* Timeline sidebar */}
                 <div className="p-4 overflow-y-auto">

@@ -2532,10 +2532,14 @@ export const migrations: Migration[] = [
       // Add preset_id and handoff_context columns to conversations
       try {
         database.exec(`ALTER TABLE conversations ADD COLUMN preset_id TEXT DEFAULT NULL`)
-      } catch { /* column may already exist */ }
+      } catch {
+        /* column may already exist */
+      }
       try {
         database.exec(`ALTER TABLE conversations ADD COLUMN handoff_context TEXT DEFAULT NULL`)
-      } catch { /* column may already exist */ }
+      } catch {
+        /* column may already exist */
+      }
 
       // Seed built-in presets for each existing workspace
       const workspaces = database.prepare('SELECT id FROM workspaces').all() as { id: string }[]
@@ -2573,7 +2577,9 @@ export const migrations: Migration[] = [
               )
             }
           }
-        } catch { /* non-fatal — skip malformed settings */ }
+        } catch {
+          /* non-fatal — skip malformed settings */
+        }
       }
 
       dbLogger.info('[migration-105] ✓ Created llm_presets table + seeded built-in presets')

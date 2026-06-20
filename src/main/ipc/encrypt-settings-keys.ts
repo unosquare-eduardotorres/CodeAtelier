@@ -20,9 +20,7 @@ const ENCRYPTED_SETTINGS_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiK
  * Fields that are already encrypted (have a truthy `${key}Encrypted` companion)
  * are left untouched to avoid double-encryption.
  */
-export function encryptSettingsKeys(
-  settings: Record<string, unknown>
-): Record<string, unknown> {
+export function encryptSettingsKeys(settings: Record<string, unknown>): Record<string, unknown> {
   const result = { ...settings }
   for (const key of ENCRYPTED_SETTINGS_KEYS) {
     const value = result[key]

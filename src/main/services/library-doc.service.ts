@@ -48,10 +48,7 @@ export class LibraryDocService {
    * Index README docs from node_modules for all dependencies in package.json.
    * Skips packages already cached within TTL.
    */
-  indexWorkspaceDependencies(
-    workspaceId: string,
-    workspacePath: string
-  ): IndexResult {
+  indexWorkspaceDependencies(workspaceId: string, workspacePath: string): IndexResult {
     const result: IndexResult = { indexed: 0, skipped: 0, errors: [] }
 
     // 1. Read package.json
@@ -101,7 +98,9 @@ export class LibraryDocService {
         try {
           const depPkg = JSON.parse(readFileSync(depPkgPath, 'utf-8'))
           version = depPkg.version ?? ''
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
 
         const sections = this.chunkMarkdownBySections(readmeContent)
         libraryDocRepository.upsertSections(workspaceId, depName, version, 'node_modules', sections)
@@ -129,7 +128,8 @@ export class LibraryDocService {
   ): Promise<ResolvedLibrary[]> {
     // Tier 1: Search local cache
     try {
-      const cached = libraryDocRepository.listPackages(workspaceId)
+      const cached = libraryDocRepository
+        .listPackages(workspaceId)
         .filter((p) => p.packageName.includes(libraryName))
       if (cached.length > 0) {
         return cached.map((p) => ({
@@ -163,15 +163,27 @@ export class LibraryDocService {
         let version = ''
         try {
           version = JSON.parse(readFileSync(depPkgPath, 'utf-8')).version ?? ''
-        } catch { /* non-fatal */ }
-        libraryDocRepository.upsertSections(workspaceId, libraryName, version, 'node_modules', sections)
-        return [{
-          packageName: libraryName,
+        } catch {
+          /* non-fatal */
+        }
+        libraryDocRepository.upsertSections(
+          workspaceId,
+          libraryName,
           version,
-          source: 'node_modules',
-          sectionCount: sections.length
-        }]
-      } catch { /* fall through to npm */ }
+          'node_modules',
+          sections
+        )
+        return [
+          {
+            packageName: libraryName,
+            version,
+            source: 'node_modules',
+            sectionCount: sections.length
+          }
+        ]
+      } catch {
+        /* fall through to npm */
+      }
     }
 
     // Tier 3b: Check npm registry
@@ -180,14 +192,24 @@ export class LibraryDocService {
       if (npmReadme) {
         const sections = this.chunkMarkdownBySections(npmReadme.readme)
         try {
-          libraryDocRepository.upsertSections(workspaceId, libraryName, npmReadme.version, 'npm_registry', sections)
-        } catch { /* DB may not be available — return results without caching */ }
-        return [{
-          packageName: libraryName,
-          version: npmReadme.version,
-          source: 'npm_registry',
-          sectionCount: sections.length
-        }]
+          libraryDocRepository.upsertSections(
+            workspaceId,
+            libraryName,
+            npmReadme.version,
+            'npm_registry',
+            sections
+          )
+        } catch {
+          /* DB may not be available — return results without caching */
+        }
+        return [
+          {
+            packageName: libraryName,
+            version: npmReadme.version,
+            source: 'npm_registry',
+            sectionCount: sections.length
+          }
+        ]
       }
     } catch (err) {
       libDocLog.warn('[resolveLibrary] npm registry failed:', err)
@@ -232,8 +254,16 @@ export class LibraryDocService {
         const docs = await this.fetchContext7Docs(packageName, query, context7ApiKey)
         if (docs && docs.snippets.length > 0) {
           try {
-            libraryDocRepository.upsertSections(workspaceId, packageName, '', 'context7', docs.snippets)
-          } catch { /* DB may not be available — return results without caching */ }
+            libraryDocRepository.upsertSections(
+              workspaceId,
+              packageName,
+              '',
+              'context7',
+              docs.snippets
+            )
+          } catch {
+            /* DB may not be available — return results without caching */
+          }
           return {
             packageName,
             version: '',
@@ -252,7 +282,13 @@ export class LibraryDocService {
       if (npmResult) {
         const sections = this.chunkMarkdownBySections(npmResult.readme)
         try {
-          libraryDocRepository.upsertSections(workspaceId, packageName, npmResult.version, 'npm_registry', sections)
+          libraryDocRepository.upsertSections(
+            workspaceId,
+            packageName,
+            npmResult.version,
+            'npm_registry',
+            sections
+          )
           // FTS5 search the just-cached docs for relevance
           const searched = libraryDocRepository.searchDocs(workspaceId, query, {
             packageName,
@@ -266,7 +302,9 @@ export class LibraryDocService {
               sections: searched.map((d) => ({ title: d.sectionTitle, content: d.sectionContent }))
             }
           }
-        } catch { /* DB may not be available — return raw sections */ }
+        } catch {
+          /* DB may not be available — return raw sections */
+        }
         // If FTS5 found nothing or DB unavailable, return the first N sections
         return {
           packageName,

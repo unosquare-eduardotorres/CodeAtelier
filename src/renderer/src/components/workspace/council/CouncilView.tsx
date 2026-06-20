@@ -14,12 +14,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Hammer, Play, RefreshCw, X, Landmark, Loader2, Target } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
-import type { CouncilAdvisorRole, CouncilVerdict } from '../../../../../shared/types'
+import type { CouncilAdvisorRole, CouncilPeerReview, CouncilVerdict } from '../../../../../shared/types'
 import CouncilMemberColumn, { StatusBadge } from './CouncilMemberColumn'
 import CouncilVerdictCard from './CouncilVerdictCard'
 import CouncilRankingsMatrix from './CouncilRankingsMatrix'
 import CouncilAdvisorDetailsTab from './CouncilAdvisorDetailsTab'
 import AdvisorIcon from './AdvisorIcon'
+
+type CouncilAdvisors = ReturnType<typeof useCouncilStore.getState>['advisors']
 
 // ── Props ─────────────────────────────────────────────────────────────────
 

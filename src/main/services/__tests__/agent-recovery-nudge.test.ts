@@ -40,9 +40,7 @@ function capturingExecutor(chunks: unknown[] | Error): {
   return { executor, calls }
 }
 
-function basePlanOpts(
-  overrides: Partial<PlanToolRecoveryOptions> = {}
-): PlanToolRecoveryOptions {
+function basePlanOpts(overrides: Partial<PlanToolRecoveryOptions> = {}): PlanToolRecoveryOptions {
   return {
     cliExecutor: fakeExecutor([]),
     systemPrompt: 'sys',
@@ -104,7 +102,12 @@ describe('agent-recovery-nudge › attemptRecovery', () => {
         {
           _meta: {
             sessionId: 'new-session',
-            tokenUsage: { input: 100, output: 40, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 }
+            tokenUsage: {
+              input: 100,
+              output: 40,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0
+            }
           }
         },
         { type: 'text', content: 'ok' }

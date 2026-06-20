@@ -56,8 +56,20 @@ export const SETTINGS_MENU: {
   { id: 'goals', label: 'Goals', icon: Target, iconColor: 'text-cyan-400', group: 'tools' },
   { id: 'council', label: 'Council', icon: Landmark, iconColor: 'text-indigo-400', group: 'tools' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning', group: 'tools' },
-  { id: 'plans', label: 'Plans', icon: ClipboardList, iconColor: 'text-mode-plan-text', group: 'tools' },
-  { id: 'blueprints', label: 'Blueprints', icon: BookOpen, iconColor: 'text-emerald-400', group: 'tools' },
+  {
+    id: 'plans',
+    label: 'Plans',
+    icon: ClipboardList,
+    iconColor: 'text-mode-plan-text',
+    group: 'tools'
+  },
+  {
+    id: 'blueprints',
+    label: 'Blueprints',
+    icon: BookOpen,
+    iconColor: 'text-emerald-400',
+    group: 'tools'
+  },
   // ── Configuration (settings) ──
   {
     id: 'specialist',

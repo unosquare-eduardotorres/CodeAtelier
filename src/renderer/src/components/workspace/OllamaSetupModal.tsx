@@ -100,7 +100,10 @@ export default function OllamaSetupModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div data-testid="ollama-setup-modal" className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4">
+      <div
+        data-testid="ollama-setup-modal"
+        className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Ollama Setup</h2>

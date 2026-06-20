@@ -114,7 +114,7 @@ export default function HealthConfigure({
     totalSeconds < 60 ? `~${totalSeconds}s` : `~${(totalSeconds / 60).toFixed(1)} min`
 
   return (
-    <div className="flex flex-col h-full">
+    <div data-testid="health-configure" className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-subtle bg-surface-raised">
         <div className="flex items-center gap-2">
@@ -128,6 +128,7 @@ export default function HealthConfigure({
           <h2 className="text-sm font-bold text-text-primary">Configure Audit</h2>
         </div>
         <button
+          data-testid="health-run-btn"
           onClick={handleRun}
           disabled={selectedTracks.size === 0}
           className="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold rounded-lg bg-success/15 text-success hover:bg-success/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"

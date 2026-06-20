@@ -7,12 +7,7 @@
  */
 
 import { DEFAULT_MODEL_CONFIG, ACTION_GROUPS } from '../../shared/constants'
-import type {
-  ActionModelConfig,
-  LLMPreset,
-  LLMProvider,
-  ModelAction
-} from '../../shared/types'
+import type { ActionModelConfig, LLMPreset, LLMProvider, ModelAction } from '../../shared/types'
 import { presetRepository } from '../db/repositories/preset.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
 
@@ -108,9 +103,7 @@ class PresetService {
    * Rules:
    * - Chat group actions must all use the same provider (providerConstrained)
    */
-  validatePreset(
-    actionConfig: Partial<Record<ModelAction, ActionModelConfig>>
-  ): ValidationResult {
+  validatePreset(actionConfig: Partial<Record<ModelAction, ActionModelConfig>>): ValidationResult {
     const errors: ValidationError[] = []
 
     // Check provider parity for constrained groups

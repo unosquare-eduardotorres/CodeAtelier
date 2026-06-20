@@ -70,7 +70,10 @@ const GIT_CONTEXT_TOOLS = [
 const CODE_ANALYSIS_TOOLS = [
   'mcp__code-analysis__todo_scanner',
   'mcp__code-analysis__dependency_health',
-  'mcp__code-analysis__test_coverage_map'
+  'mcp__code-analysis__test_coverage_map',
+  'mcp__code-analysis__eslint_check',
+  'mcp__code-analysis__eslint_fix',
+  'mcp__code-analysis__eslint_rules'
 ] as const
 
 // ── Public API ───────────────────────────────────────────────────────────

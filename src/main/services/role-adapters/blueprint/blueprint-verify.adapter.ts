@@ -21,11 +21,7 @@ export class BlueprintVerifyAdapter extends BlueprintBaseAdapter {
 
   private readonly phaseContext: PhaseContext
 
-  constructor(params: {
-    workspaceId: string
-    blueprintId: string
-    phaseContext: PhaseContext
-  }) {
+  constructor(params: { workspaceId: string; blueprintId: string; phaseContext: PhaseContext }) {
     super({ workspaceId: params.workspaceId, blueprintId: params.blueprintId })
     this.phaseContext = params.phaseContext
     this.agentId = `blueprint-verify-${params.blueprintId}`
@@ -67,8 +63,8 @@ export class BlueprintVerifyAdapter extends BlueprintBaseAdapter {
         'Read',
         'Glob',
         'Grep',
-        'Bash',       // For running tests + inspection commands
-        'ListDir',    // For directory traversal verification
+        'Bash', // For running tests + inspection commands
+        'ListDir', // For directory traversal verification
         'WebSearch',
         'WebFetch',
         // Code graph tools

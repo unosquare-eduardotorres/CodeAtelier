@@ -141,6 +141,7 @@ export default function ChatPanel({
     useIsolatedBranch?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
+    presetId?: string | null
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -150,7 +151,8 @@ export default function ChatPanel({
       undefined,
       (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
       data.mcpOverrides,
-      data.communicationTone
+      data.communicationTone,
+      data.presetId
     )
     onNewChatDismiss?.()
     if (data.useIsolatedBranch) {
@@ -374,10 +376,7 @@ export default function ChatPanel({
                   disabled={isStreaming}
                 />
 
-                <PresetSwitcher
-                  conversation={activeConversation}
-                  disabled={isStreaming}
-                />
+                <PresetSwitcher conversation={activeConversation} disabled={isStreaming} />
 
                 {availableMcpIntegrations.map((integration) => (
                   <McpPill

@@ -56,9 +56,7 @@ class PlanRegistryService {
         linkedConversationId: params.conversationId
       })
 
-      svcLog.info(
-        `[register-chat] ✓ Plan registered: id=${record.id}, title="${record.title}"`
-      )
+      svcLog.info(`[register-chat] ✓ Plan registered: id=${record.id}, title="${record.title}"`)
       return record
     } catch (err) {
       svcLog.warn('[register-chat] Failed (non-critical):', err)
@@ -162,8 +160,7 @@ class PlanRegistryService {
         source: 'council',
         sourceId: params.councilSessionId,
         title: params.originalPlan.title || 'Council-Reviewed Plan',
-        summary:
-          params.verdict.summary || params.originalPlan.summary || '',
+        summary: params.verdict.summary || params.originalPlan.summary || '',
         planType: params.originalPlan.type ?? null,
         structuredPlan: params.originalPlan,
         sourcePlanJson: JSON.stringify(params.verdict),

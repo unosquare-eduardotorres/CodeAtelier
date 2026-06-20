@@ -76,6 +76,10 @@ export interface ChunkRouterContext {
 // ── Per-stream metrics ──────────────────────────────────────────────
 // Tracks TTFT, chunk count, total chars, and duration per stream.
 // Logged as [METRIC:STREAM_COMPLETE] on finalization for observability.
+// The StreamMetricsAggregator keeps a sliding window of recent streams
+// for completion-rate and TTFT p95 aggregation.
+
+type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout'
 
 interface StreamMetrics {
   startedAt: number
@@ -84,7 +88,67 @@ interface StreamMetrics {
   totalChars: number
 }
 
+interface AggregatedStreamRecord {
+  outcome: StreamOutcome
+  ttft: number | null
+  duration: number
+}
+
+/**
+ * Sliding-window aggregator for stream health metrics.
+ * Keeps the last `windowSize` stream outcomes and computes
+ * completion rate + TTFT percentiles on demand.
+ */
+export class StreamMetricsAggregator {
+  private records: AggregatedStreamRecord[] = []
+  private readonly windowSize: number
+
+  constructor(windowSize: number = 100) {
+    this.windowSize = windowSize
+  }
+
+  /** Record a completed stream's outcome and timing. */
+  record(outcome: StreamOutcome, ttft: number | null, duration: number): void {
+    this.records.push({ outcome, ttft, duration })
+    if (this.records.length > this.windowSize) this.records.shift()
+  }
+
+  /** Fraction of streams that ended with 'complete' outcome (0–1). */
+  get completionRate(): number {
+    if (this.records.length === 0) return 1
+    return this.records.filter((r) => r.outcome === 'complete').length / this.records.length
+  }
+
+  /** TTFT at the given percentile (0–1). Returns null when no TTFT data exists. */
+  ttftPercentile(p: number): number | null {
+    const ttfts = this.records
+      .map((r) => r.ttft)
+      .filter((t): t is number => t !== null)
+      .sort((a, b) => a - b)
+    if (ttfts.length === 0) return null
+    return ttfts[Math.min(Math.floor(ttfts.length * p), ttfts.length - 1)]
+  }
+
+  /** Convenience: TTFT p95. */
+  get ttftP95(): number | null {
+    return this.ttftPercentile(0.95)
+  }
+
+  /** Number of streams in the current window. */
+  get sampleSize(): number {
+    return this.records.length
+  }
+
+  /** Distribution of outcomes in the current window. */
+  get outcomeCounts(): Record<StreamOutcome, number> {
+    const counts: Record<StreamOutcome, number> = { complete: 0, stopped: 0, error: 0, timeout: 0 }
+    for (const r of this.records) counts[r.outcome]++
+    return counts
+  }
+}
+
 const streamMetricsStore = new Map<string, StreamMetrics>()
+const streamAggregator = new StreamMetricsAggregator()
 
 /** Begin tracking metrics for a new stream. */
 export function startStreamMetrics(conversationId: string): void {
@@ -97,12 +161,12 @@ export function startStreamMetrics(conversationId: string): void {
 }
 
 /**
- * Log final stream metrics and clean up.
+ * Log final stream metrics, record into the sliding-window aggregator, and clean up.
  * @param outcome - How the stream ended: 'complete' | 'stopped' | 'error' | 'timeout'
  */
 export function completeStreamMetrics(
   conversationId: string,
-  outcome: 'complete' | 'stopped' | 'error' | 'timeout'
+  outcome: StreamOutcome
 ): void {
   const metrics = streamMetricsStore.get(conversationId)
   streamMetricsStore.delete(conversationId)
@@ -110,12 +174,24 @@ export function completeStreamMetrics(
 
   const duration = Date.now() - metrics.startedAt
   const ttft = metrics.firstTokenAt ? metrics.firstTokenAt - metrics.startedAt : null
+
+  // Record into sliding-window aggregator
+  streamAggregator.record(outcome, ttft, duration)
+
   chatIpcLogger.info(
     `[METRIC:STREAM_COMPLETE] ` +
       `outcome=${outcome} duration=${duration}ms ttft=${ttft}ms ` +
       `chunks=${metrics.chunkCount} chars=${metrics.totalChars} ` +
-      `conversationId=${conversationId.slice(0, 8)}`
+      `conversationId=${conversationId.slice(0, 8)} ` +
+      `completionRate=${(streamAggregator.completionRate * 100).toFixed(1)}% ` +
+      `ttftP95=${streamAggregator.ttftP95}ms ` +
+      `sampleSize=${streamAggregator.sampleSize}`
   )
+}
+
+/** Expose the aggregator for diagnostic IPC or health checks. */
+export function getStreamMetricsAggregator(): StreamMetricsAggregator {
+  return streamAggregator
 }
 
 // ── Text delta batching (~30fps) ────────────────────────────────────
@@ -186,9 +262,7 @@ function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
     if (metrics.firstTokenAt === null) {
       metrics.firstTokenAt = Date.now()
       const ttft = metrics.firstTokenAt - metrics.startedAt
-      chatIpcLogger.info(
-        `[METRIC:TTFT] ${ttft}ms conversationId=${ctx.conversationId.slice(0, 8)}`
-      )
+      chatIpcLogger.info(`[METRIC:TTFT] ${ttft}ms conversationId=${ctx.conversationId.slice(0, 8)}`)
     }
     metrics.chunkCount++
     metrics.totalChars += chunk.content.length
@@ -213,7 +287,7 @@ function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before tool activity (tool_use starts a new visual block)
-  if (chunk.type === 'tool_use') textBatcher.flush()
+  if (chunk.type === 'tool_use') textBatcher.flush(ctx.conversationId)
 
   const result = processToolChunk(chunk, {
     workspacePath: ctx.workspacePath,
@@ -236,7 +310,7 @@ function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush any pending text before emitting boundary
-  textBatcher.flush()
+  textBatcher.flush(ctx.conversationId)
   safeSend(
     ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
@@ -252,7 +326,7 @@ const OVERLOAD_PATTERNS = [/529/i, /overloaded/i, /server_is_overloaded/i, /503 
 
 function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before error
-  textBatcher.flush()
+  textBatcher.flush(ctx.conversationId)
 
   // Detect server overload errors and format with friendly message
   const isOverload = chunk.error && OVERLOAD_PATTERNS.some((p) => p.test(chunk.error!))
@@ -270,7 +344,7 @@ function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before status messages
-  textBatcher.flush()
+  textBatcher.flush(ctx.conversationId)
   if (!chunk.content || chunk.content === 'heartbeat') return
   const statusText = `\n\n_${chunk.content}_\n\n`
   ctx.contentAccumulator.value += statusText
@@ -565,8 +639,11 @@ export function routeChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 /**
  * Flush any pending batched text deltas immediately.
- * Call at stream end to ensure no text is left in the buffer.
+ * When `conversationId` is provided, only that conversation's buffer is flushed
+ * and its flusher callback is cleared. Without it, ALL keys are flushed — which
+ * is safe today (single-stream lock) but would leak across conversations if
+ * concurrent streams were ever allowed.
  */
-export function flushTextBatcher(): void {
-  textBatcher.reset()
+export function flushTextBatcher(conversationId?: string): void {
+  textBatcher.reset(conversationId)
 }

@@ -44,7 +44,12 @@ describe('chunk-router › getAndClearToolActivities', () => {
     const c = ctx('conv-merge', window)
 
     routeChunk(c, { type: 'tool_use', toolId: 'tool-A', toolName: 'Read' } as StreamChunk)
-    routeChunk(c, { type: 'tool_result', toolId: 'tool-A', toolName: 'Read', content: 'ok' } as StreamChunk)
+    routeChunk(c, {
+      type: 'tool_result',
+      toolId: 'tool-A',
+      toolName: 'Read',
+      content: 'ok'
+    } as StreamChunk)
 
     const activities = getAndClearToolActivities('conv-merge')
     assert.equal(activities.length, 1, 'two chunks with the same id merge into one entry')
@@ -234,7 +239,8 @@ describe('chunk-router › isStatusLabel coverage (via subagent handlers)', () =
   test('subagent_progress with prose text → accumulates + sends text chunk', () => {
     const { window } = mockWindow()
     const c = ctx('c-sub-prose', window)
-    const longContent = 'I am analyzing the codebase for potential improvements in the authentication module.'
+    const longContent =
+      'I am analyzing the codebase for potential improvements in the authentication module.'
     routeChunk(c, {
       type: 'subagent_progress',
       content: longContent,

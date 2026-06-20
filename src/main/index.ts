@@ -178,8 +178,14 @@ function createWindow(): void {
   let safetyTimer: ReturnType<typeof setTimeout> | undefined
 
   const dismissSplash = (): void => {
-    if (splashTimer) { clearTimeout(splashTimer); splashTimer = undefined }
-    if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = undefined }
+    if (splashTimer) {
+      clearTimeout(splashTimer)
+      splashTimer = undefined
+    }
+    if (safetyTimer) {
+      clearTimeout(safetyTimer)
+      safetyTimer = undefined
+    }
     if (splashWindow && !splashWindow.isDestroyed()) {
       splashWindow.destroy()
       splashWindow = null

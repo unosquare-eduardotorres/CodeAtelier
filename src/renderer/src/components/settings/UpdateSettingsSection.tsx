@@ -20,6 +20,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
 
   // Sync local state when config loads
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync local form state from loaded config
     setLocalDrivePath(config.drivePath)
     setLocalGithubOwner(config.githubOwner)
     setLocalGithubRepo(config.githubRepo)

@@ -137,10 +137,7 @@ describe('GrillRoleAdapter', () => {
       ) => void
     }
     // Should not throw or attempt DB access
-    adapter.persistMemory(
-      { type: 'project', title: 'test', content: 'content' },
-      'conv-1'
-    )
+    adapter.persistMemory({ type: 'project', title: 'test', content: 'content' }, 'conv-1')
     assert.ok(true, 'persistMemory completed without error')
   })
 

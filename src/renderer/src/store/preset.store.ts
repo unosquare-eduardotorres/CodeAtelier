@@ -112,8 +112,7 @@ export const usePresetStore = create<PresetState>((set, _get) => ({
       // Optimistic remove
       set((s) => ({
         presets: s.presets.filter((p) => p.id !== presetId),
-        defaultPresetId:
-          s.defaultPresetId === presetId ? null : s.defaultPresetId
+        defaultPresetId: s.defaultPresetId === presetId ? null : s.defaultPresetId
       }))
       return true
     } catch (error) {
@@ -135,6 +134,5 @@ export const usePresetStore = create<PresetState>((set, _get) => ({
     set({ editingPreset: preset })
   },
 
-  reset: () =>
-    set({ presets: [], defaultPresetId: null, loading: false, editingPreset: null })
+  reset: () => set({ presets: [], defaultPresetId: null, loading: false, editingPreset: null })
 }))

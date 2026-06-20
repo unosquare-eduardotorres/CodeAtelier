@@ -1754,8 +1754,7 @@ const api = {
     linkedConversationId?: string
     linkedMpaRunId?: string
     linkedCouncilSessionId?: string
-  }): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.PLAN_UPDATE_STATUS, args),
+  }): Promise<{ success: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.PLAN_UPDATE_STATUS, args),
 
   planDelete: (args: { planId: string }): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_DELETE, args),
@@ -1771,10 +1770,15 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_ALL, args),
   getPreset: (args: { presetId: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_BY_ID, args),
-  createPreset: (args: { workspaceId: string; name: string; actionConfig: Record<string, unknown> }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_CREATE, args),
-  updatePreset: (args: { presetId: string; changes: { name?: string; actionConfig?: Record<string, unknown> } }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_UPDATE, args),
+  createPreset: (args: {
+    workspaceId: string
+    name: string
+    actionConfig: Record<string, unknown>
+  }) => ipcRenderer.invoke(IPC_CHANNELS.PRESET_CREATE, args),
+  updatePreset: (args: {
+    presetId: string
+    changes: { name?: string; actionConfig?: Record<string, unknown> }
+  }) => ipcRenderer.invoke(IPC_CHANNELS.PRESET_UPDATE, args),
   deletePreset: (args: { presetId: string }) =>
     ipcRenderer.invoke(IPC_CHANNELS.PRESET_DELETE, args),
   setDefaultPreset: (args: { workspaceId: string; presetId: string }) =>
@@ -2369,20 +2373,20 @@ const api = {
     settingsJson?: Record<string, unknown>
   }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE, args),
 
-  blueprintCreateFromIdea: (args: {
-    ideaId: string
-    workspaceId: string
-  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
+  blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
 
   blueprintStartSpecify: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, args),
 
   blueprintStartClarify: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_CLARIFY, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_CLARIFY, args),
 
   blueprintClarifyAnswer: (args: {
     blueprintId: string
@@ -2390,9 +2394,8 @@ const api = {
     message: string
   }): Promise<{ sent: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ANSWER, args),
 
-  blueprintSkipClarify: (args: {
-    blueprintId: string
-  }): Promise<{ skipped: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY, args),
+  blueprintSkipClarify: (args: { blueprintId: string }): Promise<{ skipped: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY, args),
 
   blueprintStartPlan: (args: {
     blueprintId: string
@@ -2407,7 +2410,8 @@ const api = {
   blueprintStartReview: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_REVIEW, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_REVIEW, args),
 
   blueprintStartBuild: (args: {
     blueprintId: string
@@ -2417,7 +2421,8 @@ const api = {
   blueprintStartVerify: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_VERIFY, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_VERIFY, args),
 
   blueprintGet: (args: { id: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET, args),
@@ -2425,14 +2430,11 @@ const api = {
   blueprintGetDetails: (args: { id: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_DETAILS, args),
 
-  blueprintList: (args: {
-    workspaceId: string
-    limit?: number
-  }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_LIST, args),
+  blueprintList: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_LIST, args),
 
-  blueprintCancel: (args: {
-    workspaceId: string
-  }): Promise<{ cancelled: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
+  blueprintCancel: (args: { workspaceId: string }): Promise<{ cancelled: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
 
   blueprintGetConstitution: (args: {
     workspaceId: string
@@ -2443,7 +2445,8 @@ const api = {
     workspaceId: string
     constitutionMd: string
     version?: string
-  }): Promise<{ saved: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION, args),
+  }): Promise<{ saved: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION, args),
 
   blueprintGetPipelineStatus: (args: {
     workspaceId: string
@@ -2612,12 +2615,7 @@ const api = {
   },
 
   onBlueprintWaveComplete: (
-    cb: (data: {
-      blueprintId: string
-      workspaceId: string
-      wave: number
-      status: string
-    }) => void
+    cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ): (() => void) => {
     const handler = (
       _: unknown,

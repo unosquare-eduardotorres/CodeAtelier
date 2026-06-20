@@ -15,6 +15,7 @@ import type { ContextWindowTier } from './context-management'
 import { messageRepository, conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import { chatAgentLogger } from '../logger'
+import { sanitizePromptInput } from './sanitize-prompt-input'
 
 const log = chatAgentLogger
 
@@ -86,7 +87,11 @@ export class LocalContextReconstructor {
 
     if (parts.length === 0) return null
 
-    const result = parts.join('\n\n')
+    let result = parts.join('\n\n')
+    // PROMPT-06: Enforce total budget — join separators add chars not tracked by charCount
+    if (result.length > maxChars) {
+      result = result.slice(0, maxChars)
+    }
     log.info(
       `[S12:context-reconstructed] conversationId=${conversationId} ` +
         `parts=${parts.length} chars=${result.length}`
@@ -111,7 +116,7 @@ export class LocalContextReconstructor {
     const parts: string[] = []
 
     if (planState.originalRequest) {
-      parts.push(`### Original Request\n${planState.originalRequest.slice(0, 500)}`)
+      parts.push(`### Original Request\n${sanitizePromptInput(planState.originalRequest).slice(0, 500)}`)
     }
 
     const ctx = planState.discoveredContext
@@ -119,14 +124,14 @@ export class LocalContextReconstructor {
       parts.push(`### Files Explored\n${ctx.filesExplored.map((f) => `- ${f}`).join('\n')}`)
     }
     if (ctx.planItems.length > 0) {
-      parts.push(`### Plan Items\n${ctx.planItems.join('\n')}`)
+      parts.push(`### Plan Items\n${ctx.planItems.map((p) => sanitizePromptInput(p)).join('\n')}`)
     }
     if (ctx.keyFindings.length > 0) {
-      parts.push(`### Key Findings\n${ctx.keyFindings.join('\n')}`)
+      parts.push(`### Key Findings\n${ctx.keyFindings.map((f) => sanitizePromptInput(f)).join('\n')}`)
     }
 
     if (planState.planText && planState.planText.length > 50) {
-      parts.push(`### Partial Plan\n${planState.planText.slice(0, 1000)}`)
+      parts.push(`### Partial Plan\n${sanitizePromptInput(planState.planText).slice(0, 1000)}`)
     }
 
     if (parts.length === 0) return null
@@ -149,10 +154,11 @@ export class LocalContextReconstructor {
 
     for (const msg of recent) {
       const role = msg.role === 'user' ? 'User' : 'Assistant'
-      const content =
+      const content = sanitizePromptInput(
         msg.role === 'user'
           ? msg.contentMd.slice(0, 500) // User messages are usually short
           : msg.contentMd.slice(0, 300) // Truncate assistant messages
+      )
 
       const line = `**${role}:** ${content}${content.length < msg.contentMd.length ? '...' : ''}`
       if (charCount + line.length > maxChars) break

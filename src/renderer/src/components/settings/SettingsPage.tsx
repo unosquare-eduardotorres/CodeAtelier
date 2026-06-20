@@ -12,7 +12,7 @@ interface SettingsPageProps {
 
 export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.Element {
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
+    <div data-testid="app-settings-page" className="flex-1 flex flex-col bg-surface-raised min-w-0">
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-3 border-b border-border-subtle bg-surface-raised">
         <button

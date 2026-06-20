@@ -94,10 +94,7 @@ describe('Lean Mode Blocks', () => {
       /write\/edit/i.test(PLAN_MODE_SECTION_LEAN),
       'Lean plan should mention Write/Edit are blocked for plans'
     )
-    assert.ok(
-      PLAN_MODE_SECTION_LEAN.includes('emit_plan'),
-      'Lean plan should point to emit_plan'
-    )
+    assert.ok(PLAN_MODE_SECTION_LEAN.includes('emit_plan'), 'Lean plan should point to emit_plan')
   })
 
   test('lean plan preserves all plan types', () => {

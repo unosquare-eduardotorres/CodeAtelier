@@ -64,7 +64,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
         }
       }
     },
-    [activeWorkspace?.id, searchMemories, loadMemories, setSearchQuery]
+    [activeWorkspace, searchMemories, loadMemories, setSearchQuery]
   )
 
   const handleRegenerateClaudeMd = async (): Promise<void> => {
@@ -119,7 +119,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
     filterType === 'all' ? memories : memories.filter((m) => m.type === filterType)
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8">
+    <div data-testid="memory-settings-page" className="max-w-6xl mx-auto px-6 py-8">
       {/* Header */}
       <div className="mb-6">
         <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">
@@ -140,6 +140,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
         <div className="grid grid-cols-3 gap-3">
           {/* Regenerate CLAUDE.md — writes file only, no memory feed */}
           <button
+            data-testid="memory-regenerate-btn"
             onClick={handleRegenerateClaudeMd}
             disabled={feedStatus === 'running' || isRegenerating}
             title="AI-generates a CLAUDE.md from project sources, lets you review it, then writes to disk"
@@ -243,7 +244,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
         </div>
 
         {/* Memory List */}
-        <div className="space-y-2">
+        <div data-testid="memory-list" className="space-y-2">
           {filteredMemories.length === 0 ? (
             <SettingsCard>
               <div className="flex items-center gap-2 mb-4">

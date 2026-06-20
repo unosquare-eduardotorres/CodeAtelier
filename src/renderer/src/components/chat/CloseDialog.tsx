@@ -21,6 +21,7 @@ export default function CloseDialog({
 
   useEffect(() => {
     if (isOpen && conversationId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
       setInsightsLoading(true)
       setIsSubmitting(false)
       window.api

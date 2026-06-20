@@ -136,10 +136,21 @@ describe('buildNoToolsConfig', () => {
   test('disallowedTools_includes_all_common_tools', () => {
     const result = buildNoToolsConfig()
     const expected = [
-      'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
-      'Agent', 'ToolSearch', 'WebSearch', 'WebFetch',
-      'ExitPlanMode', 'AskUserQuestion', 'TodoWrite',
-      'TaskCreate', 'TaskUpdate'
+      'Read',
+      'Write',
+      'Edit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'Agent',
+      'ToolSearch',
+      'WebSearch',
+      'WebFetch',
+      'ExitPlanMode',
+      'AskUserQuestion',
+      'TodoWrite',
+      'TaskCreate',
+      'TaskUpdate'
     ]
     for (const tool of expected) {
       assert.ok(result.disallowedTools.includes(tool), `Expected ${tool} in disallowedTools`)

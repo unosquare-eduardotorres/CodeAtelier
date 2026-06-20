@@ -146,6 +146,32 @@ resolve_library_id → query_library_docs for current API docs.
 Use for external library APIs (Zod, Electron, MCP SDK, React, Tailwind). Not internal code (use Code Graph).
 Fallback: local cache → Context7 → npm. Call resolve once per library per session.`
 
+export const ESLINT_GUIDANCE_PROMPT = `## ESLint — Code Quality Gate
+
+ESLint tools check and fix code style/quality issues using the workspace's own ESLint config.
+
+### Tools
+- **eslint_check** — lint files and return issues. Omit paths to lint only git-changed files.
+- **eslint_fix** — auto-fix what ESLint can, report remaining issues.
+- **eslint_rules** — list active rules for a file (useful when debugging a violation).
+
+### Mandatory Workflow
+**After completing any code change in Build mode**, run:
+1. \`eslint_check\` (no paths → scans changed files only)
+2. If errors found → \`eslint_fix\` on affected files
+3. Re-run \`eslint_check\` to confirm zero errors
+4. Do NOT submit work with unresolved ESLint errors
+
+### Rules
+- NEVER disable an ESLint rule to bypass errors (no \`eslint-disable\`, no rule config changes)
+- Fix the root cause instead
+- Warnings are acceptable; errors are NOT`
+
+export const ESLINT_GUIDANCE_PROMPT_LEAN = `## ESLint
+eslint_check (omit paths → changed files), eslint_fix, eslint_rules.
+MANDATORY after code changes in Build mode: check → fix → re-check until 0 errors.
+Never eslint-disable to bypass. Fix root cause.`
+
 export const MAESTRO_GUIDANCE_PROMPT = `## Maestro Mobile Testing — Tool Guide
 
 You have **Maestro MCP tools** available for driving real mobile devices and emulators.
@@ -635,4 +661,10 @@ export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
 ## Tool Priority
 Use code graph tools (file_outline, find_references, find_callers) FIRST to understand structure before writing code.
 file_outline before Read on large files. find_references before changing signatures.
-Read only files identified by code intelligence. Grep for exact strings only.`
+Read only files identified by code intelligence. Grep for exact strings only.
+
+## Finalization Checklist
+Before considering your work complete:
+1. Run tests via Bash (npm test or equivalent)
+2. Run \`eslint_check\` on changed files — fix any errors with \`eslint_fix\`
+3. Run \`eslint_check\` again to confirm zero errors`

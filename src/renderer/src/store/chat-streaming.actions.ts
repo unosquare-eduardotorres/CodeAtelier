@@ -47,9 +47,7 @@ type GetFn = () => ChatStreamingState
 // SetFn mirrors zustand's `set` for the full ChatState — the streaming actions
 // only touch the ChatStreamingState slice, but the callback receives the full
 // store state, so the param/return must be typed against ChatState.
-type SetFn = (
-  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
-) => void
+type SetFn = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
 
 // ── ChatStreamingInternals ──────────────────────────────────────────────────
 
@@ -141,7 +139,12 @@ export function appendStreamChunkAction(
   requestId?: string
 ): void {
   const activeRequestId = get().activeRequestId
-  if (activeRequestId && requestId && requestId !== activeRequestId) return
+  if (activeRequestId && requestId && requestId !== activeRequestId) {
+    rendererLog.debug(
+      `[appendStreamChunk] Dropped stale chunk: expected=${activeRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
+    )
+    return
+  }
 
   // Reset safety timer — backend is still alive
   streamingInternals.resetSafetyTimer()
