@@ -1,4 +1,5 @@
 import log from 'electron-log/main'
+import { safeStorage } from 'electron'
 import { workspaceRepository } from '../db/repositories'
 
 type AuthMode = 'claude-max' | 'api-key'
@@ -33,8 +34,24 @@ class AuthProviderService implements AuthProvider {
     this._mode = authMode
 
     if (authMode === 'api-key') {
-      // Prefer workspace-level setting, fall back to env var
-      this._apiKey = (settings?.anthropicApiKey as string) ?? process.env.ANTHROPIC_API_KEY
+      // IPC-01: Decrypt API key from safeStorage if encrypted, support legacy plaintext
+      const storedKey = settings?.anthropicApiKey as string | undefined
+      const isEncrypted = settings?.anthropicApiKeyEncrypted as boolean | undefined
+
+      if (storedKey && isEncrypted) {
+        try {
+          this._apiKey = safeStorage.decryptString(Buffer.from(storedKey, 'base64'))
+        } catch (err) {
+          log.scope('AuthProvider').error('Failed to decrypt API key:', err)
+          this._apiKey = undefined
+        }
+      } else if (storedKey) {
+        // Legacy plaintext path — will be re-encrypted on next auth update
+        this._apiKey = storedKey
+      } else {
+        // Fall back to env var
+        this._apiKey = process.env.ANTHROPIC_API_KEY
+      }
     } else {
       this._apiKey = undefined
     }

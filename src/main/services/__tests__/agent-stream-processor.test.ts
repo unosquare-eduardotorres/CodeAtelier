@@ -179,6 +179,205 @@ describe('AgentStreamProcessor.processContentChunk', () => {
   })
 })
 
+// ── Expanded coverage (Round 4) ──
+
+describe('AgentStreamProcessor.processContentChunk — plan-mode tool block detection', () => {
+  const ctx = { conversationId: 'c2', isBuildMode: false, streamState: {} as never }
+
+  test('tool_result with Write block in plan mode sets planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean }
+    const r = proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'Write',
+        content: '<tool_use_error>No such tool available: Write</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(r, 'next')
+    assert.equal(streamState.planModeToolBlock, true)
+  })
+
+  test('tool_result without Write/Edit does NOT set planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean }
+    proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'Read',
+        content: '<tool_use_error>No such tool available: Read</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.planModeToolBlock, undefined)
+  })
+})
+
+describe('AgentStreamProcessor.checkCompaction — decision.level undefined', () => {
+  test('no event emitted when below all thresholds', () => {
+    const host = makeHost({ compactSuggestThreshold: 1000, compactAutoThreshold: 2000 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(10) // way below warning band
+    const hasCompactNeeded = host.emit.calls.some((c) => c[0] === 'compactNeeded')
+    assert.equal(hasCompactNeeded, false)
+  })
+})
+
+describe('AgentStreamProcessor.processContentChunk — text accumulation', () => {
+  const ctx = { conversationId: 'c3', isBuildMode: true, streamState: {} as never }
+
+  test('text chunk sets hasTextAfterLastTool flag', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { hasTextAfterLastTool: false } as { hasTextAfterLastTool: boolean }
+    proc.processContentChunk(
+      { type: 'text', content: 'some text' } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.hasTextAfterLastTool, true)
+  })
+
+  test('text chunk with empty content still returns next', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk(
+      { type: 'text', content: '' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(r, 'next')
+  })
+})
+
+describe('AgentStreamProcessor.processContentChunk — status updates', () => {
+  const ctx = { conversationId: 'c4', isBuildMode: true, streamState: {} as never }
+
+  test('text chunk sets currentStatus to writing', () => {
+    const host = makeHost({ currentStatus: 'idle' })
+    const proc = new AgentStreamProcessor(host)
+    proc.processContentChunk(
+      { type: 'text', content: 'hi' } as never,
+      { ...ctx, streamState: {} as never }
+    )
+    assert.equal(host.currentStatus, 'writing')
+  })
+})
+
+// ── resolveCompactionThresholds: additional window sizes ──
+
+describe('AgentStreamProcessor.resolveCompactionThresholds — window sizes', () => {
+  test('128K window', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(128_000)
+    assert.equal(result.suggest, 128_000 * 0.6)
+    assert.equal(result.auto, 128_000 * 0.75)
+  })
+
+  test('64K window (small)', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(64_000)
+    assert.equal(result.suggest, 64_000 * 0.6)
+    assert.equal(result.auto, 64_000 * 0.75)
+  })
+
+  test('500K window (mid-range: transitions between ≤200K and 1M)', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(500_000)
+    // Between the two tiers, the policy interpolates
+    assert.ok(result.suggest > 0)
+    assert.ok(result.auto > result.suggest)
+  })
+
+  test('0 window → both thresholds are 0', () => {
+    const proc = new AgentStreamProcessor(makeHost())
+    const result = proc.resolveCompactionThresholds(0)
+    assert.equal(result.suggest, 0)
+    assert.equal(result.auto, 0)
+  })
+})
+
+// ── checkCompaction: debounce behavior ──
+
+describe('AgentStreamProcessor.checkCompaction — debounce behavior', () => {
+  test('suggest band sets compactSuggested and resets turnsSinceCompactSuggestion', () => {
+    const host = makeHost({ turnsSinceCompactSuggestion: 5 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(600) // suggest band
+    assert.equal(host.compactSuggested, true)
+    assert.equal(host.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('below warning band resets compactSuggested to false', () => {
+    const host = makeHost({ compactSuggested: true, turnsSinceCompactSuggestion: 3 })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(10) // well below threshold
+    assert.equal(host.compactSuggested, false)
+    assert.equal(host.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('warning band does NOT change compactSuggested flag', () => {
+    const host = makeHost({ compactSuggested: false })
+    const proc = new AgentStreamProcessor(host)
+    proc.checkCompaction(450) // warning band
+    // compactSuggested should remain false (not promoted to suggest)
+    assert.equal(host.compactSuggested, false)
+  })
+})
+
+// ── processContentChunk: api_retry overload detection ──
+
+describe('AgentStreamProcessor.processContentChunk — api_retry', () => {
+  const ctx = { conversationId: 'c6', isBuildMode: true, streamState: {} as never }
+
+  test('api_retry with 529 status sets overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'retrying', retryInfo: { errorStatus: 529 } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, true)
+  })
+
+  test('api_retry with 503 status sets overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'retrying', retryInfo: { errorStatus: 503 } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, true)
+  })
+
+  test('api_retry with overloaded content sets overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'server_is_overloaded', retryInfo: { errorStatus: null } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, true)
+  })
+
+  test('api_retry with 200 status does NOT set overloadDetected', () => {
+    const host = makeHost()
+    const proc = new AgentStreamProcessor(host)
+    const streamState = { overloadDetected: false } as { overloadDetected: boolean }
+    proc.processContentChunk(
+      { type: 'api_retry', content: 'retrying request', retryInfo: { errorStatus: 200 } } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.overloadDetected, false)
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

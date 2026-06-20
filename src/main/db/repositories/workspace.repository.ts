@@ -10,6 +10,8 @@ interface WorkspaceRow {
   last_opened_at: string
   settings_json: string
   is_git_repo: number | null
+  constitution_md: string | null
+  constitution_version: string | null
 }
 
 function mapRow(row: WorkspaceRow): Workspace {
@@ -21,7 +23,9 @@ function mapRow(row: WorkspaceRow): Workspace {
     createdAt: row.created_at,
     lastOpenedAt: row.last_opened_at,
     settingsJson: row.settings_json,
-    isGitRepo: row.is_git_repo !== 0
+    isGitRepo: row.is_git_repo !== 0,
+    constitutionMd: row.constitution_md ?? undefined,
+    constitutionVersion: row.constitution_version ?? undefined
   }
 }
 
@@ -113,6 +117,20 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
     } catch {
       return {}
     }
+  }
+
+  /** Update workspace constitution markdown and version. */
+  updateConstitution(
+    id: string,
+    constitutionMd: string,
+    version: string = '1.0.0'
+  ): Workspace | undefined {
+    const row = this.db()
+      .prepare(
+        `UPDATE workspaces SET constitution_md = ?, constitution_version = ? WHERE id = ? RETURNING *`
+      )
+      .get(constitutionMd, version, id) as WorkspaceRow | undefined
+    return row ? mapRow(row) : undefined
   }
 }
 

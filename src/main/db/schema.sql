@@ -509,4 +509,67 @@ CREATE TABLE IF NOT EXISTS grill_sessions (
 CREATE INDEX IF NOT EXISTS idx_grill_sessions_idea ON grill_sessions(idea_id);
 CREATE INDEX IF NOT EXISTS idx_grill_sessions_workspace ON grill_sessions(workspace_id);
 
+-- ── Blueprints: Structured Specification Pipeline ─────────────────────────────
+
+-- Blueprints: top-level entity for the 7-phase spec pipeline
+CREATE TABLE IF NOT EXISTS blueprints (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  short_name TEXT NOT NULL DEFAULT '',
+  description TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','specifying','clarifying','planning',
+                       'tasking','reviewing','building','verifying',
+                       'complete','failed','cancelled')),
+  current_phase TEXT DEFAULT 'specify'
+    CHECK (current_phase IN ('specify','clarify','plan','tasks',
+                              'review','build','verify')),
+  priority TEXT DEFAULT 'P1'
+    CHECK (priority IN ('P1','P2','P3')),
+  source_idea_id TEXT REFERENCES ideas(id) ON DELETE SET NULL,
+  constitution_snapshot TEXT,
+  settings_json TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_blueprints_workspace ON blueprints(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_blueprints_status ON blueprints(status);
+
+-- Blueprint phases: each pipeline step gets its own record
+CREATE TABLE IF NOT EXISTS blueprint_phases (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL
+    CHECK (phase IN ('specify','clarify','plan','tasks','review','build','verify')),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','active','complete','skipped','failed')),
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  artifacts_json TEXT DEFAULT '[]',
+  context_snapshot TEXT,
+  started_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bp_phases_blueprint ON blueprint_phases(blueprint_id);
+
+-- Blueprint tasks: parsed from tasks.md artifact, used for wave execution
+CREATE TABLE IF NOT EXISTS blueprint_tasks (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL,
+  wave INTEGER NOT NULL DEFAULT 1,
+  user_story TEXT,
+  description TEXT NOT NULL,
+  file_paths_json TEXT DEFAULT '[]',
+  is_parallel INTEGER NOT NULL DEFAULT 0,
+  depends_on_json TEXT DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','running','complete','failed')),
+  executor_run_id TEXT REFERENCES mpa_runs(id) ON DELETE SET NULL,
+  started_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bp_tasks_blueprint ON blueprint_tasks(blueprint_id);
+CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);
+
 

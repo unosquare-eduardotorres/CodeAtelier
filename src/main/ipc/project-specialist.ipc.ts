@@ -23,6 +23,7 @@ import { specialistRepository } from '../db/repositories'
 import { specialistBuilderService } from '../services/specialist-builder.service'
 import { stackDriftDetectorService } from '../services/stack-drift-detector.service'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 import { requireObject, requireString, optionalBoolean } from './validate-args'
 import log from 'electron-log'
 
@@ -47,7 +48,7 @@ interface ProjectSpecialistRow {
 
 function emitProgress(specialistId: string, phase: string, message: string): void {
   for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send(IPC_CHANNELS.PROJECT_SPECIALIST_BUILD_PROGRESS, {
+    safeWindowSend(win, IPC_CHANNELS.PROJECT_SPECIALIST_BUILD_PROGRESS, {
       specialistId,
       phase,
       message,

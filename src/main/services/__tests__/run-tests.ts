@@ -158,6 +158,31 @@ import './workspace-deploy-parsing.test'
 // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
 import './chat-stream-lifecycle.test'
 
+// ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
+import './telemetry-recorder.test'
+import '../../ipc/__tests__/listener-cleanup.test'
+import './prompt-builder.test'
+import './skill-prompt-composer.test'
+import './sandbox-config.test'
+
+// ─── Run 30: Blueprint pipeline — parsers, conditions, review service, build service ───
+import './blueprint-parsers-conditions.test'
+import './blueprint-review.service.test'
+import './blueprint-build.service.test'
+import './blueprint-verify-conditions.test'
+
+// ─── Run 31: Plan Hub — unified plan registry ───
+import './audit-plan-mapper.test'
+import './plan-registry.test'
+
+// ─── Run 32: Code Graph enhancements — blast_radius, co_change, hotspot_score, code_clones ───
+import './code-graph-enhancements.test'
+
+// ─── Run 33: Phase 10 Coverage Push — 57% → 60% ───
+import './repo-service-utils.test'
+import './base-adapter.test'
+import './specialist-builder-logic.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

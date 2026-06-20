@@ -5,6 +5,7 @@ import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { vectorSearchService } from '../services/vector-search.service'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 import { workspaceRepository, codeChunkRepository } from '../db/repositories'
 import { convertTagsToChunks } from '../services/tag-to-chunk-adapter'
 import type { IndexingState } from '../../shared/types'
@@ -12,7 +13,7 @@ import type { IndexingState } from '../../shared/types'
 export function registerIndexingIpc(mainWindow: BrowserWindow): void {
   // Forward indexing progress events to the renderer
   vectorSearchService.on('progress', (state: IndexingState) => {
-    mainWindow.webContents.send(IPC_CHANNELS.INDEXING_PROGRESS, state)
+    safeWindowSend(mainWindow, IPC_CHANNELS.INDEXING_PROGRESS, state)
   })
 
   ipcMain.handle(IPC_CHANNELS.INDEXING_START, async (event, args: { workspaceId: string }) => {

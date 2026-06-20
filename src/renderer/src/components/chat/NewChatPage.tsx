@@ -201,7 +201,7 @@ export default function NewChatPage({
   const isValid = title.trim().length > 0
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0 overflow-y-auto">
+    <div data-testid="new-chat-page" className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0 overflow-y-auto">
       <div className="flex-1 flex flex-col items-center justify-start px-8 py-10 max-w-3xl mx-auto w-full">
         {/* Greeting */}
         <h1 className="text-2xl font-bold text-text-primary mb-1 text-center">
@@ -222,6 +222,7 @@ export default function NewChatPage({
           <input
             ref={titleInputRef}
             id="new-chat-title"
+            data-testid="new-chat-title-input"
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value.slice(0, TITLE_MAX))}
@@ -239,6 +240,7 @@ export default function NewChatPage({
 
         {/* Mode Toggle */}
         <ToggleButtonGroup
+          data-testid="new-chat-mode-toggle"
           label="Mode"
           value={mode}
           onChange={setMode}
@@ -265,7 +267,7 @@ export default function NewChatPage({
         />
 
         {/* Communication Tone */}
-        <div className="w-full mb-5">
+        <div data-testid="new-chat-tone-selector" className="w-full mb-5">
           <label className="block text-sm font-medium text-text-primary mb-1.5">
             Tone{' '}
             <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
@@ -312,6 +314,7 @@ export default function NewChatPage({
           </label>
           <textarea
             id="new-chat-description"
+            data-testid="new-chat-description"
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, DESCRIPTION_MAX))}
             placeholder="Describe what needs to be done, acceptance criteria, technical requirements, etc."
@@ -371,6 +374,7 @@ export default function NewChatPage({
 
         {/* LLM Provider */}
         <ToggleButtonGroup
+          data-testid="new-chat-provider-toggle"
           label="Provider"
           value={llmProvider}
           onChange={setLlmProvider}
@@ -419,6 +423,7 @@ export default function NewChatPage({
           <div className="flex items-center gap-2">
             {onCreateIdea && (
               <button
+                data-testid="new-chat-create-idea-btn"
                 onClick={handleCreateIdea}
                 disabled={!isValid}
                 className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 press-scale ${
@@ -432,6 +437,7 @@ export default function NewChatPage({
               </button>
             )}
             <button
+              data-testid="new-chat-start-btn"
               onClick={handleSubmit}
               disabled={!isValid}
               className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale ${

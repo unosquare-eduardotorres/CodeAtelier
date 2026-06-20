@@ -373,6 +373,25 @@ function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
   )
 }
 
+// ── Export Helpers ──────────────────────────────────────────────────────────
+
+async function saveMarkdownFile(
+  mainWindow: BrowserWindow,
+  markdown: string,
+  defaultPath: string,
+  title: string,
+  logLabel: string
+): Promise<void> {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title,
+    defaultPath,
+    filters: [{ name: 'Markdown', extensions: ['md'] }]
+  })
+  if (canceled || !filePath) return
+  await writeFile(filePath, markdown, 'utf-8')
+  auditLog.info(`[${logLabel}] Exported to ${filePath}`)
+}
+
 // ── Export Handlers ─────────────────────────────────────────────────────────
 
 function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
@@ -471,17 +490,105 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
 
       const markdown = lines.join('\n')
 
-      // Show save dialog
-      const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-        title: 'Export Audit Report',
-        defaultPath: `health-report-${new Date().toISOString().slice(0, 10)}.md`,
-        filters: [{ name: 'Markdown', extensions: ['md'] }]
+      await saveMarkdownFile(
+        mainWindow,
+        markdown,
+        `health-report-${new Date().toISOString().slice(0, 10)}.md`,
+        'Export Audit Report',
+        'audit:export'
+      )
+    }
+  )
+
+  // ── audit:exportPlanMarkdown — export the remediation plan as Markdown ───
+
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_EXPORT_PLAN_MARKDOWN,
+    async (event, args: { workspaceId: string }): Promise<void> => {
+      validateSender(event)
+
+      const run = auditRepository.getLatestForWorkspace(args.workspaceId)
+      if (!run) throw new Error('No audit run found for this workspace')
+
+      const plans = auditPlanRepository.getPlansForRun(run.id)
+      if (plans.length === 0) throw new Error('No remediation plan found for this audit run')
+
+      const planRecord = plans[0]
+      const plan = planRecord.plan
+
+      // If the plan has a requirementDocument, export that directly
+      if (plan.requirementDocument?.trim()) {
+        await saveMarkdownFile(
+          mainWindow,
+          plan.requirementDocument,
+          `remediation-plan-${new Date().toISOString().slice(0, 10)}.md`,
+          'Export Remediation Plan',
+          'audit:exportPlan'
+        )
+        return
+      }
+
+      // Fallback: build structured markdown from plan items
+      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspaceName = workspace?.name ?? 'Unknown Workspace'
+      const date = new Date(planRecord.createdAt).toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
       })
 
-      if (canceled || !filePath) return
+      const lines: string[] = [
+        `# ${plan.title}`,
+        '',
+        `**Workspace:** ${workspaceName} | **Date:** ${date} | **Items:** ${plan.items.length} | **Findings addressed:** ${plan.sourceFindingIds.length}`,
+        '',
+        plan.summary,
+        ''
+      ]
 
-      await writeFile(filePath, markdown, 'utf-8')
-      auditLog.info(`[audit:export] Exported to ${filePath}`)
+      for (let i = 0; i < plan.items.length; i++) {
+        const item = plan.items[i]
+        const severity = item.severity ? ` \`${item.severity.toUpperCase()}\`` : ''
+        lines.push(`## ${i + 1}. ${item.title}${severity}`)
+        lines.push('')
+        lines.push(`**Scope:** ${item.scope}`)
+        lines.push('')
+        lines.push(item.description)
+        lines.push('')
+        if (item.recommendation) {
+          lines.push(`> 💡 ${item.recommendation}`)
+          lines.push('')
+        }
+        if (item.files.length > 0) {
+          lines.push(
+            `**Files:** ${item.files.map((f) => '\`' + f + '\`').join(', ')}`
+          )
+          lines.push('')
+        }
+        if (item.dependsOn && item.dependsOn.length > 0) {
+          lines.push(`**Depends on:** ${item.dependsOn.join(', ')}`)
+          lines.push('')
+        }
+      }
+
+      if (plan.risks.length > 0) {
+        lines.push('## ⚠️ Risks')
+        lines.push('')
+        for (const risk of plan.risks) {
+          lines.push(`- ${risk}`)
+        }
+        lines.push('')
+      }
+
+      const markdown = lines.join('\n')
+
+      await saveMarkdownFile(
+        mainWindow,
+        markdown,
+        `remediation-plan-${new Date().toISOString().slice(0, 10)}.md`,
+        'Export Remediation Plan',
+        'audit:exportPlan'
+      )
     }
   )
 }
@@ -497,7 +604,7 @@ const auditCleanup = createTimedCleanupMap('audit')
 
 function wireAuditEvents(runId: string, workspaceId: string, workspacePath: string): void {
   const cleanups = auditCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // Lazy router resolution
 
   // ── progress ──
   auditCleanup.addListener<AuditProgressPayload>(
@@ -516,7 +623,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
         }
       }
 
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.AUDIT_PROGRESS,
         workspaceId,
         data as unknown as Record<string, unknown>
@@ -544,7 +651,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     // Forward to renderer
     const updatedResult = resultRow ? auditRepository.findResultById(resultRow.id) : null
     if (updatedResult) {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.AUDIT_RESULT,
         workspaceId,
         updatedResult as unknown as Record<string, unknown>
@@ -569,7 +676,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
       }
 
       // Forward to renderer for live display
-      router.sendWorkspaceEvent(IPC_CHANNELS.AUDIT_INTERMEDIATE, workspaceId, {
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AUDIT_INTERMEDIATE, workspaceId, {
         trackId: data.trackId,
         findings: data.findings,
         coverageStats: data.coverageStats,
@@ -605,7 +712,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
       })
 
       if (updatedRun) {
-        router.sendWorkspaceEvent(
+        getSessionEventRouter().sendWorkspaceEvent(
           IPC_CHANNELS.AUDIT_COMPLETE,
           workspaceId,
           updatedRun as unknown as Record<string, unknown>
@@ -626,7 +733,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     auditAgentService,
     'stream',
     (data) => {
-      processAuditStreamChunk(router, workspaceId, workspacePath, data.trackId, data.chunk)
+      processAuditStreamChunk(getSessionEventRouter(), workspaceId, workspacePath, data.trackId, data.chunk)
     }
   )
 
@@ -637,7 +744,7 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 

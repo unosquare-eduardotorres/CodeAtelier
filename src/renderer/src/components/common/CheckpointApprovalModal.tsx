@@ -69,7 +69,7 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
       aria-modal="true"
       aria-labelledby="checkpoint-approval-title"
     >
-      <div className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[520px] max-h-[80vh] flex flex-col">
+      <div data-testid="checkpoint-approval-modal" className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[520px] max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 bg-surface-overlay border-b border-border-default">
           <ShieldCheck size={20} className="text-primary flex-shrink-0" />
@@ -83,6 +83,7 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
             <p className="text-xs text-text-secondary mt-0.5">{current.summary}</p>
           </div>
           <span
+            data-testid="checkpoint-type-badge"
             className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${badge.className}`}
           >
             {badge.label}
@@ -127,6 +128,7 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
           {current.details.changedFiles && current.details.changedFiles.length > 0 && (
             <div>
               <button
+                data-testid="checkpoint-files-toggle"
                 onClick={() => setFilesExpanded(!filesExpanded)}
                 className="flex items-center gap-1.5 text-[11px] font-semibold text-text-secondary uppercase tracking-wider hover:text-text-primary transition-colors"
               >
@@ -162,6 +164,7 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
         {/* Actions */}
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-border-default bg-surface-overlay">
           <button
+            data-testid="checkpoint-reject-btn"
             onClick={() => handleRespond(current.id, false)}
             className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             aria-label="Reject checkpoint"
@@ -170,6 +173,7 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
             Reject
           </button>
           <button
+            data-testid="checkpoint-approve-btn"
             onClick={() => handleRespond(current.id, true)}
             className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
             aria-label="Approve checkpoint"

@@ -65,7 +65,7 @@ export default function EmbeddingModelSetupModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4">
+      <div data-testid="embedding-setup-modal" className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Embedding Model Setup</h2>
@@ -81,7 +81,7 @@ export default function EmbeddingModelSetupModal({
         {/* Content */}
         <div className="px-5 py-5 space-y-4">
           {state === 'checking' && (
-            <div className="flex items-center gap-3 text-text-secondary">
+            <div data-testid="embedding-status" className="flex items-center gap-3 text-text-secondary">
               <Loader2 size={16} className="animate-spin" />
               <span className="text-sm">Checking embedding model status…</span>
             </div>
@@ -160,6 +160,7 @@ export default function EmbeddingModelSetupModal({
                 </div>
               </div>
               <button
+                data-testid="embedding-download-btn"
                 onClick={checkAndInit}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
               >

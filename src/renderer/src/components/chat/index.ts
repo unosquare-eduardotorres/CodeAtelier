@@ -1,3 +1,4 @@
+export { default as ApiRetryBanner } from './ApiRetryBanner'
 export { default as AttachmentDropzone } from './AttachmentDropzone'
 export { default as AutoModeSwitchPill } from './AutoModeSwitchPill'
 export { default as ChatItem } from './ChatItem'

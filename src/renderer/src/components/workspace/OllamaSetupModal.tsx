@@ -100,7 +100,7 @@ export default function OllamaSetupModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4">
+      <div data-testid="ollama-setup-modal" className="bg-surface-raised border border-border-default rounded-xl shadow-xl w-full max-w-md mx-4">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Ollama Setup</h2>
@@ -219,6 +219,7 @@ export default function OllamaSetupModal({
                   </button>
                 )}
                 <button
+                  data-testid="ollama-test-btn"
                   onClick={checkStatus}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-lg transition-colors"
                 >
@@ -296,6 +297,7 @@ export default function OllamaSetupModal({
         {/* Footer */}
         <div className="px-5 py-3 border-t border-border-subtle flex justify-end">
           <button
+            data-testid="ollama-save-btn"
             onClick={onClose}
             className="px-4 py-1.5 text-xs font-medium bg-surface-hover hover:bg-surface-base text-text-body rounded-lg transition-colors"
           >

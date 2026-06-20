@@ -1,51 +1,21 @@
 import { useEffect } from 'react'
 import { Loader2, Pause, Play, X, Check } from 'lucide-react'
 import { useIndexingStore } from '@renderer/store'
+import type { IndexingState } from '@shared/types'
 
-interface IndexingProgressPanelProps {
-  workspaceId: string
+// ── Pure progress computation ──────────────────────────────────────
+
+interface IndexingProgress {
+  isActive: boolean
+  isPaused: boolean
+  isComplete: boolean
+  isError: boolean
+  percent: number
+  progressLabel: string
+  statusLabel: string
 }
 
-export default function IndexingProgressPanel({
-  workspaceId
-}: IndexingProgressPanelProps): React.JSX.Element {
-  // Single source of truth: the globally-mounted indexing store already
-  // subscribes to INDEXING_PROGRESS. Reading it here (instead of opening a
-  // second onIndexingProgress listener) avoids a redundant subscription and
-  // duplicate commit per progress event.
-  const state = useIndexingStore((s) => s.indexingState)
-  const refreshStatus = useIndexingStore((s) => s.refreshStatus)
-  const pauseIndexing = useIndexingStore((s) => s.pauseIndexing)
-  const resumeIndexing = useIndexingStore((s) => s.resumeIndexing)
-  const cancelIndexing = useIndexingStore((s) => s.cancelIndexing)
-
-  // One-time status refresh on mount so the panel reflects current state even
-  // if no progress event has fired since it opened.
-  useEffect(() => {
-    refreshStatus(workspaceId)
-  }, [workspaceId, refreshStatus])
-
-  const handlePause = (): void => {
-    pauseIndexing(workspaceId)
-  }
-
-  const handleResume = (): void => {
-    resumeIndexing(workspaceId)
-  }
-
-  const handleCancel = (): void => {
-    cancelIndexing(workspaceId)
-  }
-
-  if (!state || state.status === 'idle') return <div />
-
-  // ETA is a pure read of the main-process estimate (set for both the
-  // embedding and AI-description phases) — no timing/refs in render.
-  const etaLabel =
-    state.status === 'preprocessing' && state.estimatedRemaining
-      ? ` (${state.estimatedRemaining})`
-      : ''
-
+function computeIndexingProgress(state: IndexingState): IndexingProgress {
   const isActive =
     state.status === 'scanning' ||
     state.status === 'preprocessing' ||
@@ -55,14 +25,14 @@ export default function IndexingProgressPanel({
   const isComplete = state.status === 'complete'
   const isError = state.status === 'error'
 
-  // Calculate progress percentage
   let percent = 0
   let progressLabel = ''
 
   if (state.status === 'scanning') {
     progressLabel = 'Scanning files...'
   } else if (state.status === 'preprocessing') {
-    // Check if we're in the AI description generation sub-phase
+    const etaLabel =
+      state.estimatedRemaining ? ` (${state.estimatedRemaining})` : ''
     const isDescriptionPhase =
       state.descriptionsTotal > 0 && state.descriptionsProcessed < state.descriptionsTotal
 
@@ -98,6 +68,55 @@ export default function IndexingProgressPanel({
     progressLabel = `Error: ${state.error ?? 'Unknown error'}`
   }
 
+  const STATUS_LABELS: Partial<Record<IndexingState['status'], string>> = {
+    scanning: 'Scanning',
+    preprocessing: 'Preprocessing',
+    'indexing-chunks': 'Embedding',
+    paused: 'Paused',
+    complete: 'Complete',
+    error: 'Error'
+  }
+  const statusLabel = STATUS_LABELS[state.status] ?? 'Indexing'
+
+  return { isActive, isPaused, isComplete, isError, percent, progressLabel, statusLabel }
+}
+
+// ── Component ──────────────────────────────────────────────────────
+
+interface IndexingProgressPanelProps {
+  workspaceId: string
+}
+
+export default function IndexingProgressPanel({
+  workspaceId
+}: IndexingProgressPanelProps): React.JSX.Element {
+  const state = useIndexingStore((s) => s.indexingState)
+  const refreshStatus = useIndexingStore((s) => s.refreshStatus)
+  const pauseIndexing = useIndexingStore((s) => s.pauseIndexing)
+  const resumeIndexing = useIndexingStore((s) => s.resumeIndexing)
+  const cancelIndexing = useIndexingStore((s) => s.cancelIndexing)
+
+  useEffect(() => {
+    refreshStatus(workspaceId)
+  }, [workspaceId, refreshStatus])
+
+  const handlePause = (): void => {
+    pauseIndexing(workspaceId)
+  }
+
+  const handleResume = (): void => {
+    resumeIndexing(workspaceId)
+  }
+
+  const handleCancel = (): void => {
+    cancelIndexing(workspaceId)
+  }
+
+  if (!state || state.status === 'idle') return <div />
+
+  const { isActive, isPaused, isComplete, isError, percent, progressLabel, statusLabel } =
+    computeIndexingProgress(state)
+
   return (
     <div className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-3 space-y-2">
       {/* Status line */}
@@ -106,21 +125,7 @@ export default function IndexingProgressPanel({
         {isPaused && <Pause size={12} className="text-warning" />}
         {isComplete && <Check size={12} className="text-success" />}
         {isError && <X size={12} className="text-danger" />}
-        <span className="text-xs text-text-body font-medium">
-          {state.status === 'scanning'
-            ? 'Scanning'
-            : state.status === 'preprocessing'
-              ? 'Preprocessing'
-              : state.status === 'indexing-chunks'
-                ? 'Embedding'
-                : state.status === 'paused'
-                  ? 'Paused'
-                  : state.status === 'complete'
-                    ? 'Complete'
-                    : state.status === 'error'
-                      ? 'Error'
-                      : 'Indexing'}
-        </span>
+        <span className="text-xs text-text-body font-medium">{statusLabel}</span>
       </div>
 
       {/* Progress bar */}

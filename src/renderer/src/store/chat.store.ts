@@ -105,7 +105,8 @@ export interface ChatState {
     role?: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string,
-    requestId?: string
+    requestId?: string,
+    conversationId?: string
   ) => void
   /** Reset safety timer without processing content — used by keepalive signals from backend. */
   handleKeepalive: () => void
@@ -583,9 +584,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     role?: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string,
-    requestId?: string
+    requestId?: string,
+    conversationId?: string
   ) => {
-    appendStreamChunkAction(get, set, chunk, role, taskId, specialist, requestId)
+    appendStreamChunkAction(get, set, chunk, role, taskId, specialist, requestId, conversationId)
   },
 
   handleKeepalive: () => {
@@ -671,6 +673,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Remove conversation from state (it's been deleted in DB)
     const newConversations = conversations.filter((c) => c.id !== activeConversation.id)
+    // STORE-07: clean streamingConversationIds on complete
+    const newStreamingIds = new Set(get().streamingConversationIds)
+    newStreamingIds.delete(activeConversation.id)
     set({
       conversations: newConversations,
       activeConversation: null,
@@ -678,7 +683,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: '',
       streamingSegments: [],
       isStreaming: false,
-      toolActivities: []
+      toolActivities: [],
+      streamingConversationIds: newStreamingIds
     })
 
     return result
@@ -693,10 +699,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const { activeConversation, conversations } = get()
     const newConversations = conversations.filter((c) => c.id !== id)
+    // STORE-02: clean orphaned ID from streamingConversationIds
+    const newStreamingIds = new Set(get().streamingConversationIds)
+    newStreamingIds.delete(id)
     set({
       conversations: newConversations,
       activeConversation: activeConversation?.id === id ? null : activeConversation,
-      messages: activeConversation?.id === id ? [] : get().messages
+      messages: activeConversation?.id === id ? [] : get().messages,
+      streamingConversationIds: newStreamingIds
     })
   },
 
@@ -785,7 +795,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!activeConversation) return
 
     const localMessage: Message = {
-      id: `local-${Date.now()}`,
+      id: `local-${crypto.randomUUID().slice(0, 8)}`,
       conversationId: activeConversation.id,
       role: opts?.role ?? 'da-vinci',
       ...(opts?.agentId ? { agentId: opts.agentId } : {}),

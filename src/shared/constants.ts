@@ -409,12 +409,20 @@ export const IPC_CHANNELS = {
   AUDIT_CONVERT_FINDINGS: 'audit:convertFindings',
   AUDIT_RERUN_TRACK: 'audit:rerunTrack',
   AUDIT_EXPORT_MARKDOWN: 'audit:exportMarkdown',
+  AUDIT_EXPORT_PLAN_MARKDOWN: 'audit:exportPlanMarkdown',
   AUDIT_RESUME: 'audit:resume',
   AUDIT_INTERMEDIATE: 'audit:intermediate',
   AUDIT_GET_HISTORY: 'audit:getHistory',
   AUDIT_DELETE_RUN: 'audit:deleteRun',
   AUDIT_GENERATE_PLAN: 'audit:generatePlan',
   AUDIT_GET_PLANS: 'audit:getPlans',
+
+  // Plan Hub (unified plan registry)
+  PLAN_GET_ALL: 'plan:getAll',
+  PLAN_GET_BY_ID: 'plan:getById',
+  PLAN_UPDATE_STATUS: 'plan:updateStatus',
+  PLAN_DELETE: 'plan:delete',
+  PLAN_IMPORT: 'plan:import',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
@@ -486,7 +494,65 @@ export const IPC_CHANNELS = {
   COUNCIL_COMPLETE: 'council:complete',
   COUNCIL_RESUME: 'council:resume',
   COUNCIL_GET_HISTORY: 'council:getHistory',
-  COUNCIL_DELETE_SESSION: 'council:deleteSession'
+  COUNCIL_DELETE_SESSION: 'council:deleteSession',
+
+  // ── Blueprint Pipeline ──
+
+  BLUEPRINT_CREATE: 'blueprint:create',
+  BLUEPRINT_CREATE_FROM_IDEA: 'blueprint:createFromIdea',
+  BLUEPRINT_GET: 'blueprint:get',
+  BLUEPRINT_GET_DETAILS: 'blueprint:getDetails',
+  BLUEPRINT_LIST: 'blueprint:list',
+  BLUEPRINT_DELETE: 'blueprint:delete',
+  BLUEPRINT_CANCEL: 'blueprint:cancel',
+
+  BLUEPRINT_ADVANCE_PHASE: 'blueprint:advancePhase',
+  BLUEPRINT_SKIP_PHASE: 'blueprint:skipPhase',
+  BLUEPRINT_REWIND_PHASE: 'blueprint:rewindPhase',
+  BLUEPRINT_BUILD_PROMPT: 'blueprint:buildPrompt',
+  BLUEPRINT_SAVE_ARTIFACT: 'blueprint:saveArtifact',
+  BLUEPRINT_GET_ARTIFACTS: 'blueprint:getArtifacts',
+  BLUEPRINT_POPULATE_TASKS: 'blueprint:populateTasks',
+  BLUEPRINT_GET_PIPELINE_STATUS: 'blueprint:getPipelineStatus',
+
+  // Blueprint phase execution (Phase 2 — Specify + Clarify)
+  BLUEPRINT_START_SPECIFY: 'blueprint:startSpecify',
+  BLUEPRINT_START_CLARIFY: 'blueprint:startClarify',
+  BLUEPRINT_CLARIFY_ANSWER: 'blueprint:clarifyAnswer',
+  BLUEPRINT_SKIP_CLARIFY: 'blueprint:skipClarify',
+
+  // Blueprint phase execution (Phase 3 — Plan)
+  BLUEPRINT_START_PLAN: 'blueprint:startPlan',
+
+  // Blueprint phase execution (Phase 4 — Tasks)
+  BLUEPRINT_START_TASKS: 'blueprint:startTasks',
+
+  // Blueprint phase execution (Phase 5 — Review)
+  BLUEPRINT_START_REVIEW: 'blueprint:startReview',
+
+  // Blueprint phase execution (Phase 6 — Build)
+  BLUEPRINT_START_BUILD: 'blueprint:startBuild',
+
+  // Blueprint phase execution (Phase 7 — Verify)
+  BLUEPRINT_START_VERIFY: 'blueprint:startVerify',
+
+  // Blueprint streamed events (main → renderer)
+  BLUEPRINT_PHASE_START: 'blueprint:phaseStart',
+  BLUEPRINT_PHASE_PROGRESS: 'blueprint:phaseProgress',
+  BLUEPRINT_PHASE_COMPLETE: 'blueprint:phaseComplete',
+  BLUEPRINT_PHASE_ARTIFACT: 'blueprint:phaseArtifact',
+  BLUEPRINT_APPROVAL_NEEDED: 'blueprint:approvalNeeded',
+  BLUEPRINT_APPROVAL_RESPOND: 'blueprint:approvalRespond',
+
+  // Blueprint wave execution events (BUILD phase)
+  BLUEPRINT_WAVE_START: 'blueprint:waveStart',
+  BLUEPRINT_WAVE_TASK_START: 'blueprint:waveTaskStart',
+  BLUEPRINT_WAVE_TASK_COMPLETE: 'blueprint:waveTaskComplete',
+  BLUEPRINT_WAVE_COMPLETE: 'blueprint:waveComplete',
+
+  // Constitution
+  BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
+  BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -581,7 +647,16 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'council-member': 'claude-opus-4-8',
   'council-chairman': 'claude-opus-4-8',
   'grill:plan': 'claude-opus-4-8',
-  'mpa:decompose': 'claude-opus-4-8'
+  'mpa:decompose': 'claude-opus-4-8',
+
+  // Blueprint phase actions
+  'blueprint:specify': 'claude-opus-4-8',
+  'blueprint:clarify': 'claude-sonnet-4-6',
+  'blueprint:plan': 'claude-opus-4-8',
+  'blueprint:tasks': 'claude-opus-4-8',
+  'blueprint:review': 'claude-opus-4-8',
+  'blueprint:build': 'claude-sonnet-4-6',
+  'blueprint:verify': 'claude-opus-4-8'
 } as const
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────
@@ -747,6 +822,48 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Goal Decomposer',
     description: 'Breaks a plan into measurable goals for campaigns',
     icon: '🎯',
+    section: 'background'
+  },
+  'blueprint:specify': {
+    label: 'Blueprint Specify',
+    description: 'Codebase analysis and specification generation',
+    icon: '📋',
+    section: 'background'
+  },
+  'blueprint:clarify': {
+    label: 'Blueprint Clarify',
+    description: 'Specification gap resolution via Q&A',
+    icon: '❓',
+    section: 'background'
+  },
+  'blueprint:plan': {
+    label: 'Blueprint Plan',
+    description: 'Multi-file implementation plan decomposition',
+    icon: '🗺️',
+    section: 'background'
+  },
+  'blueprint:tasks': {
+    label: 'Blueprint Tasks',
+    description: 'Wave-ordered task decomposition from plan',
+    icon: '📝',
+    section: 'background'
+  },
+  'blueprint:review': {
+    label: 'Blueprint Review',
+    description: 'Cross-artifact consistency review and quality gate',
+    icon: '🔍',
+    section: 'background'
+  },
+  'blueprint:build': {
+    label: 'Blueprint Build',
+    description: 'Per-task code generation and implementation',
+    icon: '🏗️',
+    section: 'background'
+  },
+  'blueprint:verify': {
+    label: 'Blueprint Verify',
+    description: 'Adversarial verification of build output against spec',
+    icon: '✅',
     section: 'background'
   }
 } as const
@@ -1441,7 +1558,11 @@ export const MCP_TOOLS = {
       'code-graph',
       'module_boundary_health',
       'Code Graph · module_boundary_health'
-    )
+    ),
+    BLAST_RADIUS: mcpTool('code-graph', 'blast_radius', 'Code Graph · blast_radius'),
+    CO_CHANGE: mcpTool('code-graph', 'co_change', 'Code Graph · co_change'),
+    HOTSPOT_SCORE: mcpTool('code-graph', 'hotspot_score', 'Code Graph · hotspot_score'),
+    CODE_CLONES: mcpTool('code-graph', 'code_clones', 'Code Graph · code_clones')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
     SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),
@@ -1513,10 +1634,10 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'code-graph',
     displayName: 'Code Graph',
-    description: 'AST-based navigation — callers, references, dead code, coupling',
+    description: 'AST-based navigation — callers, references, dead code, coupling, blast radius, co-change, hotspots, clones',
     icon: 'Network',
     tokenImpact: 'high',
-    toolCount: 13,
+    toolCount: 17,
     featureFlagKey: 'repomapEnabled',
     defaultEnabled: true
   },

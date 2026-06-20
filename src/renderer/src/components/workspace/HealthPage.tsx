@@ -19,6 +19,7 @@ import HealthLanding from './health/HealthLanding'
 import HealthConfigure from './health/HealthConfigure'
 import HealthPlanStep from './health/HealthPlanStep'
 import SelectionTrayBar from './health/SelectionTrayBar'
+import { auditPlanToStructuredPlan } from '../../utils/audit-plan-converter'
 
 type HealthView = 'landing' | 'configure' | 'active' | 'plan'
 
@@ -231,6 +232,15 @@ export default function HealthPage({
     }
   }, [workspaceId])
 
+  const handleExportPlan = useCallback(async () => {
+    if (!workspaceId) return
+    try {
+      await window.api.auditExportPlanMarkdown({ workspaceId })
+    } catch {
+      // Non-critical — user may have cancelled the save dialog
+    }
+  }, [workspaceId])
+
   const handleAutoFix = useCallback(
     (finding: AuditFinding, trackName: string) => {
       const description =
@@ -313,32 +323,53 @@ export default function HealthPage({
 
   const handleSendPlanToChat = useCallback(() => {
     if (!currentPlan) return
-    setPendingFixContext({ title: `🔧 ${planTitle}`, description: planDoc })
+
+    // Convert AuditPlan → StructuredPlan JSON wrapped in ```plan block
+    const structuredPlan = auditPlanToStructuredPlan(currentPlan.plan)
+    const planBlock = '```plan\n' + JSON.stringify(structuredPlan, null, 2) + '\n```'
+
+    setPendingFixContext({
+      title: `🔧 ${planTitle}`,
+      description: planBlock
+    })
     clearSelectedFindings()
     onFixInNewChat()
-  }, [currentPlan, planTitle, planDoc, setPendingFixContext, clearSelectedFindings, onFixInNewChat])
+  }, [currentPlan, planTitle, setPendingFixContext, clearSelectedFindings, onFixInNewChat])
 
   const handleSendPlanToCouncil = useCallback(() => {
     if (!workspaceId || !currentPlan) return
     const councilStore = useCouncilStore.getState()
     councilStore.startCouncil()
+    const structuredPlan = auditPlanToStructuredPlan(currentPlan.plan)
     window.api
       .councilStart({
         workspaceId,
         inputType: 'plan',
         planContent: planDoc,
+        structuredPlan,
         originalUserRequest: planTitle,
         conversationId: undefined
       })
-      .then(({ sessionId }) => councilStore.setSessionIdentity(sessionId, workspaceId))
+      .then(({ sessionId }) => {
+        councilStore.setSessionIdentity(sessionId, workspaceId)
+        councilStore.setInputTitle(planTitle)
+      })
       .catch(() => councilStore.reset())
     onNavigateToCouncil?.()
+    // TODO: Update plan registry status to 'handed_off' — needs
+    // planUpdateStatusBySource IPC (HealthPage only has audit plan ID,
+    // not the plan registry ID). See PlansPage.handleCouncilReview for
+    // the pattern once IPC is available.
   }, [workspaceId, currentPlan, planDoc, planTitle, onNavigateToCouncil])
 
   const handleSendPlanToGoals = useCallback(() => {
     if (!currentPlan) return
     useMpaStore.getState().setPreloadedGoal({ text: `${planTitle}\n\n${planDoc}` })
     onNavigateToGoals?.()
+    // TODO: Update plan registry status to 'handed_off' — needs
+    // planUpdateStatusBySource IPC (HealthPage only has audit plan ID,
+    // not the plan registry ID). See PlansPage.handleCouncilReview for
+    // the pattern once IPC is available.
   }, [currentPlan, planTitle, planDoc, onNavigateToGoals])
 
   const handleSendPlanToGrill = useCallback(() => {
@@ -384,7 +415,7 @@ export default function HealthPage({
         onSendToGrill={handleSendPlanToGrill}
         onSendToGoals={handleSendPlanToGoals}
         onSendToCouncil={handleSendPlanToCouncil}
-        onExport={handleExport}
+        onExport={handleExportPlan}
       />
     )
   }

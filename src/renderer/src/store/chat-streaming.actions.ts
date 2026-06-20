@@ -138,10 +138,14 @@ export function appendStreamChunkAction(
   role?: 'da-vinci' | 'specialist',
   taskId?: string,
   specialist?: string,
-  requestId?: string
+  requestId?: string,
+  conversationId?: string
 ): void {
-  const activeRequestId = get().activeRequestId
+  const { activeRequestId, isStreaming } = get()
+  if (!isStreaming) return
   if (activeRequestId && requestId && requestId !== activeRequestId) return
+  // STORE-01: guard against stale chunks leaking across conversation switches
+  if (conversationId && get().activeConversation?.id !== conversationId) return
 
   // Reset safety timer — backend is still alive
   streamingInternals.resetSafetyTimer()
@@ -248,7 +252,11 @@ export function finalizeStreamAction(
         toolActivities: taskId ? state.toolActivities : [],
         streamingTaskId: null,
         streamingSpecialist: taskId ? state.streamingSpecialist : null,
-        streamingConversationIds: newStreamingIds
+        streamingConversationIds: newStreamingIds,
+        // Clear stale ask-question state on final complete
+        ...(!taskId
+          ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
+          : {})
       }
     })
   } else if (taskId) {
@@ -267,7 +275,11 @@ export function finalizeStreamAction(
         activeRequestId: null,
         toolActivities: [],
         streamingTaskId: null,
-        streamingConversationIds: newStreamingIds
+        streamingConversationIds: newStreamingIds,
+        // Clear stale ask-question state
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
       }
     })
     // Reload messages from DB asynchronously.

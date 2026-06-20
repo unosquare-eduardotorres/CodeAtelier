@@ -353,6 +353,23 @@ export class AgentStreamProcessor {
     // The chunk is already forwarded to the renderer via emit('chunk', chunk) below,
     // which the chunk-router routes through handlePromptSuggestion.
 
+    // Track server overload from api_retry chunks
+    if (chunk.type === 'api_retry') {
+      const errorStatus = (chunk as StreamChunk & { retryInfo?: { errorStatus?: number | null } })
+        .retryInfo?.errorStatus
+      const content = chunk.content ?? ''
+      if (
+        errorStatus === 529 ||
+        errorStatus === 503 ||
+        /overloaded|server_is_overloaded/i.test(content)
+      ) {
+        streamState.overloadDetected = true
+        this.s.log.warn(
+          `[PIPELINE:overload-detected] API overload detected (status=${errorStatus}) for conversationId=${conversationId}`
+        )
+      }
+    }
+
     if (chunk.type === 'text') this.s.currentStatus = 'writing'
     if (chunk.type === 'tool_use') this.s.currentStatus = 'reviewing'
     this.s.emit('statusUpdate', this.s.getStatus())

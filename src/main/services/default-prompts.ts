@@ -62,8 +62,11 @@ export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
 5. For deprecated code (still used): Grep "@deprecated" — mcp__code-graph__find_dead_code only finds zero-reference symbols.
 6. Use **mcp__code-graph__file_outline** before Read on large files — get the structural map first, then read targeted line ranges.
 7. For impact analysis ("who uses X?") → **mcp__code-graph__find_callers**. For dependency chains ("what does X depend on?") → **mcp__code-graph__find_callees**. For all references (imports, type annotations, call sites) → **mcp__code-graph__find_references**.
-8. For blast radius ("what breaks if I change this file?") → **mcp__code-graph__file_dependents**. For module imports → **mcp__code-graph__file_dependencies**.
+8. For blast radius ("what breaks if I change this file?") → **mcp__code-graph__file_dependents** (direct only). For FULL transitive blast radius with depth → **mcp__code-graph__blast_radius**. Call blast_radius BEFORE editing high-coupling files. For module imports → **mcp__code-graph__file_dependencies**.
 9. For architecture audits → **mcp__code-graph__coupling_analysis** + **mcp__code-graph__circular_dependencies** + **mcp__code-graph__module_boundary_health** give quantitative metrics without manual file traversal. For load-bearing symbols → **mcp__code-graph__symbol_hotspots**.
+10. For **logical coupling** → **mcp__code-graph__co_change** mines git history for files that always change together — reveals coupling invisible to the import graph.
+11. For **refactoring prioritization** → **mcp__code-graph__hotspot_score** ranks files by composite risk (coupling × churn). Start refactoring from the highest-scored items.
+12. For **deduplication** → **mcp__code-graph__code_clones** finds structurally identical functions across files. Check before creating new abstractions.
 
 One mcp__code-graph__search_identifiers call replaces 3-5 Grep+Read rounds.`
 
@@ -71,7 +74,9 @@ export const REPOMAP_GUIDANCE_PROMPT_LEAN = `## Code Graph
 search_identifiers or graph_map FIRST — not Read/Grep/Glob.
 Read only files identified by code intelligence. Grep for exact strings/regex.
 file_outline before Read on large files.
-Impact → find_callers/find_references. Architecture → coupling_analysis + circular_dependencies.`
+Impact → find_callers/find_references. Architecture → coupling_analysis + circular_dependencies.
+blast_radius before editing high-coupling files. co_change for logical coupling beyond imports.
+hotspot_score for refactoring priority. code_clones for duplicate detection.`
 
 export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search — Priority Rules
 

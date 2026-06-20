@@ -65,6 +65,7 @@ interface ChatStreamServiceInternal {
 function mockMainWindow() {
   const sentMessages: Array<{ channel: string; data: unknown }> = []
   return {
+    isDestroyed: () => false,
     webContents: {
       send(channel: string, data: unknown) {
         sentMessages.push({ channel, data })
@@ -115,6 +116,10 @@ function createTestService(overrides?: {
   svc.finalizeStreamMessage = proto.finalizeStreamMessage.bind(svc)
   svc.processMemoryBlocks = proto.processMemoryBlocks.bind(svc)
   svc.forceResetIfStuck = proto.forceResetIfStuck.bind(svc)
+  // Bind safeWindowSend so finalizeStreamMessage can call it on the test double
+  if (proto.safeWindowSend) {
+    ;(svc as Record<string, unknown>).safeWindowSend = proto.safeWindowSend.bind(svc)
+  }
 
   return svc
 }
@@ -147,7 +152,7 @@ describe('acquireStreamLock', () => {
         'chat-agent-streaming',
         'state machine should be streaming'
       )
-      assert.match(result.requestId, /^req-\d+-[a-z0-9]+$/, 'requestId matches expected pattern')
+      assert.match(result.requestId, /^req-[0-9a-f-]+$/, 'requestId matches expected pattern')
       assert.equal(typeof result.resolveDone, 'function')
       assert.equal(typeof result.rejectDone, 'function')
       assert.ok(result.done instanceof Promise, 'done is a Promise')

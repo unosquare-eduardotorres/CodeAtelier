@@ -1,4 +1,4 @@
-import { Hammer, Landmark, Lightbulb, RefreshCw } from 'lucide-react'
+import { Hammer, Landmark, Lightbulb, RefreshCw, ClipboardCheck } from 'lucide-react'
 
 interface BuildActionBarProps {
   onBuildNow?: () => void
@@ -6,6 +6,8 @@ interface BuildActionBarProps {
   onRefine?: () => void
   onCouncilReview?: () => void
   onUserClicked: () => void
+  /** When true, shows a "Saved to Plans" indicator */
+  savedToPlans?: boolean
 }
 
 export default function BuildActionBar({
@@ -13,7 +15,8 @@ export default function BuildActionBar({
   onSaveAsIdea,
   onRefine,
   onCouncilReview,
-  onUserClicked
+  onUserClicked,
+  savedToPlans
 }: BuildActionBarProps): React.JSX.Element {
   return (
     <div className="sticky bottom-0 flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
@@ -64,6 +67,12 @@ export default function BuildActionBar({
           <RefreshCw size={14} />
           Refine Plan
         </button>
+      )}
+      {savedToPlans && (
+        <span className="ml-auto flex items-center gap-1.5 text-xs text-success/80 select-none">
+          <ClipboardCheck size={13} />
+          Saved to Plans
+        </span>
       )}
     </div>
   )

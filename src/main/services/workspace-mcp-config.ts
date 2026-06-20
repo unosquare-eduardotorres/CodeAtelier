@@ -184,10 +184,11 @@ function buildStdioEnv(envKeys: readonly string[] | undefined): Record<string, s
     }
 
     // Add common Homebrew paths
+    // SEC-01: Removed ~/.maestro/bin — user-writable directory enables executable
+    // hijacking. Maestro users should have it in their system PATH.
     extraPaths.push(
       '/opt/homebrew/bin', // Homebrew arm64
-      '/usr/local/bin', // Homebrew x86_64 + system tools
-      `${homedir()}/.maestro/bin` // Maestro CLI
+      '/usr/local/bin' // Homebrew x86_64 + system tools
     )
 
     const basePath = process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'

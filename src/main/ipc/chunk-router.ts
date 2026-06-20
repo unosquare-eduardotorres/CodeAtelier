@@ -187,10 +187,19 @@ function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   )
 }
 
+/** Patterns indicating server-side overload/outage */
+const OVERLOAD_PATTERNS = [/529/i, /overloaded/i, /server_is_overloaded/i, /503 Service/i]
+
 function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before error
   textBatcher.flush()
-  const errorText = `\n\n**Error:** ${chunk.error}`
+
+  // Detect server overload errors and format with friendly message
+  const isOverload = chunk.error && OVERLOAD_PATTERNS.some((p) => p.test(chunk.error!))
+  const errorText = isOverload
+    ? '\n\n**API Error: 529 Overloaded.** This is a server-side issue, usually temporary — try again in a moment. If it persists, check [status.claude.com](https://status.claude.com).'
+    : `\n\n**Error:** ${chunk.error}`
+
   ctx.contentAccumulator.value += errorText
   safeSend(
     ctx,
@@ -496,8 +505,9 @@ export function routeChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 /**
  * Flush any pending batched text deltas immediately.
- * Call at stream end to ensure no text is left in the buffer.
+ * STREAM-04: Pass a conversation key to flush only that stream's buffer.
+ * Without a key, resets ALL conversations' buffers (cross-conversation data race).
  */
-export function flushTextBatcher(): void {
-  textBatcher.reset()
+export function flushTextBatcher(key?: string): void {
+  textBatcher.reset(key)
 }

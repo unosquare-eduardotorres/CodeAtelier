@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import type { AgentStatus } from '../../shared/types'
 import { agentIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 
 const log = agentIpcLogger
 
@@ -34,7 +35,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
     }
 
     // Broadcast updated statuses to renderer
-    mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, chatAgentService.getStatus())
+    safeWindowSend(mainWindow, IPC_CHANNELS.AGENT_STATUS_UPDATE, chatAgentService.getStatus())
 
     log.info('Stop all results:', results)
     return results
@@ -50,7 +51,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
   chatAgentService.on('statusUpdate', (status: AgentStatus) => {
     // Tag with workspaceId for multi-workspace routing
     const workspaceId = chatAgentService.activeWorkspaceId
-    mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, {
+    safeWindowSend(mainWindow, IPC_CHANNELS.AGENT_STATUS_UPDATE, {
       ...status,
       workspaceId: workspaceId ?? undefined
     })
@@ -62,7 +63,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
 
   chatAgentService.on('statusUpdate:ws', (workspaceId: string, status: AgentStatus) => {
     // Forward to renderer
-    mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS_UPDATE, {
+    safeWindowSend(mainWindow, IPC_CHANNELS.AGENT_STATUS_UPDATE, {
       ...status,
       workspaceId
     })
@@ -90,7 +91,7 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
         /* non-fatal */
       }
 
-      mainWindow.webContents.send(IPC_CHANNELS.COMPLETION_NOTIFICATION, {
+      safeWindowSend(mainWindow, IPC_CHANNELS.COMPLETION_NOTIFICATION, {
         workspaceId,
         workspaceName,
         service: 'chat',

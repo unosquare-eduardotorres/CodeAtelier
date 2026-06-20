@@ -22,6 +22,7 @@ export class ConversationLifecycle {
   private disposers: Array<() => void> = []
   private _requestId: string | null = null
   private _conversationId: string | null = null
+  private isDisposing = false
 
   /** Current request ID for this lifecycle (null when idle) */
   get requestId(): string | null {
@@ -57,7 +58,7 @@ export class ConversationLifecycle {
     }
 
     this.abortController = new AbortController()
-    this._requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    this._requestId = `req-${crypto.randomUUID()}`
     this._conversationId = conversationId
 
     log.info(
@@ -80,6 +81,7 @@ export class ConversationLifecycle {
    * Call when the full pipeline (generalist + specialists) completes successfully.
    */
   complete(): void {
+    if (this.isDisposing) return
     log.info(
       `[ConversationLifecycle] Complete: conversation=${this._conversationId} requestId=${this._requestId}`
     )
@@ -94,6 +96,7 @@ export class ConversationLifecycle {
    * Call on user stop, errors, or when a new message supersedes the current one.
    */
   abort(reason?: string): void {
+    if (this.isDisposing) return
     log.warn(
       `[ConversationLifecycle] Abort: reason=${reason ?? 'unknown'} conversation=${this._conversationId} requestId=${this._requestId}`
     )
@@ -108,18 +111,21 @@ export class ConversationLifecycle {
   }
 
   private runDisposers(): void {
-    const count = this.disposers.length
-    for (const fn of this.disposers) {
+    if (this.isDisposing) return
+    this.isDisposing = true
+    const snapshot = [...this.disposers]
+    this.disposers = []
+    for (const fn of snapshot) {
       try {
         fn()
       } catch (e) {
         log.warn('[ConversationLifecycle] Disposer error:', e)
       }
     }
-    this.disposers = []
-    if (count > 0) {
-      log.info(`[ConversationLifecycle] Ran ${count} disposer(s)`)
+    if (snapshot.length > 0) {
+      log.info(`[ConversationLifecycle] Ran ${snapshot.length} disposer(s)`)
     }
+    this.isDisposing = false
   }
 }
 

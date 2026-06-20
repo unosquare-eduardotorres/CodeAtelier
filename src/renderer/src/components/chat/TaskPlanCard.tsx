@@ -281,6 +281,7 @@ export default function TaskPlanCard({
           onRefine={onRefine}
           onCouncilReview={onCouncilReview}
           onUserClicked={() => setUserClicked(true)}
+          savedToPlans
         />
       )}
     </div>

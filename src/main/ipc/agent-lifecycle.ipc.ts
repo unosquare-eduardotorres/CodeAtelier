@@ -4,6 +4,7 @@ import { mainLogger } from '../logger'
 import { chatAgentService } from '../services'
 import { chatStreamService } from '../services/chat-stream.service'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 import { workspaceRepository } from '../db/repositories'
 
 const log = mainLogger
@@ -58,7 +59,7 @@ export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
         // Force-reset any stuck streaming state from the previous workspace
         chatStreamService.forceResetIfStuck()
         chatAgentService.setActiveWorkspace(workspaceId)
-        mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY, { workspaceId })
+        safeWindowSend(mainWindow, IPC_CHANNELS.AGENT_READY, { workspaceId })
         return
       }
 
@@ -73,7 +74,7 @@ export function registerAgentLifecycleIpc(mainWindow: BrowserWindow): void {
           workspaceId,
           '— role=' + chatAgentService.getActiveRole()
         )
-        mainWindow.webContents.send(IPC_CHANNELS.AGENT_READY, { workspaceId })
+        safeWindowSend(mainWindow, IPC_CHANNELS.AGENT_READY, { workspaceId })
       } catch (error) {
         log.error('Failed to start services:', error)
         throw error

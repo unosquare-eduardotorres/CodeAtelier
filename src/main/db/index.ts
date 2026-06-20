@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 102
+const CURRENT_SCHEMA_VERSION = 104
 
 export interface Migration {
   version: number
@@ -2393,6 +2393,121 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
       `)
       dbLogger.info('[migration-102] ✓ Created usage_log table')
+    }
+  },
+  {
+    version: 103,
+    name: 'create-blueprints-tables',
+    up: (db) => {
+      db.exec(`
+        -- Blueprints: top-level entity for the structured specification pipeline
+        CREATE TABLE IF NOT EXISTS blueprints (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          short_name TEXT NOT NULL DEFAULT '',
+          description TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft','specifying','clarifying','planning',
+                               'tasking','reviewing','building','verifying',
+                               'complete','failed','cancelled')),
+          current_phase TEXT DEFAULT 'specify'
+            CHECK (current_phase IN ('specify','clarify','plan','tasks',
+                                      'review','build','verify')),
+          priority TEXT DEFAULT 'P1'
+            CHECK (priority IN ('P1','P2','P3')),
+          source_idea_id TEXT REFERENCES ideas(id) ON DELETE SET NULL,
+          constitution_snapshot TEXT,
+          settings_json TEXT DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_blueprints_workspace ON blueprints(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_blueprints_status ON blueprints(status);
+
+        -- Blueprint phases: each pipeline step gets its own record
+        CREATE TABLE IF NOT EXISTS blueprint_phases (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+          phase TEXT NOT NULL
+            CHECK (phase IN ('specify','clarify','plan','tasks','review','build','verify')),
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','active','complete','skipped','failed')),
+          conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          artifacts_json TEXT DEFAULT '[]',
+          context_snapshot TEXT,
+          started_at TEXT,
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_bp_phases_blueprint ON blueprint_phases(blueprint_id);
+
+        -- Blueprint tasks: parsed from tasks.md artifact, used for wave execution
+        CREATE TABLE IF NOT EXISTS blueprint_tasks (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL,
+          wave INTEGER NOT NULL DEFAULT 1,
+          user_story TEXT,
+          description TEXT NOT NULL,
+          file_paths_json TEXT DEFAULT '[]',
+          is_parallel INTEGER NOT NULL DEFAULT 0,
+          depends_on_json TEXT DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','running','complete','failed')),
+          executor_run_id TEXT REFERENCES mpa_runs(id) ON DELETE SET NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_bp_tasks_blueprint ON blueprint_tasks(blueprint_id);
+        CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);
+
+        -- Link mpa_runs to blueprints (BUILD/VERIFY phases reuse MPA)
+        ALTER TABLE mpa_runs ADD COLUMN blueprint_id TEXT REFERENCES blueprints(id) ON DELETE SET NULL;
+        ALTER TABLE mpa_runs ADD COLUMN blueprint_phase_id TEXT REFERENCES blueprint_phases(id) ON DELETE SET NULL;
+
+        -- Workspace constitution storage
+        ALTER TABLE workspaces ADD COLUMN constitution_md TEXT;
+        ALTER TABLE workspaces ADD COLUMN constitution_version TEXT DEFAULT '1.0.0';
+      `)
+      dbLogger.info(
+        '[migration-103] ✓ Created blueprints, blueprint_phases, blueprint_tasks tables + ALTER mpa_runs/workspaces'
+      )
+    }
+  },
+
+  // ── v104: Unified plan registry ──
+  {
+    version: 104,
+    name: 'create-plans-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS plans (
+          id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          source        TEXT NOT NULL CHECK (source IN ('chat','grill','audit','council','mpa','blueprint')),
+          source_id     TEXT NOT NULL,
+          title         TEXT NOT NULL,
+          summary       TEXT NOT NULL DEFAULT '',
+          plan_type     TEXT DEFAULT NULL,
+          structured_plan_json TEXT NOT NULL CHECK (json_valid(structured_plan_json)),
+          source_plan_json     TEXT DEFAULT NULL,
+          requirement_document TEXT DEFAULT NULL,
+          status        TEXT NOT NULL DEFAULT 'saved'
+            CHECK (status IN ('saved','handed_off','in_progress','completed','archived')),
+          linked_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          linked_mpa_run_id      TEXT REFERENCES mpa_runs(id) ON DELETE SET NULL,
+          linked_council_session_id TEXT REFERENCES council_sessions(id) ON DELETE SET NULL,
+          file_count    INTEGER DEFAULT 0,
+          phase_count   INTEGER DEFAULT 0,
+          risk_count    INTEGER DEFAULT 0,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_plans_workspace ON plans(workspace_id, status);
+        CREATE INDEX IF NOT EXISTS idx_plans_source ON plans(source, source_id);
+        CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(workspace_id, status, updated_at DESC);
+      `)
+      dbLogger.info('[migration-104] ✓ Created plans table + indexes')
     }
   }
 ]

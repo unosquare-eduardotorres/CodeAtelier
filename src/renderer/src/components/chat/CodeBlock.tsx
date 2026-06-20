@@ -8,6 +8,52 @@ import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { MermaidDiagram } from '@renderer/components/common'
 import { useAppTheme } from '@renderer/store'
 
+/** Best-effort language detection for untagged code blocks */
+function detectLanguage(code: string): string {
+  const trimmed = code.trimStart()
+
+  // JSON — starts with { or [
+  if (trimmed[0] === '{' || trimmed[0] === '[') {
+    try {
+      JSON.parse(code)
+      return 'json'
+    } catch {
+      /* try heuristic */
+    }
+    if (/^\s*\{[\s\S]*"[\w]+"/.test(code)) return 'json'
+  }
+
+  // HTML/XML
+  if (/^<[a-zA-Z!]/.test(trimmed) && /<\/\w+>/.test(code)) return 'html'
+
+  // Shell
+  if (
+    /^(\$|#!\/|npm |yarn |pnpm |pip |brew |apt |curl |wget |git |cd |ls |mkdir |echo |export )/.test(
+      trimmed
+    )
+  )
+    return 'bash'
+
+  // SQL
+  if (/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WITH)\s/i.test(trimmed)) return 'sql'
+
+  // CSS
+  if (/^[.#@]?[\w-]+\s*\{[\s\S]*:\s*[\s\S]*\}/.test(trimmed)) return 'css'
+
+  // Python
+  if (/^(def |class |import |from |if __name__|@\w+)/.test(trimmed)) return 'python'
+
+  // TypeScript/JavaScript
+  if (
+    /^(const |let |var |function |import |export |interface |type |class |async |await )/.test(
+      trimmed
+    )
+  )
+    return 'typescript'
+
+  return ''
+}
+
 /** Recursively extract text content from a React node tree */
 function extractTextContent(node: React.ReactNode): string {
   if (typeof node === 'string') return node
@@ -46,13 +92,15 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
   // Extract language only from valid language-* class prefixes
   const rawClassName = (codeChild?.props as { className?: string })?.className || ''
   const langMatch = rawClassName.match(/language-(\S+)/)
-  const language = langMatch ? langMatch[1] : ''
+  const explicitLang = langMatch ? langMatch[1] : ''
 
   // Extract code text: <code> child first, fallback to recursive extraction
   const rawChildren = (codeChild?.props as { children?: React.ReactNode })?.children
   const codeText = (
     rawChildren != null ? String(rawChildren) : extractTextContent(children)
   ).replace(/\n$/, '')
+
+  const language = explicitLang || detectLanguage(codeText)
 
   const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])
 
@@ -79,7 +127,7 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
   }
 
   return (
-    <div className="relative group my-2 rounded-lg overflow-hidden border border-border-subtle">
+    <div className="relative group my-2 rounded-lg overflow-x-auto overflow-y-hidden border border-border-subtle">
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-raised border-b border-border-default">
         <span className="text-xs text-primary/70 font-mono tracking-wide uppercase">
           {language || 'code'}
@@ -108,7 +156,7 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
           const showLineNumbers = tokens.length > LINE_NUMBER_THRESHOLD
           return (
             <pre
-              className="p-3 overflow-x-auto text-sm"
+              className="p-3 text-sm"
               style={{ ...style, background: 'var(--color-surface-base)' }}
             >
               {tokens.map((line, i) => (

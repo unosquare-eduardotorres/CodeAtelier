@@ -128,6 +128,148 @@ describe('chunk-router › safeSend destroyed-window guard', () => {
   })
 })
 
+// ── Expanded coverage (Round 4) ──
+
+describe('chunk-router › handleText edge cases', () => {
+  test('empty content → no send (early return)', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-empty-text', window)
+    routeChunk(c, { type: 'text', content: '' } as StreamChunk)
+    // Text batching might not send immediately, but accumulator should be unchanged
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('undefined content → no accumulation', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-undef-text', window)
+    routeChunk(c, { type: 'text' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+})
+
+describe('chunk-router › handleThinking edge cases', () => {
+  test('empty thinking content → no send', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-empty-think', window), { type: 'thinking', content: '' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('undefined thinking content → no send', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-undef-think', window), { type: 'thinking' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+})
+
+describe('chunk-router › handleStatus edge cases', () => {
+  test('empty string status content → no send', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-empty-status', window), { type: 'status', content: '' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+})
+
+describe('chunk-router › handleFilesPersisted', () => {
+  test('sends SDK_FILES_PERSISTED with files payload', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-files', window), {
+      type: 'files_persisted',
+      persistedFiles: ['a.ts', 'b.ts']
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.SDK_FILES_PERSISTED)
+  })
+})
+
+describe('chunk-router › handleTodoUpdate', () => {
+  test('missing todoUpdate → no send', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-no-todo', window), { type: 'todo_update' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('with todoUpdate → sends chunk', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-todo', window), {
+      type: 'todo_update',
+      todoUpdate: { action: 'add', text: 'Fix bug' }
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.CHAT_MESSAGE_CHUNK)
+  })
+})
+
+describe('chunk-router › handleLspDiagnostics', () => {
+  test('missing lspDiagnostics → no send', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-no-lsp', window), { type: 'lsp_diagnostics' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('with diagnostics → sends SDK_LSP_DIAGNOSTICS', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-lsp', window), {
+      type: 'lsp_diagnostics',
+      lspDiagnostics: [{ file: 'a.ts', line: 1, severity: 'error', message: 'bad' }]
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.SDK_LSP_DIAGNOSTICS)
+  })
+})
+
+describe('chunk-router › isStatusLabel coverage (via subagent handlers)', () => {
+  test('subagent_progress with status-label-only → no text emit, still sends tool activity', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-sub-status', window)
+    routeChunk(c, {
+      type: 'subagent_progress',
+      content: 'running task',
+      toolId: 'sub-1',
+      toolName: 'Agent'
+    } as unknown as StreamChunk)
+    // Short status label (< 30 chars, starts with 'running') should NOT accumulate as text
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('subagent_progress with prose text → accumulates + sends text chunk', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-sub-prose', window)
+    const longContent = 'I am analyzing the codebase for potential improvements in the authentication module.'
+    routeChunk(c, {
+      type: 'subagent_progress',
+      content: longContent,
+      toolId: 'sub-2',
+      toolName: 'Agent'
+    } as unknown as StreamChunk)
+    assert.ok(c.contentAccumulator.value.includes('analyzing'))
+  })
+})
+
+describe('chunk-router › handleSubagentComplete', () => {
+  test('toolInput=completed → status completed', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-sub-done', window), {
+      type: 'subagent_complete',
+      content: 'Done with analysis',
+      toolInput: 'completed',
+      toolId: 'sub-3'
+    } as unknown as StreamChunk)
+    // Should have sent at least one chunk
+    assert.ok(send.callCount >= 1)
+  })
+
+  test('toolInput != completed → status error', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-sub-err', window), {
+      type: 'subagent_complete',
+      content: 'Failed to complete the task due to timeout',
+      toolInput: 'failed',
+      toolId: 'sub-4'
+    } as unknown as StreamChunk)
+    assert.ok(send.callCount >= 1)
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

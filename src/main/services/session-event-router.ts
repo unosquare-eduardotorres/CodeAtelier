@@ -10,6 +10,7 @@
 import type { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { PendingPermission } from '../../shared/types'
+import { safeWindowSend } from '../ipc/safe-send'
 
 export interface TaggedEvent {
   workspaceId: string
@@ -25,7 +26,7 @@ export class SessionEventRouter {
 
   /** Send a tagged event to the renderer on any IPC channel. */
   send(channel: string, payload: TaggedEvent): void {
-    this.mainWindow.webContents.send(channel, payload)
+    safeWindowSend(this.mainWindow, channel, payload)
   }
 
   /**
@@ -33,7 +34,7 @@ export class SessionEventRouter {
    * Enforces workspaceId is always present in the payload.
    */
   sendWorkspaceEvent(channel: string, workspaceId: string, payload: Record<string, unknown>): void {
-    this.mainWindow.webContents.send(channel, { workspaceId, ...payload })
+    safeWindowSend(this.mainWindow, channel, { workspaceId, ...payload })
   }
 
   /** Send a permission/blocking event from a background workspace. */

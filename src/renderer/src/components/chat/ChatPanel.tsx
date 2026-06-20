@@ -30,8 +30,10 @@ import {
 import type { ConversationMode } from '../../../../shared/types'
 import { useChatPanelEffects } from './useChatPanelEffects'
 import { useRateLimitState } from './useRateLimitState'
+import { useApiRetryState } from './useApiRetryState'
 import { useSessionRecoveryState } from './useSessionRecoveryState'
 import { useMcpIntegrations } from './useMcpIntegrations'
+import ApiRetryBanner from './ApiRetryBanner'
 
 type ChatTab = 'chat' | 'code-changes'
 
@@ -66,6 +68,7 @@ export default function ChatPanel({
   // ── Extracted hooks ──
   const { projectSpecialist, generateModalOpen, handleDismissGenerate } = useChatPanelEffects()
   const { rateLimitState } = useRateLimitState()
+  const { apiRetry } = useApiRetryState()
   const { sessionRecovery } = useSessionRecoveryState()
   const { availableMcpIntegrations, handleMcpToggle } = useMcpIntegrations()
 
@@ -238,6 +241,15 @@ export default function ChatPanel({
               status={rateLimitState.status}
             />
           </div>
+        )}
+
+        {/* API retry / overload banner */}
+        {apiRetry && (
+          <ApiRetryBanner
+            attempt={apiRetry.attempt}
+            maxRetries={apiRetry.maxRetries}
+            errorStatus={apiRetry.errorStatus}
+          />
         )}
 
         {/* Tab content */}

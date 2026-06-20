@@ -14,6 +14,36 @@
 import type Database from 'better-sqlite3'
 import { getDatabase } from './index'
 
+/**
+ * SQL-01 / DB-02 / DB-03: Regex validators for SQL identifiers interpolated into queries.
+ * Prevents SQL injection via column names and ORDER BY clauses.
+ * Only allows alphanumeric + underscore identifiers, with optional ASC/DESC for orderBy.
+ */
+const COLUMN_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+const ORDER_BY_RE =
+  /^[a-zA-Z_][a-zA-Z0-9_]*(\s+(ASC|DESC))?(\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*(\s+(ASC|DESC))?)*$/i
+
+function validateColumnName(name: string): string {
+  if (!COLUMN_NAME_RE.test(name)) {
+    throw new Error(`Invalid column name: ${name}`)
+  }
+  return name
+}
+
+function validateOrderBy(clause: string): string {
+  if (!ORDER_BY_RE.test(clause)) {
+    throw new Error(`Invalid ORDER BY clause: ${clause}`)
+  }
+  return clause
+}
+
+function validateLimit(limit: number): number {
+  if (!Number.isFinite(limit) || limit < 0 || !Number.isInteger(limit)) {
+    throw new Error(`Invalid LIMIT value: ${limit}`)
+  }
+  return limit
+}
+
 export abstract class BaseRepository<Row, Model> {
   /** Table name used by generic finders */
   protected abstract readonly tableName: string
@@ -32,7 +62,7 @@ export abstract class BaseRepository<Row, Model> {
    */
   findOneBy(column: string, value: unknown): Model | undefined {
     const row = this.db()
-      .prepare(`SELECT * FROM ${this.tableName} WHERE ${column} = ?`)
+      .prepare(`SELECT * FROM ${this.tableName} WHERE ${validateColumnName(column)} = ?`)
       .get(value) as Row | undefined
     return row ? this.mapRow(row) : undefined
   }
@@ -52,9 +82,9 @@ export abstract class BaseRepository<Row, Model> {
     value: unknown,
     options?: { orderBy?: string; limit?: number }
   ): Model[] {
-    let sql = `SELECT * FROM ${this.tableName} WHERE ${column} = ?`
-    if (options?.orderBy) sql += ` ORDER BY ${options.orderBy}`
-    if (options?.limit) sql += ` LIMIT ${options.limit}`
+    let sql = `SELECT * FROM ${this.tableName} WHERE ${validateColumnName(column)} = ?`
+    if (options?.orderBy) sql += ` ORDER BY ${validateOrderBy(options.orderBy)}`
+    if (options?.limit) sql += ` LIMIT ${validateLimit(options.limit)}`
     const rows = this.db().prepare(sql).all(value) as Row[]
     return rows.map((r) => this.mapRow(r))
   }
@@ -63,7 +93,7 @@ export abstract class BaseRepository<Row, Model> {
    * Delete rows by column value. Returns the number of deleted rows.
    */
   deleteBy(column: string, value: unknown): number {
-    return this.db().prepare(`DELETE FROM ${this.tableName} WHERE ${column} = ?`).run(value).changes
+    return this.db().prepare(`DELETE FROM ${this.tableName} WHERE ${validateColumnName(column)} = ?`).run(value).changes
   }
 
   /**

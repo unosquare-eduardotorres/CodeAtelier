@@ -26,6 +26,8 @@ interface MpaRunRow {
   total_tokens: number
   campaign_id: string | null
   order_index: number | null
+  blueprint_id: string | null
+  blueprint_phase_id: string | null
 }
 
 interface MpaPhaseRow {
@@ -68,7 +70,9 @@ function mapRunRow(row: MpaRunRow): MpaRun {
     completedAt: row.completed_at,
     totalTokens: row.total_tokens,
     campaignId: row.campaign_id ?? null,
-    orderIndex: row.order_index ?? null
+    orderIndex: row.order_index ?? null,
+    blueprintId: row.blueprint_id ?? null,
+    blueprintPhaseId: row.blueprint_phase_id ?? null
   }
 }
 

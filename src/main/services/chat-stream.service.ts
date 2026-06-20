@@ -23,11 +23,13 @@ import {
   type CompactNeededMessage
 } from '../ipc/chat-protocol'
 import { chatIpcLogger } from '../logger'
+import { safeWindowSend } from '../ipc/safe-send'
 import { getSessionEventRouter } from './session-event-router'
 import { IntentRouter } from './intent-router'
 import { conversationStateMachine } from './conversation-state-machine'
 import { conversationLifecycle } from './conversation-lifecycle'
 import { hookEngine } from './hook-engine.service'
+import { planRegistryService } from './plan-registry.service'
 
 const log = chatIpcLogger
 
@@ -139,7 +141,8 @@ export class ChatStreamService {
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
     const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
           conversationId: chatAgentService.getCurrentConversationId() || '',
@@ -159,7 +162,7 @@ export class ChatStreamService {
       action?: string
       requestId?: string
     }): void => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         questions: data.questions,
         action: data.action,
@@ -171,7 +174,7 @@ export class ChatStreamService {
 
     // Elicitation — MCP server user input requests forwarded to renderer
     const onElicitation = (data: ElicitationEvent): void => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.ELICITATION_REQUEST, {
+      safeWindowSend(this.mainWindow, IPC_CHANNELS.ELICITATION_REQUEST, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         ...data
       })
@@ -181,7 +184,7 @@ export class ChatStreamService {
 
     // Budget cap reached — forward as a CHAT_MESSAGE_CHUNK with budgetCapReached field
     const onBudgetCapReached = (data: { conversationId: string; message: string }): void => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: data.conversationId,
         requestId: this.activeRequestId ?? undefined,
         budgetCapReached: {
@@ -391,7 +394,7 @@ export class ChatStreamService {
   ): void {
     // Keepalive — prevents renderer's 2-min safety timer from firing
     this.keepaliveTimer = setInterval(() => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId,
         requestId,
         keepalive: true
@@ -401,13 +404,19 @@ export class ChatStreamService {
     // Main-process safety timeout (5 min) — last-resort recovery
     const MAIN_PROCESS_SAFETY_TIMEOUT_MS = 5 * 60 * 1000
     const safetyTimer = setTimeout(() => {
-      if (this.streamingLock) {
-        log.error(
-          '[STREAM:main-safety-timeout] Streaming lock stuck for 5 minutes — force-resetting. ' +
-            `conversationId=${conversationId} requestId=${requestId}`
-        )
-        conversationLifecycle.abort('safety-timeout')
-        rejectDone(new Error('Streaming timed out — safety recovery triggered'))
+      // STREAM-08: try-catch entire safety timer body to ensure rejectDone is called
+      try {
+        if (this.streamingLock) {
+          log.error(
+            '[STREAM:main-safety-timeout] Streaming lock stuck for 5 minutes — force-resetting. ' +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          conversationLifecycle.abort('safety-timeout')
+          rejectDone(new Error('Streaming timed out — safety recovery triggered'))
+        }
+      } catch (e) {
+        log.error('[STREAM:safety-timer] Abort failed during safety timeout:', e)
+        rejectDone(e instanceof Error ? e : new Error(String(e)))
       }
     }, MAIN_PROCESS_SAFETY_TIMEOUT_MS)
 
@@ -466,7 +475,8 @@ export class ChatStreamService {
     phase: ConversationPhase,
     specialistMeta: { specialist: string; taskId?: string } | undefined
   ): void {
-    this.mainWindow.webContents.send(
+    safeWindowSend(
+      this.mainWindow,
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createTextChunk({
         conversationId,
@@ -558,7 +568,8 @@ export class ChatStreamService {
         messageRepository.updateToolActivities(savedMessage.id, errorToolActivities)
       }
 
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
           conversationId,
@@ -567,7 +578,8 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
         createCompleteMessage({
           conversationId,
@@ -601,7 +613,8 @@ export class ChatStreamService {
         )
 
         // Surface the failure to the user instead of saving an empty message
-        this.mainWindow.webContents.send(
+        safeWindowSend(
+          this.mainWindow,
           IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
           createTextChunk({
             conversationId: ctx.conversationId,
@@ -636,7 +649,8 @@ export class ChatStreamService {
       log.info(
         `[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
       )
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
         createCompleteMessage({
           conversationId: ctx.conversationId,
@@ -646,7 +660,8 @@ export class ChatStreamService {
       )
     } catch (error) {
       log.error('Failed to save generalist message:', error)
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
           conversationId: ctx.conversationId,
@@ -655,7 +670,8 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
         createCompleteMessage({
           conversationId: ctx.conversationId,
@@ -742,8 +758,12 @@ export class ChatStreamService {
     }
 
     const onComplete = (): void => {
-      // Flush any pending batched text deltas before finalizing
-      flushTextBatcher()
+      // STREAM-07: try-catch flushTextBatcher to prevent finalizeStreamMessage skip
+      try {
+        flushTextBatcher(ctx.conversationId)
+      } catch (flushErr) {
+        log.error('[PIPELINE:complete] flushTextBatcher failed:', flushErr)
+      }
 
       if (this.isStopped) {
         cleanupListeners()
@@ -762,7 +782,12 @@ export class ChatStreamService {
           // reaching the transition (e.g. mainWindow destroyed), ensure the state
           // machine still moves to idle. Idempotent when already idle.
           conversationStateMachine.transition('chatAgentComplete')
-          cleanupListeners()
+          // STREAM-06: try-catch cleanupListeners to ensure rejectDone is always called
+          try {
+            cleanupListeners()
+          } catch (cleanupErr) {
+            log.error('[PIPELINE:complete] cleanupListeners in catch path failed:', cleanupErr)
+          }
           rejectDone(err instanceof Error ? err : new Error(String(err)))
         })
     }
@@ -780,7 +805,8 @@ export class ChatStreamService {
 
       const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
       ctx.streamedContent += planBlock
-      this.mainWindow.webContents.send(
+      safeWindowSend(
+        this.mainWindow,
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
           conversationId: ctx.conversationId,
@@ -789,6 +815,22 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
+      // Dual-write: register plan in Plan Hub registry (non-critical)
+      try {
+        const workspaceId = chatAgentService.activeWorkspaceId
+        if (workspaceId && data.structuredPlan) {
+          planRegistryService.registerChatPlan({
+            workspaceId,
+            conversationId: ctx.conversationId,
+            messageId: ctx.requestId,
+            plan: data.structuredPlan,
+            rawContent: data.rawContent
+          })
+        }
+      } catch (err) {
+        log.warn('[PIPELINE:plan-registry-failed] Non-critical:', err)
+      }
+
       log.info(
         '[PIPELINE:plan-injected] Plan block injected into streamed content and forwarded to renderer'
       )
@@ -821,57 +863,77 @@ export class ChatStreamService {
       throw error
     }
 
-    // Stage 3: Resolve identity
-    const { streamingRole, phase, specialistMeta, adapterAgentId } =
-      this.resolveStreamIdentity()
-    this.currentStreamingRole = streamingRole
+    // STREAM-01: Wrap stages 3–9 in try-catch to prevent stream lock leaks.
+    // If any pre-dispatch stage throws, abort lifecycle (releases lock) and reject.
+    try {
+      // Stage 3: Resolve identity
+      const { streamingRole, phase, specialistMeta, adapterAgentId } =
+        this.resolveStreamIdentity()
+      this.currentStreamingRole = streamingRole
 
-    void signal // AbortSignal available for future cooperative cancellation
+      void signal // AbortSignal available for future cooperative cancellation
 
-    // Stage 4: Announce streaming identity to renderer
-    this.announceStreamStart(conversationId, requestId, streamingRole, phase, specialistMeta)
+      // Stage 4: Announce streaming identity to renderer
+      this.announceStreamStart(conversationId, requestId, streamingRole, phase, specialistMeta)
 
-    // Stage 5: Setup timers (keepalive + safety)
-    this.setupStreamTimers(conversationId, requestId, rejectDone)
+      // Stage 5: Setup timers (keepalive + safety)
+      this.setupStreamTimers(conversationId, requestId, rejectDone)
 
-    // Clear any stale tool activities from a previous crashed stream
-    getAndClearToolActivities(conversationId)
+      // Clear any stale tool activities from a previous crashed stream
+      getAndClearToolActivities(conversationId)
 
-    // Stage 6: Prepare user message
-    const { fullContent, imageAttachments } = this.prepareUserMessage(text, attachments)
-    const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
-    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
-    log.info('User message saved to DB')
+      // Stage 6: Prepare user message
+      const { fullContent, imageAttachments } = this.prepareUserMessage(text, attachments)
+      const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
+      messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
+      log.info('User message saved to DB')
 
-    // Stage 7: Build context + listeners
-    const ctx: StreamContext = {
-      conversationId,
-      requestId,
-      streamingRole,
-      phase,
-      specialistMeta,
-      adapterAgentId,
-      workspacePath: chatAgentService.getWorkspacePath() ?? undefined,
-      streamedContent: '',
-      planInjected: false
+      // Stage 7: Build context + listeners
+      const ctx: StreamContext = {
+        conversationId,
+        requestId,
+        streamingRole,
+        phase,
+        specialistMeta,
+        adapterAgentId,
+        workspacePath: chatAgentService.getWorkspacePath() ?? undefined,
+        streamedContent: '',
+        planInjected: false
+      }
+
+      const { onChunk, onComplete, onIntent, onPlanEvent } =
+        this.buildStreamListeners(ctx, resolveDone, rejectDone)
+
+      // Stage 8: Register disposers (needs listener refs)
+      this.registerStreamDisposers(onChunk, onComplete, onIntent, onPlanEvent)
+
+      // Stage 9: Dispatch to agent
+      await this.dispatchToAgent(
+        conversationId,
+        fullContent,
+        imageAttachments,
+        { onChunk, onComplete, onIntent, onPlanEvent },
+        ctx,
+        requestId,
+        rejectDone
+      )
+    } catch (error) {
+      // Lifecycle abort releases streamingLock + activeRequestId + per-stream listeners
+      conversationLifecycle.abort('streamError')
+      const err = error instanceof Error ? error : new Error(String(error))
+      log.error('[STREAM:pre-dispatch-error] Stage 3–9 failed, lock released:', err.message)
+      safeWindowSend(
+        this.mainWindow,
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({
+          conversationId,
+          requestId,
+          text: `**Error:** ${err.message}`,
+          role: this.currentStreamingRole
+        })
+      )
+      rejectDone(err)
     }
-
-    const { onChunk, onComplete, onIntent, onPlanEvent } =
-      this.buildStreamListeners(ctx, resolveDone, rejectDone)
-
-    // Stage 8: Register disposers (needs listener refs)
-    this.registerStreamDisposers(onChunk, onComplete, onIntent, onPlanEvent)
-
-    // Stage 9: Dispatch to agent
-    await this.dispatchToAgent(
-      conversationId,
-      fullContent,
-      imageAttachments,
-      { onChunk, onComplete, onIntent, onPlanEvent },
-      ctx,
-      requestId,
-      rejectDone
-    )
 
     // Return StreamHandle — callers can optionally await `done` for full pipeline completion
     return { done, abort: () => conversationLifecycle.abort('external'), requestId }
@@ -928,8 +990,13 @@ export class ChatStreamService {
     const requestId =
       this.activeRequestId ?? conversationLifecycle.requestId ?? `req-stop-${Date.now()}`
 
-    // Stop specialist pool via callback
-    await this.callbacks.onStopPipeline()
+    // STREAM-05: try-catch onStopPipeline to prevent unhandled rejection
+    // from skipping partial content save + lifecycle abort below.
+    try {
+      await this.callbacks.onStopPipeline()
+    } catch (e) {
+      log.error('[STREAM:stop] onStopPipeline failed:', e)
+    }
 
     // Save partial content
     if (conversationId) {
@@ -963,7 +1030,8 @@ export class ChatStreamService {
           )
         }
 
-        this.mainWindow.webContents.send(
+        safeWindowSend(
+          this.mainWindow,
           IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
           createCompleteMessage({
             conversationId,
@@ -985,9 +1053,15 @@ export class ChatStreamService {
 
   // ── Compact ──
 
+  // STREAM-12: try-catch compact to prevent unhandled rejection in IPC handler
   async compact(extractNuance = false): Promise<void> {
     log.info(`Compact requested (nuance=${extractNuance})`)
-    await chatAgentService.compact(extractNuance)
+    try {
+      await chatAgentService.compact(extractNuance)
+    } catch (e) {
+      log.error('[STREAM:compact] Compact failed:', e)
+      throw e
+    }
   }
 
   /**
@@ -999,7 +1073,15 @@ export class ChatStreamService {
       log.warn(
         '[STREAM:workspace-switch-reset] Streaming lock active during workspace switch — force-resetting'
       )
-      conversationLifecycle.abort('workspace-switch')
+      // STREAM-09: try-catch abort to prevent IPC handler crash
+      try {
+        conversationLifecycle.abort('workspace-switch')
+      } catch (e) {
+        log.error('[STREAM:workspace-switch-reset] Lifecycle abort failed:', e)
+        // Manual fallback release if abort throws
+        this.streamingLock = false
+        this.activeRequestId = null
+      }
     }
   }
 

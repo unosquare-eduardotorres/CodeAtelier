@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron'
+import { ipcMain, dialog, safeStorage } from 'electron'
 import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { resolve, basename } from 'node:path'
@@ -244,11 +244,25 @@ export function registerWorkspaceIpc(): void {
 
     // Merge auth settings with existing workspace settings
     const existing = workspaceRepository.getSettings(workspaceId)
-    const merged = {
+    const merged: Record<string, unknown> = {
       ...existing,
-      authMode,
-      // Only store API key if auth mode is api-key, otherwise clear it
-      anthropicApiKey: authMode === 'api-key' ? anthropicApiKey : undefined
+      authMode
+    }
+
+    // IPC-01: Encrypt API key with safeStorage (OS keychain) before DB storage
+    // — matches the pattern established in github.service.ts:69
+    if (authMode === 'api-key' && anthropicApiKey) {
+      try {
+        const encrypted = safeStorage.encryptString(anthropicApiKey)
+        merged.anthropicApiKey = encrypted.toString('base64')
+        merged.anthropicApiKeyEncrypted = true
+      } catch (encryptErr) {
+        dbLogger.error('Failed to encrypt API key with safeStorage:', encryptErr)
+        throw new Error('Failed to securely store API key')
+      }
+    } else {
+      merged.anthropicApiKey = undefined
+      merged.anthropicApiKeyEncrypted = false
     }
     workspaceRepository.updateSettings(workspaceId, merged)
 

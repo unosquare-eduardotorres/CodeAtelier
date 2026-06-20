@@ -95,6 +95,173 @@ describe('ChatAgentService — workspace accessors', () => {
   })
 })
 
+// ── getStatus ──
+
+describe('ChatAgentService — getStatus', () => {
+  test('no active session → returns idle DaVinci status', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      const status = chatAgentService.getStatus()
+      assert.equal(status.status, 'idle')
+      assert.equal(status.agentType, 'da-vinci')
+      assert.equal(status.elapsedMs, 0)
+      assert.equal(status.tokenUsage, 0)
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('no active session → workspaceId is undefined when no activeWorkspaceId', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      const status = chatAgentService.getStatus()
+      assert.equal(status.workspaceId, undefined)
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('with active workspace but no session → includes workspaceId', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = 'ws-status-test'
+    try {
+      const status = chatAgentService.getStatus()
+      assert.equal(status.workspaceId, 'ws-status-test')
+      assert.equal(status.status, 'idle')
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+})
+
+// ── Backward-compatible getters (no session) ──
+
+describe('ChatAgentService — backward-compatible getters (no session)', () => {
+  test('getWorkspacePath → null when no active session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getWorkspacePath(), null)
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getCurrentConversationId → null when no active session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getCurrentConversationId(), null)
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getStreamedContent → empty string when no active session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getStreamedContent(), '')
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getMode → plan when no active session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getMode(), 'plan')
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('isRunning → false when no active session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.isRunning(), false)
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getCacheEfficiency → zero-filled report when no active session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      const report = chatAgentService.getCacheEfficiency()
+      assert.equal(report.hitRate, 0)
+      assert.equal(report.savedTokens, 0)
+      assert.equal(report.totalInput, 0)
+      assert.equal(report.turns, 0)
+      assert.deepEqual(report.turnBreakdown, [])
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+})
+
+// ── Role/agent accessors ──
+
+describe('ChatAgentService — role accessors', () => {
+  test('getActiveRole → da-vinci when no session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getActiveRole(), 'da-vinci')
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getActiveAgentId → da-vinci when no session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getActiveAgentId(), 'da-vinci')
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getActiveMessageRole → da-vinci when no session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getActiveMessageRole(), 'da-vinci')
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+
+  test('getActivePersona → null when no session', () => {
+    const svc = chatAgentService as unknown as Injectable
+    const original = svc._activeWorkspaceId
+    svc._activeWorkspaceId = null
+    try {
+      assert.equal(chatAgentService.getActivePersona(), null)
+    } finally {
+      svc._activeWorkspaceId = original
+    }
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

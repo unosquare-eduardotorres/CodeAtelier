@@ -4,6 +4,7 @@ import {
   useBugStore,
   useIndexingStore,
   useMpaStore,
+  useBlueprintStore,
   useToastStore
 } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
@@ -61,6 +62,17 @@ export function useWorkspaceListeners(
       setSidebarView('settings')
     }
   }, [preloadedGoal, setWorkspaceSettingsTab, setSidebarView])
+
+  // Blueprint listeners — keeps pipeline state in sync even when BlueprintPage is not mounted
+  const registerBlueprintListeners = useBlueprintStore((s) => s.registerListeners)
+  const loadBlueprintStatus = useBlueprintStore((s) => s.loadPipelineStatus)
+
+  useEffect(() => {
+    if (!activeWorkspace) return
+    loadBlueprintStatus(activeWorkspace.id)
+    const cleanup = registerBlueprintListeners()
+    return cleanup
+  }, [activeWorkspace?.id, registerBlueprintListeners, loadBlueprintStatus])
 
   // Indexing listener
   const startIndexingListener = useIndexingStore((s) => s.startListening)

@@ -57,6 +57,8 @@ export interface StreamLoopState {
    * in finalizeStream so the user still gets a plan card.
    */
   planModeToolBlock?: boolean
+  /** Set when api_retry chunks indicate server overload (529/503/overloaded) */
+  overloadDetected?: boolean
 }
 
 /**
