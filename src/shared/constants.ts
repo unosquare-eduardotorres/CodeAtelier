@@ -1681,7 +1681,17 @@ export const MCP_TOOLS = {
       'dependency_health',
       'Analysis · dependency_health'
     ),
-    TEST_COVERAGE_MAP: mcpTool('code-analysis', 'test_coverage_map', 'Analysis · test_coverage_map')
+    TEST_COVERAGE_MAP: mcpTool('code-analysis', 'test_coverage_map', 'Analysis · test_coverage_map'),
+    RESOLVE_LIBRARY_ID: mcpTool(
+      'code-analysis',
+      'resolve_library_id',
+      'Analysis · resolve_library_id'
+    ),
+    QUERY_LIBRARY_DOCS: mcpTool(
+      'code-analysis',
+      'query_library_docs',
+      'Analysis · query_library_docs'
+    )
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
@@ -1771,10 +1781,10 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'code-analysis',
     displayName: 'Code Analysis',
-    description: 'TODO scanning, dependency health, test coverage',
+    description: 'TODO scanning, dependency health, test coverage, and library documentation',
     icon: 'BarChart3',
     tokenImpact: 'low',
-    toolCount: 3,
+    toolCount: 5,
     featureFlagKey: null,
     defaultEnabled: true
   }

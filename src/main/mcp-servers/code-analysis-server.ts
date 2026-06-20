@@ -3,17 +3,29 @@
  * Code Analysis MCP Server — externalized for CLI interactive mode.
  *
  * Exposes: analyze_complexity, analyze_dependencies, analyze_test_coverage,
- *          find_code_smells, suggest_refactoring
+ *          find_code_smells, suggest_refactoring, resolve_library_id,
+ *          query_library_docs
  *
  * Environment variables:
- *   WORKSPACE_PATH — Absolute workspace path
+ *   WORKSPACE_PATH    — Absolute workspace path
+ *   WORKSPACE_ID      — Workspace UUID (for DB-backed features)
+ *   DB_PATH           — SQLite database directory
+ *   CONTEXT7_API_KEY  — Optional Context7 API key for library doc fallback
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { truncateToolOutput } from './output-cap'
+import { LibraryDocService } from '../services/library-doc.service'
+import { libraryDocRepository } from '../db/repositories/library-doc.repository'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
+const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
+const CONTEXT7_API_KEY = process.env.CONTEXT7_API_KEY ?? ''
+
+// Service instance — standalone (no Electron) so we instantiate directly
+const libraryDocService = new LibraryDocService()
 
 const server = new McpServer(
   { name: 'code-analysis', version: '1.0.0' },
@@ -111,6 +123,95 @@ async function registerTools(): Promise<void> {
             text: `[suggest_refactoring] file=${args.filePath} — delegating to in-process service`
           }
         ]
+      }
+    }
+  )
+
+  // ── Library Documentation Tools ──
+
+  server.tool(
+    'resolve_library_id',
+    'Search for a library by name. Checks local cache first, then Context7, then npm registry. Returns available packages and their doc coverage.',
+    {
+      libraryName: z.string().describe('Package name (e.g. "zod", "electron", "react")'),
+      query: z.string().optional().describe('What you need — improves ranking')
+    },
+    async (args) => {
+      if (!WORKSPACE_ID) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: '[resolve_library_id] WORKSPACE_ID not set — cannot access library doc cache'
+          }]
+        }
+      }
+      try {
+        const results = await libraryDocService.resolveLibrary(
+          WORKSPACE_ID,
+          WORKSPACE_PATH,
+          args.libraryName,
+          CONTEXT7_API_KEY || undefined,
+          args.query
+        )
+        return {
+          content: [{
+            type: 'text' as const,
+            text: truncateToolOutput(
+              JSON.stringify({ matches: results, count: results.length }, null, 2),
+              15_000
+            )
+          }]
+        }
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `[resolve_library_id] Error: ${err instanceof Error ? err.message : String(err)}`
+          }]
+        }
+      }
+    }
+  )
+
+  server.tool(
+    'query_library_docs',
+    'Get documentation for a library. Returns relevant sections matched by full-text search. Falls back through local cache → Context7 → npm registry.',
+    {
+      packageName: z.string().describe('Package name (exact match)'),
+      query: z.string().describe('Specific question or topic to search for'),
+      maxSections: z.number().optional().default(5).describe('Max doc sections to return')
+    },
+    async (args) => {
+      if (!WORKSPACE_ID) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: '[query_library_docs] WORKSPACE_ID not set — cannot access library doc cache'
+          }]
+        }
+      }
+      try {
+        const result = await libraryDocService.queryDocs(
+          WORKSPACE_ID,
+          WORKSPACE_PATH,
+          args.packageName,
+          args.query,
+          CONTEXT7_API_KEY || undefined,
+          args.maxSections
+        )
+        return {
+          content: [{
+            type: 'text' as const,
+            text: truncateToolOutput(JSON.stringify(result, null, 2), 15_000)
+          }]
+        }
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `[query_library_docs] Error: ${err instanceof Error ? err.message : String(err)}`
+          }]
+        }
       }
     }
   )

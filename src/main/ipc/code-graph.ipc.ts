@@ -6,6 +6,7 @@ import { codeGraphService } from '../services/code-graph.service'
 import { validateSender } from './validate-sender'
 import { workspaceRepository } from '../db/repositories'
 import type { CodeGraphIndexingState } from '../../shared/types'
+import { libraryDocService } from '../services/library-doc.service'
 
 export function registerCodeGraphIpc(mainWindow: BrowserWindow): void {
   // Forward progress events to renderer
@@ -29,6 +30,23 @@ export function registerCodeGraphIpc(mainWindow: BrowserWindow): void {
       // Fire-and-forget — progress events stream to renderer
       codeGraphService
         .indexWorkspace(args.workspaceId, workspace.repoPath)
+        .then(() => {
+          // Index library documentation in the background after code graph completes
+          try {
+            const result = libraryDocService.indexWorkspaceDependencies(
+              args.workspaceId,
+              workspace.repoPath
+            )
+            log.info(
+              `[library-docs] Indexed ${result.indexed}, skipped ${result.skipped}` +
+                (result.errors.length > 0 ? `, errors: ${result.errors.length}` : '')
+            )
+          } catch (e) {
+            log.warn(
+              `[library-docs] Indexing failed: ${e instanceof Error ? e.message : String(e)}`
+            )
+          }
+        })
         .catch((err) => log.error('[CodeGraph] Indexing pipeline failed:', err))
     }
   )
