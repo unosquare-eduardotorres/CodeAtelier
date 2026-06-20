@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Hammer, Play, RefreshCw, X, Landmark, Loader2, Target } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
-import type { CouncilAdvisorRole } from '../../../../../shared/types'
+import type { CouncilAdvisorRole, CouncilVerdict } from '../../../../../shared/types'
 import CouncilMemberColumn, { StatusBadge } from './CouncilMemberColumn'
 import CouncilVerdictCard from './CouncilVerdictCard'
 import CouncilRankingsMatrix from './CouncilRankingsMatrix'
@@ -72,6 +72,99 @@ function PhaseIndicator({ phase }: { phase: string }): React.JSX.Element {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ── Action bar (complete phase) ──────────────────────────────────────────
+
+interface CouncilActionBarProps {
+  verdict: CouncilVerdict
+  resolvedTitle: string | undefined
+  onAcceptAndBuild?: () => void
+  onSendToGoal?: (text: string, title: string) => void
+  onRevisePlan?: (feedback: string) => void
+  onDismiss?: () => void
+  onReset: () => void
+}
+
+function CouncilActionBar({
+  verdict,
+  resolvedTitle,
+  onAcceptAndBuild,
+  onSendToGoal,
+  onRevisePlan,
+  onDismiss,
+  onReset
+}: CouncilActionBarProps): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
+      {onAcceptAndBuild && (
+        <button
+          onClick={() => {
+            onReset()
+            onAcceptAndBuild()
+          }}
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors press-scale"
+        >
+          <Hammer size={14} />
+          Accept & Build
+        </button>
+      )}
+      {onSendToGoal && (
+        <button
+          onClick={() => {
+            const goalText = [
+              verdict.sections.recommendation,
+              '',
+              'Key revisions:',
+              ...verdict.revisions
+                .filter((r) => r.priority === 'high' || r.priority === 'medium')
+                .map((r) => `- ${r.description}`)
+            ].join('\n')
+
+            onReset()
+            onSendToGoal(goalText, resolvedTitle ?? 'Council-reviewed plan')
+          }}
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded text-sm font-medium transition-colors press-scale"
+        >
+          <Target size={14} />
+          Send to Goal
+        </button>
+      )}
+      {onRevisePlan && (
+        <button
+          onClick={() => {
+            const feedback = [
+              'Council Review Feedback:',
+              `Overall Score: ${verdict.overallScore}/100`,
+              '',
+              `Recommendation: ${verdict.sections.recommendation}`,
+              '',
+              'Revisions needed:',
+              ...verdict.revisions.map(
+                (r) => `- [${r.priority.toUpperCase()}] ${r.description} (${r.consensus})`
+              )
+            ].join('\n')
+            onReset()
+            onRevisePlan(feedback)
+          }}
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
+        >
+          <RefreshCw size={14} />
+          Revise Plan
+        </button>
+      )}
+      <button
+        onClick={() => {
+          onReset()
+          onDismiss?.()
+        }}
+        className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
+      >
+        <X size={14} />
+        Back to Sessions
+      </button>
     </div>
   )
 }
@@ -176,74 +269,15 @@ export default function CouncilView({
 
       {/* ── Sticky action bar (complete phase) ──────────────────────────── */}
       {phase === 'complete' && verdict && (
-        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
-          {onAcceptAndBuild && (
-            <button
-              onClick={() => {
-                reset()
-                onAcceptAndBuild()
-              }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors press-scale"
-            >
-              <Hammer size={14} />
-              Accept & Build
-            </button>
-          )}
-          {onSendToGoal && (
-            <button
-              onClick={() => {
-                const goalText = [
-                  verdict.sections.recommendation,
-                  '',
-                  'Key revisions:',
-                  ...verdict.revisions
-                    .filter((r) => r.priority === 'high' || r.priority === 'medium')
-                    .map((r) => `- ${r.description}`)
-                ].join('\n')
-
-                reset()
-                onSendToGoal(goalText, resolvedTitle ?? 'Council-reviewed plan')
-              }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded text-sm font-medium transition-colors press-scale"
-            >
-              <Target size={14} />
-              Send to Goal
-            </button>
-          )}
-          {onRevisePlan && (
-            <button
-              onClick={() => {
-                const feedback = [
-                  'Council Review Feedback:',
-                  `Overall Score: ${verdict.overallScore}/100`,
-                  '',
-                  `Recommendation: ${verdict.sections.recommendation}`,
-                  '',
-                  'Revisions needed:',
-                  ...verdict.revisions.map(
-                    (r) => `- [${r.priority.toUpperCase()}] ${r.description} (${r.consensus})`
-                  )
-                ].join('\n')
-                reset()
-                onRevisePlan(feedback)
-              }}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
-            >
-              <RefreshCw size={14} />
-              Revise Plan
-            </button>
-          )}
-          <button
-            onClick={() => {
-              reset()
-              onDismiss?.()
-            }}
-            className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
-          >
-            <X size={14} />
-            Back to Sessions
-          </button>
-        </div>
+        <CouncilActionBar
+          verdict={verdict}
+          resolvedTitle={resolvedTitle}
+          onAcceptAndBuild={onAcceptAndBuild}
+          onSendToGoal={onSendToGoal}
+          onRevisePlan={onRevisePlan}
+          onDismiss={onDismiss}
+          onReset={reset}
+        />
       )}
 
       {/* ── Main content area ───────────────────────────────────────────── */}

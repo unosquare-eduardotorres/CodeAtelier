@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 104
+const CURRENT_SCHEMA_VERSION = 106
 
 export interface Migration {
   version: number
@@ -2508,6 +2508,104 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(workspace_id, status, updated_at DESC);
       `)
       dbLogger.info('[migration-104] ✓ Created plans table + indexes')
+    }
+  },
+
+  // ── Migration 105: LLM Presets ──
+  {
+    version: 105,
+    name: 'LLM presets table + conversation preset columns',
+    up(database: Database.Database): void {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS llm_presets (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(12)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          is_built_in INTEGER NOT NULL DEFAULT 0,
+          action_config_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_presets_workspace ON llm_presets(workspace_id);
+      `)
+
+      // Add preset_id and handoff_context columns to conversations
+      try {
+        database.exec(`ALTER TABLE conversations ADD COLUMN preset_id TEXT DEFAULT NULL`)
+      } catch { /* column may already exist */ }
+      try {
+        database.exec(`ALTER TABLE conversations ADD COLUMN handoff_context TEXT DEFAULT NULL`)
+      } catch { /* column may already exist */ }
+
+      // Seed built-in presets for each existing workspace
+      const workspaces = database.prepare('SELECT id FROM workspaces').all() as { id: string }[]
+      const insertPreset = database.prepare(`
+        INSERT OR IGNORE INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json)
+        VALUES (?, ?, ?, 1, ?)
+      `)
+
+      for (const ws of workspaces) {
+        insertPreset.run(`${ws.id}_full-claude`, ws.id, 'Full Claude', '{}')
+        insertPreset.run(`${ws.id}_full-local`, ws.id, 'Full Local', '{}')
+      }
+
+      // Migrate existing modelOverrides into a custom preset per workspace
+      const wsWithSettings = database
+        .prepare('SELECT id, settings_json FROM workspaces WHERE settings_json IS NOT NULL')
+        .all() as { id: string; settings_json: string }[]
+
+      for (const ws of wsWithSettings) {
+        try {
+          const settings = JSON.parse(ws.settings_json)
+          if (settings.modelOverrides && Object.keys(settings.modelOverrides).length > 0) {
+            const actionConfig: Record<string, { provider: string; modelId: string }> = {}
+            for (const [action, modelId] of Object.entries(settings.modelOverrides)) {
+              if (typeof modelId === 'string') {
+                actionConfig[action] = { provider: 'claude', modelId }
+              }
+            }
+            if (Object.keys(actionConfig).length > 0) {
+              insertPreset.run(
+                `${ws.id}_migrated`,
+                ws.id,
+                'Custom (migrated)',
+                JSON.stringify(actionConfig)
+              )
+            }
+          }
+        } catch { /* non-fatal — skip malformed settings */ }
+      }
+
+      dbLogger.info('[migration-105] ✓ Created llm_presets table + seeded built-in presets')
+    }
+  },
+
+  // ── Migration 106: Library documentation cache ──
+  {
+    version: 106,
+    name: 'create-library-docs-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS library_docs (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id  TEXT NOT NULL,
+          package_name  TEXT NOT NULL,
+          version       TEXT NOT NULL DEFAULT '',
+          section_index INTEGER NOT NULL DEFAULT 0,
+          section_title TEXT NOT NULL DEFAULT '',
+          section_content TEXT NOT NULL,
+          source        TEXT NOT NULL CHECK (source IN ('node_modules', 'context7', 'npm_registry')),
+          indexed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(workspace_id, package_name, section_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_library_docs_pkg
+          ON library_docs(workspace_id, package_name);
+        CREATE VIRTUAL TABLE IF NOT EXISTS library_docs_fts USING fts5(
+          package_name, section_title, section_content,
+          content=library_docs, content_rowid=id
+        );
+      `)
+      dbLogger.info('[migration-106] ✓ Created library_docs table + FTS5 index')
     }
   }
 ]

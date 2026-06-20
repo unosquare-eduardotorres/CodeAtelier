@@ -49,7 +49,8 @@ export class AppPreferenceRepository extends BaseRepository<
       updateSource: (this.get('update_source') as UpdateSourceProvider) ?? 'drive',
       updateDrivePath: this.get('update_drive_path') ?? '',
       updateGithubOwner: this.get('update_github_owner') ?? '',
-      updateGithubRepo: this.get('update_github_repo') ?? ''
+      updateGithubRepo: this.get('update_github_repo') ?? '',
+      context7ApiKey: this.get('context7_api_key') ?? ''
     }
   }
 }

@@ -1,4 +1,5 @@
 import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type {
   MpaRun,
   MpaPhase,
@@ -49,12 +50,8 @@ interface MpaPhaseRow {
 // ── Mappers ──
 
 function mapRunRow(row: MpaRunRow): MpaRun {
-  let configJson: Record<string, unknown> = {}
-  try {
-    configJson = JSON.parse(row.config_json || '{}')
-  } catch {
-    /* ignore */
-  }
+  // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
+  const configJson = safeParseJSON<Record<string, unknown>>(row.config_json, {})
   return {
     id: row.id,
     workspaceId: row.workspace_id,

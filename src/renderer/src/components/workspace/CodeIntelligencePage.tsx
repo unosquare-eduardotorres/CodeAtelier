@@ -7,7 +7,8 @@ import {
   CodeGraphCard,
   SemanticSearchCard,
   EmbeddingModelCard,
-  SearchPlayground
+  SearchPlayground,
+  LibraryDocsCard
 } from './code-intelligence'
 
 export default function CodeIntelligencePage(): React.JSX.Element {
@@ -199,6 +200,8 @@ export default function CodeIntelligencePage(): React.JSX.Element {
         embeddingStatus={embeddingStatus}
         onShowSetup={() => setShowEmbeddingSetup(true)}
       />
+
+      <LibraryDocsCard workspaceId={activeWorkspace.id} />
 
       <SearchPlayground
         workspaceId={activeWorkspace.id}

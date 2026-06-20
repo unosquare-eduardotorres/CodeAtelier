@@ -68,6 +68,191 @@ interface GrillIteration {
 
 type TrackStatus = 'pending' | 'active' | 'completed' | 'skipped'
 
+// ── Shared helpers ────────────────────────────────────────────────────────
+
+/** Capture current answers as GrillDecision[] and merge with existing. */
+function captureAndMergeDecisions(
+  currentIteration: GrillIteration,
+  activeTrack: GrillTrackId,
+  questionStates: Record<string, QuestionState>,
+  existingDecisions: GrillDecision[]
+): GrillDecision[] {
+  const newDecisions: GrillDecision[] = []
+  for (const q of currentIteration.questions) {
+    const state = questionStates[q.id]
+    if (!state || (state.skipped && state.selectedOptions.length === 0)) continue
+    newDecisions.push({
+      trackId: activeTrack,
+      questionId: q.id,
+      questionText: q.header || q.question.slice(0, 60),
+      selectedOption: state.selectedOptions.join(', ') || 'Skipped',
+      otherText: state.otherText || undefined
+    })
+  }
+  const existingKeys = new Set(newDecisions.map((d) => `${d.trackId}:${d.questionId}`))
+  return [
+    ...existingDecisions.filter((d) => !existingKeys.has(`${d.trackId}:${d.questionId}`)),
+    ...newDecisions
+  ]
+}
+
+/** Build a user-facing summary string from current answers. */
+function buildUserAnswerSummary(
+  currentIteration: GrillIteration,
+  questionStates: Record<string, QuestionState>
+): string {
+  return currentIteration.questions
+    .map((q) => {
+      const state = questionStates[q.id]
+      if (!state) return null
+      const answer = state.skipped
+        ? 'Skipped'
+        : state.selectedOptions.join(', ') + (state.otherText ? ` — ${state.otherText}` : '')
+      return `**${q.header || 'Q'}**: ${answer}`
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+// ── Evaluation result handler hook ────────────────────────────────────────
+
+function useWizardGrillEvalHandler(opts: {
+  activeTrack: GrillTrackId | null
+  trackScores: GrillTrackScore[]
+  onTrackScoresChange: (scores: GrillTrackScore[]) => void
+  setChatMessages: React.Dispatch<React.SetStateAction<GrillChatMessage[]>>
+  setCurrentIteration: React.Dispatch<React.SetStateAction<GrillIteration | null>>
+  setPhase: React.Dispatch<React.SetStateAction<GrillPhase>>
+  setSuggestedNextTrack: React.Dispatch<
+    React.SetStateAction<{ trackId: GrillTrackId; reason: string } | null>
+  >
+  setIterationCount: React.Dispatch<React.SetStateAction<number>>
+  setQuestionStates: React.Dispatch<React.SetStateAction<Record<string, QuestionState>>>
+  previousQuestionsRef: React.MutableRefObject<string[]>
+}): void {
+  const {
+    activeTrack,
+    trackScores,
+    onTrackScoresChange,
+    setChatMessages,
+    setCurrentIteration,
+    setPhase,
+    setSuggestedNextTrack,
+    setIterationCount,
+    setQuestionStates,
+    previousQuestionsRef
+  } = opts
+
+  useEffect(() => {
+    const grillStore = useGrillStreamStore.getState()
+
+    const unsubChunk = window.api.onGrillStreamChunk((data) => {
+      grillStore.handleStreamChunk(data)
+    })
+
+    const unsubEval = window.api.onGrillEvaluationResult((data) => {
+      grillStore.flush()
+      const storeState = useGrillStreamStore.getState()
+      const content = getFlatContent(storeState)
+      const toolActivities = getFlatToolActivities(storeState)
+      const cleanContent = stripGrillEvaluationBlocks(content)
+
+      const newMessages: GrillChatMessage[] = []
+      if (cleanContent || toolActivities.length > 0) {
+        newMessages.push({ type: 'agent', content: cleanContent, toolActivities })
+      }
+
+      const trackName =
+        (data.trackId ?? activeTrack)
+          ? GRILL_TRACKS[(data.trackId ?? activeTrack) as GrillTrackId]?.name
+          : undefined
+
+      newMessages.push({
+        type: 'evaluation',
+        score: data.score,
+        scoreLabel: data.scoreLabel,
+        feedback: data.feedback,
+        trackName
+      })
+      setChatMessages((prev) => [...prev, ...newMessages])
+      grillStore.reset()
+
+      const iteration: GrillIteration = {
+        score: data.score,
+        scoreLabel: data.scoreLabel,
+        feedback: data.feedback,
+        questions: data.questions,
+        trackId: (data.trackId ?? activeTrack) as GrillTrackId | undefined,
+        suggestedNextTrack: data.suggestedNextTrack as
+          | { trackId: GrillTrackId; reason: string }
+          | undefined
+      }
+
+      setCurrentIteration(iteration)
+      setPhase('answering')
+      setIterationCount((c) => c + 1)
+
+      // Update track scores
+      const resolvedTrackId = (data.trackId ?? activeTrack) as GrillTrackId | null
+      if (resolvedTrackId) {
+        const newScores = trackScores.filter((ts) => ts.trackId !== resolvedTrackId)
+        const updatedScores = [
+          ...newScores,
+          {
+            trackId: resolvedTrackId,
+            score: data.score,
+            scoreLabel: data.scoreLabel,
+            iterationCount:
+              (trackScores.find((ts) => ts.trackId === resolvedTrackId)?.iterationCount ?? 0) + 1,
+            lastFeedback: data.feedback
+          }
+        ]
+        onTrackScoresChange(updatedScores)
+      }
+
+      if (data.suggestedNextTrack) {
+        setSuggestedNextTrack(data.suggestedNextTrack as { trackId: GrillTrackId; reason: string })
+      }
+
+      previousQuestionsRef.current = data.questions.map((q) => q.question)
+
+      // Initialize question states with recommended options pre-selected
+      const states: Record<string, QuestionState> = {}
+      for (const q of data.questions) {
+        const recommended = (q.options ?? []).filter((o) => o.recommended).map((o) => o.label)
+        states[q.id] = {
+          selectedOptions: recommended,
+          otherText: '',
+          otherSelected: false,
+          skipped: false
+        }
+      }
+      setQuestionStates(states)
+    })
+
+    const unsubComplete = window.api.onGrillStreamComplete(() => {
+      grillStore.flush()
+      const completeState = useGrillStreamStore.getState()
+      const content = getFlatContent(completeState)
+      const toolActivities = getFlatToolActivities(completeState)
+      const cleanContent = stripGrillEvaluationBlocks(content)
+      if (cleanContent || toolActivities.length > 0) {
+        setChatMessages((prev) => [
+          ...prev,
+          { type: 'agent', content: cleanContent, toolActivities }
+        ])
+      }
+      grillStore.reset()
+    })
+
+    return () => {
+      unsubChunk()
+      unsubEval()
+      unsubComplete()
+    }
+  }, [activeTrack, trackScores, onTrackScoresChange])
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function WizardGrillStep({
@@ -235,160 +420,35 @@ export default function WizardGrillStep({
     }
   }, [activeTrack, selectedTracks, completedTracks, skippedTracks, startTrackGrill, onDone])
 
-  // ── Grill stream event listeners ──
-  useEffect(() => {
-    const grillStore = useGrillStreamStore.getState()
-
-    const unsubChunk = window.api.onGrillStreamChunk((data) => {
-      grillStore.handleStreamChunk(data)
-    })
-
-    const unsubEval = window.api.onGrillEvaluationResult((data) => {
-      grillStore.flush()
-      const storeState = useGrillStreamStore.getState()
-      const content = getFlatContent(storeState)
-      const toolActivities = getFlatToolActivities(storeState)
-      const cleanContent = stripGrillEvaluationBlocks(content)
-
-      const newMessages: GrillChatMessage[] = []
-      if (cleanContent || toolActivities.length > 0) {
-        newMessages.push({ type: 'agent', content: cleanContent, toolActivities })
-      }
-
-      const trackName =
-        (data.trackId ?? activeTrack)
-          ? GRILL_TRACKS[(data.trackId ?? activeTrack) as GrillTrackId]?.name
-          : undefined
-
-      newMessages.push({
-        type: 'evaluation',
-        score: data.score,
-        scoreLabel: data.scoreLabel,
-        feedback: data.feedback,
-        trackName
-      })
-      setChatMessages((prev) => [...prev, ...newMessages])
-      grillStore.reset()
-
-      const iteration: GrillIteration = {
-        score: data.score,
-        scoreLabel: data.scoreLabel,
-        feedback: data.feedback,
-        questions: data.questions,
-        trackId: (data.trackId ?? activeTrack) as GrillTrackId | undefined,
-        suggestedNextTrack: data.suggestedNextTrack as
-          | { trackId: GrillTrackId; reason: string }
-          | undefined
-      }
-
-      setCurrentIteration(iteration)
-      setPhase('answering')
-      setIterationCount((c) => c + 1)
-
-      // Update track scores
-      const trackId = (data.trackId ?? activeTrack) as GrillTrackId | null
-      if (trackId) {
-        const newScores = trackScores.filter((ts) => ts.trackId !== trackId)
-        const updatedScores = [
-          ...newScores,
-          {
-            trackId,
-            score: data.score,
-            scoreLabel: data.scoreLabel,
-            iterationCount:
-              (trackScores.find((ts) => ts.trackId === trackId)?.iterationCount ?? 0) + 1,
-            lastFeedback: data.feedback
-          }
-        ]
-        onTrackScoresChange(updatedScores)
-      }
-
-      if (data.suggestedNextTrack) {
-        setSuggestedNextTrack(data.suggestedNextTrack as { trackId: GrillTrackId; reason: string })
-      }
-
-      previousQuestionsRef.current = data.questions.map((q) => q.question)
-
-      // Initialize question states with recommended options pre-selected
-      const states: Record<string, QuestionState> = {}
-      for (const q of data.questions) {
-        const recommended = (q.options ?? []).filter((o) => o.recommended).map((o) => o.label)
-        states[q.id] = {
-          selectedOptions: recommended,
-          otherText: '',
-          otherSelected: false,
-          skipped: false
-        }
-      }
-      setQuestionStates(states)
-    })
-
-    const unsubComplete = window.api.onGrillStreamComplete(() => {
-      grillStore.flush()
-      const completeState = useGrillStreamStore.getState()
-      const content = getFlatContent(completeState)
-      const toolActivities = getFlatToolActivities(completeState)
-      const cleanContent = stripGrillEvaluationBlocks(content)
-      if (cleanContent || toolActivities.length > 0) {
-        setChatMessages((prev) => [
-          ...prev,
-          { type: 'agent', content: cleanContent, toolActivities }
-        ])
-      }
-      grillStore.reset()
-    })
-
-    return () => {
-      unsubChunk()
-      unsubEval()
-      unsubComplete()
-    }
-  }, [activeTrack, trackScores, onTrackScoresChange])
+  // ── Grill stream event listeners (extracted hook) ──
+  useWizardGrillEvalHandler({
+    activeTrack,
+    trackScores,
+    onTrackScoresChange,
+    setChatMessages,
+    setCurrentIteration,
+    setPhase,
+    setSuggestedNextTrack,
+    setIterationCount,
+    setQuestionStates,
+    previousQuestionsRef
+  })
 
   // ── Submit answers → capture decisions, advance to next track ──
   const handleSubmitAnswers = useCallback(() => {
     if (!currentIteration || !activeTrack) return
 
-    // Capture decisions from current answers
-    const newDecisions: GrillDecision[] = []
-    for (const q of currentIteration.questions) {
-      const state = questionStates[q.id]
-      if (!state || (state.skipped && state.selectedOptions.length === 0)) continue
-
-      const selectedOption = state.selectedOptions.join(', ') || 'Skipped'
-      newDecisions.push({
-        trackId: activeTrack,
-        questionId: q.id,
-        questionText: q.header || q.question.slice(0, 60),
-        selectedOption,
-        otherText: state.otherText || undefined
-      })
-    }
-
-    // Merge with existing decisions (replace same track+question combos)
-    const existingKeys = new Set(newDecisions.map((d) => `${d.trackId}:${d.questionId}`))
-    const merged = [
-      ...grillDecisions.filter((d) => !existingKeys.has(`${d.trackId}:${d.questionId}`)),
-      ...newDecisions
-    ]
+    const merged = captureAndMergeDecisions(
+      currentIteration,
+      activeTrack,
+      questionStates,
+      grillDecisions
+    )
     onDecisionsChange(merged)
 
-    // Build user answer summary for chat
-    const userSummary = currentIteration.questions
-      .map((q) => {
-        const state = questionStates[q.id]
-        if (!state) return null
-        const answer = state.skipped
-          ? 'Skipped'
-          : state.selectedOptions.join(', ') + (state.otherText ? ` — ${state.otherText}` : '')
-        return `**${q.header || 'Q'}**: ${answer}`
-      })
-      .filter(Boolean)
-      .join('\n')
-
+    const userSummary = buildUserAnswerSummary(currentIteration, questionStates)
     setChatMessages((prev) => [...prev, { type: 'user', content: userSummary }])
 
-    // Auto-advance to next track
     advanceToNextTrack(activeTrack)
   }, [
     currentIteration,
@@ -403,46 +463,19 @@ export default function WizardGrillStep({
   const handleReEvaluate = useCallback(() => {
     if (!currentIteration || !activeTrack) return
 
-    // Capture decisions (same as handleSubmitAnswers)
-    const newDecisions: GrillDecision[] = []
-    for (const q of currentIteration.questions) {
-      const state = questionStates[q.id]
-      if (!state || (state.skipped && state.selectedOptions.length === 0)) continue
-      newDecisions.push({
-        trackId: activeTrack,
-        questionId: q.id,
-        questionText: q.header || q.question.slice(0, 60),
-        selectedOption: state.selectedOptions.join(', ') || 'Skipped',
-        otherText: state.otherText || undefined
-      })
-    }
-
-    // Merge decisions
-    const existingKeys = new Set(newDecisions.map((d) => `${d.trackId}:${d.questionId}`))
-    const merged = [
-      ...grillDecisions.filter((d) => !existingKeys.has(`${d.trackId}:${d.questionId}`)),
-      ...newDecisions
-    ]
+    const merged = captureAndMergeDecisions(
+      currentIteration,
+      activeTrack,
+      questionStates,
+      grillDecisions
+    )
     onDecisionsChange(merged)
 
-    // Add user answers to chat
-    const userSummary = currentIteration.questions
-      .map((q) => {
-        const state = questionStates[q.id]
-        if (!state) return null
-        const answer = state.skipped
-          ? 'Skipped'
-          : state.selectedOptions.join(', ') + (state.otherText ? ` — ${state.otherText}` : '')
-        return `**${q.header || 'Q'}**: ${answer}`
-      })
-      .filter(Boolean)
-      .join('\n')
-
+    const userSummary = buildUserAnswerSummary(currentIteration, questionStates)
     setChatMessages((prev) => [...prev, { type: 'user', content: userSummary }])
 
     // Build iteration history from ALL decisions so far
-    const allDecisions = [...merged]
-    const iterationHistory = allDecisions
+    const iterationHistory = merged
       .map(
         (d) =>
           `- [${GRILL_TRACKS[d.trackId]?.name ?? d.trackId}] **${d.questionText}**: ${d.selectedOption}${d.otherText ? ` (${d.otherText})` : ''}`

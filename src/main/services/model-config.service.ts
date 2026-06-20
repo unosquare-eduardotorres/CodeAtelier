@@ -5,6 +5,7 @@ import {
   OMLX_DEFAULT_PORT
 } from '../../shared/constants'
 import type {
+  ActionModelConfig,
   ExecutorBackend,
   LLMProvider,
   LocalLLMBackend,
@@ -14,6 +15,7 @@ import type {
   ModelOverrides
 } from '../../shared/types'
 import { workspaceRepository } from '../db/repositories'
+import { presetService } from './preset.service'
 
 /**
  * Multi-provider configuration — extends workspace settings for Phase 4C.
@@ -51,7 +53,13 @@ class ModelConfigService {
    * @param workspacePath - The workspace repo path (or undefined for default)
    * @param action - The model action to resolve
    */
-  getModel(workspacePath: string | undefined, action: ModelAction): string {
+  getModel(workspacePath: string | undefined, action: ModelAction, presetId?: string | null): string {
+    // Preset-first resolution: if a preset is active, use its config
+    if (presetId) {
+      const actionConfig = this.resolveActionConfig(action, presetId)
+      if (actionConfig) return actionConfig.modelId
+    }
+
     if (!workspacePath) return DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
 
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
@@ -77,8 +85,14 @@ class ModelConfigService {
 
   // ── Provider awareness ──
 
-  /** Get the LLM provider for a workspace */
-  getProvider(workspacePath: string | undefined): LLMProvider {
+  /** Get the LLM provider for a workspace (or per-action via preset) */
+  getProvider(workspacePath: string | undefined, action?: ModelAction, presetId?: string | null): LLMProvider {
+    // Preset per-action provider resolution
+    if (presetId && action) {
+      const actionConfig = this.resolveActionConfig(action, presetId)
+      if (actionConfig) return actionConfig.provider
+    }
+
     if (!workspacePath) return 'claude'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
     return (settings?.llmProvider as LLMProvider) ?? 'claude'
@@ -173,6 +187,32 @@ class ModelConfigService {
       openCodeBaseUrl: settings?.openCodeBaseUrl as string | undefined,
       openCodeApiKey: settings?.openCodeApiKey as string | undefined
     }
+  }
+
+  /**
+   * Resolve the executor backend for a specific action via preset.
+   * Falls back to workspace-level getExecutorBackend when no preset is active.
+   */
+  getExecutorBackendForAction(
+    workspacePath: string | undefined,
+    action: ModelAction,
+    presetId?: string | null
+  ): ExecutorBackend {
+    if (presetId) {
+      const actionConfig = this.resolveActionConfig(action, presetId)
+      if (actionConfig?.provider === 'local-llm') return 'opencode'
+    }
+    return this.getExecutorBackend(workspacePath)
+  }
+
+  /**
+   * Resolve the ActionModelConfig for a given action from a preset.
+   * Returns undefined if the preset doesn't override this action.
+   */
+  resolveActionConfig(action: ModelAction, presetId: string): ActionModelConfig | undefined {
+    const preset = presetService.getPreset(presetId)
+    if (!preset) return undefined
+    return preset.actionConfig[action]
   }
 
   /** Fallback: 'da-vinci:plan' → 'da-vinci' */

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useChatActions, useWorkspaceStore } from '@renderer/store'
 import { useIdeaStore } from '@renderer/store/idea.store'
 import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
@@ -18,6 +18,7 @@ import { useSaveGrillDecisions } from './useSaveGrillDecisions'
 import type { HistoryEntry } from './useSaveGrillDecisions'
 import { useGrillStreamListeners } from './useGrillStreamListeners'
 import { useGrillActions } from './useGrillActions'
+import { useGrillSessionRestore } from './useGrillSessionRestore'
 
 /** Soft cap for enriched description — suggest completion after this length */
 const MAX_DESCRIPTION_CHARS = 15_000
@@ -121,8 +122,6 @@ export function useGrillSession(opts: {
   const [condensedDocument, setCondensedDocument] = useState<string | undefined>()
   const [isCondensing, setIsCondensing] = useState(false)
 
-  const mountedRef = useRef(false)
-
   // Load workspace provider setting
   useEffect(() => {
     if (!activeWorkspace?.id) return
@@ -187,109 +186,19 @@ export function useGrillSession(opts: {
   })
 
   // ── On mount: restore saved state (snapshot-authoritative) or start fresh ──
-  //
-  // The grill writes to two stores: the `grill_sessions` row (live status +
-  // currentIteration, but agent-narration-only messages) and the
-  // `ideas.grill_decisions` JSON snapshot (the ONLY place holding the full chat,
-  // history, trackScores and per-iteration decisions). We read both and treat
-  // the snapshot as authoritative for the data only it carries.
-  useEffect(() => {
-    if (mountedRef.current) return
-    mountedRef.current = true
-
-    const init = async (): Promise<void> => {
-      // A brand-new session never restores — go straight to track selection.
-      if (isNewSession) {
-        setPhase('selecting')
-        return
-      }
-
-      // Live DB session — freshest status + currentIteration + (if completed) plan.
-      let dbSession: {
-        status?: string
-        currentIteration?: GrillIteration | null
-        plan?: GrillStructuredPlan | null
-      } | null = null
-      try {
-        const s = await window.api.grillGetSession({ ideaId })
-        if (s && typeof s === 'object') {
-          dbSession = s as {
-            status?: string
-            currentIteration?: GrillIteration | null
-            plan?: GrillStructuredPlan | null
-          }
-        }
-      } catch {
-        /* non-fatal — fall back to the snapshot */
-      }
-
-      // Completed handoff — transient state was stripped; surface the plan-only view.
-      if (dbSession?.status === 'completed') {
-        if (dbSession.plan) {
-          onRestorePlan?.(dbSession.plan)
-          setPhase('completed')
-        } else {
-          // Convert-Directly handoffs keep no grill plan — nothing to restore.
-          setPhase('selecting')
-        }
-        return
-      }
-
-      // JSON snapshot — full chat + history + trackScores + per-iteration decisions.
-      let snapshot: {
-        iterationCount?: number
-        history?: HistoryEntry[]
-        trackScores?: GrillTrackScore[]
-        chatMessages?: GrillChatMessage[]
-        currentIteration?: GrillIteration | null
-        activeTrack?: GrillTrackId
-      } | null = null
-      try {
-        const idea = useIdeaStore.getState().ideas.find((i) => i.id === ideaId)
-        if (idea?.grillDecisions) snapshot = JSON.parse(idea.grillDecisions)
-      } catch {
-        /* ignore parse errors */
-      }
-
-      // Nothing persisted anywhere → fresh selection screen.
-      if (!dbSession && !snapshot) {
-        setPhase('selecting')
-        return
-      }
-
-      // Snapshot is authoritative for the data only it carries.
-      if (snapshot) {
-        if (snapshot.iterationCount) setIterationCount(snapshot.iterationCount)
-        if (snapshot.history) setHistory(snapshot.history)
-        if (snapshot.trackScores) setTrackScores(snapshot.trackScores)
-        if (snapshot.chatMessages) setChatMessages(snapshot.chatMessages)
-        if (snapshot.activeTrack) setSelectedTrack(snapshot.activeTrack)
-      }
-
-      // Prefer the live row's currentIteration (freshest), fall back to snapshot.
-      const currentIteration = dbSession?.currentIteration ?? snapshot?.currentIteration ?? null
-      if (currentIteration) {
-        setCurrentIteration(currentIteration)
-        // Reset unsubmitted toggles — restored card starts from recommended defaults.
-        initQuestionStates(currentIteration.questions ?? [])
-      }
-
-      // Derive phase.
-      const status = dbSession?.status
-      const hasCurrentQuestions = (currentIteration?.questions?.length ?? 0) > 0
-      const hasTrackScores = (snapshot?.trackScores?.length ?? 0) > 0
-      if (status === 'evaluating') {
-        setPhase('evaluating')
-      } else if (status === 'awaiting_answers' || hasCurrentQuestions) {
-        setPhase('answering')
-      } else if (hasTrackScores) {
-        setPhase('selecting')
-      } else {
-        setPhase('paused')
-      }
-    }
-    init()
-  }, [isNewSession, ideaId, setCurrentIteration, initQuestionStates, onRestorePlan])
+  useGrillSessionRestore({
+    ideaId,
+    isNewSession,
+    setPhase,
+    setCurrentIteration,
+    setIterationCount,
+    setHistory,
+    setTrackScores,
+    setChatMessages,
+    setSelectedTrack,
+    initQuestionStates,
+    onRestorePlan
+  })
 
   // ── Helpers ──
 

@@ -29,6 +29,7 @@ import log from 'electron-log/main'
 import type { ConversationMode } from '../../shared/types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
+import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 
 const configLog = log.scope('CliMcpConfigWriter')
 
@@ -187,10 +188,17 @@ export class CliMcpConfigWriter {
     }
 
     // ── Code Analysis ──
+    const codeAnalysisEnv: Record<string, string> = {
+      WORKSPACE_PATH: workspacePath
+    }
+    if (workspaceId) codeAnalysisEnv.WORKSPACE_ID = workspaceId
+    if (dbDir) codeAnalysisEnv.DB_PATH = dbDir
+    const context7Key = appPreferenceRepository.get('context7_api_key')
+    if (context7Key) codeAnalysisEnv.CONTEXT7_API_KEY = context7Key
     servers['code-analysis'] = {
       command: 'node',
       args: [join(serverBasePath, 'code-analysis-server.js')],
-      env: { WORKSPACE_PATH: workspacePath }
+      env: codeAnalysisEnv
     }
 
     // ── Control Actions ──

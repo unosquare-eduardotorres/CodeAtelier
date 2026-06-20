@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron'
+import { ipcMain, dialog, safeStorage } from 'electron'
 import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { resolve, basename } from 'node:path'
@@ -36,7 +36,8 @@ export function registerWorkspaceIpc(): void {
 
     // Validate path exists
     if (!existsSync(normalizedPath)) {
-      throw new Error(`Path does not exist: ${normalizedPath}`)
+      // IPC-07: Don't expose full filesystem path in error message
+      throw new Error(`${ch}: the specified directory does not exist`)
     }
 
     // Check if this directory is the root of its own git repo (not just nested
@@ -242,24 +243,39 @@ export function registerWorkspaceIpc(): void {
       throw new Error(`${ch}: authMode must be 'claude-max' or 'api-key'`)
     }
 
-    // Merge auth settings with existing workspace settings
-    const existing = workspaceRepository.getSettings(workspaceId)
-    const merged = {
-      ...existing,
-      authMode,
-      // Only store API key if auth mode is api-key, otherwise clear it
-      anthropicApiKey: authMode === 'api-key' ? anthropicApiKey : undefined
-    }
-    workspaceRepository.updateSettings(workspaceId, merged)
+    // IPC-04: Wrap core logic in try-catch to prevent internal details from leaking
+    try {
+      // Merge auth settings with existing workspace settings
+      const existing = workspaceRepository.getSettings(workspaceId)
+      const merged: Record<string, unknown> = {
+        ...existing,
+        authMode
+      }
 
-    // Reload auth provider for the active workspace
-    const workspace = workspaceRepository.findAll().find((w) => w.id === workspaceId)
-    if (workspace) {
-      const { authProvider } = await import('../services/auth-provider')
-      authProvider.loadFromWorkspace(workspace.repoPath)
-    }
+      // IPC-01: Encrypt API key with safeStorage (OS keychain) before DB storage
+      // — matches the pattern established in github.service.ts:69
+      if (authMode === 'api-key' && anthropicApiKey) {
+        const encrypted = safeStorage.encryptString(anthropicApiKey)
+        merged.anthropicApiKey = encrypted.toString('base64')
+        merged.anthropicApiKeyEncrypted = true
+      } else {
+        merged.anthropicApiKey = undefined
+        merged.anthropicApiKeyEncrypted = false
+      }
+      workspaceRepository.updateSettings(workspaceId, merged)
 
-    return { success: true }
+      // Reload auth provider for the active workspace
+      const workspace = workspaceRepository.findAll().find((w) => w.id === workspaceId)
+      if (workspace) {
+        const { authProvider } = await import('../services/auth-provider')
+        authProvider.loadFromWorkspace(workspace.repoPath)
+      }
+
+      return { success: true }
+    } catch (err) {
+      dbLogger.error('WORKSPACE_UPDATE_AUTH failed:', err)
+      throw new Error('Failed to update authentication settings')
+    }
   })
 
   // ── External MCP prerequisite check ──
@@ -274,7 +290,8 @@ export function registerWorkspaceIpc(): void {
     }
     try {
       const result = execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
-      return { available: true, path: result.toString().trim() }
+      // IPC-03: Don't expose filesystem path to renderer
+      return { available: true }
     } catch {
       return { available: false }
     }

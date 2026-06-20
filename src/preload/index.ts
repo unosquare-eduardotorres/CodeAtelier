@@ -146,6 +146,7 @@ const api = {
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    presetId?: string | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
   updatePersona: (args: {
@@ -1764,6 +1765,22 @@ const api = {
     workspaceId: string
   }): Promise<{ conversationId: string; planId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
+
+  // ── LLM Presets ──
+  getPresets: (args: { workspaceId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_ALL, args),
+  getPreset: (args: { presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_BY_ID, args),
+  createPreset: (args: { workspaceId: string; name: string; actionConfig: Record<string, unknown> }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_CREATE, args),
+  updatePreset: (args: { presetId: string; changes: { name?: string; actionConfig?: Record<string, unknown> } }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_UPDATE, args),
+  deletePreset: (args: { presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_DELETE, args),
+  setDefaultPreset: (args: { workspaceId: string; presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_SET_DEFAULT, args),
+  switchConversationPreset: (args: { conversationId: string; presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_SWITCH, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)

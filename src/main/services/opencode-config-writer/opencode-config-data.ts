@@ -77,7 +77,11 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
     id: 'code-analysis',
     serverScript: 'code-analysis-server.js',
     condition: () => true,
-    environment: (opts) => ({ WORKSPACE_PATH: opts.workspacePath }),
+    environment: (opts) => {
+      const env: Record<string, string> = { WORKSPACE_PATH: opts.workspacePath }
+      if (opts.workspaceId) env.WORKSPACE_ID = opts.workspaceId
+      return env
+    },
     timeout: 8_000
   },
   {
@@ -98,7 +102,7 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
  * MCP servers that open the SQLite DB via getDatabase(). They run as plain `node`
  * (no Electron app global) so they must receive DB_PATH (the userData dir) explicitly.
  */
-export const DB_BACKED_SERVER_IDS = new Set(['code-graph', 'semantic-search'])
+export const DB_BACKED_SERVER_IDS = new Set(['code-graph', 'semantic-search', 'code-analysis'])
 
 /**
  * Build local MCP server entries from the declarative registry.

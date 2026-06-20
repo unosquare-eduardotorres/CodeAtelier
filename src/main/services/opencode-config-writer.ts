@@ -29,6 +29,7 @@ import {
   FORMATTER_DEFS,
   buildLocalMcpServersFromRegistry
 } from './opencode-config-writer/opencode-config-data'
+import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 
 const configLog = log.scope('OpenCodeConfigWriter')
 
@@ -638,14 +639,25 @@ export class OpenCodeConfigWriter {
         )
       : join(__dirname, 'mcp-servers')
 
-    // DB-backed servers (code-graph, semantic-search) run as plain `node` and can't
-    // call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
-    return buildLocalMcpServersFromRegistry(
+    // DB-backed servers (code-graph, semantic-search, code-analysis) run as plain `node`
+    // and can't call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
+    const servers = buildLocalMcpServersFromRegistry(
       LOCAL_MCP_SERVER_DEFS,
       opts,
       serverBasePath,
       app.getPath('userData')
     )
+
+    // Inject CONTEXT7_API_KEY for library documentation fallback
+    const context7Key = appPreferenceRepository.get('context7_api_key')
+    if (context7Key && servers['code-analysis']) {
+      servers['code-analysis'].environment = {
+        ...servers['code-analysis'].environment,
+        CONTEXT7_API_KEY: context7Key
+      }
+    }
+
+    return servers
   }
 
   /** External MCP integrations (Maestro, etc.) registered via feature flags. */

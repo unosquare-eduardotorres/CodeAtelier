@@ -125,6 +125,7 @@ interface Api {
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    presetId?: string | null
   }) => Promise<Conversation>
   updatePersona: (args: {
     conversationId: string
@@ -949,6 +950,15 @@ interface Api {
     planId: string
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
+
+  // LLM Presets
+  getPresets: (args: { workspaceId: string }) => Promise<unknown>
+  getPreset: (args: { presetId: string }) => Promise<unknown>
+  createPreset: (args: { workspaceId: string; name: string; actionConfig: Record<string, unknown> }) => Promise<unknown>
+  updatePreset: (args: { presetId: string; changes: { name?: string; actionConfig?: Record<string, unknown> } }) => Promise<unknown>
+  deletePreset: (args: { presetId: string }) => Promise<unknown>
+  setDefaultPreset: (args: { workspaceId: string; presetId: string }) => Promise<unknown>
+  switchConversationPreset: (args: { conversationId: string; presetId: string }) => Promise<unknown>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void

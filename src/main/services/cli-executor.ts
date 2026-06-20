@@ -404,8 +404,20 @@ export class CLIExecutor {
       executorLog.warn(`[CLI:slash] Cannot send "${command}" — no active process`)
       return
     }
-    executorLog.info(`[CLI:slash] Sending: ${command}`)
-    this.cliProcess.stdin.write(command + '\n')
+    // EXEC-04: Reject embedded newlines to prevent command injection;
+    // only accept /command [args] format on a single line
+    const sanitized = command.split('\n')[0].trim()
+    if (!/^\/[a-z_]+(\s+\S.*)?$/i.test(sanitized)) {
+      executorLog.error(`[CLI:slash] Invalid command format: ${command.slice(0, 80)}`)
+      return
+    }
+    executorLog.info(`[CLI:slash] Sending: ${sanitized}`)
+    // EXEC-10: Wrap stdin.write in try-catch — throws if pipe is already closed
+    try {
+      this.cliProcess.stdin.write(sanitized + '\n')
+    } catch (err) {
+      executorLog.error(`[CLI:slash] stdin.write failed:`, err)
+    }
   }
 
   /**
@@ -520,12 +532,21 @@ export class CLIExecutor {
         `permissionMode=${args[args.indexOf('--permission-mode') + 1] ?? 'unset'}`
     )
 
-    this.cliProcess = spawn('claude', args, {
-      cwd: options.cwd,
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: false
-    })
+    // EXEC-02: Guard spawn() — throws synchronously (ENOENT) if 'claude' is not in PATH
+    try {
+      this.cliProcess = spawn('claude', args, {
+        cwd: options.cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: false
+      })
+    } catch (err) {
+      this.cliProcess = null
+      this.lastStderrError = `Failed to spawn claude CLI: ${(err as Error).message}`
+      throw new Error(
+        `Claude CLI not found — ensure 'claude' is installed and in PATH. Details: ${(err as Error).message}`
+      )
+    }
 
     // Wire abort controller to process kill
     if (options.abortController) {
@@ -559,11 +580,15 @@ export class CLIExecutor {
     this.cliProcess.on('exit', (code, signal) => {
       executorLog.info(`[CLI:exit] code=${code} signal=${signal}`)
       this.lastExitCode = code
+      // EXEC-03: Clean up temp system prompt file on natural exit/crash
+      this.cleanupSystemPromptFile()
       this.cliProcess = null
     })
 
     this.cliProcess.on('error', (err) => {
       executorLog.error('[CLI:error]', err)
+      // EXEC-03: Clean up temp system prompt file on spawn error
+      this.cleanupSystemPromptFile()
       this.cliProcess = null
     })
 

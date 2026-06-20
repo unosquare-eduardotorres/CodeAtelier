@@ -1,4 +1,5 @@
 import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type { MpaArtifact, MpaArtifactType } from '../../../shared/mpa-types'
 
 // ── Row interface ──
@@ -17,12 +18,8 @@ interface MpaArtifactRow {
 // ── Mapper ──
 
 function mapRow(row: MpaArtifactRow): MpaArtifact {
-  let contentJson: Record<string, unknown> = {}
-  try {
-    contentJson = JSON.parse(row.content_json)
-  } catch {
-    /* ignore */
-  }
+  // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
+  const contentJson = safeParseJSON<Record<string, unknown>>(row.content_json, {})
   return {
     id: row.id,
     runId: row.run_id,

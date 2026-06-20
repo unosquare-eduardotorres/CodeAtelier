@@ -285,4 +285,113 @@ test.describe('UX Audit Screenshots', () => {
 
     console.log('\n  ✅ All screenshots captured in e2e/screenshots/')
   })
+
+  test('capture workspace settings modal in open and closed states', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Try to open workspace settings
+    const hasSettings = await clickLabel(page, 'Workspace Settings')
+    if (hasSettings) {
+      await page.waitForTimeout(800)
+      await snap(page, 'workspace-settings-modal-open')
+
+      // Close
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(500)
+      await snap(page, 'workspace-settings-modal-closed')
+    } else {
+      // Capture whatever state we're in
+      await snap(page, 'no-workspace-settings-available')
+    }
+
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+  })
+
+  test('capture sidebar collapsed vs expanded layout', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Capture current sidebar state
+    await snap(page, 'sidebar-default')
+
+    // Try Cmd+B to toggle sidebar
+    await page.keyboard.press('Meta+b')
+    await page.waitForTimeout(600)
+    await snap(page, 'sidebar-toggled')
+
+    // Toggle back
+    await page.keyboard.press('Meta+b')
+    await page.waitForTimeout(600)
+    await snap(page, 'sidebar-restored')
+
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+  })
+
+  test('capture empty state vs populated state differences', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Capture whatever state we're in now
+    await snap(page, 'app-current-state')
+
+    // Check for populated vs empty indicators
+    const chatPanel = page.locator('[data-testid="chat-panel"]')
+    const hasChatPanel = await chatPanel.isVisible({ timeout: 2_000 }).catch(() => false)
+
+    if (hasChatPanel) {
+      await snap(page, 'populated-chat-panel')
+    } else {
+      // Home / welcome state
+      await snap(page, 'empty-or-welcome-state')
+    }
+
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+  })
+
+  test('capture loading skeleton states during initialization', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Look for skeleton/loading indicators
+    const skeletons = page.locator('[class*="skeleton"], [class*="animate-pulse"]')
+    const skeletonCount = await skeletons.count()
+
+    if (skeletonCount > 0) {
+      await snap(page, 'loading-skeletons')
+    }
+
+    // Look for spinners
+    const spinners = page.locator('[class*="animate-spin"]')
+    const spinnerCount = await spinners.count()
+
+    if (spinnerCount > 0) {
+      await snap(page, 'loading-spinners')
+    }
+
+    // Capture final loaded state
+    await snap(page, 'fully-loaded')
+
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+  })
 })

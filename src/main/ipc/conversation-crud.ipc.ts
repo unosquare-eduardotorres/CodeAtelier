@@ -48,6 +48,7 @@ export function registerConversationCrudIpc(): void {
     const mode = optionalString(args, 'mode', ch) as ConversationMode | undefined
     const personaSpecialistId = optionalString(args, 'personaSpecialistId', ch)
     const llmProvider = optionalString(args, 'llmProvider', ch) as LLMProvider | undefined
+    const presetId = optionalString(args, 'presetId', ch)
 
     if (title !== undefined && title.length > 500) {
       throw new Error(`${ch}: title too long (max 500 chars)`)
@@ -90,7 +91,8 @@ export function registerConversationCrudIpc(): void {
       personaSpecialistId,
       resolvedProvider,
       mcpOverrides,
-      communicationTone
+      communicationTone,
+      presetId
     )
     conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 

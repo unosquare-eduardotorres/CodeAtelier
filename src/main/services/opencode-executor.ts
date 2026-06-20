@@ -147,6 +147,8 @@ export class OpenCodeExecutor {
   /** C-4: Promise that resolves when server.connected fires (MCP handshakes complete) */
   private serverReadyResolve?: () => void
   private serverReadyPromise?: Promise<void>
+  /** EXEC-05: Track the serverReady fallback timeout so it can be cancelled */
+  private serverReadyTimeout: ReturnType<typeof setTimeout> | null = null
 
   /**
    * Start the OpenCode server in-process.
@@ -204,15 +206,24 @@ export class OpenCodeExecutor {
         signal: this.startupAbortController.signal
       })
 
+      // EXEC-06: Validate client exists before marking as started
+      if (!result?.client) {
+        throw new Error('OpenCode SDK initialization failed: no client returned')
+      }
       this.client = result.client
       this.isStarted = true
 
       // C-4: Set up serverReady promise — resolved when server.connected event fires.
       // This gates the first prompt to ensure MCP handshakes are complete.
+      // EXEC-05: Cancel any prior timeout before creating a new promise
+      if (this.serverReadyTimeout) {
+        clearTimeout(this.serverReadyTimeout)
+        this.serverReadyTimeout = null
+      }
       this.serverReadyPromise = new Promise<void>((resolve) => {
         this.serverReadyResolve = resolve
         // Timeout fallback — don't block forever if event never fires
-        setTimeout(() => {
+        this.serverReadyTimeout = setTimeout(() => {
           if (this.serverReadyResolve) {
             openCodeLog.warn(
               '[opencode] server.connected not received within 10s — proceeding anyway'
@@ -220,6 +231,7 @@ export class OpenCodeExecutor {
             this.serverReadyResolve()
             this.serverReadyResolve = undefined
           }
+          this.serverReadyTimeout = null
         }, 10_000)
       })
 
@@ -441,6 +453,20 @@ export class OpenCodeExecutor {
     this.isStarted = false
     this.sessionMap.clear()
     this.consecutiveErrors = 0
+
+    // EXEC-05: Cancel the serverReady fallback timeout
+    if (this.serverReadyTimeout) {
+      clearTimeout(this.serverReadyTimeout)
+      this.serverReadyTimeout = null
+    }
+    this.serverReadyResolve = undefined
+    this.serverReadyPromise = undefined
+
+    // EXEC-01: Clean up global env vars set during start() to prevent
+    // cross-session contamination when switching workspaces
+    delete process.env.OPENCODE_CONFIG
+    delete process.env.OPENCODE_EXPERIMENTAL_LSP_TOOL
+    delete process.env.OPENCODE_ENABLE_EXA
   }
 
   /**

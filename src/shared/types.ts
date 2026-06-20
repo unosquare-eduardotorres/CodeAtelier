@@ -110,6 +110,10 @@ export interface Conversation {
   effort?: ThinkingEffort
   /** Per-conversation thinking budget cap — max thinking tokens per turn (0 = no limit) */
   thinkingBudget?: number
+  /** LLM preset controlling model selection for each action */
+  presetId?: string | null
+  /** Handoff context injected into system prompt when switching providers mid-chat */
+  handoffContext?: string | null
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -379,6 +383,7 @@ export interface AppPreferences {
   updateDrivePath: string
   updateGithubOwner: string
   updateGithubRepo: string
+  context7ApiKey?: string
 }
 
 // ── Workspace Deploy Models ──
@@ -527,6 +532,37 @@ export type ModelAction =
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
   [key: string]: string // ModelAction → model ID string
+}
+
+// ── Preset System ──
+
+/** Per-action model assignment within a preset */
+export interface ActionModelConfig {
+  provider: LLMProvider
+  modelId: string
+  localBackend?: LocalLLMBackend
+}
+
+/** Named LLM configuration preset (maps actions → models) */
+export interface LLMPreset {
+  id: string
+  workspaceId: string
+  name: string
+  isBuiltIn: boolean
+  actionConfig: Partial<Record<ModelAction, ActionModelConfig>>
+  createdAt: string
+  updatedAt: string
+}
+
+/** Logical grouping of ModelActions for the preset editor UI */
+export interface ActionGroup {
+  id: string
+  label: string
+  icon: string
+  description: string
+  providerConstrained?: boolean
+  advanced?: boolean
+  actions: ModelAction[]
 }
 
 // ── YAML ↔ DB Sync Models ──
@@ -1185,6 +1221,9 @@ export interface WorkspaceSettings {
   // ── Misc ──
   additionalDirectories?: string[]
   modelOverrides?: Record<string, unknown>
+
+  // ── Presets ──
+  defaultPresetId?: string
 
   /** Catch-all for forward-compatibility */
   [key: string]: unknown

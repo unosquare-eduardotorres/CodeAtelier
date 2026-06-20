@@ -552,7 +552,16 @@ export const IPC_CHANNELS = {
 
   // Constitution
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
-  BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution'
+  BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution',
+
+  // LLM Presets
+  PRESET_GET_ALL: 'preset:get-all',
+  PRESET_GET_BY_ID: 'preset:get-by-id',
+  PRESET_CREATE: 'preset:create',
+  PRESET_UPDATE: 'preset:update',
+  PRESET_DELETE: 'preset:delete',
+  PRESET_SET_DEFAULT: 'preset:set-default',
+  PRESET_SWITCH: 'preset:switch-conversation'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -658,6 +667,88 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'blueprint:build': 'claude-sonnet-4-6',
   'blueprint:verify': 'claude-opus-4-8'
 } as const
+
+// ── Preset System ──
+
+import type { ActionGroup, ActionModelConfig, LocalLLMBackend } from './types'
+
+/**
+ * Logical groupings of ModelActions for the preset editor UI.
+ * Each group can be configured independently; the Chat group enforces
+ * provider parity (all actions must use the same provider).
+ */
+export const ACTION_GROUPS: ActionGroup[] = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    icon: '💬',
+    description: 'Plan & Build mode conversations',
+    providerConstrained: true,
+    actions: ['da-vinci', 'da-vinci:plan', 'da-vinci:build', 'project-specialist', 'project-specialist:plan', 'project-specialist:build']
+  },
+  {
+    id: 'blueprint',
+    label: 'Blueprint',
+    icon: '📐',
+    description: 'Specification, planning, and code generation phases',
+    actions: ['blueprint:specify', 'blueprint:clarify', 'blueprint:plan', 'blueprint:tasks', 'blueprint:review', 'blueprint:build', 'blueprint:verify']
+  },
+  {
+    id: 'health',
+    label: 'Health & Audit',
+    icon: '🩺',
+    description: 'Grill sessions and audit tracks',
+    actions: ['audit', 'grill', 'grill:plan']
+  },
+  {
+    id: 'council',
+    label: 'Council',
+    icon: '🧑‍⚖️',
+    description: 'Multi-advisor code review council',
+    actions: ['council-member', 'council-chairman']
+  },
+  {
+    id: 'specialist',
+    label: 'Specialist Routing',
+    icon: '🎯',
+    description: 'Complexity-based model routing for specialists',
+    advanced: true,
+    actions: ['specialist:simple', 'specialist:moderate', 'specialist:complex']
+  },
+  {
+    id: 'background',
+    label: 'Background Tasks',
+    icon: '⚙️',
+    description: 'Memory feeds, activation, and lightweight tasks',
+    advanced: true,
+    actions: ['memoryFeed', 'activation', 'haiku', 'mpa:decompose']
+  }
+] as const
+
+/**
+ * Built-in "Full Claude" preset config — empty object means every action
+ * falls through to DEFAULT_MODEL_CONFIG (all Claude models).
+ */
+export const BUILTIN_FULL_CLAUDE_CONFIG: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
+
+/**
+ * Build a "Full Local" preset config — every action routes to the given
+ * local model + backend.
+ */
+export function buildFullLocalConfig(
+  modelId: string,
+  backend: LocalLLMBackend = 'ollama'
+): Partial<Record<import('./types').ModelAction, ActionModelConfig>> {
+  const config: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
+  for (const [action] of Object.entries(DEFAULT_MODEL_CONFIG)) {
+    config[action as import('./types').ModelAction] = {
+      provider: 'local-llm',
+      modelId,
+      localBackend: backend
+    }
+  }
+  return config
+}
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────
 

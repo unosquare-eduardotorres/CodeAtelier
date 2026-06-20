@@ -494,13 +494,15 @@ export class AgentSessionService extends AgentBaseService {
       contextTier
     })
 
-    // Resolve per-conversation LLM provider (falls back to session default)
+    // Resolve per-conversation LLM provider and preset (falls back to session default)
     let conversationProvider: LLMProvider = this.llmProvider
+    let conversationPresetId: string | null = null
     try {
       const conv = conversationRepository.findById(conversationId)
       if (conv?.llmProvider) {
         conversationProvider = conv.llmProvider as LLMProvider
       }
+      conversationPresetId = conv?.presetId ?? null
     } catch {
       /* non-fatal — keep session default */
     }
@@ -1019,7 +1021,8 @@ export class AgentSessionService extends AgentBaseService {
               abortController,
               mcpResult,
               localContextWindow,
-              goal: adapterGoal ?? undefined
+              goal: adapterGoal ?? undefined,
+              presetId: conversationPresetId
             })
           }
           break
@@ -1123,6 +1126,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
+    presetId?: string | null
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
     const cliOptions = this.buildCLIExecuteOptions(params)
     return this.cliExecutor.execute(cliOptions)
