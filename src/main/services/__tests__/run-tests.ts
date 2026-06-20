@@ -175,6 +175,9 @@ import './blueprint-verify-conditions.test'
 import './audit-plan-mapper.test'
 import './plan-registry.test'
 
+// ─── Run 32: Library Documentation Service (three-tier lookup) ───
+import './library-doc-service.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

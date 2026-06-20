@@ -93,8 +93,16 @@ function setupResponseListener(): void {
   if (!ipcSocket) return
 
   let buffer = ''
+  const MAX_BUFFER_SIZE = 1024 * 1024 // MCP-03: 1MB max to prevent unbounded accumulation
   ipcSocket.on('data', (data: Buffer) => {
     buffer += data.toString('utf-8')
+
+    // MCP-03: Guard against unbounded buffer growth when data arrives without newlines
+    if (buffer.length > MAX_BUFFER_SIZE) {
+      console.error('[control-actions-server] Buffer overflow — resetting')
+      buffer = ''
+      return
+    }
 
     let newlineIdx: number
     while ((newlineIdx = buffer.indexOf('\n')) !== -1) {

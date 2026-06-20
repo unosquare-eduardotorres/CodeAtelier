@@ -59,6 +59,7 @@ export default function ChatSidebar({
     personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
+    presetId?: string | null
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -68,7 +69,8 @@ export default function ChatSidebar({
       data.personaSpecialistId,
       undefined,
       undefined,
-      data.communicationTone
+      data.communicationTone,
+      data.presetId
     )
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {

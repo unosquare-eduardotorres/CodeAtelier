@@ -1,19 +1,38 @@
 import { ipcMain } from 'electron'
+import { resolve } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { docsService } from '../services/docs.service'
 import { mermaidService } from '../services/mermaid.service'
 import type { DocFile } from '../../shared/types'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 
 export function registerDocsIpc(): void {
-  ipcMain.handle(IPC_CHANNELS.DOCS_LIST, (event, args: { workspacePath: string }): DocFile[] => {
+  // SVC-03: Add requireObject/requireString validation to DOCS_LIST
+  ipcMain.handle(IPC_CHANNELS.DOCS_LIST, (event, rawArgs: unknown): DocFile[] => {
     validateSender(event)
-    return docsService.listDocs(args.workspacePath)
+    const ch = IPC_CHANNELS.DOCS_LIST
+    const args = requireObject(rawArgs, ch)
+    const workspacePath = requireString(args, 'workspacePath', ch)
+    return docsService.listDocs(workspacePath)
   })
 
-  ipcMain.handle(IPC_CHANNELS.DOCS_READ_FILE, (event, args: { filePath: string }): string => {
+  // SEC-03: Add path confinement — only allow reads within workspace docs/ directory
+  ipcMain.handle(IPC_CHANNELS.DOCS_READ_FILE, (event, rawArgs: unknown): string => {
     validateSender(event)
-    return docsService.readFile(args.filePath)
+    const ch = IPC_CHANNELS.DOCS_READ_FILE
+    const args = requireObject(rawArgs, ch)
+    const filePath = requireString(args, 'filePath', ch)
+    const workspacePath = requireString(args, 'workspacePath', ch)
+
+    // Confine reads to the workspace docs/ directory — prevents path traversal
+    const docsDir = resolve(workspacePath, 'docs')
+    const resolvedPath = resolve(filePath)
+    if (!resolvedPath.startsWith(docsDir + '/') && resolvedPath !== docsDir) {
+      throw new Error(`${ch}: file path must be within workspace docs/ directory`)
+    }
+
+    return docsService.readFile(resolvedPath)
   })
 
   ipcMain.handle(

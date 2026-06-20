@@ -79,7 +79,7 @@ async function registerTools(): Promise<void> {
     {
       projectRoot: z.string().describe('Absolute path to the repository root'),
       focusFiles: z.array(z.string()).optional(),
-      tokenLimit: z.number().optional().default(8192),
+      tokenLimit: z.number().int().min(1000).max(100000).optional().default(8192),
       excludeUnranked: z.boolean().optional().default(false),
       priorityFiles: z.array(z.string()).optional(),
       priorityIdentifiers: z.array(z.string()).optional()
@@ -110,7 +110,7 @@ async function registerTools(): Promise<void> {
     'Search for code identifiers across the repository via Tree-sitter AST analysis.',
     {
       query: z.string().describe('Identifier name (case-insensitive substring match)'),
-      maxResults: z.number().optional().default(50),
+      maxResults: z.number().int().min(1).max(500).optional().default(50),
       includeDefinitions: z.boolean().optional().default(true),
       includeReferences: z.boolean().optional().default(true)
     },
@@ -139,7 +139,7 @@ async function registerTools(): Promise<void> {
     'Find potentially unused code definitions with no cross-file references.',
     {
       path: z.string().optional().describe('Filter to files under this directory'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
       const results = await codeGraphService.findDeadCode(WORKSPACE_ID, WORKSPACE_PATH, {
@@ -193,7 +193,7 @@ async function registerTools(): Promise<void> {
     'Find all call-sites and references to a symbol — who calls/imports/references it.',
     {
       symbolName: z.string().describe('Symbol name to find callers of'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
       const edges = codeGraphEdgeRepository
@@ -228,7 +228,7 @@ async function registerTools(): Promise<void> {
     'Find what a symbol depends on — what does it call, import, or reference.',
     {
       symbolName: z.string().describe('Symbol name to find callees of'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
       const edges = codeGraphEdgeRepository
@@ -263,7 +263,7 @@ async function registerTools(): Promise<void> {
     'Find all cross-file reference sites for a symbol (excluding definitions).',
     {
       symbolName: z.string().describe('Symbol name to find references for'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
       const refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, args.symbolName, {
@@ -351,7 +351,7 @@ async function registerTools(): Promise<void> {
     'symbol_hotspots',
     'Find the most-referenced symbols in the codebase (load-bearing abstractions).',
     {
-      maxResults: z.number().optional().default(30),
+      maxResults: z.number().int().min(1).max(500).optional().default(30),
       path: z.string().optional().describe('Filter to symbols in files under this directory')
     },
     async (args) => {
@@ -375,9 +375,9 @@ async function registerTools(): Promise<void> {
     'coupling_analysis',
     'Find tightly coupled file pairs ranked by cross-references.',
     {
-      minCoupling: z.number().optional().default(2),
+      minCoupling: z.number().int().min(1).max(100).optional().default(2),
       path: z.string().optional().describe('Filter to files under this directory'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
       const coupled = codeGraphEdgeRepository.findCoupledFiles(WORKSPACE_ID, {
@@ -420,7 +420,7 @@ async function registerTools(): Promise<void> {
     'module_boundary_health',
     'Quantify separation of concerns by measuring intra-module vs cross-module edges.',
     {
-      depth: z.number().optional().default(2).describe('Directory depth for module boundaries')
+      depth: z.number().int().min(1).max(10).optional().default(2).describe('Directory depth for module boundaries')
     },
     async (args) => {
       const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(WORKSPACE_ID, args.depth)

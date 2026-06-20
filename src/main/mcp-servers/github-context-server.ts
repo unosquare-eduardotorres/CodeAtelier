@@ -32,7 +32,7 @@ async function registerTools(): Promise<void> {
     'List recent pull requests for the repository.',
     {
       state: z.enum(['open', 'closed', 'all']).optional().default('open'),
-      maxResults: z.number().optional().default(10)
+      maxResults: z.number().int().min(1).max(100).optional().default(10)
     },
     async (args) => {
       // Delegate to in-process service (shares Octokit instance)
@@ -51,7 +51,7 @@ async function registerTools(): Promise<void> {
     'github_pr_detail',
     'Get details of a specific pull request.',
     {
-      prNumber: z.number().describe('Pull request number')
+      prNumber: z.number().int().min(1).describe('Pull request number')
     },
     async (args) => {
       return {
@@ -71,7 +71,7 @@ async function registerTools(): Promise<void> {
     {
       state: z.enum(['open', 'closed', 'all']).optional().default('open'),
       labels: z.string().optional().describe('Comma-separated label filter'),
-      maxResults: z.number().optional().default(10)
+      maxResults: z.number().int().min(1).max(100).optional().default(10)
     },
     async (args) => {
       return {

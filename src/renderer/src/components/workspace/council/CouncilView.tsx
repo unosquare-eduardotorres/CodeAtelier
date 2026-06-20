@@ -243,7 +243,7 @@ export default function CouncilView({
   )
 
   return (
-    <div className="flex flex-col h-full bg-surface-base">
+    <div data-testid="council-view" className="flex flex-col h-full bg-surface-base">
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle bg-surface-overlay">
         <div className="flex items-center gap-3 min-w-0">

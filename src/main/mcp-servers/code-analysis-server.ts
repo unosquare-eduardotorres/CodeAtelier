@@ -38,7 +38,7 @@ async function registerTools(): Promise<void> {
     'Analyze code complexity metrics for a file or directory.',
     {
       path: z.string().describe('File or directory path to analyze'),
-      threshold: z.number().optional().default(10).describe('Cyclomatic complexity threshold')
+      threshold: z.number().int().min(1).max(100).optional().default(10).describe('Cyclomatic complexity threshold')
     },
     async (args) => {
       // Delegate to in-process service
@@ -95,7 +95,7 @@ async function registerTools(): Promise<void> {
     'Detect common code quality issues in a file or directory.',
     {
       path: z.string().describe('File or directory to analyze'),
-      maxResults: z.number().optional().default(20)
+      maxResults: z.number().int().min(1).max(500).optional().default(20)
     },
     async (args) => {
       return {
@@ -179,7 +179,7 @@ async function registerTools(): Promise<void> {
     {
       packageName: z.string().describe('Package name (exact match)'),
       query: z.string().describe('Specific question or topic to search for'),
-      maxSections: z.number().optional().default(5).describe('Max doc sections to return')
+      maxSections: z.number().int().min(1).max(50).optional().default(5).describe('Max doc sections to return')
     },
     async (args) => {
       if (!WORKSPACE_ID) {

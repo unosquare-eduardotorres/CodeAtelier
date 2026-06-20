@@ -16,6 +16,7 @@ import type {
 } from '../../shared/types'
 import { workspaceRepository } from '../db/repositories'
 import { presetService } from './preset.service'
+import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 
 /**
  * Multi-provider configuration — extends workspace settings for Phase 4C.
@@ -120,13 +121,23 @@ class ModelConfigService {
         (settings?.ollamaPort as number) ?? // backward compat
         defaultPort,
       strategy: (settings?.localLlmStrategy as LocalLLMStrategy) ?? 'default',
-      localApiKey: (settings?.localApiKey as string) || undefined
+      // SEC-04: Decrypt localApiKey (handles both legacy plaintext and encrypted)
+      localApiKey: decryptSettingsKey(
+        settings?.localApiKey as string | undefined,
+        !!settings?.localApiKeyEncrypted
+      )
     }
   }
 
   /** Build the local LLM base URL from config (works for both Ollama and oMLX) */
   getLocalBaseUrl(config: LocalLLMConfig): string {
-    return `http://${config.localHost}:${config.localPort}`
+    // SVC-07: Validate host/port before constructing URL
+    const host = config.localHost || 'localhost'
+    const port = Number(config.localPort)
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      return `http://${host}:${OLLAMA_DEFAULT_PORT}`
+    }
+    return `http://${host}:${port}`
   }
 
   /**
@@ -158,7 +169,10 @@ class ModelConfigService {
     if (!workspacePath) return 'cli'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
     if (settings?.llmProvider === 'local-llm') return 'opencode'
-    return (settings?.executorBackend as ExecutorBackend) ?? 'cli'
+    // SVC-08: Validate against the union type instead of blind cast
+    const raw = settings?.executorBackend as string | undefined
+    if (raw === 'cli' || raw === 'opencode') return raw
+    return 'cli'
   }
 
   /**
@@ -185,7 +199,11 @@ class ModelConfigService {
       openCodeProvider: (settings?.openCodeProvider as string) ?? 'anthropic',
       openCodeModel: (settings?.openCodeModel as string) ?? 'claude-sonnet-4-6',
       openCodeBaseUrl: settings?.openCodeBaseUrl as string | undefined,
-      openCodeApiKey: settings?.openCodeApiKey as string | undefined
+      // SEC-04: Decrypt openCodeApiKey (handles both legacy plaintext and encrypted)
+      openCodeApiKey: decryptSettingsKey(
+        settings?.openCodeApiKey as string | undefined,
+        !!settings?.openCodeApiKeyEncrypted
+      )
     }
   }
 
@@ -217,8 +235,12 @@ class ModelConfigService {
 
   /** Fallback: 'da-vinci:plan' → 'da-vinci' */
   private fallbackAction(action: ModelAction): string {
-    const base = action.split(':')[0] as ModelAction
-    return DEFAULT_MODEL_CONFIG[base] ?? DEFAULT_MODEL_CONFIG['da-vinci']
+    // SVC-06: Validate that the base portion is a known ModelAction key
+    const base = action.split(':')[0]
+    if (base && base in DEFAULT_MODEL_CONFIG) {
+      return DEFAULT_MODEL_CONFIG[base as ModelAction]
+    }
+    return DEFAULT_MODEL_CONFIG['da-vinci']
   }
 }
 

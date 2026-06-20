@@ -15,6 +15,8 @@ import {
   CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
   CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
+  LIBRARY_DOCS_GUIDANCE_PROMPT,
+  LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN,
   DIRECT_ANSWER_BOOST_PROMPT,
   DIRECT_ANSWER_BOOST_PROMPT_LEAN,
   DIRECT_ANSWER_PLAN_MODE_EARLY,
@@ -127,6 +129,12 @@ export function appendMcpToolGuidance(
   if (!basePrompt.includes('## Code Analysis')) {
     appendSections.push(
       verbosity === 'lean' ? CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN : CODE_ANALYSIS_GUIDANCE_PROMPT
+    )
+  }
+
+  if (!basePrompt.includes('## Library Doc')) {
+    appendSections.push(
+      verbosity === 'lean' ? LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN : LIBRARY_DOCS_GUIDANCE_PROMPT
     )
   }
 

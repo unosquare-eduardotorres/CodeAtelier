@@ -154,7 +154,7 @@ export default function IdeaCard({
   }
 
   return (
-    <div className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm">
+    <div data-testid="idea-card" className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm">
       {editing ? (
         /* Inline editing mode */
         <div className="space-y-2">
@@ -325,6 +325,7 @@ export default function IdeaCard({
           {/* Delete button — always available */}
           <button
             onClick={() => onDelete(idea.id)}
+            data-testid="idea-delete-btn"
             className="inline-flex items-center p-1 text-text-muted hover:text-danger hover:bg-danger-muted rounded-md transition-colors ml-auto"
             aria-label="Delete idea"
             title="Delete idea"

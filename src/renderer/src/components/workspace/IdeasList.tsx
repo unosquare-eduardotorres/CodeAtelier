@@ -371,6 +371,7 @@ export default function IdeasList({
 
   return (
     <>
+      <div data-testid="ideas-list">
       <IdeaFilterBar
         filter={filter}
         searchQuery={searchQuery}
@@ -423,6 +424,7 @@ export default function IdeasList({
         />
       )}
 
+      </div>
       <ConfirmDialog
         isOpen={deleteTarget !== null}
         title="Delete Idea"

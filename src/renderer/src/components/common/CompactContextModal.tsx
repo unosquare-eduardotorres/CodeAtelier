@@ -141,7 +141,7 @@ export default function CompactContextModal({
       />
 
       {/* Dialog */}
-      <div className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto">
+      <div data-testid="compact-context-modal" className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-start justify-between p-5 pb-3">
           <div className="flex items-center gap-3">
@@ -179,7 +179,7 @@ export default function CompactContextModal({
               {tokensK}K / {windowK}K ({percentage}%) — Quality: {qualityLabel}
             </span>
           </div>
-          <div className="w-full h-2 bg-surface-overlay rounded-full overflow-hidden">
+          <div data-testid="context-usage-bar" className="w-full h-2 bg-surface-overlay rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-300 ${barColor}`}
               style={{ width: `${percentage}%` }}
@@ -245,6 +245,7 @@ export default function CompactContextModal({
           <div className="px-5 pb-3">
             <button
               type="button"
+              data-testid="context-mcp-toggle"
               onClick={() => setShowMcpDetails((v) => !v)}
               className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-text-muted hover:text-text-secondary font-semibold transition-colors"
             >
@@ -304,6 +305,7 @@ export default function CompactContextModal({
             <div className="px-5 pb-3 space-y-2.5">
               <button
                 ref={nuanceRef}
+                data-testid="context-new-convo-btn"
                 onClick={onNewConversation}
                 className="w-full flex items-center gap-3 p-3 rounded-lg border-2 border-brand-primary/40 bg-brand-primary/5 hover:bg-brand-primary/10 transition-colors text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
               >
@@ -355,6 +357,7 @@ export default function CompactContextModal({
               {/* Extract Nuance — Recommended */}
               <button
                 ref={nuanceRef}
+                data-testid="context-compact-btn"
                 onClick={onExtractNuance}
                 className="w-full flex items-center gap-3 p-3 rounded-lg border-2 border-warning/40 bg-warning/5 hover:bg-warning/10 transition-colors text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-warning"
               >
@@ -378,6 +381,7 @@ export default function CompactContextModal({
 
               {/* Quick Compact */}
               <button
+                data-testid="context-quick-compact-btn"
                 onClick={onQuickCompact}
                 className="w-full flex items-center gap-3 p-3 rounded-lg border border-border-default bg-surface-overlay hover:bg-surface-raised transition-colors text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
               >

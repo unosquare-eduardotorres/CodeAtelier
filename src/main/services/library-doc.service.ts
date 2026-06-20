@@ -128,15 +128,19 @@ export class LibraryDocService {
     query?: string
   ): Promise<ResolvedLibrary[]> {
     // Tier 1: Search local cache
-    const cached = libraryDocRepository.listPackages(workspaceId)
-      .filter((p) => p.packageName.includes(libraryName))
-    if (cached.length > 0) {
-      return cached.map((p) => ({
-        packageName: p.packageName,
-        version: p.version,
-        source: p.source,
-        sectionCount: p.sectionCount
-      }))
+    try {
+      const cached = libraryDocRepository.listPackages(workspaceId)
+        .filter((p) => p.packageName.includes(libraryName))
+      if (cached.length > 0) {
+        return cached.map((p) => ({
+          packageName: p.packageName,
+          version: p.version,
+          source: p.source,
+          sectionCount: p.sectionCount
+        }))
+      }
+    } catch (err) {
+      libDocLog.warn('[resolveLibrary] Cache lookup failed, trying other tiers:', err)
     }
 
     // Tier 2: Try Context7 API (if key configured)
@@ -175,7 +179,9 @@ export class LibraryDocService {
       const npmReadme = await this.fetchNpmReadme(libraryName)
       if (npmReadme) {
         const sections = this.chunkMarkdownBySections(npmReadme.readme)
-        libraryDocRepository.upsertSections(workspaceId, libraryName, npmReadme.version, 'npm_registry', sections)
+        try {
+          libraryDocRepository.upsertSections(workspaceId, libraryName, npmReadme.version, 'npm_registry', sections)
+        } catch { /* DB may not be available — return results without caching */ }
         return [{
           packageName: libraryName,
           version: npmReadme.version,
@@ -203,17 +209,21 @@ export class LibraryDocService {
     maxSections = 5
   ): Promise<QueryResult> {
     // Tier 1: FTS5 search local cache
-    const cached = libraryDocRepository.searchDocs(workspaceId, query, {
-      packageName,
-      maxResults: maxSections
-    })
-    if (cached.length > 0) {
-      return {
+    try {
+      const cached = libraryDocRepository.searchDocs(workspaceId, query, {
         packageName,
-        version: cached[0].version,
-        source: cached[0].source,
-        sections: cached.map((d) => ({ title: d.sectionTitle, content: d.sectionContent }))
+        maxResults: maxSections
+      })
+      if (cached.length > 0) {
+        return {
+          packageName,
+          version: cached[0].version,
+          source: cached[0].source,
+          sections: cached.map((d) => ({ title: d.sectionTitle, content: d.sectionContent }))
+        }
       }
+    } catch (err) {
+      libDocLog.warn('[queryDocs] Cache search failed, trying other tiers:', err)
     }
 
     // Tier 2: Fetch from Context7 → cache → return
@@ -221,7 +231,9 @@ export class LibraryDocService {
       try {
         const docs = await this.fetchContext7Docs(packageName, query, context7ApiKey)
         if (docs && docs.snippets.length > 0) {
-          libraryDocRepository.upsertSections(workspaceId, packageName, '', 'context7', docs.snippets)
+          try {
+            libraryDocRepository.upsertSections(workspaceId, packageName, '', 'context7', docs.snippets)
+          } catch { /* DB may not be available — return results without caching */ }
           return {
             packageName,
             version: '',
@@ -239,21 +251,23 @@ export class LibraryDocService {
       const npmResult = await this.fetchNpmReadme(packageName)
       if (npmResult) {
         const sections = this.chunkMarkdownBySections(npmResult.readme)
-        libraryDocRepository.upsertSections(workspaceId, packageName, npmResult.version, 'npm_registry', sections)
-        // FTS5 search the just-cached docs for relevance
-        const searched = libraryDocRepository.searchDocs(workspaceId, query, {
-          packageName,
-          maxResults: maxSections
-        })
-        if (searched.length > 0) {
-          return {
+        try {
+          libraryDocRepository.upsertSections(workspaceId, packageName, npmResult.version, 'npm_registry', sections)
+          // FTS5 search the just-cached docs for relevance
+          const searched = libraryDocRepository.searchDocs(workspaceId, query, {
             packageName,
-            version: npmResult.version,
-            source: 'npm_registry',
-            sections: searched.map((d) => ({ title: d.sectionTitle, content: d.sectionContent }))
+            maxResults: maxSections
+          })
+          if (searched.length > 0) {
+            return {
+              packageName,
+              version: npmResult.version,
+              source: 'npm_registry',
+              sections: searched.map((d) => ({ title: d.sectionTitle, content: d.sectionContent }))
+            }
           }
-        }
-        // If FTS5 found nothing relevant, return the first N sections
+        } catch { /* DB may not be available — return raw sections */ }
+        // If FTS5 found nothing or DB unavailable, return the first N sections
         return {
           packageName,
           version: npmResult.version,
@@ -288,7 +302,7 @@ export class LibraryDocService {
   chunkMarkdownBySections(markdown: string): { title: string; content: string }[] {
     const sections: { title: string; content: string }[] = []
     const lines = markdown.split('\n')
-    let currentTitle = ''
+    let currentTitle = 'README'
     let currentContent: string[] = []
 
     const flush = (): void => {

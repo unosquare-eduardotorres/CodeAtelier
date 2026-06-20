@@ -165,29 +165,41 @@ function createWindow(): void {
     }
   })
 
+  // ELECTRON-01: Null out mainWindow reference when the window is closed
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
   const splashStartTime = Date.now()
   const MINIMUM_SPLASH_DURATION = 3000 // 3s minimum for brand feel
+
+  // ELECTRON-02: Track timers for cleanup — use event-driven splash dismissal
+  let splashTimer: ReturnType<typeof setTimeout> | undefined
+  let safetyTimer: ReturnType<typeof setTimeout> | undefined
+
+  const dismissSplash = (): void => {
+    if (splashTimer) { clearTimeout(splashTimer); splashTimer = undefined }
+    if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = undefined }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.destroy()
+      splashWindow = null
+    }
+  }
 
   mainWindow.on('ready-to-show', () => {
     const elapsed = Date.now() - splashStartTime
     const remaining = Math.max(0, MINIMUM_SPLASH_DURATION - elapsed)
 
-    setTimeout(() => {
+    splashTimer = setTimeout(() => {
       mainWindow?.show()
-      if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.destroy()
-        splashWindow = null
-      }
+      dismissSplash()
     }, remaining)
   })
 
   // Safety timeout: if main window fails to load within 15s, show it anyway
-  setTimeout(() => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.destroy()
-      splashWindow = null
-    }
-    if (mainWindow && !mainWindow.isVisible()) {
+  safetyTimer = setTimeout(() => {
+    dismissSplash()
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show()
     }
   }, 15000)

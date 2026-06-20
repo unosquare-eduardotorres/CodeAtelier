@@ -32,12 +32,15 @@ export function useMcpIntegrations(): {
       .catch(() => setAvailableMcpIntegrations([]))
   }, [activeWorkspace])
 
-  // Toggle handler — persists to DB, updates store optimistically
+  // Toggle handler — persists to DB, updates store optimistically with rollback
   const handleMcpToggle = useCallback(
     async (mcpId: string): Promise<void> => {
       if (!activeConversation) return
       const current = activeConversation.mcpOverrides ?? {}
       const updated = { ...current, [mcpId]: !current[mcpId] }
+
+      // FE-02: Save original for rollback on API failure
+      const originalConv = activeConversation
 
       // Optimistic update
       const updatedConv = { ...activeConversation, mcpOverrides: updated }
@@ -46,11 +49,21 @@ export function useMcpIntegrations(): {
         conversations: state.conversations.map((c) => (c.id === updatedConv.id ? updatedConv : c))
       }))
 
-      // Persist
-      await window.api.updateMcpOverrides({
-        conversationId: activeConversation.id,
-        overrides: updated
-      })
+      // Persist — rollback on failure
+      try {
+        await window.api.updateMcpOverrides({
+          conversationId: activeConversation.id,
+          overrides: updated
+        })
+      } catch (err) {
+        console.error('[useMcpIntegrations] Failed to persist MCP override, rolling back:', err)
+        useChatStore.setState((state) => ({
+          activeConversation: originalConv,
+          conversations: state.conversations.map((c) =>
+            c.id === originalConv.id ? originalConv : c
+          )
+        }))
+      }
     },
     [activeConversation]
   )

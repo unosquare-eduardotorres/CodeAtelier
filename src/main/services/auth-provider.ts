@@ -1,5 +1,6 @@
 import log from 'electron-log/main'
 import { workspaceRepository } from '../db/repositories'
+import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 
 type AuthMode = 'claude-max' | 'api-key'
 
@@ -34,7 +35,12 @@ class AuthProviderService implements AuthProvider {
 
     if (authMode === 'api-key') {
       // Prefer workspace-level setting, fall back to env var
-      this._apiKey = (settings?.anthropicApiKey as string) ?? process.env.ANTHROPIC_API_KEY
+      // SEC-04: Decrypt API key (handles both legacy plaintext and encrypted)
+      const storedKey = decryptSettingsKey(
+        settings?.anthropicApiKey as string | undefined,
+        !!settings?.anthropicApiKeyEncrypted
+      )
+      this._apiKey = storedKey ?? process.env.ANTHROPIC_API_KEY
     } else {
       this._apiKey = undefined
     }

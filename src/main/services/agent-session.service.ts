@@ -99,6 +99,8 @@ interface ExecuteStreamOptions {
   localContextWindow?: number
   /** F3: Pre-resolved context tier — avoids re-resolving per tool_use chunk. */
   contextTier?: ContextWindowTier
+  /** LLM preset ID for per-action model resolution */
+  presetId?: string | null
 }
 
 /**
@@ -200,6 +202,16 @@ export class AgentSessionService extends AgentBaseService {
   maxTurnsContinuations = 0
   /** Stashed executeStream options for replay on max_turns auto-continue. */
   lastStreamOpts: ExecuteStreamOptions | null = null
+
+  /**
+   * SES-01: Per-conversation send lock — serializes concurrent send() calls
+   * for the same conversation to prevent shared mutable state corruption
+   * (accumulatedText, currentConversationId, sdkAbortController, etc.).
+   */
+  private readonly sendLocks = new Map<string, Promise<void>>()
+
+  /** SES-02: Guard flag to prevent concurrent ensureIpcBridge() calls from creating duplicate bridges. */
+  private ipcBridgeStarting = false
 
   private controlToolState: ControlToolState = {
     plan: false,
@@ -425,6 +437,23 @@ export class AgentSessionService extends AgentBaseService {
     if (!this.workspacePath) {
       throw new Error(`${this.adapter.role} not started — call start() first`)
     }
+
+    // SES-01: Serialize sends per-conversation to prevent concurrent state corruption.
+    // If a send is already in-flight for this conversation, chain after it.
+    const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
+    const thisLock = prevLock.then(
+      () => this._doSend(message, conversationId, images),
+      () => this._doSend(message, conversationId, images) // Still proceed after prior error
+    )
+    this.sendLocks.set(conversationId, thisLock.catch(() => {})) // Swallow for chain continuity
+    return thisLock
+  }
+
+  private async _doSend(
+    message: string,
+    conversationId: string,
+    images?: ImageAttachment[]
+  ): Promise<void> {
     this.resetForNewMessage(conversationId)
 
     const sessionId = this.resolveSession(conversationId)
@@ -441,6 +470,20 @@ export class AgentSessionService extends AgentBaseService {
     // Track turn count locally so we can supply it to the adapter.
     const turnCount = this.incrementTurnCount(conversationId, sessionId !== undefined)
 
+    // Resolve per-conversation LLM provider and preset BEFORE building prompts/MCP config
+    // so adapters can use preset-aware model resolution for prompt verbosity gating.
+    let conversationProvider: LLMProvider = this.llmProvider
+    let conversationPresetId: string | null = null
+    try {
+      const conv = conversationRepository.findById(conversationId)
+      if (conv?.llmProvider) {
+        conversationProvider = conv.llmProvider as LLMProvider
+      }
+      conversationPresetId = conv?.presetId ?? null
+    } catch {
+      /* non-fatal — keep session default */
+    }
+
     const { systemPrompt, effectiveMessage } = this.adapter.buildPrompts({
       message,
       conversationId,
@@ -450,7 +493,8 @@ export class AgentSessionService extends AgentBaseService {
       mode: this.currentMode,
       workspacePath: this.workspacePath,
       workspaceId: this.workspaceId,
-      costPreference: this.costPreference
+      costPreference: this.costPreference,
+      presetId: conversationPresetId
     })
 
     // Resolve context tier for local LLMs — gates tool selection in MCP config.
@@ -494,19 +538,6 @@ export class AgentSessionService extends AgentBaseService {
       contextTier
     })
 
-    // Resolve per-conversation LLM provider and preset (falls back to session default)
-    let conversationProvider: LLMProvider = this.llmProvider
-    let conversationPresetId: string | null = null
-    try {
-      const conv = conversationRepository.findById(conversationId)
-      if (conv?.llmProvider) {
-        conversationProvider = conv.llmProvider as LLMProvider
-      }
-      conversationPresetId = conv?.presetId ?? null
-    } catch {
-      /* non-fatal — keep session default */
-    }
-
     // Start IPC bridge for CLI/OpenCode backends — the control-actions MCP server
     // sends plan/askUser/memory events through a Unix domain socket.
     if (this.executorBackend === 'cli' || this.executorBackend === 'opencode') {
@@ -543,7 +574,8 @@ export class AgentSessionService extends AgentBaseService {
       mcpResult,
       llmProvider: conversationProvider,
       localContextWindow,
-      contextTier
+      contextTier,
+      presetId: conversationPresetId
     })
   }
 
@@ -809,9 +841,18 @@ export class AgentSessionService extends AgentBaseService {
     this.currentConversationId = conversationId
     this.updateDbSessionConversation(conversationId)
     this.accumulatedText = ''
+    // SES-03: Only reset circuit breaker and tool accumulator when switching TO
+    // this conversation. The send lock (SES-01) prevents concurrent sends within
+    // the same conversation, but a conversation switch mid-stream could wipe the
+    // breaker counter for an active stream on the old conversation. Since the send
+    // lock serializes per-conversation, this reset is now safe — the old stream
+    // has already finished or will finish on its own abort path.
     this.circuitBreaker.reset()
     this.toolActivityAccumulator.reset()
     this.maxTurnsContinuations = 0
+    // SES-04: Don't null-out lastStreamOpts here — executeStream sets it at the
+    // start of each stream, and the recovery manager reads it on error. The send
+    // lock ensures no concurrent access within the same conversation.
     this.lastStreamOpts = null
     this.controlToolState = { plan: false, askUser: false, memory: false }
     this.emit('statusUpdate', this.getStatus())
@@ -927,7 +968,8 @@ export class AgentSessionService extends AgentBaseService {
       mcpResult,
       llmProvider,
       localContextWindow,
-      contextTier: passedContextTier
+      contextTier: passedContextTier,
+      presetId: streamPresetId
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -1022,7 +1064,7 @@ export class AgentSessionService extends AgentBaseService {
               mcpResult,
               localContextWindow,
               goal: adapterGoal ?? undefined,
-              presetId: conversationPresetId
+              presetId: streamPresetId
             })
           }
           break
@@ -1408,6 +1450,11 @@ export class AgentSessionService extends AgentBaseService {
   private async ensureIpcBridge(_conversationId: string): Promise<void> {
     if (this.ipcBridge?.isListening()) return
 
+    // SES-02: Re-entrance guard — prevent concurrent calls from creating duplicate bridges.
+    // Two concurrent send() calls can both pass isListening() before bridge.start() resolves.
+    if (this.ipcBridgeStarting) return
+    this.ipcBridgeStarting = true
+
     // N10: Clean up stale listeners if the bridge is being restarted
     if (this.ipcBridge) {
       this.ipcBridge.removeAllListeners()
@@ -1415,9 +1462,14 @@ export class AgentSessionService extends AgentBaseService {
       this.executorFactory.invalidateMcpConfigCache()
     }
 
-    const bridge = new IpcBridge()
-    await bridge.start()
-    this.ipcBridge = bridge
+    let bridge: IpcBridge
+    try {
+      bridge = new IpcBridge()
+      await bridge.start()
+      this.ipcBridge = bridge
+    } finally {
+      this.ipcBridgeStarting = false
+    }
 
     // Wire bridge events to session events (same handling as wrapControlCallbacks).
     // Listeners read from this.currentConversationId (live) rather than a captured

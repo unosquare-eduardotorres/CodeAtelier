@@ -35,8 +35,9 @@ interface ChatStreamServiceInternal {
   activeRequestId: string | null
   currentStreamingRole: 'da-vinci' | 'specialist'
   keepaliveTimer: ReturnType<typeof setInterval> | null
-  mainWindow: { webContents: { send: (channel: string, data: unknown) => void } }
+  mainWindow: { webContents: { send: (channel: string, data: unknown) => void }; isDestroyed: () => boolean }
   callbacks: { onStopPipeline: () => Promise<void> }
+  safeWindowSend(channel: string, ...args: unknown[]): void
   acquireStreamLock(conversationId: string): {
     requestId: string
     signal: AbortSignal
@@ -65,6 +66,7 @@ interface ChatStreamServiceInternal {
 function mockMainWindow() {
   const sentMessages: Array<{ channel: string; data: unknown }> = []
   return {
+    isDestroyed: () => false,
     webContents: {
       send(channel: string, data: unknown) {
         sentMessages.push({ channel, data })
@@ -92,6 +94,7 @@ function createTestService(overrides?: {
     keepaliveTimer: null,
     mainWindow,
     callbacks: { onStopPipeline: async () => {} },
+    safeWindowSend: undefined as unknown as ChatStreamServiceInternal['safeWindowSend'],
     acquireStreamLock: undefined as unknown as ChatStreamServiceInternal['acquireStreamLock'],
     resolveStreamIdentity:
       undefined as unknown as ChatStreamServiceInternal['resolveStreamIdentity'],
@@ -109,6 +112,7 @@ function createTestService(overrides?: {
   }
   const proto = ChatStreamService.prototype as Record<string, Function>
 
+  svc.safeWindowSend = proto.safeWindowSend.bind(svc)
   svc.acquireStreamLock = proto.acquireStreamLock.bind(svc)
   svc.resolveStreamIdentity = proto.resolveStreamIdentity.bind(svc)
   svc.setupStreamTimers = proto.setupStreamTimers.bind(svc)

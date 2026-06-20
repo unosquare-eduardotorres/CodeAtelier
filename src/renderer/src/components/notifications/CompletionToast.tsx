@@ -35,7 +35,7 @@ export default function CompletionToast({
   const isSuccess = notification.status === 'completed'
 
   return (
-    <div className="w-96 bg-surface-raised border border-border-default rounded-xl shadow-xl p-4 animate-in slide-in-from-right-5 duration-300">
+    <div data-testid="completion-toast" className="w-96 bg-surface-raised border border-border-default rounded-xl shadow-xl p-4 animate-in slide-in-from-right-5 duration-300">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <span className="w-6 h-6 rounded bg-primary-subtle flex items-center justify-center text-xs font-bold text-primary-text">

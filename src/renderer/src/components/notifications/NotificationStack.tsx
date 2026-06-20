@@ -98,7 +98,7 @@ export default function NotificationStack(): React.JSX.Element | null {
   if (totalVisible === 0) return null
 
   return (
-    <div className="fixed top-14 right-4 z-50 flex flex-col gap-3">
+    <div data-testid="notification-stack" className="fixed top-14 right-4 z-50 flex flex-col gap-3">
       {/* Permission toasts — show first (higher priority) */}
       {visiblePermissions.slice(0, MAX_VISIBLE_TOASTS).map((p) => (
         <PermissionToast

@@ -15,7 +15,12 @@ import type {
 import { memoryService } from './memory.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
-import { flushTextBatcher, getAndClearToolActivities } from '../ipc/chunk-router'
+import {
+  flushTextBatcher,
+  getAndClearToolActivities,
+  startStreamMetrics,
+  completeStreamMetrics
+} from '../ipc/chunk-router'
 import {
   createTextChunk,
   createCompleteMessage,
@@ -112,6 +117,23 @@ export class ChatStreamService {
     this.registerEventForwarders()
   }
 
+  /**
+   * Guard all IPC sends against destroyed windows.
+   * During streaming the user may close the window — without this guard
+   * every webContents.send() throws an unhandled exception.
+   * The keepalive timer (30s interval) is particularly dangerous as it
+   * fires repeatedly after window destruction.
+   */
+  private safeWindowSend(channel: string, ...args: unknown[]): void {
+    try {
+      if (!this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send(channel, ...args)
+      }
+    } catch (error) {
+      log.warn(`Failed to send IPC ${channel}:`, error)
+    }
+  }
+
   // ── Persistent Event Forwarders ──
 
   /**
@@ -140,7 +162,7 @@ export class ChatStreamService {
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
     const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
           conversationId: chatAgentService.getCurrentConversationId() || '',
@@ -160,7 +182,7 @@ export class ChatStreamService {
       action?: string
       requestId?: string
     }): void => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+      this.safeWindowSend(IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         questions: data.questions,
         action: data.action,
@@ -172,7 +194,7 @@ export class ChatStreamService {
 
     // Elicitation — MCP server user input requests forwarded to renderer
     const onElicitation = (data: ElicitationEvent): void => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.ELICITATION_REQUEST, {
+      this.safeWindowSend(IPC_CHANNELS.ELICITATION_REQUEST, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         ...data
       })
@@ -182,7 +204,7 @@ export class ChatStreamService {
 
     // Budget cap reached — forward as a CHAT_MESSAGE_CHUNK with budgetCapReached field
     const onBudgetCapReached = (data: { conversationId: string; message: string }): void => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      this.safeWindowSend(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: data.conversationId,
         requestId: this.activeRequestId ?? undefined,
         budgetCapReached: {
@@ -390,9 +412,16 @@ export class ChatStreamService {
     requestId: string,
     rejectDone: (err: Error) => void
   ): void {
-    // Keepalive — prevents renderer's 2-min safety timer from firing
+    // Keepalive — prevents renderer's 2-min safety timer from firing.
+    // Checks isDestroyed() to self-clear after window close — without this
+    // the timer fires every 30s throwing unhandled exceptions.
     this.keepaliveTimer = setInterval(() => {
-      this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      if (this.mainWindow.isDestroyed()) {
+        clearInterval(this.keepaliveTimer!)
+        this.keepaliveTimer = null
+        return
+      }
+      this.safeWindowSend(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId,
         requestId,
         keepalive: true
@@ -407,6 +436,7 @@ export class ChatStreamService {
           '[STREAM:main-safety-timeout] Streaming lock stuck for 5 minutes — force-resetting. ' +
             `conversationId=${conversationId} requestId=${requestId}`
         )
+        completeStreamMetrics(conversationId, 'timeout')
         conversationLifecycle.abort('safety-timeout')
         rejectDone(new Error('Streaming timed out — safety recovery triggered'))
       }
@@ -467,7 +497,7 @@ export class ChatStreamService {
     phase: ConversationPhase,
     specialistMeta: { specialist: string; taskId?: string } | undefined
   ): void {
-    this.mainWindow.webContents.send(
+    this.safeWindowSend(
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createTextChunk({
         conversationId,
@@ -536,6 +566,7 @@ export class ChatStreamService {
     } catch (error) {
       // Lifecycle abort handles: streamingLock, listener removal, state machine force-reset
       conversationLifecycle.abort('streamError')
+      completeStreamMetrics(conversationId, 'error')
 
       eventLoggerService.logSessionFailed({
         conversationId,
@@ -559,7 +590,7 @@ export class ChatStreamService {
         messageRepository.updateToolActivities(savedMessage.id, errorToolActivities)
       }
 
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
           conversationId,
@@ -568,7 +599,7 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
         createCompleteMessage({
           conversationId,
@@ -602,7 +633,7 @@ export class ChatStreamService {
         )
 
         // Surface the failure to the user instead of saving an empty message
-        this.mainWindow.webContents.send(
+        this.safeWindowSend(
           IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
           createTextChunk({
             conversationId: ctx.conversationId,
@@ -637,7 +668,7 @@ export class ChatStreamService {
       log.info(
         `[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
       )
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
         createCompleteMessage({
           conversationId: ctx.conversationId,
@@ -647,7 +678,7 @@ export class ChatStreamService {
       )
     } catch (error) {
       log.error('Failed to save generalist message:', error)
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
           conversationId: ctx.conversationId,
@@ -656,7 +687,7 @@ export class ChatStreamService {
           role: ctx.streamingRole
         })
       )
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
         createCompleteMessage({
           conversationId: ctx.conversationId,
@@ -669,6 +700,9 @@ export class ChatStreamService {
     // ALWAYS transition state machine — regardless of success or failure.
     // This is the single point where streaming → idle happens on the happy path.
     conversationStateMachine.transition('chatAgentComplete')
+
+    // Log stream completion metrics (TTFT, duration, chunk count, chars)
+    completeStreamMetrics(ctx.conversationId, 'complete')
   }
 
   /**
@@ -781,7 +815,7 @@ export class ChatStreamService {
 
       const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
       ctx.streamedContent += planBlock
-      this.mainWindow.webContents.send(
+      this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
           conversationId: ctx.conversationId,
@@ -853,6 +887,9 @@ export class ChatStreamService {
 
     // Clear any stale tool activities from a previous crashed stream
     getAndClearToolActivities(conversationId)
+
+    // Start stream metrics tracking (TTFT, chunk count, total chars, duration)
+    startStreamMetrics(conversationId)
 
     // Stage 6: Prepare user message
     const { fullContent, imageAttachments } = this.prepareUserMessage(text, attachments)
@@ -948,56 +985,60 @@ export class ChatStreamService {
     // Stop specialist pool via callback
     await this.callbacks.onStopPipeline()
 
-    // Save partial content
-    if (conversationId) {
-      try {
-        const partialContent = chatAgentService.getStreamedContent()
-        const contentToSave = partialContent
-          ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
-          : '⏹ *Generation stopped by user.*'
+    try {
+      // Save partial content
+      if (conversationId) {
+        try {
+          const partialContent = chatAgentService.getStreamedContent()
+          const contentToSave = partialContent
+            ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
+            : '⏹ *Generation stopped by user.*'
 
-        // Snapshot the active adapter for the stop path — runs from a different
-        // IPC entry point and has no per-turn snapshot in scope.
-        // Check persona directly since stream-level streamingRole/specialistMeta
-        // aren't available in this separate IPC entry point.
-        const stopPersona = chatAgentService.getActivePersona()
-        const stopRole = stopPersona ? 'specialist' : chatAgentService.getActiveMessageRole()
-        const stopAgentId = stopPersona?.agentId ?? chatAgentService.getActiveAgentId()
-        const savedMessage = messageRepository.create(
-          conversationId,
-          stopRole,
-          contentToSave,
-          stopAgentId
-        )
-        log.info('Stopped message saved to DB, id:', savedMessage.id)
-
-        // Persist tool activities accumulated before user stopped
-        const stopToolActivities = getAndClearToolActivities(conversationId)
-        if (stopToolActivities.length > 0) {
-          messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
-          log.info(
-            `[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`
-          )
-        }
-
-        this.mainWindow.webContents.send(
-          IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-          createCompleteMessage({
+          // Snapshot the active adapter for the stop path — runs from a different
+          // IPC entry point and has no per-turn snapshot in scope.
+          // Check persona directly since stream-level streamingRole/specialistMeta
+          // aren't available in this separate IPC entry point.
+          const stopPersona = chatAgentService.getActivePersona()
+          const stopRole = stopPersona ? 'specialist' : chatAgentService.getActiveMessageRole()
+          const stopAgentId = stopPersona?.agentId ?? chatAgentService.getActiveAgentId()
+          const savedMessage = messageRepository.create(
             conversationId,
-            messageId: savedMessage.id,
-            requestId
-          })
-        )
-      } catch (error) {
-        log.error('Failed to save stopped message:', error)
+            stopRole,
+            contentToSave,
+            stopAgentId
+          )
+          log.info('Stopped message saved to DB, id:', savedMessage.id)
+
+          // Persist tool activities accumulated before user stopped
+          const stopToolActivities = getAndClearToolActivities(conversationId)
+          if (stopToolActivities.length > 0) {
+            messageRepository.updateToolActivities(savedMessage.id, stopToolActivities)
+            log.info(
+              `[PIPELINE:tool-activities-persisted-on-stop] count=${stopToolActivities.length}`
+            )
+          }
+
+          this.safeWindowSend(
+            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+            createCompleteMessage({
+              conversationId,
+              messageId: savedMessage.id,
+              requestId
+            })
+          )
+        } catch (error) {
+          log.error('Failed to save stopped message:', error)
+        }
       }
+    } finally {
+      // ALWAYS cancel and abort — even if save/send fails.
+      // Prevents orphaned CLI processes and stuck streaming locks.
+      if (conversationId) {
+        completeStreamMetrics(conversationId, 'stopped')
+      }
+      chatAgentService.cancelCurrentQuery()
+      conversationLifecycle.abort('userStop')
     }
-
-    // Cancel generalist query
-    chatAgentService.cancelCurrentQuery()
-
-    // Lifecycle abort handles: streamingLock, activeRequestId, listener removal, state machine reset
-    conversationLifecycle.abort('userStop')
   }
 
   // ── Compact ──

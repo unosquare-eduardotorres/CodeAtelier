@@ -68,7 +68,7 @@ export function GrillTrackSelector({
       )}
 
       {/* Track description */}
-      <div className="text-center">
+      <div data-testid="grill-track-selector" className="text-center">
         <h2 className="text-lg font-semibold text-text-primary mb-1">Choose a Grill Track</h2>
         <p className="text-sm text-text-muted">
           Each track evaluates your requirement from a specialist perspective.

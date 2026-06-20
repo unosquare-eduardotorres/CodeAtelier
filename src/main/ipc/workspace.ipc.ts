@@ -5,6 +5,7 @@ import { resolve, basename } from 'node:path'
 import simpleGit from 'simple-git'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { workspaceRepository } from '../db/repositories'
+import { presetRepository } from '../db/repositories/preset.repository'
 import { repoService } from '../services/repo.service'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, requirePlainObject, optionalString } from './validate-args'
@@ -13,6 +14,7 @@ import { fileWatcherService } from '../services/file-watcher.service'
 import { chatAgentService } from '../services/chat-agent.service'
 import { dbLogger } from '../logger'
 import { getDatabase } from '../db/index'
+import { encryptSettingsKeys } from './encrypt-settings-keys'
 
 export function registerWorkspaceIpc(): void {
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_LIST, async (event) => {
@@ -73,6 +75,13 @@ export function registerWorkspaceIpc(): void {
       gitRemoteUrl,
       isGitRepo
     )
+
+    // Seed built-in LLM presets for the new workspace
+    try {
+      presetRepository.ensureBuiltIns(workspace.id)
+    } catch (err) {
+      dbLogger.warn('Failed to seed built-in presets (non-fatal):', err)
+    }
 
     // Phase 2 refactor: seed a pending Project Specialist row so the user
     // can build it on first open. Idempotent — migration 66 already does
@@ -187,7 +196,9 @@ export function registerWorkspaceIpc(): void {
     // Merge with existing settings to avoid overwriting fields set by other services
     // (e.g., githubTokenEncrypted set by github.service)
     const existing = workspaceRepository.getSettings(workspaceId)
-    const merged = { ...existing, ...settings }
+    // SEC-04: Encrypt all API key fields before DB storage
+    const encrypted = encryptSettingsKeys({ ...existing, ...settings })
+    const merged = encrypted
     const result = workspaceRepository.updateSettings(workspaceId, merged)
 
     // Update file watcher based on new settings

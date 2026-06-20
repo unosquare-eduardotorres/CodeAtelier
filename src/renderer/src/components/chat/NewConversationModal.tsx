@@ -15,6 +15,8 @@ import type { LucideIcon } from 'lucide-react'
 import type { CommunicationTone, ConversationMode } from '../../../../shared/types'
 import { COMMUNICATION_TONES } from '../../../../shared/constants'
 import { AttachmentDropzone } from '@renderer/components/chat'
+import { PresetSelector } from './PresetSelector'
+import { useWorkspaceStore } from '@renderer/store/workspace.store'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -29,6 +31,7 @@ interface NewConversationModalProps {
     communicationTone?: CommunicationTone | null
     attachments?: string[]
     useIsolatedBranch?: boolean
+    presetId?: string | null
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -48,7 +51,9 @@ export default function NewConversationModal({
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
+  const [presetId, setPresetId] = useState<string | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
 
   // Auto-focus title input when opened
   useEffect(() => {
@@ -70,6 +75,7 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setUseIsolatedBranch(false)
+      setPresetId(null)
     }
   }, [isOpen])
 
@@ -97,9 +103,10 @@ export default function NewConversationModal({
       mode,
       communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
-      useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined
+      useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
+      presetId
     })
-  }, [title, description, mode, conversationTone, attachments, useIsolatedBranch, onSubmit])
+  }, [title, description, mode, conversationTone, attachments, useIsolatedBranch, presetId, onSubmit])
 
   const handleCreateIdea = useCallback((): void => {
     const trimmedTitle = title.trim()
@@ -220,6 +227,15 @@ export default function NewConversationModal({
                 : 'Build mode — the agent can create and modify files in your workspace'}
             </p>
           </div>
+
+          {/* LLM Preset Selector */}
+          {activeWorkspace && (
+            <PresetSelector
+              workspaceId={activeWorkspace.id}
+              presetId={presetId}
+              onChange={setPresetId}
+            />
+          )}
 
           {/* Communication Tone */}
           <div>

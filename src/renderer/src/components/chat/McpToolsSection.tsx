@@ -34,8 +34,9 @@ export default function McpToolsSection({
   activeExternalMcps
 }: McpToolsSectionProps): React.JSX.Element {
   return (
-    <div className="w-full mb-5">
+    <div data-testid="new-chat-mcp-section" className="w-full mb-5">
       <button
+        data-testid="new-chat-mcp-expand"
         onClick={() => setShowMcpTools(!showMcpTools)}
         className="flex items-center gap-2.5 text-sm font-medium text-text-primary mb-2"
       >

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { app } from 'electron'
 import { MCP_TOOLS, EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
@@ -90,6 +91,14 @@ function resolveStdioCommand(command: string, knownPaths?: readonly string[]): s
       if (found) return resolved
     }
   }
+  // SVC-04: In packaged apps, don't fall back to bare command — the minimal
+  // GUI PATH (/usr/bin:/bin:/usr/sbin:/sbin) could resolve a trojan binary.
+  if (app.isPackaged) {
+    chatAgentLogger.error(
+      `[mcp:resolve-command] Command "${command}" not found at any known path — refusing bare fallback in packaged mode`
+    )
+    throw new Error(`MCP command not found: ${command}`)
+  }
   chatAgentLogger.info(`[mcp:resolve-command] Falling back to bare command: ${command}`)
   return command
 }
@@ -118,11 +127,22 @@ const KNOWN_JAVA_PATHS = [
  */
 function resolveJavaHome(): string | undefined {
   // Already set — use it
-  if (process.env.JAVA_HOME) return process.env.JAVA_HOME
+  if (process.env.JAVA_HOME) {
+    // SVC-05: Validate that JAVA_HOME actually contains bin/java
+    const javaBin = join(process.env.JAVA_HOME, 'bin', 'java')
+    if (existsSync(javaBin)) {
+      return process.env.JAVA_HOME
+    }
+    chatAgentLogger.warn(
+      `[mcp:java-resolve] JAVA_HOME=${process.env.JAVA_HOME} has no bin/java — ignoring`
+    )
+  }
 
   // Probe known Homebrew paths
   for (const p of KNOWN_JAVA_PATHS) {
-    if (existsSync(p)) {
+    // SVC-05: Verify bin/java exists, not just the directory
+    const javaBin = join(p, 'bin', 'java')
+    if (existsSync(javaBin)) {
       chatAgentLogger.info(`[mcp:java-resolve] Found Java at ${p}`)
       return p
     }

@@ -37,6 +37,145 @@ export interface MessageContentData {
   afterBuildSummary: string | null
 }
 
+// ─── Pure Helpers ─────────────────────────────────────────
+
+interface ExtractedBlock<T> {
+  data: T | null
+  rawContent: string | null
+  before: string | null
+  after: string | null
+  match: RegExpMatchArray | null
+}
+
+/**
+ * Generic regex-match → JSON.parse → transform pattern.
+ * Replaces the repeated block-parsing logic for plan, grill-summary,
+ * grill-question, grill-evaluation, and build-summary blocks.
+ */
+function extractStructuredBlock<T>(
+  content: string,
+  pattern: RegExp,
+  transform: (parsed: unknown) => T | null,
+  opts?: { skipForUser?: boolean; isUser?: boolean }
+): ExtractedBlock<T> {
+  const empty: ExtractedBlock<T> = { data: null, rawContent: null, before: null, after: null, match: null }
+
+  if (opts?.skipForUser && opts.isUser) return empty
+
+  const match = content.match(pattern)
+  if (!match) return empty
+
+  const rawContent = match[1]
+  let data: T | null = null
+  try {
+    data = transform(JSON.parse(rawContent.trim()))
+  } catch {
+    /* noop — raw content or malformed JSON */
+  }
+
+  return {
+    data,
+    rawContent,
+    before: content.substring(0, match.index!),
+    after: content.substring(match.index! + match[0].length),
+    match
+  }
+}
+
+/** Parse attachment JSON into image and file lists. */
+function parseAttachments(json: string | undefined): {
+  imageAttachments: string[]
+  fileAttachments: string[]
+} {
+  let paths: string[] = []
+  try {
+    const parsed = JSON.parse(json || '[]')
+    paths = Array.isArray(parsed) ? parsed : []
+  } catch {
+    /* noop */
+  }
+  const imagePattern = /\.(png|jpg|jpeg|gif|webp)$/i
+  return {
+    imageAttachments: paths.filter((p) => imagePattern.test(p)),
+    fileAttachments: paths.filter((p) => !imagePattern.test(p))
+  }
+}
+
+/** Detect grill activation markers and clean display content. */
+function processGrillActivation(
+  content: string,
+  isUser: boolean
+): { isGrillActivation: boolean; ideaToRefineMatch: RegExpMatchArray | null; displayContent: string } {
+  const isGrillActivation = isUser && content.startsWith('[GRILL MODE ACTIVATED]')
+  const ideaToRefineMatch = isGrillActivation
+    ? content.match(/## Idea to Refine\n\*\*(.+?)\*\*/)
+    : null
+
+  let displayContent = content
+  if (isGrillActivation) {
+    displayContent = content.replace(/^\[GRILL MODE ACTIVATED\]\s*/, '')
+    if (ideaToRefineMatch) {
+      displayContent = displayContent.replace(/## Idea to Refine\n\*\*.+?\*\*\n*/, '')
+    }
+    displayContent = displayContent.trim()
+  }
+
+  return { isGrillActivation, ideaToRefineMatch, displayContent }
+}
+
+// ─── Block Transforms ─────────────────────────────────────
+
+interface GrillSummaryBlock {
+  summary: string | null
+  proposedTasks: GrillProposedTask[]
+}
+
+function toStructuredPlan(parsed: unknown): StructuredPlan | null {
+  const p = parsed as Record<string, unknown>
+  return p && typeof p === 'object' && typeof p.title === 'string'
+    ? (parsed as StructuredPlan)
+    : null
+}
+
+function toGrillSummary(parsed: unknown): GrillSummaryBlock {
+  const p = parsed as Record<string, unknown>
+  return {
+    summary: (p.summary as string) || null,
+    proposedTasks: Array.isArray(p.proposedTasks) ? (p.proposedTasks as GrillProposedTask[]) : []
+  }
+}
+
+function toGrillQuestions(parsed: unknown): GrillQuestion[] | null {
+  const p = parsed as Record<string, unknown>
+  return p.questions && Array.isArray(p.questions) ? (p.questions as GrillQuestion[]) : null
+}
+
+interface GrillEvalBlock {
+  score: number
+  scoreLabel: string
+  feedback: string
+  questions: GrillQuestion[]
+}
+
+function toGrillEval(parsed: unknown): GrillEvalBlock | null {
+  const p = parsed as Record<string, unknown>
+  if (typeof p.score === 'number' && Array.isArray(p.questions)) {
+    return {
+      score: p.score,
+      scoreLabel: (p.scoreLabel as string) ?? '',
+      feedback: (p.feedback as string) ?? '',
+      questions: p.questions as GrillQuestion[]
+    }
+  }
+  return null
+}
+
+function toBuildSummary(parsed: unknown): BuildSummary {
+  return parsed as BuildSummary
+}
+
+// ─── Hook ─────────────────────────────────────────────────
+
 /**
  * Parses message content to detect and extract structured blocks
  * (plans, grill sessions, handoffs, build summaries, etc.)
@@ -49,145 +188,40 @@ export function useMessageContent(
   isUser: boolean
 ): MessageContentData {
   return useMemo(() => {
-    // Parse attachments
-    let parsedAttachments: string[] = []
-    try {
-      const parsed = JSON.parse(attachmentsJson || '[]')
-      parsedAttachments = Array.isArray(parsed) ? parsed : []
-    } catch {
-      /* noop */
-    }
-    const imageAtts = parsedAttachments.filter((p) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p))
-    const fileAtts = parsedAttachments.filter((p) => !/\.(png|jpg|jpeg|gif|webp)$/i.test(p))
+    const { imageAttachments, fileAttachments } = parseAttachments(attachmentsJson)
+    const { isGrillActivation, ideaToRefineMatch, displayContent } =
+      processGrillActivation(contentMd, isUser)
 
-    // Grill activation detection
-    const grillActivation = isUser && contentMd.startsWith('[GRILL MODE ACTIVATED]')
-    const ideaMatch = grillActivation ? contentMd.match(/## Idea to Refine\n\*\*(.+?)\*\*/) : null
-
-    // Clean display content for grill messages
-    let dispContent = contentMd
-    if (grillActivation) {
-      dispContent = contentMd.replace(/^\[GRILL MODE ACTIVATED\]\s*/, '')
-      if (ideaMatch) {
-        dispContent = dispContent.replace(/## Idea to Refine\n\*\*.+?\*\*\n*/, '')
-      }
-      dispContent = dispContent.trim()
-    }
-
-    // Detect plan blocks
-    const pMatch = contentMd.match(/`{3,4}plan\n([\s\S]*?)`{3,4}/)
-    const pContent = pMatch ? pMatch[1] : null
-    const bPlan = pMatch ? contentMd.substring(0, pMatch.index!) : null
-    const aPlan = pMatch ? contentMd.substring(pMatch.index! + pMatch[0].length) : null
-
-    // Try to parse planContent as structured plan for direct execution path
-    let sPlan: StructuredPlan | null = null
-    if (pContent) {
-      try {
-        const parsed = JSON.parse(pContent)
-        if (parsed && typeof parsed === 'object' && typeof parsed.title === 'string') {
-          sPlan = parsed as StructuredPlan
-        }
-      } catch {
-        /* noop — raw markdown plan, will use fallback generalist path */
-      }
-    }
-
-    // Detect grill-summary blocks
-    const gMatch = !isUser ? contentMd.match(/```grill-summary\n([\s\S]*?)```/) : null
-    let gSummary: string | null = null
-    let gProposedTasks: GrillProposedTask[] = []
-    if (gMatch) {
-      try {
-        const parsed = JSON.parse(gMatch[1].trim())
-        gSummary = parsed.summary || null
-        gProposedTasks = Array.isArray(parsed.proposedTasks) ? parsed.proposedTasks : []
-      } catch {
-        /* noop */
-      }
-    }
-    const bGrill = gMatch ? contentMd.substring(0, gMatch.index!) : null
-    const aGrill = gMatch ? contentMd.substring(gMatch.index! + gMatch[0].length) : null
-
-    // Detect grill-question blocks
-    const gqMatch = !isUser ? contentMd.match(/```grill-question\n([\s\S]*?)```/) : null
-    let gQuestions: GrillQuestion[] = []
-    if (gqMatch) {
-      try {
-        const parsed = JSON.parse(gqMatch[1].trim())
-        if (parsed.questions && Array.isArray(parsed.questions)) {
-          gQuestions = parsed.questions
-        }
-      } catch {
-        /* noop */
-      }
-    }
-    const bGrillQ = gqMatch ? contentMd.substring(0, gqMatch.index!) : null
-    const aGrillQ = gqMatch ? contentMd.substring(gqMatch.index! + gqMatch[0].length) : null
-
-    // Detect grill-evaluation blocks
-    const geMatch = !isUser ? contentMd.match(/```grill-evaluation\n([\s\S]*?)```/) : null
-    let geData: {
-      score: number
-      scoreLabel: string
-      feedback: string
-      questions: GrillQuestion[]
-    } | null = null
-    if (geMatch) {
-      try {
-        const parsed = JSON.parse(geMatch[1].trim())
-        if (typeof parsed.score === 'number' && Array.isArray(parsed.questions)) {
-          geData = {
-            score: parsed.score,
-            scoreLabel: parsed.scoreLabel ?? '',
-            feedback: parsed.feedback ?? '',
-            questions: parsed.questions
-          }
-        }
-      } catch {
-        /* noop */
-      }
-    }
-    const bGrillEval = geMatch ? contentMd.substring(0, geMatch.index!) : null
-    const aGrillEval = geMatch ? contentMd.substring(geMatch.index! + geMatch[0].length) : null
-
-    // Detect build-summary blocks
-    const bsMatch = !isUser ? contentMd.match(/```build-summary\n([\s\S]*?)```/) : null
-    let bsData: BuildSummary | null = null
-    if (bsMatch) {
-      try {
-        bsData = JSON.parse(bsMatch[1].trim()) as BuildSummary
-      } catch {
-        /* noop */
-      }
-    }
-    const bBuildSummary = bsMatch ? contentMd.substring(0, bsMatch.index!) : null
-    const aBuildSummary = bsMatch ? contentMd.substring(bsMatch.index! + bsMatch[0].length) : null
+    const plan = extractStructuredBlock(contentMd, /`{3,4}plan\n([\s\S]*?)`{3,4}/, toStructuredPlan)
+    const grill = extractStructuredBlock(contentMd, /```grill-summary\n([\s\S]*?)```/, toGrillSummary, { skipForUser: true, isUser })
+    const grillQ = extractStructuredBlock(contentMd, /```grill-question\n([\s\S]*?)```/, toGrillQuestions, { skipForUser: true, isUser })
+    const grillE = extractStructuredBlock(contentMd, /```grill-evaluation\n([\s\S]*?)```/, toGrillEval, { skipForUser: true, isUser })
+    const buildS = extractStructuredBlock(contentMd, /```build-summary\n([\s\S]*?)```/, toBuildSummary, { skipForUser: true, isUser })
 
     return {
-      imageAttachments: imageAtts,
-      fileAttachments: fileAtts,
-      isGrillActivation: grillActivation,
-      ideaToRefineMatch: ideaMatch,
-      displayContent: dispContent,
-      planContent: pContent,
-      structuredPlan: sPlan,
-      beforePlan: bPlan,
-      afterPlan: aPlan,
-      grillSummary: gSummary,
-      grillProposedTasks: gProposedTasks,
-      beforeGrill: bGrill,
-      afterGrill: aGrill,
-      grillQuestionMatch: gqMatch,
-      grillQuestions: gQuestions,
-      beforeGrillQuestion: bGrillQ,
-      afterGrillQuestion: aGrillQ,
-      grillEvalData: geData,
-      beforeGrillEval: bGrillEval,
-      afterGrillEval: aGrillEval,
-      buildSummaryData: bsData,
-      beforeBuildSummary: bBuildSummary,
-      afterBuildSummary: aBuildSummary
+      imageAttachments,
+      fileAttachments,
+      isGrillActivation,
+      ideaToRefineMatch,
+      displayContent,
+      planContent: plan.rawContent,
+      structuredPlan: plan.data,
+      beforePlan: plan.before,
+      afterPlan: plan.after,
+      grillSummary: grill.data?.summary ?? null,
+      grillProposedTasks: grill.data?.proposedTasks ?? [],
+      beforeGrill: grill.before,
+      afterGrill: grill.after,
+      grillQuestionMatch: grillQ.match,
+      grillQuestions: grillQ.data ?? [],
+      beforeGrillQuestion: grillQ.before,
+      afterGrillQuestion: grillQ.after,
+      grillEvalData: grillE.data,
+      beforeGrillEval: grillE.before,
+      afterGrillEval: grillE.after,
+      buildSummaryData: buildS.data,
+      beforeBuildSummary: buildS.before,
+      afterBuildSummary: buildS.after
     }
   }, [contentMd, attachmentsJson, isUser])
 }

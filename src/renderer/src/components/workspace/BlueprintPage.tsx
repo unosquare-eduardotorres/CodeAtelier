@@ -126,7 +126,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   const currentPhaseStream = currentPhase ? (phaseStreamText[currentPhase] ?? '') : ''
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div data-testid="blueprint-page" className="flex flex-col h-full overflow-y-auto">
       <div className="p-6 space-y-6 max-w-3xl mx-auto w-full">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -141,6 +141,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             <button
               type="button"
               onClick={handleCancel}
+              data-testid="blueprint-cancel-btn"
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-danger hover:bg-danger/10 rounded-lg transition-colors"
             >
               <StopCircle size={14} />
@@ -338,7 +339,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
           <>
             {/* Approval Gate overlay */}
             {pendingApproval && (
-              <div className="bg-surface-raised rounded-xl border border-emerald-400/30 p-4">
+              <div data-testid="blueprint-approval-gate" className="bg-surface-raised rounded-xl border border-emerald-400/30 p-4">
                 <BlueprintApprovalGate
                   planSummary={pendingApproval.planSummary}
                   onApprove={handleApprove}
@@ -349,7 +350,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             )}
 
             {/* Timeline + Stream */}
-            <div className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden">
+            <div data-testid="blueprint-phase-timeline" className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden">
               <div className="grid grid-cols-[200px_1fr] divide-x divide-border-subtle h-[400px]">
                 {/* Timeline sidebar */}
                 <div className="p-4 overflow-y-auto">

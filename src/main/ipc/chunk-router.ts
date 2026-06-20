@@ -73,6 +73,51 @@ export interface ChunkRouterContext {
   mode?: ConversationMode
 }
 
+// ── Per-stream metrics ──────────────────────────────────────────────
+// Tracks TTFT, chunk count, total chars, and duration per stream.
+// Logged as [METRIC:STREAM_COMPLETE] on finalization for observability.
+
+interface StreamMetrics {
+  startedAt: number
+  firstTokenAt: number | null
+  chunkCount: number
+  totalChars: number
+}
+
+const streamMetricsStore = new Map<string, StreamMetrics>()
+
+/** Begin tracking metrics for a new stream. */
+export function startStreamMetrics(conversationId: string): void {
+  streamMetricsStore.set(conversationId, {
+    startedAt: Date.now(),
+    firstTokenAt: null,
+    chunkCount: 0,
+    totalChars: 0
+  })
+}
+
+/**
+ * Log final stream metrics and clean up.
+ * @param outcome - How the stream ended: 'complete' | 'stopped' | 'error' | 'timeout'
+ */
+export function completeStreamMetrics(
+  conversationId: string,
+  outcome: 'complete' | 'stopped' | 'error' | 'timeout'
+): void {
+  const metrics = streamMetricsStore.get(conversationId)
+  streamMetricsStore.delete(conversationId)
+  if (!metrics) return
+
+  const duration = Date.now() - metrics.startedAt
+  const ttft = metrics.firstTokenAt ? metrics.firstTokenAt - metrics.startedAt : null
+  chatIpcLogger.info(
+    `[METRIC:STREAM_COMPLETE] ` +
+      `outcome=${outcome} duration=${duration}ms ttft=${ttft}ms ` +
+      `chunks=${metrics.chunkCount} chars=${metrics.totalChars} ` +
+      `conversationId=${conversationId.slice(0, 8)}`
+  )
+}
+
 // ── Text delta batching (~30fps) ────────────────────────────────────
 // Reduces IPC calls from ~15/sec to ~3-5/sec during fast streaming.
 // Text deltas are buffered and flushed every 33ms (1 frame at 30fps).
@@ -134,6 +179,21 @@ function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   chatIpcLogger.debug(
     `[chunk-router:text] ${chunk.content.length} chars → ${ctx.conversationId.slice(0, 8)}`
   )
+
+  // Track stream metrics (TTFT, chunk count, total chars)
+  const metrics = streamMetricsStore.get(ctx.conversationId)
+  if (metrics) {
+    if (metrics.firstTokenAt === null) {
+      metrics.firstTokenAt = Date.now()
+      const ttft = metrics.firstTokenAt - metrics.startedAt
+      chatIpcLogger.info(
+        `[METRIC:TTFT] ${ttft}ms conversationId=${ctx.conversationId.slice(0, 8)}`
+      )
+    }
+    metrics.chunkCount++
+    metrics.totalChars += chunk.content.length
+  }
+
   // Accumulate immediately for backend consumers (prompt caching, etc.)
   ctx.contentAccumulator.value += chunk.content
   // Batch IPC sends at ~30fps to reduce renderer pressure during fast streaming

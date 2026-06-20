@@ -11,8 +11,17 @@ export function useSessionRecoveryState(): {
   const sessionRecovery = useChatStore((s) => s.sessionRecovery)
   const setSessionRecovery = useChatStore((s) => s.setSessionRecovery)
 
+  // FE-03: Track dismiss timer for cleanup on unmount
   useEffect(() => {
+    let dismissTimer: ReturnType<typeof setTimeout> | undefined
+
     const cleanup = window.api.onSessionRecovery((data) => {
+      // Clear any pending dismiss timer when new recovery data arrives
+      if (dismissTimer) {
+        clearTimeout(dismissTimer)
+        dismissTimer = undefined
+      }
+
       if (data.phase === 'completed') {
         // Auto-dismiss after 2s
         setSessionRecovery({
@@ -20,7 +29,7 @@ export function useSessionRecoveryState(): {
           phase: 'completed',
           message: data.message
         })
-        setTimeout(() => setSessionRecovery(null), 2000)
+        dismissTimer = setTimeout(() => setSessionRecovery(null), 2000)
       } else {
         setSessionRecovery({
           active: true,
@@ -29,7 +38,10 @@ export function useSessionRecoveryState(): {
         })
       }
     })
-    return cleanup
+    return () => {
+      cleanup()
+      if (dismissTimer) clearTimeout(dismissTimer)
+    }
   }, [setSessionRecovery])
 
   return { sessionRecovery }

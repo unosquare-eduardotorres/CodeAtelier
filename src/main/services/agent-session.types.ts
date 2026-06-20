@@ -38,6 +38,8 @@ export interface AdapterPromptContext {
   workspacePath: string
   workspaceId: string | null
   costPreference: CostPreference
+  /** LLM preset ID for per-action model resolution */
+  presetId?: string | null
 }
 
 export interface AdapterPromptResult {
@@ -74,6 +76,8 @@ export interface AdapterSessionLifecycleCtx {
   workspacePath: string
   workspaceId: string | null
   conversationId: string | null
+  /** LLM preset ID — null at session start, available on refreshFeatureFlags */
+  presetId?: string | null
 }
 
 // ── Events emitted by AgentSessionService ────────────────────────────

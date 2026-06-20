@@ -50,7 +50,7 @@ export default function CreateIdeaModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-surface-float rounded-xl border border-warning/30 shadow-xl w-[640px] max-w-full max-h-[85vh] flex flex-col overflow-hidden">
+      <div data-testid="create-idea-modal" className="bg-surface-float rounded-xl border border-warning/30 shadow-xl w-[640px] max-w-full max-h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 bg-warning-muted border-b border-warning/20 flex-shrink-0">
           <div className="flex items-center gap-2">

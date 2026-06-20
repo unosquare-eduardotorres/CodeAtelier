@@ -187,7 +187,7 @@ export default function GrillPage({
   }, [session])
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0 overflow-hidden">
+    <div data-testid="grill-page" className="flex-1 flex flex-col bg-surface-raised min-w-0 overflow-hidden">
       <GrillPageHeader
         ideaTitle={ideaTitle}
         selectedTrack={session.selectedTrack}

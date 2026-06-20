@@ -222,7 +222,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
-    <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
+    <div data-testid="message-list" className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
       <FloatingRobots />
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full">
         {/* Virtualized message list */}

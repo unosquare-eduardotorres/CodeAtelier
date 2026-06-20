@@ -282,10 +282,19 @@ export function finalizeStreamAction(
     // DB is the source of truth — no optimistic message preservation.
     // The previous merge strategy incorrectly kept temp-* optimistic messages
     // (whose IDs never exist in the DB), causing duplicate user bubbles.
+    // Guarded: if the user sends a new message or switches conversations before
+    // the reload completes, the stale DB result is discarded to prevent overwriting
+    // optimistic messages with outdated data.
+    const reloadConversationId = activeConversation.id
     window.api
-      .getMessages({ conversationId: activeConversation.id })
+      .getMessages({ conversationId: reloadConversationId })
       .then((dbMessages) => {
-        if (dbMessages.length > 0) {
+        const current = get()
+        if (
+          current.activeConversation?.id === reloadConversationId &&
+          !current.isStreaming &&
+          dbMessages.length > 0
+        ) {
           set({ messages: dbMessages })
         }
       })

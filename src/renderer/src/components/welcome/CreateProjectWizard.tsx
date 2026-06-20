@@ -378,6 +378,7 @@ export default function CreateProjectWizard({
 
   return (
     <div
+      data-testid="wizard-container"
       className="flex flex-col bg-surface-base"
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }}
     >
@@ -394,6 +395,7 @@ export default function CreateProjectWizard({
                        hover:text-text-primary hover:bg-surface-overlay transition-colors
                        focus:outline-none focus:ring-2 focus:ring-primary/50"
             aria-label="Close wizard"
+            data-testid="wizard-close-btn"
           >
             <X size={18} />
           </button>
@@ -410,7 +412,7 @@ export default function CreateProjectWizard({
       {/* Step content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {currentStep === 'setup' && (
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <div data-testid="wizard-setup-step" className="flex-1 flex flex-col items-center justify-center p-8">
             <WizardStepIndicator
               currentStep={currentStep}
               onGoToStep={goToStep}
@@ -431,7 +433,7 @@ export default function CreateProjectWizard({
         )}
 
         {currentStep === 'focus' && (
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <div data-testid="wizard-focus-step" className="flex-1 flex flex-col items-center justify-center p-8">
             <WizardStepIndicator
               currentStep={currentStep}
               onGoToStep={goToStep}
@@ -448,6 +450,7 @@ export default function CreateProjectWizard({
         )}
 
         {currentStep === 'grill' && workspaceId && (
+          /* data-testid="wizard-grill-step" is on the WizardGrillStep root */
           <WizardGrillStep
             workspaceId={workspaceId}
             projectName={projectName}
@@ -463,7 +466,7 @@ export default function CreateProjectWizard({
         )}
 
         {currentStep === 'create' && (
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <div data-testid="wizard-summary-step" className="flex-1 flex flex-col items-center justify-center p-8">
             <WizardStepIndicator
               currentStep={currentStep}
               onGoToStep={goToStep}

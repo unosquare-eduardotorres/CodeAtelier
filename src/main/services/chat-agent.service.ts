@@ -85,8 +85,6 @@ export class ChatAgentService extends EventEmitter {
     mode?: ConversationMode,
     resumeSessionId?: string
   ): Promise<void> {
-    this._activeWorkspaceId = workspaceId
-
     const existing = this.sessions.get(workspaceId)
     if (existing) {
       this.log.info(`[multi-session] Workspace ${workspaceId} already has a session — activating`)
@@ -99,6 +97,7 @@ export class ChatAgentService extends EventEmitter {
         await this.stopForWorkspace(workspaceId)
         // Fall through to create a new session below
       } else {
+        this._activeWorkspaceId = workspaceId
         return // Session already running with correct adapter
       }
     }
@@ -108,10 +107,22 @@ export class ChatAgentService extends EventEmitter {
     const forwarderCleanups: Array<() => void> = []
 
     const entry: SessionEntry = { adapter, session, forwarderCleanups, workspacePath }
-    this.sessions.set(workspaceId, entry)
-    this.wireSessionForwarders(workspaceId, entry)
 
-    await session.start(workspacePath, mode, resumeSessionId)
+    // SVC-01: Wire forwarders and start BEFORE adding to map.
+    // If start() throws, the entry never enters the map — prevents
+    // dead-session ghost entries that block future startForWorkspace calls.
+    this.wireSessionForwarders(workspaceId, entry)
+    try {
+      await session.start(workspacePath, mode, resumeSessionId)
+    } catch (err) {
+      // Cleanup on failure — don't leave partial forwarders
+      this.teardownSessionForwarders(entry)
+      throw err
+    }
+
+    // Only add to map and set active AFTER successful start
+    this.sessions.set(workspaceId, entry)
+    this._activeWorkspaceId = workspaceId
   }
 
   /**
@@ -227,7 +238,11 @@ export class ChatAgentService extends EventEmitter {
   private resolveAdapter(workspacePath: string): AgentRoleAdapter {
     try {
       const workspace = workspaceRepository.findByPath(workspacePath)
-      if (!workspace) return this.daVinciAdapter
+      if (!workspace) {
+        // SVC-02: Log workspace path for debugging — silent fallback is hard to trace
+        this.log.warn(`[adapter-swap] Workspace not found for path=${workspacePath}, using DaVinci`)
+        return this.daVinciAdapter
+      }
 
       const settings = workspaceRepository.getSettings(workspace.id)
       if (!settings.specialistSwapAccepted) {

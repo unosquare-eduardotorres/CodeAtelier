@@ -77,7 +77,7 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
     })()
 
     // Pattern 1: Centralized model resolution
-    const resolvedModel = this.resolveModel(ctx.workspacePath, 'audit')
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'audit', ctx.presetId)
 
     this.systemPrompt = renderAuditPrompt({
       trackId: this.trackId,

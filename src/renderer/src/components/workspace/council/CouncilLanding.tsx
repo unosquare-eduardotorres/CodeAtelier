@@ -246,7 +246,7 @@ export default function CouncilLanding({
   if (history.length === 0) {
     return (
       <>
-        <div className="flex flex-col items-center justify-center py-10 px-4">
+        <div data-testid="council-landing" className="flex flex-col items-center justify-center py-10 px-4">
           <div className="max-w-2xl w-full space-y-6">
             {/* Header */}
             <div className="text-center space-y-2">
@@ -360,6 +360,7 @@ export default function CouncilLanding({
             <div className="flex justify-center">
               <button
                 onClick={() => setShowStartModal(true)}
+                data-testid="council-start-btn"
                 className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-xl transition-colors"
               >
                 <Plus size={16} />

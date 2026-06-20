@@ -75,6 +75,7 @@ export default function UnifiedSidebar({
             : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
         }`}
         aria-label="Settings"
+        data-testid="sidebar-tab-settings"
         title="Workspace Settings"
       >
         <Settings size={14} />
@@ -88,6 +89,7 @@ export default function UnifiedSidebar({
             : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
         }`}
         aria-label="Chats"
+        data-testid="sidebar-tab-chats"
         title="Chats"
       >
         <MessageSquare size={14} />
@@ -99,7 +101,7 @@ export default function UnifiedSidebar({
   // --- Collapsed view ---
   if (isCollapsed) {
     return (
-      <div className="flex flex-col items-center w-12 h-full bg-surface-raised border-r border-border-subtle">
+      <div data-testid="unified-sidebar" className="flex flex-col items-center w-12 h-full bg-surface-raised border-r border-border-subtle">
         {/* Collapse toggle */}
         <div className="flex items-center justify-center w-full py-2 border-b border-border-subtle">
           <button
@@ -205,7 +207,7 @@ export default function UnifiedSidebar({
   // --- Expanded view ---
   return (
     <>
-      <div className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
+      <div data-testid="unified-sidebar" className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2 min-w-0">
@@ -229,6 +231,7 @@ export default function UnifiedSidebar({
               onClick={toggleCollapse}
               className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
               aria-label="Collapse sidebar"
+              data-testid="sidebar-collapse-btn"
               title="Collapse sidebar"
             >
               <ChevronLeft size={16} />

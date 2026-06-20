@@ -338,6 +338,7 @@ export default function GrillQuestionCard({
   return (
     <div
       ref={cardRef}
+      data-testid="grill-question-card"
       className="rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden shadow-sm"
     >
       {/* Header */}

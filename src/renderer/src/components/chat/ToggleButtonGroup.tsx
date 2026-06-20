@@ -9,7 +9,8 @@ export default function ToggleButtonGroup<T extends string>({
   value,
   onChange,
   options,
-  description
+  description,
+  'data-testid': dataTestId
 }: {
   label: string
   value: T
@@ -21,9 +22,10 @@ export default function ToggleButtonGroup<T extends string>({
     activeClass: string
   }>
   description?: string
+  'data-testid'?: string
 }): React.JSX.Element {
   return (
-    <div className="w-full mb-5">
+    <div className="w-full mb-5" data-testid={dataTestId}>
       <label className="block text-sm font-medium text-text-primary mb-1.5">{label}</label>
       <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
         {options.map((opt) => {

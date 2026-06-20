@@ -116,6 +116,36 @@ export const CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN = `## Code Analysis
 
 todo_scanner for tech debt, test_coverage_map for untested files, dependency_health for package audits.`
 
+export const LIBRARY_DOCS_GUIDANCE_PROMPT = `## Library Documentation
+
+When writing code that uses **external library APIs**, use library doc tools for current docs:
+
+### Workflow
+1. \`mcp__code-analysis__resolve_library_id\` — find a package and check if docs are cached
+2. \`mcp__code-analysis__query_library_docs\` — get relevant doc sections for your question
+
+### When to Use
+- BEFORE writing code that uses a library API you're not certain about
+- For fast-moving deps: Zod, Electron, MCP SDK, React, Tailwind, Vite, better-sqlite3
+- When the user mentions a specific library version
+- When you get a type error or API mismatch — your training data may be stale
+
+### When NOT to Use
+- For the project's own internal APIs — use Code Graph instead
+- For stable built-in APIs (Math, Array, etc.)
+
+### Data Sources (automatic three-tier fallback)
+1. Local cache (from node_modules) — instant, covers installed deps
+2. Context7 API — rich docs for 57K+ libraries (if API key configured)
+3. npm registry — README only, last resort
+
+Call resolve_library_id ONCE per library per session. Be specific in queries.`
+
+export const LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN = `## Library Docs
+resolve_library_id → query_library_docs for current API docs.
+Use for external library APIs (Zod, Electron, MCP SDK, React, Tailwind). Not internal code (use Code Graph).
+Fallback: local cache → Context7 → npm. Call resolve once per library per session.`
+
 export const MAESTRO_GUIDANCE_PROMPT = `## Maestro Mobile Testing — Tool Guide
 
 You have **Maestro MCP tools** available for driving real mobile devices and emulators.

@@ -21,6 +21,7 @@ import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
+import { PresetSwitcher } from './PresetSwitcher'
 import TodoTaskBar from './TodoTaskBar'
 import {
   StackDriftBanner,
@@ -370,6 +371,11 @@ export default function ChatPanel({
                 <EffortPill
                   effort={effortLevels[activeConversation.id] ?? 'medium'}
                   onChange={(effort) => setEffort(activeConversation.id, effort)}
+                  disabled={isStreaming}
+                />
+
+                <PresetSwitcher
+                  conversation={activeConversation}
                   disabled={isStreaming}
                 />
 

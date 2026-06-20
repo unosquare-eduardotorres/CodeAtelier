@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'node:child_process'
+import { spawnSync, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -106,23 +106,31 @@ class HookEngine extends EventEmitter {
         output: undefined
       })
 
-      // Interpolate ${VAR} in command
+      // SVC-16: Escape context values to prevent shell metacharacter injection.
+      // Context values (workspaceId, mode, etc.) may contain shell-special chars.
       let cmd = hook.command
       for (const [key, val] of Object.entries(context)) {
-        cmd = cmd.replaceAll(`\${${key}}`, val)
+        // Escape single quotes in value, then wrap in single quotes for POSIX shell safety
+        const escaped = "'" + val.replace(/'/g, "'\\''") + "'"
+        cmd = cmd.replaceAll(`\${${key}}`, escaped)
       }
 
       const start = Date.now()
       if (hook.blocking) {
         // Synchronous — blocks until complete
         try {
-          const stdout = execSync(cmd, {
+          const spawnResult = spawnSync('sh', ['-c', cmd], {
             cwd: this.workspacePath ?? undefined,
             encoding: 'utf-8',
             timeout: hook.timeout ?? 30000
           })
+          if (spawnResult.error) throw spawnResult.error
+          if (spawnResult.status !== 0) {
+            throw new Error(spawnResult.stderr || `Hook exited with code ${spawnResult.status}`)
+          }
+          const stdout = spawnResult.stdout ?? ''
           hookLog.info(`Hook "${hook.name}" completed (${Date.now() - start}ms)`)
-          const result: HookResult = {
+          const hookResult: HookResult = {
             hook: hook.name,
             event,
             exitCode: 0,
@@ -130,7 +138,7 @@ class HookEngine extends EventEmitter {
             stderr: '',
             durationMs: Date.now() - start
           }
-          results.push(result)
+          results.push(hookResult)
 
           // Emit lifecycle: response
           this.emit('hookLifecycle', {

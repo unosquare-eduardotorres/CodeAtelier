@@ -57,7 +57,7 @@ export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
     this.applyLocalLlmTimeout(this.llmProvider)
 
     // Pattern 1: Centralized model resolution
-    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-member')
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-member', ctx.presetId)
 
     this.systemPrompt = this.buildSystemPrompt()
 

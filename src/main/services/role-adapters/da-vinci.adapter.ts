@@ -114,7 +114,7 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
     // Pattern 1: Centralized model resolution
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
     const modelAction = `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction, ctx.presetId)
     // isLocalProvider is still needed by the assembler for local-prompt branching
     const isLocalProvider = modelConfigService.isLocalProvider(ctx.workspacePath)
 

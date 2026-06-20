@@ -92,8 +92,15 @@ export function executeSwapToSpecialist(get: GetState, set: SetState): void {
         // Parse attachments from the original message (if any)
         let attachments: string[] | undefined
         try {
-          const parsed = JSON.parse(lastUserMessage.attachmentsJson || '[]') as string[]
-          if (parsed.length > 0) attachments = parsed
+          // FE-05: Type-guard parse result — don't blindly cast to string[]
+          const parsed: unknown = JSON.parse(lastUserMessage.attachmentsJson || '[]')
+          if (
+            Array.isArray(parsed) &&
+            parsed.length > 0 &&
+            parsed.every((item): item is string => typeof item === 'string')
+          ) {
+            attachments = parsed
+          }
         } catch {
           /* no attachments */
         }

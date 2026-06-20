@@ -145,6 +145,12 @@ export function useGrillSessionRestore(opts: UseGrillSessionRestoreOpts): void {
         setPhase('paused')
       }
     }
-    init()
-  }, [isNewSession, ideaId, setCurrentIteration, initQuestionStates, onRestorePlan])
+    // FE-01: Catch unhandled rejection — fall back to selection screen on failure
+    init().catch((err) => {
+      console.error('[useGrillSessionRestore] Init failed:', err)
+      setPhase('selecting')
+    })
+    // FE-04: Include all state setters used inside init() in the dependency array
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNewSession, ideaId, setPhase, setCurrentIteration, setIterationCount, setHistory, setTrackScores, setChatMessages, setSelectedTrack, initQuestionStates, onRestorePlan])
 }

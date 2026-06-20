@@ -64,7 +64,7 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
     this.detectedTechs = ctx.workspacePath ? detectTechStack(ctx.workspacePath).detectedTechs : []
 
     // Pattern 1: Centralized model resolution
-    this.resolvedModel = this.resolveModel(ctx.workspacePath, this.getModelAction())
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, this.getModelAction(), ctx.presetId)
 
     // Build the phase-specific system prompt
     this.systemPrompt = this.buildPhaseSystemPrompt()

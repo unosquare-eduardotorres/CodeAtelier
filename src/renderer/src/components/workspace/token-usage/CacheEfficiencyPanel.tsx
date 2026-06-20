@@ -45,7 +45,7 @@ export default function CacheEfficiencyPanel({
   return (
     <>
       {showCachePerf && (
-        <div className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm mb-4">
+        <div data-testid="cache-efficiency-panel" className="bg-surface-overlay border border-border-subtle rounded-lg p-4 shadow-sm mb-4">
           <div className="flex items-center gap-2 text-text-secondary text-xs uppercase tracking-wider mb-2">
             <Database size={12} />
             Prompt Cache Performance
