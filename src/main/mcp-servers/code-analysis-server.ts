@@ -293,7 +293,7 @@ async function registerTools(): Promise<void> {
             {
               type: 'text' as const,
               text: truncateToolOutput(
-                JSON.stringify({ matches: results, count: results.length }, null, 2),
+                JSON.stringify({ matches: results, count: results.length }),
                 15_000
               )
             }
@@ -351,7 +351,7 @@ async function registerTools(): Promise<void> {
           content: [
             {
               type: 'text' as const,
-              text: truncateToolOutput(JSON.stringify(result, null, 2), 15_000)
+              text: truncateToolOutput(JSON.stringify(result), 15_000)
             }
           ]
         }
@@ -725,7 +725,131 @@ async function handleEslintRules(args: {
   }
 }
 
-// ── ESLint tool registration ──────────────────────────────────────────
+// ── Audit scan (combined tool) ──────────────────────────────────────
+
+async function handleAuditScan(args: {
+  paths: string[]
+  complexityThreshold: number
+  maxResults: number
+}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const sections: string[] = ['## Audit Scan Results\n']
+
+  // ── 1. Run ESLint with complexity rule (single pass for lint + complexity) ──
+  try {
+    const targetPaths = args.paths.map(sanitizePath)
+    const { stdout } = runEslint(
+      [
+        '--format', 'json',
+        '--rule', '"complexity: [\\"warn\\", {\\"max\\": 0}]"',
+        quotePaths(targetPaths)
+      ],
+      WORKSPACE_PATH
+    )
+    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+
+    // Split lint issues from complexity issues
+    const lintIssues: Array<{
+      file: string; line: number; severity: number; rule: string
+    }> = []
+    const complexityResults: ComplexityResult[] = []
+
+    for (const diag of diagnostics) {
+      for (const msg of diag.messages) {
+        if (msg.ruleId === 'complexity') {
+          const parsed = parseComplexityMessage(msg, diag.filePath)
+          if (parsed && parsed.complexity >= args.complexityThreshold) {
+            complexityResults.push(parsed)
+          }
+        } else if (msg.ruleId) {
+          lintIssues.push({
+            file: diag.filePath.replace(WORKSPACE_PATH + '/', ''),
+            line: msg.line,
+            severity: msg.severity,
+            rule: msg.ruleId
+          })
+        }
+      }
+    }
+
+    // ESLint section
+    const errors = lintIssues.filter((i) => i.severity === 2)
+    const warnings = lintIssues.filter((i) => i.severity === 1)
+    sections.push(
+      `### ESLint (${errors.length} errors, ${warnings.length} warnings across ${diagnostics.length} files)`
+    )
+    if (lintIssues.length === 0) {
+      sections.push('✅ All files pass.\n')
+    } else {
+      sections.push('| Severity | Rule | File | Line |')
+      sections.push('|----------|------|------|------|')
+      for (const i of lintIssues.slice(0, args.maxResults)) {
+        const sev = i.severity === 2 ? '❌' : '⚠️'
+        sections.push(`| ${sev} | ${i.rule} | ${i.file} | ${i.line} |`)
+      }
+      if (lintIssues.length > args.maxResults) {
+        sections.push(`_...and ${lintIssues.length - args.maxResults} more_`)
+      }
+      sections.push('')
+    }
+
+    // Complexity section
+    complexityResults.sort((a, b) => b.complexity - a.complexity)
+    const cappedComplexity = complexityResults.slice(0, args.maxResults)
+    sections.push(
+      `### Complexity (${complexityResults.length} functions above threshold ${args.complexityThreshold})`
+    )
+    if (cappedComplexity.length === 0) {
+      sections.push(`✅ No functions exceed complexity ${args.complexityThreshold}.\n`)
+    } else {
+      sections.push('| Score | Function | File | Line |')
+      sections.push('|-------|----------|------|------|')
+      for (const r of cappedComplexity) {
+        const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
+        const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
+        sections.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
+      }
+      sections.push('')
+    }
+  } catch (err) {
+    sections.push(
+      `### ESLint + Complexity\n⚠️ Error: ${err instanceof Error ? err.message : String(err)}\n`
+    )
+  }
+
+  // ── 2. Dead code via code-graph (if available) ──
+  if (WORKSPACE_ID) {
+    try {
+      const { codeGraphService } = await import('../services/code-graph.service')
+      const deadResults = await codeGraphService.findDeadCode(WORKSPACE_ID, WORKSPACE_PATH, {
+        path: args.paths.length === 1 ? args.paths[0] : undefined,
+        maxResults: args.maxResults
+      })
+      sections.push(`### Dead Code (${deadResults.length} unreferenced symbols)`)
+      if (deadResults.length === 0) {
+        sections.push('✅ No unreferenced symbols found.\n')
+      } else {
+        sections.push('| Symbol | File | Line |')
+        sections.push('|--------|------|------|')
+        for (const d of deadResults.slice(0, args.maxResults)) {
+          sections.push(`| ${d.name} | ${d.file} | ${d.line} |`)
+        }
+        sections.push('')
+      }
+    } catch (err) {
+      sections.push(
+        `### Dead Code\n⚠️ Error: ${err instanceof Error ? err.message : String(err)}\n`
+      )
+    }
+  } else {
+    sections.push('### Dead Code\n⚠️ Skipped — code graph unavailable (no WORKSPACE_ID).\n')
+  }
+
+  return {
+    content: [{ type: 'text' as const, text: truncateToolOutput(sections.join('\n'), 15_000) }]
+  }
+}
+
+// ── ESLint + audit tool registration ────────────────────────────────────
 
 function registerEslintTools(): void {
   server.tool(
@@ -767,6 +891,31 @@ function registerEslintTools(): void {
         .describe('File to check config for (default: first .ts file found or src/index.ts)')
     },
     handleEslintRules
+  )
+
+  server.tool(
+    'audit_scan',
+    'Run a combined audit scan: ESLint check + cyclomatic complexity + dead code detection in a single call. Returns one consolidated report. Prefer this over calling eslint_check, analyze_complexity, and find_dead_code separately.',
+    {
+      paths: z.array(z.string()).min(1).describe('Files or directories to scan'),
+      complexityThreshold: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(5)
+        .describe('Report functions with complexity >= this (default: 5)'),
+      maxResults: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(25)
+        .describe('Max results per section (default: 25)')
+    },
+    handleAuditScan
   )
 }
 

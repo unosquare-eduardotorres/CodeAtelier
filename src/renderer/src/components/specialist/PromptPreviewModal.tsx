@@ -96,6 +96,7 @@ export default function PromptPreviewModal({
               Cancel
             </button>
             <button
+              data-testid="prompt-preview-save"
               onClick={() => onSave(draft)}
               disabled={!isDirty || isSaving}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium

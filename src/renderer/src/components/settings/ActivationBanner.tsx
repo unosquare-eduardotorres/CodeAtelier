@@ -40,7 +40,7 @@ export default function ActivationBanner({
   }
 
   return (
-    <div className="rounded border border-primary/30 bg-primary-muted p-6">
+    <div data-testid="activation-banner" className="rounded border border-primary/30 bg-primary-muted p-6">
       <div className="flex items-start gap-4">
         <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-muted flex items-center justify-center">
           <Sparkles size={20} className="text-primary-text" />
@@ -100,6 +100,7 @@ export default function ActivationBanner({
           {/* Button area */}
           <div className="mt-4">
             <button
+              data-testid="activation-deploy-btn"
               onClick={handleActivate}
               disabled={isActivating}
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

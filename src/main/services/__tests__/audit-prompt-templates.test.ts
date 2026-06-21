@@ -68,7 +68,7 @@ describe('renderAuditPrompt', () => {
       trackId: 'code',
       workspaceName: 'MyApp',
       detectedTechs: ['Node.js'],
-      model: 'claude-sonnet-4-6' // full verbosity
+      model: 'claude-haiku-4-5-20251001' // full verbosity
     })
     const leanPrompt = renderAuditPrompt({
       trackId: 'code',
@@ -89,7 +89,7 @@ describe('renderAuditPrompt', () => {
         trackId,
         workspaceName: 'Test',
         detectedTechs: ['Go'],
-        model: 'claude-sonnet-4-6'
+        model: 'claude-haiku-4-5-20251001'
       })
       const lean = renderAuditPrompt({
         trackId,

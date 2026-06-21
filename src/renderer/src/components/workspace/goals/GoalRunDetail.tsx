@@ -50,7 +50,7 @@ export default function GoalRunDetail({
   const successCriteria = Array.isArray(goalSpec?.successCriteria) ? goalSpec.successCriteria : []
 
   return (
-    <div className="space-y-4">
+    <div data-testid="goal-run-detail" className="space-y-4">
       {/* Back + Header */}
       <div className="flex items-center gap-3">
         <button

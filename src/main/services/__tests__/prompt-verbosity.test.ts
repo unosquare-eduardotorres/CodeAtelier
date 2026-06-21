@@ -14,8 +14,8 @@ describe('Prompt Verbosity', () => {
     assert.equal(resolvePromptVerbosity('claude-opus-4-8'), 'lean')
   })
 
-  test('sonnet resolves to full', () => {
-    assert.equal(resolvePromptVerbosity('claude-sonnet-4-6'), 'full')
+  test('sonnet 4.6 resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-sonnet-4-6'), 'lean')
   })
 
   test('haiku resolves to full', () => {
@@ -61,7 +61,7 @@ describe('Lean Conditional Gating', () => {
       hasImages: false,
       mode: 'plan',
       turnCount: 1,
-      model: 'claude-sonnet-4-6'
+      model: 'claude-haiku-4-5-20251001'
     })
     assert.ok(out.includes('Memory Protocol'), 'Full mode should include Memory Protocol prompt')
   })
@@ -88,7 +88,7 @@ describe('Lean Conditional Gating', () => {
       hasImages: false,
       mode: 'build',
       turnCount: 3,
-      model: 'claude-sonnet-4-6'
+      model: 'claude-haiku-4-5-20251001'
     })
     assert.ok(
       out.includes('Answer-Complete Rule'),

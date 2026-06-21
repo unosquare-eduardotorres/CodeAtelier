@@ -147,6 +147,19 @@ export class StreamMetricsAggregator {
     for (const r of this.records) counts[r.outcome]++
     return counts
   }
+
+  /**
+   * Fraction of streams that ended with 'error' or 'timeout' outcome (0–1).
+   * Per Zylos Research recommendation: track connection reset rate with < 0.5% target.
+   * Streams interrupted without a message_stop event are classified as resets.
+   */
+  get connectionResetRate(): number {
+    if (this.records.length === 0) return 0
+    const resets = this.records.filter(
+      (r) => r.outcome === 'error' || r.outcome === 'timeout'
+    ).length
+    return resets / this.records.length
+  }
 }
 
 const streamMetricsStore = new Map<string, StreamMetrics>()
@@ -285,6 +298,10 @@ function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   if (!chunk.content) return
+  // F-20: Flush pending batched text before thinking IPC send.
+  // Prevents minor reorder if thinking and text chunks interleave.
+  // Consistent with handleToolChunk, handleError, and handleStatus.
+  textBatcher.flush(ctx.conversationId)
   const thinkingText = `\n\n<details>\n<summary>💭 Reasoning</summary>\n\n${chunk.content}\n\n</details>\n\n`
   ctx.contentAccumulator.value += thinkingText
   safeSend(
@@ -668,6 +685,7 @@ export function registerStreamDiagnosticsIpc(): void {
     validateSender(event)
     return {
       completionRate: streamAggregator.completionRate,
+      connectionResetRate: streamAggregator.connectionResetRate,
       ttftP50: streamAggregator.ttftPercentile(0.50),
       ttftP95: streamAggregator.ttftP95,
       ttftP99: streamAggregator.ttftPercentile(0.99),

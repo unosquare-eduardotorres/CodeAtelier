@@ -76,7 +76,7 @@ async function registerTools(): Promise<void> {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ results, count: results.length }, null, 2),
+              JSON.stringify({ results, count: results.length }),
               15_000
             )
           }
@@ -101,7 +101,7 @@ async function registerTools(): Promise<void> {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ results, count: results.length }, null, 2),
+              JSON.stringify({ results, count: results.length }),
               15_000
             )
           }
@@ -124,7 +124,7 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: truncateToolOutput(JSON.stringify({ concepts }, null, 2), 15_000)
+            text: truncateToolOutput(JSON.stringify({ concepts }), 15_000)
           }
         ]
       }

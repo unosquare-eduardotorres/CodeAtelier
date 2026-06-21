@@ -61,6 +61,76 @@ export interface PromptFeatureFlags {
   externalMcpActive?: Record<string, boolean>
 }
 
+// ── Data-driven guidance configuration ──
+
+interface GuidanceSection {
+  marker: string
+  flag: (f: PromptFeatureFlags) => boolean
+  lean: string
+  full: string
+  /** When set, skip the lean variant if basePrompt already contains this marker. */
+  skipLeanWhen?: string
+}
+
+const GUIDANCE_SECTIONS: GuidanceSection[] = [
+  {
+    marker: '## Code Graph',
+    flag: (f) => f.repomapEnabled,
+    lean: REPOMAP_GUIDANCE_PROMPT_LEAN,
+    full: REPOMAP_GUIDANCE_PROMPT,
+    // DaVinci lean identity has ## Code Exploration built-in — skip to avoid duplication.
+    skipLeanWhen: '## Code Exploration'
+  },
+  {
+    marker: '## Semantic Search',
+    flag: (f) => f.semanticSearchEnabled,
+    lean: SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN,
+    full: SEMANTIC_SEARCH_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Git Context',
+    flag: (f) => f.includeGitContext !== false,
+    lean: GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
+    full: GIT_CONTEXT_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Checkpoint Tools',
+    flag: (f) => f.includeCheckpoint !== false,
+    lean: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
+    full: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## GitHub Tools',
+    flag: (f) => f.githubConfigured,
+    lean: GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN,
+    full: GITHUB_CONTEXT_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Code Analysis',
+    flag: () => true,
+    lean: CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
+    full: CODE_ANALYSIS_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Library Doc',
+    flag: () => true,
+    lean: LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN,
+    full: LIBRARY_DOCS_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## ESLint',
+    flag: () => true,
+    lean: ESLINT_GUIDANCE_PROMPT_LEAN,
+    full: ESLINT_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Maestro',
+    flag: (f) => !!f.externalMcpActive?.['maestro'],
+    lean: MAESTRO_GUIDANCE_PROMPT_LEAN,
+    full: MAESTRO_GUIDANCE_PROMPT
+  }
+]
+
 /**
  * Strategy δ: Append MCP tool guidance sections to a system prompt — turn 1 only.
  * These blocks are workspace-stable (don't toggle between turns) so they live
@@ -90,67 +160,14 @@ export function appendMcpToolGuidance(
   const verbosity = resolvePromptVerbosity(model ?? '')
   const appendSections: string[] = []
 
-  if (featureFlags.repomapEnabled && !basePrompt.includes('## Code Graph')) {
+  for (const section of GUIDANCE_SECTIONS) {
+    if (!section.flag(featureFlags) || basePrompt.includes(section.marker)) continue
     if (verbosity === 'lean') {
-      // DaVinci lean identity has ## Code Exploration built-in — skip to avoid duplication.
-      // Specialist/evaluation adapters DON'T — inject compressed guidance.
-      if (!basePrompt.includes('## Code Exploration')) {
-        appendSections.push(REPOMAP_GUIDANCE_PROMPT_LEAN)
-      }
+      if (section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen)) continue
+      appendSections.push(section.lean)
     } else {
-      appendSections.push(REPOMAP_GUIDANCE_PROMPT)
+      appendSections.push(section.full)
     }
-  }
-
-  if (featureFlags.semanticSearchEnabled && !basePrompt.includes('## Semantic Search')) {
-    appendSections.push(
-      verbosity === 'lean' ? SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN : SEMANTIC_SEARCH_GUIDANCE_PROMPT
-    )
-  }
-
-  if (featureFlags.includeGitContext !== false && !basePrompt.includes('## Git Context')) {
-    appendSections.push(
-      verbosity === 'lean' ? GIT_CONTEXT_GUIDANCE_PROMPT_LEAN : GIT_CONTEXT_GUIDANCE_PROMPT
-    )
-  }
-
-  if (featureFlags.includeCheckpoint !== false && !basePrompt.includes('## Checkpoint Tools')) {
-    appendSections.push(
-      verbosity === 'lean'
-        ? CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN
-        : CHECKPOINT_CONTEXT_GUIDANCE_PROMPT
-    )
-  }
-
-  if (featureFlags.githubConfigured && !basePrompt.includes('## GitHub Tools')) {
-    appendSections.push(
-      verbosity === 'lean' ? GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN : GITHUB_CONTEXT_GUIDANCE_PROMPT
-    )
-  }
-
-  if (!basePrompt.includes('## Code Analysis')) {
-    appendSections.push(
-      verbosity === 'lean' ? CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN : CODE_ANALYSIS_GUIDANCE_PROMPT
-    )
-  }
-
-  if (!basePrompt.includes('## Library Doc')) {
-    appendSections.push(
-      verbosity === 'lean' ? LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN : LIBRARY_DOCS_GUIDANCE_PROMPT
-    )
-  }
-
-  if (!basePrompt.includes('## ESLint')) {
-    appendSections.push(
-      verbosity === 'lean' ? ESLINT_GUIDANCE_PROMPT_LEAN : ESLINT_GUIDANCE_PROMPT
-    )
-  }
-
-  // External MCP guidance — only when toggled ON for this chat
-  if (featureFlags.externalMcpActive?.['maestro'] && !basePrompt.includes('## Maestro')) {
-    appendSections.push(
-      verbosity === 'lean' ? MAESTRO_GUIDANCE_PROMPT_LEAN : MAESTRO_GUIDANCE_PROMPT
-    )
   }
 
   if (appendSections.length === 0) return basePrompt
@@ -218,12 +235,8 @@ export function buildConditionalPrefix(opts: {
   const planReminderInjected = isPlanGenerationRequest || (mode === 'plan' && !isSimpleQuestion)
 
   if (planReminderInjected) {
-    const planReminder =
-      turnCount > 1
-        ? PLAN_REMINDER_LEAN
-        : verbosity === 'lean'
-          ? PLAN_REMINDER_LEAN
-          : PLAN_REMINDER_FULL
+    // Turn 1 + full-verbosity model: full reminder. All other cases: lean.
+    const planReminder = turnCount <= 1 && verbosity !== 'lean' ? PLAN_REMINDER_FULL : PLAN_REMINDER_LEAN
     sections.push(planReminder)
   }
 

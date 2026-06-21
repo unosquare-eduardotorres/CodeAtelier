@@ -34,6 +34,18 @@ export class ToolTracker {
   }
 
   /**
+   * Whether any pending tool is an ask_user-type tool that legitimately waits
+   * for human input. These tools have no meaningful timeout — the user decides
+   * when to respond.
+   */
+  hasAskUserPending(): boolean {
+    for (const name of this.toolIdToName.values()) {
+      if (name === 'ask_user' || name === 'elicitation') return true
+    }
+    return false
+  }
+
+  /**
    * Register a tool use mapping (id → name).
    */
   register(toolId: string, toolName: string, inputSummary?: string): void {

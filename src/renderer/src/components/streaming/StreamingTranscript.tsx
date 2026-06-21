@@ -121,7 +121,7 @@ export default function StreamingTranscript<T>({
   const hasLiveContent = liveContent.trim().length > 0
 
   return (
-    <div ref={scrollRef} className={className}>
+    <div ref={scrollRef} data-testid="streaming-transcript" className={className}>
       <div className={innerClassName}>
         {header}
 

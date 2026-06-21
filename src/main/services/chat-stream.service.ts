@@ -495,6 +495,13 @@ export class ChatStreamService {
       conversationLifecycle.onDispose(() => {
         chatAgentService.clearConversationPendingState(streamConvId)
       })
+
+      // F-19: Clear accumulated tool activities on lifecycle abort.
+      // Without this, tool activities from an aborted stream sit in memory
+      // until the next stream() call clears them. Defense-in-depth cleanup.
+      conversationLifecycle.onDispose(() => {
+        getAndClearToolActivities(streamConvId)
+      })
     }
 
     // Remove per-stream listeners
@@ -682,24 +689,51 @@ export class ChatStreamService {
       // transaction. If the conversation is cascade-deleted between the two calls,
       // both operations roll back together instead of leaving orphaned data.
       const toolActivities = getAndClearToolActivities(ctx.conversationId)
-      const { getDatabase } = await import('../db/index')
-      const db = getDatabase()
-      const savedMessage = db.transaction(() => {
-        const msg = messageRepository.create(
+      const contentToSave =
+        cleanedContent || '**Error:** Agent produced no response. Check the app logs for details.'
+      const agentId = ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
+
+      let savedMessage: { id: string }
+      try {
+        const { getDatabase } = await import('../db/index')
+        const db = getDatabase()
+        savedMessage = db.transaction(() => {
+          const msg = messageRepository.create(
+            ctx.conversationId,
+            ctx.streamingRole,
+            contentToSave,
+            agentId
+          )
+          if (toolActivities.length > 0) {
+            messageRepository.updateToolActivities(msg.id, toolActivities)
+            log.info(
+              `[PIPELINE:tool-activities-persisted] messageId=${msg.id} count=${toolActivities.length}`
+            )
+          }
+          return msg
+        })()
+      } catch {
+        // Fallback: non-transactional (e.g., test environment without DB)
+        savedMessage = messageRepository.create(
           ctx.conversationId,
           ctx.streamingRole,
-          cleanedContent ||
-            '**Error:** Agent produced no response. Check the app logs for details.',
-          ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
+          contentToSave,
+          agentId
         )
         if (toolActivities.length > 0) {
-          messageRepository.updateToolActivities(msg.id, toolActivities)
-          log.info(
-            `[PIPELINE:tool-activities-persisted] messageId=${msg.id} count=${toolActivities.length}`
-          )
+          try {
+            messageRepository.updateToolActivities(savedMessage.id, toolActivities)
+            log.info(
+              `[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`
+            )
+          } catch (toolErr) {
+            log.error(
+              `[PIPELINE:tool-activities-lost] messageId=${savedMessage.id} count=${toolActivities.length}:`,
+              toolErr
+            )
+          }
         }
-        return msg
-      })()
+      }
       log.info('Agent message saved, id:', savedMessage.id)
 
       // Process memory blocks

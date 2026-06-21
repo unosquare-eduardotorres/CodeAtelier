@@ -69,7 +69,7 @@ server.tool(
       })
     return {
       content: [
-        { type: 'text' as const, text: JSON.stringify({ commits, count: commits.length }, null, 2) }
+        { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ commits, count: commits.length }), 10_000) }
       ]
     }
   }

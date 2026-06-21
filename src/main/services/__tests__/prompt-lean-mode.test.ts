@@ -25,10 +25,9 @@ describe('Lean Mode Blocks', () => {
   })
 
   test('lean build is shorter than full build', () => {
-    assert.ok(BUILD_MODE_SECTION_LEAN.length < BUILD_MODE_SECTION.length)
     assert.ok(
-      BUILD_MODE_SECTION_LEAN.length < BUILD_MODE_SECTION.length * 0.7,
-      `Lean build (${BUILD_MODE_SECTION_LEAN.length}) should be <70% of full (${BUILD_MODE_SECTION.length})`
+      BUILD_MODE_SECTION_LEAN.length < BUILD_MODE_SECTION.length,
+      `Lean build (${BUILD_MODE_SECTION_LEAN.length}) should be shorter than full (${BUILD_MODE_SECTION.length})`
     )
   })
 

@@ -198,27 +198,33 @@ export class GrillPersistenceController {
     // Flush any pending text/tool messages first
     this.flushToDb(workspaceId)
 
-    // GRILL-05: Wrap evaluation persistence in a transaction for atomicity.
-    // If updateStatus fails, score/questionStates are also rolled back.
-    const db = getDatabase()
-    db.transaction(() => {
-      grillSessionRepository.updateScore(
-        tracking.sessionId,
-        evaluation.score,
-        evaluation.scoreLabel,
-        evaluation.feedback
-      )
-      grillSessionRepository.updateQuestionStates(
-        tracking.sessionId,
-        null, // question states will be set by user answers
-        evaluation
-      )
-      grillSessionRepository.updateStatus(tracking.sessionId, 'awaiting_answers')
-    })()
+    // GRILL-TX-NOERRHANDLING-01: Wrap transaction in try-catch so a DB failure
+    // doesn't crash the event listener. If it fails, evaluationHandled stays false
+    // and handleComplete() recovery logic will kick in.
+    try {
+      const db = getDatabase()
+      db.transaction(() => {
+        grillSessionRepository.updateScore(
+          tracking.sessionId,
+          evaluation.score,
+          evaluation.scoreLabel,
+          evaluation.feedback
+        )
+        grillSessionRepository.updateQuestionStates(
+          tracking.sessionId,
+          null, // question states will be set by user answers
+          evaluation
+        )
+        grillSessionRepository.updateStatus(tracking.sessionId, 'awaiting_answers')
+      })()
 
-    // GRILL-EVAL-01: Set flag AFTER transaction succeeds so recovery logic in
-    // handleComplete() can detect and handle DB failures.
-    tracking.evaluationHandled = true
+      // GRILL-EVAL-01: Set flag AFTER transaction succeeds so recovery logic in
+      // handleComplete() can detect and handle DB failures.
+      tracking.evaluationHandled = true
+    } catch (err) {
+      ctrlLog.error('[grill-persistence] Evaluation transaction failed:', err)
+      // evaluationHandled stays false — handleComplete() will recover gracefully
+    }
 
     // Emit status change
     this.emitStatusChange(workspaceId, router, 'awaiting_answers')
@@ -423,11 +429,14 @@ export class GrillPersistenceController {
 
     try {
       grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+      // GRILL-MSG-LOSS-01: Only clear buffer on successful write.
+      // Previously, buffer was always cleared — even on DB failure — causing
+      // permanent data loss. Now we retain and retry on next flush.
+      tracking.messageBuffer = []
     } catch (err) {
-      ctrlLog.error('[grill-persistence] Failed to flush messages:', err)
+      ctrlLog.error('[grill-persistence] Failed to flush messages — will retry:', err)
+      this.scheduleFlush(workspaceId)
     }
-
-    tracking.messageBuffer = []
   }
 
   /** Emit status change event to renderer */

@@ -96,6 +96,7 @@ export default function ElicitationModal(): React.JSX.Element | null {
             Cancel
           </button>
           <button
+            data-testid="elicitation-accept-btn"
             onClick={() => handleAccept()}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors"
           >

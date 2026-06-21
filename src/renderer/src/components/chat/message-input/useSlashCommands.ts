@@ -176,8 +176,12 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/help': 'Show available commands'
 }
 
-// ── Audit prompt ──
+// ── Audit prompts ──
 
+/**
+ * Full audit prompt — verbose with detailed instructions for each check.
+ * Used for local LLMs that need explicit step-by-step guidance.
+ */
 const AUDIT_PROMPT = `You are performing a **post-implementation audit** of the code we built in this conversation. Systematically verify quality before this work is considered done.
 
 ## Step 0 — Scope
@@ -243,6 +247,13 @@ Position yourself 1 year in the future. This implementation has caused productio
 
 ---
 
+## Tool Guidance
+- If a tool returns an error, do NOT retry — note the error and move on
+- If a tool returns zero results, that's a valid finding (report as ✅)
+- Prefer **audit_scan** over individual eslint_check + analyze_complexity + find_dead_code calls
+- Scale maxResults by scope: 1–3 files → maxResults: 10, 4–10 files → maxResults: 20, 10+ files → maxResults: 30
+- Do NOT call find_dead_code, analyze_complexity, or eslint_check individually if you already called audit_scan — it covers all three
+
 ## Output Format
 
 Use EXACTLY this structure:
@@ -280,6 +291,38 @@ Use EXACTLY this structure:
 1. ...
 2. ...
 3. ...`
+
+/**
+ * Lean audit prompt — compressed for Claude models that handle terse instructions well.
+ * ~1,000 tokens vs ~1,800 in the full variant. Saves ~800 tokens per audit.
+ */
+const AUDIT_PROMPT_LEAN = `You are performing a **post-implementation audit** of the code we built in this conversation.
+
+## Scope
+List files from conversation + \`git diff --name-only\`. Print scope. Exclude out-of-scope files.
+
+## Checks (in order)
+1. **Wiring** — Run file_dependents + find_references on changed files. Verify exports have importers, new symbols are called, IPC/routes/tests registered.
+2. **Bugs** — Run audit_scan on changed files (combines eslint_check + analyze_complexity + find_dead_code). Grep for \`as any\`, TODO, HACK, empty catches. Reason about edge cases, error handling, races, type safety, off-by-one, stale state.
+3. **Tests** — Run test_coverage_map. Check test runner registration. Evaluate happy path + error path + edge case coverage.
+4. **Complexity** — Check audit_scan results for functions above threshold. Flag >10 as high, 7–10 as approaching.
+5. **Dead Code** — Check audit_scan results + run todo_scanner. Check commented-out code, unused imports.
+6. **Premortem 🔮** — For each: scaling, maintenance, silent corruption, security, assumptions → state failure + prevention.
+
+## Tool Guidance
+- If a tool returns an error, do NOT retry — note the error and move on
+- If a tool returns zero results, that's a valid finding (report as ✅)
+- Prefer **audit_scan** over individual eslint_check + analyze_complexity + find_dead_code calls
+- Scale maxResults by scope: 1–3 files → maxResults: 10, 4–10 files → maxResults: 20, 10+ files → maxResults: 30
+- Do NOT call find_dead_code, analyze_complexity, or eslint_check individually if you already called audit_scan — it covers all three
+
+## Output
+Use: \`## 🔍 Implementation Audit\` header, **Scope** list, then checks 1–6 with [✅|⚠️|❌] markers. End with severity table (🔴Critical/🟡Major/🔵Minor counts) and top 3 action items.`
+
+/** Select audit prompt based on provider — lean for Claude, full for local LLMs */
+function getAuditPrompt(provider: LLMProvider): string {
+  return provider === 'claude' ? AUDIT_PROMPT_LEAN : AUDIT_PROMPT
+}
 
 // ── Hook ──
 
@@ -445,7 +488,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
 
         '/audit': async () => {
           opts.onClearAttachments()
-          await opts.sendMessage(AUDIT_PROMPT)
+          await opts.sendMessage(getAuditPrompt(opts.currentProvider))
         },
 
         '/help': () => {

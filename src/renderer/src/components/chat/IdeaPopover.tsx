@@ -47,6 +47,7 @@ export default function IdeaPopover({
 
   return (
     <div
+      data-testid="idea-popover"
       className="absolute bottom-full mb-2 left-0 w-80 bg-surface-float rounded-xl border border-warning/30 shadow-xl z-50 overflow-hidden"
       onKeyDown={handleKeyDown}
     >
@@ -108,6 +109,7 @@ export default function IdeaPopover({
                 Cancel
               </button>
               <button
+                data-testid="idea-popover-save"
                 onClick={handleSave}
                 disabled={!title.trim() || isSaving}
                 className="px-3 py-1.5 text-xs font-medium text-surface-base bg-warning rounded-lg hover:brightness-110 disabled:opacity-30 transition-colors"

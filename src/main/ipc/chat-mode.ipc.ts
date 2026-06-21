@@ -20,6 +20,7 @@ import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 import { resolveContextLevel } from './context-usage-level'
+import { conversationLifecycle } from '../services/conversation-lifecycle'
 
 const log = chatIpcLogger
 
@@ -104,6 +105,14 @@ export function registerChatModeIpc(): void {
     // Without this, a swap triggered mid-stream orphans the onComplete listener,
     // leaving streamingLock permanently stuck.
     chatStreamService.forceResetIfStuck()
+
+    // SWAP-NOCLEANUP-01: Explicitly abort lifecycle if still active after force-reset.
+    // forceResetIfStuck() only acts when the lock is stuck or state isn't idle;
+    // if the stream just finished but async finalization is still running,
+    // this ensures it's properly cancelled before starting the specialist session.
+    if (conversationLifecycle.isActive) {
+      conversationLifecycle.abort('specialist-swap')
+    }
 
     // Re-start so resolveAdapter() now picks the ProjectSpecialistRoleAdapter,
     // which tears down the DaVinci session and rebuilds as the specialist.

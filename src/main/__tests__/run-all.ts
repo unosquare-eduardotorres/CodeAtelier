@@ -222,6 +222,43 @@ import '../services/__tests__/opencode-config-writer-logic.test'
 import '../services/__tests__/description-cache-pure.test'
 import '../services/__tests__/workspace-mcp-config-logic.test'
 
+// ─── Run 33: ESLint MCP tools ───
+import '../services/__tests__/eslint-mcp-tools.test'
+
+// ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───
+import '../services/__tests__/blueprint-remaining-adapters.test'
+import '../services/__tests__/council-member-adapter.test'
+import '../services/__tests__/council-chairman-adapter.test'
+import '../services/__tests__/audit-adapter.test'
+import '../services/__tests__/skill-tiers-parser.test'
+import '../services/__tests__/parse-plan-payload.test'
+import '../services/__tests__/specialist-builder-pure.test'
+import '../services/__tests__/blueprint-prompt-loader-pure.test'
+import '../services/__tests__/repository-maprow-logic.test'
+import '../services/__tests__/base-adapter-strategies.test'
+import '../services/__tests__/heuristic-description-logic.test'
+import '../services/__tests__/event-logger-service.test'
+import '../ipc/__tests__/ipc-registration.test'
+import '../mcp-servers/__tests__/mcp-server-registration.test'
+
+// ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
+import '../ipc/__tests__/ipc-remaining-registration.test'
+import '../services/__tests__/cli-executor-args.test'
+import '../services/__tests__/opencode-executor-pure.test'
+import '../services/__tests__/agent-session-deep.test'
+import '../services/__tests__/chat-stream-methods.test'
+import '../services/__tests__/mpa-orchestration-helpers.test'
+import '../services/__tests__/council-service-helpers.test'
+import '../services/__tests__/grill-agent-helpers.test'
+import '../services/__tests__/audit-agent-helpers.test'
+import '../services/__tests__/grill-persistence-logic.test'
+import '../services/__tests__/council-persistence-logic.test'
+import '../services/__tests__/shared-types-coverage.test'
+import '../services/__tests__/blueprint-spec-helpers.test'
+import '../services/__tests__/memory-service-logic.test'
+import '../services/__tests__/plan-registry-helpers.test'
+import '../services/__tests__/zero-coverage-services.test'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────

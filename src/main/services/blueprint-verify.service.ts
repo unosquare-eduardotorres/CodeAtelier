@@ -105,20 +105,31 @@ export class BlueprintVerifyService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-01: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
         if (abortSignal?.aborted) {
-          reject(new Error('Phase cancelled'))
-          return
+          onAbort()
         }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), {
-          once: true
-        })
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
 
       try {
         await Promise.race([sendPromise, timeoutPromise, abortPromise])
+      } catch (err) {
+        // BP-VERIFY-TIMEOUT-01: Cancel the in-flight query when timeout/abort wins the race.
+        // Without this, session.send() continues streaming in the background while
+        // the outer catch handler tries to clean up — causing a race between the
+        // active stream and session.stop() in the finally block.
+        try {
+          session.cancelCurrentQuery()
+        } catch {
+          /* best-effort — session may already be stopped */
+        }
+        throw err
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
       }

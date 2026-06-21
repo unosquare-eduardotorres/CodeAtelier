@@ -180,6 +180,7 @@ import './library-doc-service.test'
 
 // ─── Run 33: ESLint MCP tools (output parsing, summary formatting, error handling) ───
 import './eslint-mcp-tools.test'
+import './analyze-complexity.test'
 
 // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
 import './evaluation-mcp-config.test'
@@ -201,6 +202,40 @@ import './repo-service-pure.test'
 import './opencode-config-writer-logic.test'
 import './description-cache-pure.test'
 import './workspace-mcp-config-logic.test'
+
+// ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───
+import './blueprint-remaining-adapters.test'
+import './council-member-adapter.test'
+import './council-chairman-adapter.test'
+import './audit-adapter.test'
+import './skill-tiers-parser.test'
+import './parse-plan-payload.test'
+import './specialist-builder-pure.test'
+import './blueprint-prompt-loader-pure.test'
+import './repository-maprow-logic.test'
+import './base-adapter-strategies.test'
+import './heuristic-description-logic.test'
+import './event-logger-service.test'
+import '../../ipc/__tests__/ipc-registration.test'
+import '../../mcp-servers/__tests__/mcp-server-registration.test'
+
+// ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
+import '../../ipc/__tests__/ipc-remaining-registration.test'
+import './cli-executor-args.test'
+import './opencode-executor-pure.test'
+import './agent-session-deep.test'
+import './chat-stream-methods.test'
+import './mpa-orchestration-helpers.test'
+import './council-service-helpers.test'
+import './grill-agent-helpers.test'
+import './audit-agent-helpers.test'
+import './grill-persistence-logic.test'
+import './council-persistence-logic.test'
+import './shared-types-coverage.test'
+import './blueprint-spec-helpers.test'
+import './memory-service-logic.test'
+import './plan-registry-helpers.test'
+import './zero-coverage-services.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls

@@ -72,17 +72,7 @@ export class SkillPromptComposer {
     }
 
     const baseBudget = budgetTier === 'minimal' ? 500 : budgetTier === 'full' ? 4000 : 2000
-
-    // Selective skill loading: rank skills by relevance when >1 skill and we have task context
-    let rankedSkills = activeSkills
-    if (activeSkills.length > 1 && normalizedTaskContext && budgetTier !== 'full') {
-      rankedSkills = [...activeSkills].sort((a, b) => {
-        const scoreA = this.skillRelevanceScore(a, normalizedTaskContext)
-        const scoreB = this.skillRelevanceScore(b, normalizedTaskContext)
-        return scoreB - scoreA
-      })
-    }
-
+    const rankedSkills = this.rankSkillsByRelevance(activeSkills, normalizedTaskContext, budgetTier)
     const sections: string[] = []
 
     for (let i = 0; i < rankedSkills.length; i++) {
@@ -92,80 +82,13 @@ export class SkillPromptComposer {
       if (!isPrimary && budgetTier !== 'full') continue
       const budget = isPrimary ? baseBudget : Math.min(200, baseBudget)
 
-      try {
-        let selected: string | null = null
-
-        // Try tier2_instructions for minimal/standard budgets (fast path, no disk I/O)
-        if (skill.tier2Instructions && budgetTier === 'minimal') {
-          selected = skill.tier2Instructions.substring(0, budget)
-          log.info(
-            `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: minimal)`
-          )
-        }
-
-        // Try pre-computed semantic summary (token-optimized, ~50-60% savings)
-        if (!selected) {
-          const summaryTier = isPrimary ? budgetTier : 'minimal'
-          const summary = skillRepository.getSummary(skill.id, summaryTier)
-
-          if (summary) {
-            selected = summary
-            log.info(
-              `Skill "${skill.name}" using pre-computed ${summaryTier} summary (${summary.length} chars)`
-            )
-          }
-        }
-
-        // For standard budget with tier2: use tier2 + summary blend
-        if (!selected && skill.tier2Instructions && budgetTier === 'standard') {
-          selected = skill.tier2Instructions.substring(0, budget)
-          log.info(
-            `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: standard)`
-          )
-        }
-
-        // Fallback: read from disk if no pre-computed data available
-        if (!selected) {
-          const content = this.readSkillFile(skill.filePath)
-
-          if (content.length <= budget) {
-            selected = content
-          } else if (!isPrimary || budgetTier === 'minimal') {
-            selected = content.substring(0, budget) + '\n\n[... see full skill file for details]'
-          } else {
-            selected = this.extractSkillSections(content, budget)
-          }
-
-          if (content.length > budget) {
-            log.info(
-              `Skill "${skill.name}" ${isPrimary ? 'trimmed' : 'condensed'} from ${content.length} to ~${budget} chars (budget: ${budgetTier}, fallback — no summary)`
-            )
-          }
-        }
-
+      const selected = this.resolveSkillContent(skill, isPrimary, budgetTier, budget)
+      if (selected) {
         sections.push(`## Skill: ${skill.name}\n${selected}`)
-      } catch {
-        log.warn(`Could not read skill file: ${skill.filePath}`)
       }
     }
 
-    // Strategy 6: 4K hard cap on total skill content
-    const SKILL_HARD_CAP = 4000
-    const totalContent = sections.join('\n\n')
-    if (totalContent.length > SKILL_HARD_CAP) {
-      let accumulated = ''
-      const capped: string[] = []
-      for (const section of sections) {
-        if (accumulated.length + section.length + 2 > SKILL_HARD_CAP) break
-        capped.push(section)
-        accumulated += section + '\n\n'
-      }
-      log.info(
-        `Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (${SKILL_HARD_CAP} limit)`
-      )
-      return capped.join('\n\n')
-    }
-    return totalContent
+    return this.applySkillHardCap(sections, 4000)
   }
 
   /**
@@ -198,6 +121,106 @@ export class SkillPromptComposer {
   }
 
   // ── Private helpers ──
+
+  /**
+   * Strategy 8: Rank skills by relevance when >1 skill and task context is available.
+   * Returns the original array unmodified when selective loading isn't needed.
+   */
+  private rankSkillsByRelevance(
+    skills: Skill[],
+    taskContext: string | undefined,
+    budgetTier: BudgetTier
+  ): Skill[] {
+    if (skills.length <= 1 || !taskContext || budgetTier === 'full') return skills
+    return [...skills].sort((a, b) => {
+      const scoreA = this.skillRelevanceScore(a, taskContext)
+      const scoreB = this.skillRelevanceScore(b, taskContext)
+      return scoreB - scoreA
+    })
+  }
+
+  /**
+   * Resolve content for a single skill through the 4-level cascade:
+   * tier2+minimal → summary → tier2+standard → disk fallback.
+   */
+  private resolveSkillContent(
+    skill: Skill,
+    isPrimary: boolean,
+    budgetTier: BudgetTier,
+    budget: number
+  ): string | null {
+    try {
+      // Try tier2_instructions for minimal budgets (fast path, no disk I/O)
+      if (skill.tier2Instructions && budgetTier === 'minimal') {
+        const selected = skill.tier2Instructions.substring(0, budget)
+        log.info(
+          `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: minimal)`
+        )
+        return selected
+      }
+
+      // Try pre-computed semantic summary (token-optimized, ~50-60% savings)
+      const summaryTier = isPrimary ? budgetTier : 'minimal'
+      const summary = skillRepository.getSummary(skill.id, summaryTier)
+      if (summary) {
+        log.info(
+          `Skill "${skill.name}" using pre-computed ${summaryTier} summary (${summary.length} chars)`
+        )
+        return summary
+      }
+
+      // For standard budget with tier2: use tier2 + summary blend
+      if (skill.tier2Instructions && budgetTier === 'standard') {
+        const selected = skill.tier2Instructions.substring(0, budget)
+        log.info(
+          `Skill "${skill.name}" using tier2 instructions (${selected.length} chars, budget: standard)`
+        )
+        return selected
+      }
+
+      // Fallback: read from disk if no pre-computed data available
+      const content = this.readSkillFile(skill.filePath)
+      let selected: string
+      if (content.length <= budget) {
+        selected = content
+      } else if (!isPrimary || budgetTier === 'minimal') {
+        selected = content.substring(0, budget) + '\n\n[... see full skill file for details]'
+      } else {
+        selected = this.extractSkillSections(content, budget)
+      }
+
+      if (content.length > budget) {
+        log.info(
+          `Skill "${skill.name}" ${isPrimary ? 'trimmed' : 'condensed'} from ${content.length} to ~${budget} chars (budget: ${budgetTier}, fallback — no summary)`
+        )
+      }
+      return selected
+    } catch {
+      log.warn(`Could not read skill file: ${skill.filePath}`)
+      return null
+    }
+  }
+
+  /**
+   * Strategy 6: Apply 4K hard cap on total skill content.
+   * Accumulates sections until the cap is reached, dropping the rest.
+   */
+  private applySkillHardCap(sections: string[], hardCap: number): string {
+    const totalContent = sections.join('\n\n')
+    if (totalContent.length <= hardCap) return totalContent
+
+    let accumulated = ''
+    const capped: string[] = []
+    for (const section of sections) {
+      if (accumulated.length + section.length + 2 > hardCap) break
+      capped.push(section)
+      accumulated += section + '\n\n'
+    }
+    log.info(
+      `Skill content hard-capped: ${totalContent.length} → ${accumulated.length} chars (${hardCap} limit)`
+    )
+    return capped.join('\n\n')
+  }
 
   /**
    * Strategy O: Read a skill file with in-memory caching and mtime invalidation.

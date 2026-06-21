@@ -359,7 +359,10 @@ export class BlueprintBuildService extends EventEmitter {
       }
     } satisfies BlueprintPhaseArtifactPayload)
 
-    // Auto-trigger VERIFY phase (non-blocking)
+    // Auto-trigger VERIFY phase (non-blocking).
+    // BP-VERIFY-AUTOFIRE-01: Verify event listeners are already wired by the IPC handler
+    // that started this build phase (wireBlueprintEvents persists for 180min via
+    // scheduleAutoCleanup). No additional wiring needed here.
     blueprintVerifyService
       .startVerifyPhase({
         blueprintId,
@@ -440,14 +443,14 @@ export class BlueprintBuildService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-01: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
         if (abortSignal?.aborted) {
-          reject(new Error('Phase cancelled'))
-          return
+          onAbort()
         }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), {
-          once: true
-        })
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)

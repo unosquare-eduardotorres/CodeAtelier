@@ -25,7 +25,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
   const allFiles = [...new Set(summary.tasks.flatMap((t) => t.filesChanged ?? []))]
 
   return (
-    <div className="my-3 rounded border border-border-subtle bg-surface-overlay overflow-hidden">
+    <div data-testid="build-summary-card" className="my-3 rounded border border-border-subtle bg-surface-overlay overflow-hidden">
       {/* Header */}
       <div
         className={`flex items-center gap-3 px-4 py-3 border-b ${
@@ -68,7 +68,7 @@ export default function BuildSummaryCard({ summary }: BuildSummaryCardProps): Re
           </thead>
           <tbody>
             {summary.tasks.map((task, idx) => (
-              <tr key={task.taskId} className="border-t border-border-subtle/50">
+              <tr key={task.taskId} data-testid="build-summary-task" className="border-t border-border-subtle/50">
                 <td className="py-1.5 pr-2 text-text-muted">{idx + 1}</td>
                 <td className="py-1.5 pr-2">
                   {(() => {

@@ -58,17 +58,20 @@ describe('DaVinciPromptAssembler', () => {
   test('setPendingCompaction_stores_compaction_prompt', () => {
     const { assembler } = createPromptAssembler()
     assembler.setPendingCompaction('conv-1', '/compact Summarize the conversation')
-    // Verify it's consumed in buildEffectiveMessage
+    // Verify it's included in buildEffectiveMessage
     const result = assembler.buildEffectiveMessage(defaultMessageOpts())
     assert.ok(
       result.includes('/compact Summarize the conversation'),
       'Compaction prompt should be in effective message'
     )
-    // After consumption, building again should NOT include the compaction
+    // COMPACT-LOST-01: Compaction is NOT deleted during buildEffectiveMessage.
+    // It must be explicitly confirmed after executeStream() succeeds.
+    assembler.confirmPendingConsumed('conv-1')
+    // After confirmation, building again should NOT include the compaction
     const result2 = assembler.buildEffectiveMessage(defaultMessageOpts())
     assert.ok(
       !result2.includes('/compact Summarize the conversation'),
-      'Compaction should be consumed after first use'
+      'Compaction should be consumed after confirmation'
     )
   })
 

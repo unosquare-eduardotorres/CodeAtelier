@@ -66,9 +66,20 @@ export class ChatAgentService extends EventEmitter {
 
     this.daVinciAdapter = new DaVinciRoleAdapter()
 
-    // Outside code emits elicitationResponse on us — relay to the active session.
+    // ELICIT-ROUTES-ACTIVE-01: Route elicitationResponse to the correct workspace
+    // session when a workspaceId is provided, falling back to the active session.
+    // The permission.ipc handler already routes correctly per-workspace; this
+    // catch-all is only hit from sdk-control.ipc which always targets the active UI.
     this.on('elicitationResponse', (payload: unknown) => {
-      this.getActiveSession()?.emit('elicitationResponse', payload)
+      const wsId = (payload as Record<string, unknown> | null)?.workspaceId as string | undefined
+      const session = wsId
+        ? this.getSessionForWorkspace(wsId)
+        : this.getActiveSession()
+      if (session) {
+        session.emit('elicitationResponse', payload)
+      } else {
+        this.log.warn('[elicitationResponse] No session for routing — response dropped')
+      }
     })
   }
 
@@ -90,7 +101,9 @@ export class ChatAgentService extends EventEmitter {
       this.log.info(`[multi-session] Workspace ${workspaceId} already has a session — activating`)
       // Adapter may have changed (e.g., specialist build_status changed)
       const nextAdapter = this.resolveAdapter(workspacePath)
-      if (nextAdapter !== existing.adapter) {
+      // ADAPTER-IDENTITY-01: Compare by adapter type, not object identity —
+      // resolveAdapter() creates fresh instances, so identity always differs.
+      if (nextAdapter.constructor !== existing.adapter.constructor) {
         this.log.info(
           `[multi-session] Adapter changed for workspace ${workspaceId} — rebuilding session`
         )
@@ -241,13 +254,13 @@ export class ChatAgentService extends EventEmitter {
       if (!workspace) {
         // SVC-02: Log workspace path for debugging — silent fallback is hard to trace
         this.log.warn(`[adapter-swap] Workspace not found for path=${workspacePath}, using DaVinci`)
-        return this.daVinciAdapter
+        return new DaVinciRoleAdapter()
       }
 
       const settings = workspaceRepository.getSettings(workspace.id)
       if (!settings.specialistSwapAccepted) {
         // User has not accepted the swap yet → keep DaVinci.
-        return this.daVinciAdapter
+        return new DaVinciRoleAdapter()
       }
 
       const db = getDatabase()
@@ -263,7 +276,7 @@ export class ChatAgentService extends EventEmitter {
     } catch (err) {
       this.log.warn('[adapter-swap] resolveAdapter failed, falling back to DaVinci:', err)
     }
-    return this.daVinciAdapter
+    return new DaVinciRoleAdapter()
   }
 
   // ── Active Session Helper ─────────────────────────────────────────
@@ -333,8 +346,8 @@ export class ChatAgentService extends EventEmitter {
 
     if (mode === session.getMode()) return
     const adapter = this.getActiveAdapter()
-    if (adapter === this.daVinciAdapter) {
-      this.daVinciAdapter.setPendingModeSwitch(session.getMode(), mode)
+    if (adapter instanceof DaVinciRoleAdapter) {
+      adapter.setPendingModeSwitch(session.getMode(), mode)
     }
     return session.switchMode(mode)
   }
@@ -346,21 +359,22 @@ export class ChatAgentService extends EventEmitter {
 
     // Persona is a Generalist-only concept; if the Project Specialist is active,
     // persona switches are ignored (warning logged).
-    if (adapter !== this.daVinciAdapter) {
+    // SHARED-ADAPTER-01: Use instanceof — adapter is per-workspace, not a singleton.
+    if (!(adapter instanceof DaVinciRoleAdapter)) {
       this.log.warn('[persona-switch] Ignored — Project Specialist is active for this workspace')
       return
     }
-    if (personaSpecialistId === this.daVinciAdapter.getPersona().id) return
+    if (personaSpecialistId === adapter.getPersona().id) return
     if (!session.getWorkspacePath()) return
 
     this.log.info(
-      `[PIPELINE:persona-switch] ${this.daVinciAdapter.getPersona().id ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
+      `[PIPELINE:persona-switch] ${adapter.getPersona().id ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
     )
 
-    this.daVinciAdapter.setPersona(personaSpecialistId)
+    adapter.setPersona(personaSpecialistId)
 
     if (session.isRunning()) {
-      this.daVinciAdapter.setPendingCompaction(
+      adapter.setPendingCompaction(
         conversationId,
         'Summarize the conversation so far — a persona change is about to happen.'
       )
@@ -376,10 +390,10 @@ export class ChatAgentService extends EventEmitter {
     const adapter = this.getActiveAdapter()
     // Only the Generalist adapter caches pending context; the Project Specialist
     // writes a simpler prompt and doesn't need the lazy-inject mechanism.
-    if (adapter !== this.daVinciAdapter) return
+    if (!(adapter instanceof DaVinciRoleAdapter)) return
 
-    const existingSize = this.daVinciAdapter.getPendingContextSize(conversationId)
-    this.daVinciAdapter.addPendingContext(conversationId, context)
+    const existingSize = adapter.getPendingContextSize(conversationId)
+    adapter.addPendingContext(conversationId, context)
     if (existingSize > 0) {
       this.log.info(
         `Appended to pending context injection for conversation ${conversationId} (${context.length} chars added, total: ${existingSize + context.length + 2} chars)`
@@ -418,14 +432,14 @@ export class ChatAgentService extends EventEmitter {
     const adapter = this.getActiveAdapter()
     // Pending compaction prefix is only wired on the Generalist adapter; for
     // the Project Specialist we simply delegate to the session's compact.
-    if (adapter === this.daVinciAdapter) {
+    if (adapter instanceof DaVinciRoleAdapter) {
       if (extractNuance) {
-        this.daVinciAdapter.setPendingCompaction(
+        adapter.setPendingCompaction(
           conversationId,
           '/compact Extract nuance: preserve ALL decisions, preferences, file paths, specialist reports verbatim. Keep recent 3-4 turns verbatim.'
         )
       } else {
-        this.daVinciAdapter.setPendingCompaction(conversationId, '/compact')
+        adapter.setPendingCompaction(conversationId, '/compact')
       }
     }
     await session.compact()
@@ -513,8 +527,8 @@ export class ChatAgentService extends EventEmitter {
    */
   clearConversationPendingState(conversationId: string): void {
     const adapter = this.getActiveAdapter()
-    if (adapter === this.daVinciAdapter) {
-      this.daVinciAdapter.clearConversation(conversationId)
+    if (adapter instanceof DaVinciRoleAdapter) {
+      adapter.clearConversation(conversationId)
     }
   }
 
@@ -550,8 +564,8 @@ export class ChatAgentService extends EventEmitter {
    */
   getActivePersona(): { id: string; agentId: string; alias: string | null } | null {
     const adapter = this.getActiveAdapter()
-    if (adapter !== this.daVinciAdapter) return null
-    const persona = this.daVinciAdapter.getPersona()
+    if (!(adapter instanceof DaVinciRoleAdapter)) return null
+    const persona = adapter.getPersona()
     if (!persona.id) return null
     return {
       id: persona.id,

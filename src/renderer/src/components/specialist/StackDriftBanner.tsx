@@ -48,6 +48,7 @@ export default function StackDriftBanner({
         <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
+            data-testid="stack-drift-rebuild"
             onClick={() => void rebuildPrompt(specialist.id)}
             className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700"
           >

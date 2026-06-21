@@ -127,8 +127,11 @@ export class ChatStreamingInternals {
       () => {
         if (this.storeGet?.().isStreaming) {
           rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
+          // STREAM-SAFETY-PARTIAL-01: Also clear activeRequestId so late chunks
+          // from the timed-out request are rejected instead of silently accepted.
           this.storeSet?.({
             isStreaming: false,
+            activeRequestId: null,
             streamingConversationIds: new Set<string>(),
             conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
           })
@@ -170,19 +173,30 @@ export function appendStreamChunkAction(
     return
   }
 
+  // STREAM-REQID-BYPASS-01: If we expect a specific request but this chunk has no ID,
+  // drop it — it's likely a late chunk from a previous request that omitted requestId.
+  if (activeRequestId && !requestId) {
+    rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (activeRequestId set)')
+    return
+  }
+
   // Reset safety timer — backend is still alive
   streamingInternals.resetSafetyTimer()
   if (!chunk) return // Skip empty chunks (tool-only messages)
 
   const isNewTask = taskId != null && taskId !== get().streamingTaskId
 
-  // If task changed, flush old accumulator and reset
+  // STREAM-TASK-FLUSH-RACE-01: On task switch, flush the accumulator (which pushes
+  // buffered text to the store via onFlush), then read the flushed state BEFORE
+  // clearing — otherwise the set() below overwrites what flush just wrote.
   if (isNewTask) {
     streamingInternals.flushAccumulator()
     streamingInternals.resetAccumulator()
   }
 
-  // Update streaming metadata (non-content state) immediately
+  // Update streaming metadata (non-content state) immediately.
+  // On task switch the segments/content were already archived by flush above,
+  // so clearing here is safe (flush output was consumed by the accumulator's onFlush).
   set((state) => ({
     isStreaming: true, // Ensure streaming bubble renders for specialist chunks
     streamingPhase: role === 'specialist' ? 'specialist-executing' : 'da-vinci-responding',

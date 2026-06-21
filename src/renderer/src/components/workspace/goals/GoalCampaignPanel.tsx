@@ -343,7 +343,7 @@ export default function GoalCampaignPanel({
   const canGenerate = input.trim().length >= 15 && !busy
 
   return (
-    <div className="rounded-xl border border-cyan-400/30 bg-surface-raised overflow-hidden">
+    <div data-testid="goal-campaign-panel" className="rounded-xl border border-cyan-400/30 bg-surface-raised overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 bg-cyan-500/10 border-b border-cyan-400/20">
         <div className="flex items-center gap-2">

@@ -14,7 +14,7 @@ describe('appendMcpToolGuidance', () => {
       repomapEnabled: true,
       semanticSearchEnabled: true,
       githubConfigured: true
-    })
+    }, 'claude-haiku-4-5-20251001')
     assert.ok(out.includes('Tool Priority'), 'Should include compact tool priority reminder')
     assert.ok(out.includes('search_identifiers'), 'Should mention search_identifiers')
     assert.ok(out.includes('emit_plan'), 'Should include lean plan output guidance')
@@ -126,7 +126,7 @@ describe('appendMcpToolGuidance', () => {
         semanticSearchEnabled: false,
         githubConfigured: false
       },
-      'claude-sonnet-4-6'
+      'claude-haiku-4-5-20251001'
     )
     assert.ok(out.includes('## Code Graph'), 'Full mode should include REPOMAP_GUIDANCE')
   })
@@ -149,7 +149,7 @@ describe('appendMcpToolGuidance', () => {
     assert.ok(out.includes('list_devices'), 'Lean Maestro should mention list_devices')
   })
 
-  test('full mode uses verbose Maestro guidance', () => {
+  test('full mode uses Maestro guidance (now same as lean)', () => {
     const out = appendMcpToolGuidance(
       'BASE',
       1,
@@ -159,9 +159,10 @@ describe('appendMcpToolGuidance', () => {
         githubConfigured: false,
         externalMcpActive: { maestro: true }
       },
-      'claude-sonnet-4-6'
+      'claude-haiku-4-5-20251001'
     )
-    assert.ok(out.includes('### Workflow'), 'Full mode should have ### Workflow subsection')
+    assert.ok(out.includes('## Maestro'), 'Full mode should include Maestro guidance')
+    assert.ok(out.includes('list_devices'), 'Full Maestro should mention list_devices')
   })
 
   test('idempotent when block already present in base prompt', () => {

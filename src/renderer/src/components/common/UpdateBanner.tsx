@@ -18,7 +18,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'error') {
     return (
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-danger-muted border-b border-danger/50 text-sm">
+      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-danger-muted border-b border-danger/50 text-sm">
         <AlertCircle size={14} className="text-danger shrink-0" />
         <span className="text-danger flex-1">Update error: {errorMessage ?? 'Unknown error'}</span>
         <button
@@ -34,7 +34,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'available') {
     return (
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm">
+      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm">
         <Download size={14} className="text-info shrink-0" />
         <span className="text-info flex-1">
           Update <span className="font-semibold">v{availableVersion}</span> is available!
@@ -59,7 +59,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'downloading') {
     return (
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm">
+      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm">
         <RefreshCw size={14} className="text-info shrink-0 animate-spin" />
         <span className="text-info flex-1">
           Downloading update... {Math.round(downloadProgress)}%
@@ -76,7 +76,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'ready') {
     return (
-      <div className="flex items-center gap-3 px-4 py-2.5 bg-success-muted border-b border-success/50 text-sm">
+      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-success-muted border-b border-success/50 text-sm">
         <CheckCircle2 size={14} className="text-success shrink-0" />
         <span className="text-success flex-1">
           Update <span className="font-semibold">v{availableVersion}</span> is ready to install!

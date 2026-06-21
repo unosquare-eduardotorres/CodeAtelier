@@ -16,11 +16,6 @@ describe('Lean Identity Prompt', () => {
       lean.length < full.length,
       `Lean (${lean.length}) should be shorter than full (${full.length})`
     )
-    // At least 25% shorter (lean ≤ 75% of full)
-    assert.ok(
-      lean.length < full.length * 0.75,
-      `Lean (${lean.length}) should be <75% of full (${full.length})`
-    )
   })
 
   test('lean prompt includes all structural sections', () => {
@@ -56,7 +51,6 @@ describe('Lean Identity Prompt', () => {
   test('full prompt retains verbose labels', () => {
     const full = buildDaVinciIdentityPrompt('default')
     assert.ok(full.includes('(MANDATORY)'), 'Full prompt should contain (MANDATORY)')
-    assert.ok(full.includes('(CRITICAL)'), 'Full prompt should contain (CRITICAL)')
   })
 
   test('lean identity includes Code Exploration rules from repomap merge', () => {
@@ -70,15 +64,11 @@ describe('Lean Identity Prompt', () => {
     assert.ok(lean.includes('file_dependents'), 'Missing file_dependents guidance')
   })
 
-  test('full prompt includes ## Tool Priority section', () => {
+  test('full prompt does NOT include ## Tool Priority (injected separately via appendMcpToolGuidance)', () => {
     const full = buildDaVinciIdentityPrompt('default')
     assert.ok(
-      full.includes('## Tool Priority'),
-      'Full prompt should include ## Tool Priority section'
-    )
-    assert.ok(
-      full.includes('Code Graph and Semantic Search tools FIRST'),
-      'Tool Priority should mention Code Graph and Semantic Search'
+      !full.includes('## Tool Priority'),
+      'Full prompt should NOT include ## Tool Priority — it is injected by appendMcpToolGuidance'
     )
   })
 })

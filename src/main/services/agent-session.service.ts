@@ -66,6 +66,7 @@ import type { OpenCodeExecuteResult } from './opencode-executor'
 import { openCodeConfigWriter } from './opencode-config-writer'
 import { openCodeAgentWriter } from './opencode-agent-writer'
 import { CliMcpConfigWriter } from './cli-mcp-config-writer'
+import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
@@ -279,6 +280,11 @@ export class AgentSessionService extends AgentBaseService {
 
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
+    // TURN-COUNT-01: Reset turn count so the next session starts at turn 1,
+    // ensuring adapters apply first-turn setup (specialist roster, MCP guidance, etc.)
+    this.turnCounts.delete(conversationId)
+    // SESSION-PENDING-01: Clear stale resume target to prevent cross-session resume races
+    this.pendingResumeAt.delete(conversationId)
   }
 
   /**
@@ -322,6 +328,8 @@ export class AgentSessionService extends AgentBaseService {
    * Routes through the IPC bridge to the control-actions MCP server.
    */
   respondToAskUser(requestId: string, response: string): void {
+    // ASK-OVERWRITE-01: Clear the askUser flag so subsequent ask_user calls aren't blocked
+    this.controlToolState.askUser = false
     if (this.ipcBridge) {
       this.ipcBridge.sendAskUserResponse(requestId, response)
     } else {
@@ -642,6 +650,8 @@ export class AgentSessionService extends AgentBaseService {
     if (this.workspaceId) {
       await vectorSearchService.dispose(this.workspaceId)
     }
+    // ELICIT-NOCLEANUP-01: Cancel any pending elicitations so their promises don't hang forever
+    elicitationService.resolveAll()
     this.adapter.onSessionStop()
     this.completeDbSession('terminated')
     this.currentStatus = 'idle'
@@ -771,7 +781,9 @@ export class AgentSessionService extends AgentBaseService {
     this.compactCount++
     this.compactSuggested = false
     this.turnsSinceCompactSuggestion = 0
-    // Adapters wire /compact into their own prompt assembler — signal via invalidate.
+    // SDK-COMPACT-01: Queue the compaction instruction so the next send() prepends it.
+    // Previously only invalidated the snapshot (no-op for compaction).
+    this.adapter.setPendingCompaction?.(this.currentConversationId, '/compact')
     this.adapter.onConversationSwitch(this.currentConversationId)
   }
 
@@ -940,6 +952,15 @@ export class AgentSessionService extends AgentBaseService {
 
     const origAsk = cb.onAskUser
     cb.onAskUser = (questions, action, requestId) => {
+      // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
+      // to prevent the first request's promise from deadlocking forever.
+      if (this.controlToolState.askUser && requestId) {
+        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.log.info(
+          `[wrapControlCallbacks] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
+        )
+        return
+      }
       this.controlToolState.askUser = true
       this.controlToolState.askUserIntent = { type: 'askUser', questions, action, requestId }
       // Include requestId so the renderer can route the response back (mirrors
@@ -1501,6 +1522,16 @@ export class AgentSessionService extends AgentBaseService {
         this.respondToAskUser(requestId, rejection)
         this.log.info(
           `[ipc-bridge] askUser intercepted (plan already emitted this turn) for ${this.currentConversationId} requestId=${requestId}`
+        )
+        return
+      }
+
+      // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
+      // to prevent the first request's promise from deadlocking forever.
+      if (this.controlToolState.askUser && requestId) {
+        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.log.info(
+          `[ipc-bridge] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
         )
         return
       }

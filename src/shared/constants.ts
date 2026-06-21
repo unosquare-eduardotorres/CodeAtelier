@@ -774,14 +774,17 @@ export function buildFullLocalConfig(
 
 /**
  * Resolve prompt verbosity based on model capability.
- * Opus 4.8+ follows compressed instructions reliably — use lean prompts.
- * Sonnet/Haiku/older models need full explicit guardrailing.
+ * Opus 4.8+ and Sonnet 4.6+ follow compressed instructions reliably — use lean prompts.
+ * Haiku and older models need full explicit guardrailing.
  */
 export function resolvePromptVerbosity(model: string): import('./types').PromptVerbosity {
   // Opus 4.8+ can follow compressed instructions reliably
   if (model === 'claude-opus-4-8') return 'lean'
   // Future-proof: any Opus newer than 4.8 also gets lean
   if (model.startsWith('claude-opus-') && model > 'claude-opus-4-8') return 'lean'
+  // Sonnet 4.6+ follows lean instructions effectively — saves ~800-1200 tokens/turn
+  if (model === 'claude-sonnet-4-6') return 'lean'
+  if (model.startsWith('claude-sonnet-') && model > 'claude-sonnet-4-6') return 'lean'
   return 'full'
 }
 
@@ -1723,7 +1726,8 @@ export const MCP_TOOLS = {
       'code-analysis',
       'analyze_complexity',
       'Analysis · analyze_complexity'
-    )
+    ),
+    AUDIT_SCAN: mcpTool('code-analysis', 'audit_scan', 'Analysis · audit_scan')
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),

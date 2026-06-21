@@ -290,7 +290,7 @@ export default function LocalLLMConfigSection({
   )
 
   return (
-    <div className="space-y-6">
+    <div data-testid="local-llm-config" className="space-y-6">
       {/* Section 1: Backend + Server Address */}
       <div>
         <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">

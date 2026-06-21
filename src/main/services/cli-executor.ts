@@ -141,6 +141,15 @@ export interface CLIExecuteResult {
  */
 const MESSAGE_TIMEOUT_MS = 5 * 60_000 // 5 minutes
 
+/**
+ * Generous timeout for MCP tool execution results. Applied when tools are
+ * pending BUT none of them are ask_user-type (which legitimately wait for
+ * human input). Prevents zombie CLI processes when MCP tools deadlock.
+ * The 5-min main-process safety timer provides a second layer, but this
+ * timeout addresses the root cause at the executor level.
+ */
+const TOOL_RESULT_TIMEOUT_MS = 10 * 60_000 // 10 minutes
+
 /** Regex for stderr patterns that indicate real errors (not progress info). */
 const STDERR_ERROR_PATTERN = /error|fatal|panic|ENOENT|EACCES|permission denied|segfault|SIGABRT/i
 
@@ -234,18 +243,41 @@ export class CLIExecutor {
       try {
         while (true) {
           // Per-message timeout prevents indefinite hangs when CLI stalls
-          // (e.g., MCP tool deadlock). DISABLED when a tool call is pending —
-          // the CLI is legitimately blocked waiting for the MCP tool result
-          // (e.g., ask_user waiting for human input). The process exit (stream
-          // close) is the only termination signal during tool-pending waits.
+          // (e.g., MCP tool deadlock). When tool calls are pending:
+          //   • ask_user/elicitation tools: timeout fully disabled (human input)
+          //   • other MCP tools: TOOL_RESULT_TIMEOUT_MS (10 min) prevents zombie processes
+          // The process exit (stream close) is a fallback termination signal.
           let iterResult: IteratorResult<Record<string, unknown>>
           if (tools.pendingToolCount > 0) {
-            // Tool call in flight — no timeout. If the process dies, the
-            // stream closes and iterator.next() returns { done: true }.
-            executorLog.debug(
-              `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — timeout suspended`
-            )
-            iterResult = await this.ndjsonIterator.next()
+            // Tool call in flight — use generous timeout unless waiting for
+            // human input (ask_user / elicitation), which has no timeout.
+            if (tools.hasAskUserPending()) {
+              // Human input has no meaningful timeout — user decides when to respond
+              executorLog.debug(
+                `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending) — timeout suspended`
+              )
+              iterResult = await this.ndjsonIterator.next()
+            } else {
+              // MCP tool execution: generous timeout prevents indefinite hangs
+              executorLog.debug(
+                `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
+              )
+              let toolTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+              iterResult = await Promise.race([
+                this.ndjsonIterator.next(),
+                new Promise<never>((_, reject) => {
+                  toolTimeoutHandle = setTimeout(
+                    () =>
+                      reject(
+                        new Error(
+                          `CLI tool result timeout — no response from MCP tool for ${TOOL_RESULT_TIMEOUT_MS / 60_000} minutes`
+                        )
+                      ),
+                    TOOL_RESULT_TIMEOUT_MS
+                  )
+                })
+              ]).finally(() => clearTimeout(toolTimeoutHandle))
+            }
           } else {
             // No tools pending — use normal timeout to detect CLI stalls
             let timeoutHandle: ReturnType<typeof setTimeout> | undefined
@@ -605,8 +637,7 @@ export class CLIExecutor {
    */
   private async writeToStdin(message: Record<string, unknown>): Promise<void> {
     if (!this.cliProcess?.stdin) {
-      executorLog.warn('[CLI:writeToStdin] No stdin available — message dropped')
-      return
+      throw new Error('CLI stdin unavailable — process may have exited')
     }
     const accepted = writeNdjsonMessage(this.cliProcess.stdin, message)
     if (!accepted) {

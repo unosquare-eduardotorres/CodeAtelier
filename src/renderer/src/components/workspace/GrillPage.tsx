@@ -105,6 +105,130 @@ function PlanDecisionGroups({
   )
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const getTabClass = (isActive: boolean): string =>
+  isActive
+    ? 'border-accent text-accent'
+    : 'border-transparent text-text-muted hover:text-text-secondary'
+
+function isValidPlan(plan: unknown): plan is GrillStructuredPlan {
+  return (
+    plan != null &&
+    typeof plan === 'object' &&
+    'items' in plan &&
+    Array.isArray((plan as Record<string, unknown>).items)
+  )
+}
+
+// ── Sub-components ───────────────────────────────────────────────────────────
+
+function GrillCompletedPlanView({ plan }: { plan: GrillStructuredPlan }): React.JSX.Element {
+  return (
+    <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div className="max-w-3xl mx-auto space-y-6">
+        {/* Plan header */}
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-success/15 rounded-lg flex items-center justify-center">
+            <CheckCircle size={20} className="text-success" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-text-primary">
+                {plan.title}
+              </h2>
+              {plan.goalType && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent/15 text-accent">
+                  {GOAL_TYPE_LABELS[plan.goalType] ?? plan.goalType}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-text-secondary">{plan.summary}</p>
+          </div>
+        </div>
+
+        {/* Implementation items */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+            <FileText size={14} />
+            Implementation Items ({plan.items.length})
+          </h3>
+          {plan.items.map((item, i) => (
+            <div
+              key={item.id || i}
+              className="p-3 rounded-lg border border-border-subtle bg-surface-overlay"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-accent/15 text-accent">
+                  {item.scope}
+                </span>
+                <span className="text-sm font-medium text-text-primary">{item.title}</span>
+              </div>
+              <p className="text-xs text-text-secondary">{item.description}</p>
+              {item.files.length > 0 && (
+                <p className="text-xs text-text-muted mt-1">Files: {item.files.join(', ')}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+                {item.includesTests && (
+                  <span className="inline-flex items-center gap-1 text-xs text-success">
+                    <CheckSquare size={11} />
+                    Includes tests
+                  </span>
+                )}
+                {item.dependsOn.length > 0 && (
+                  <span className="text-xs text-text-muted">
+                    Depends on: {item.dependsOn.join(', ')}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Decisions by track */}
+        {plan.decisions.length > 0 && (
+          <PlanDecisionGroups decisions={plan.decisions} />
+        )}
+
+        {/* Requirement Document */}
+        {plan.requirementDocument && (
+          <RequirementDocumentPanel text={plan.requirementDocument} />
+        )}
+
+        {/* Risks */}
+        {plan.risks.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-text-primary">⚠️ Risks</h3>
+            <ul className="list-disc list-inside space-y-1">
+              {plan.risks.map((risk, i) => (
+                <li key={i} className="text-xs text-text-secondary">
+                  {risk}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Constraints */}
+        {plan.constraints.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-text-primary">🔒 Constraints</h3>
+            <ul className="list-disc list-inside space-y-1">
+              {plan.constraints.map((c, i) => (
+                <li key={i} className="text-xs text-text-secondary">
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Page component ──────────────────────────────────────────────────────────
+
 interface GrillPageProps {
   ideaId: string
   conversationId: string
@@ -156,7 +280,7 @@ export default function GrillPage({
         ideaId,
         workspaceId: activeWorkspace.id
       })
-      if (plan && typeof plan === 'object' && 'items' in plan && Array.isArray(plan.items)) {
+      if (isValidPlan(plan)) {
         setStructuredPlan(plan)
         session.setPhase('completed')
         return plan
@@ -186,6 +310,27 @@ export default function GrillPage({
     session.setPhase('selecting')
   }, [session])
 
+  const handleCouncilSweep = useCallback(async () => {
+    if (!activeWorkspace || !structuredPlan) return
+    const councilStore = useCouncilStore.getState()
+    councilStore.startCouncil()
+    const { sessionId } = await window.api.councilStart({
+      workspaceId: activeWorkspace.id,
+      inputType: 'plan',
+      planContent: structuredPlan.requirementDocument,
+      structuredPlan,
+      originalUserRequest: ideaTitle,
+      grillSessionId: conversationId
+    })
+    councilStore.setSessionIdentity(sessionId, activeWorkspace.id)
+    onNavigateToCouncil?.()
+    try {
+      await window.api.grillComplete({ ideaId })
+    } catch (err) {
+      console.error('grillComplete failed:', err)
+    }
+  }, [activeWorkspace, structuredPlan, ideaTitle, conversationId, ideaId, onNavigateToCouncil])
+
   return (
     <div
       data-testid="grill-page"
@@ -207,22 +352,14 @@ export default function GrillPage({
           <div className="flex items-center gap-1">
             <button
               onClick={() => session.setActiveTab('chat')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                session.activeTab === 'chat'
-                  ? 'border-accent text-accent'
-                  : 'border-transparent text-text-muted hover:text-text-secondary'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${getTabClass(session.activeTab === 'chat')}`}
             >
               <MessageSquare size={14} />
               Chat
             </button>
             <button
               onClick={() => session.setActiveTab('decisions')}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                session.activeTab === 'decisions'
-                  ? 'border-accent text-accent'
-                  : 'border-transparent text-text-muted hover:text-text-secondary'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${getTabClass(session.activeTab === 'decisions')}`}
             >
               <ClipboardList size={14} />
               Decisions
@@ -248,105 +385,7 @@ export default function GrillPage({
           </div>
         </div>
       ) : session.phase === 'completed' && structuredPlan ? (
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="max-w-3xl mx-auto space-y-6">
-            {/* Plan header */}
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-success/15 rounded-lg flex items-center justify-center">
-                <CheckCircle size={20} className="text-success" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-text-primary">
-                    {structuredPlan.title}
-                  </h2>
-                  {structuredPlan.goalType && (
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent/15 text-accent">
-                      {GOAL_TYPE_LABELS[structuredPlan.goalType] ?? structuredPlan.goalType}
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-text-secondary">{structuredPlan.summary}</p>
-              </div>
-            </div>
-
-            {/* Implementation items */}
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-                <FileText size={14} />
-                Implementation Items ({structuredPlan.items.length})
-              </h3>
-              {structuredPlan.items.map((item, i) => (
-                <div
-                  key={item.id || i}
-                  className="p-3 rounded-lg border border-border-subtle bg-surface-overlay"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-accent/15 text-accent">
-                      {item.scope}
-                    </span>
-                    <span className="text-sm font-medium text-text-primary">{item.title}</span>
-                  </div>
-                  <p className="text-xs text-text-secondary">{item.description}</p>
-                  {item.files.length > 0 && (
-                    <p className="text-xs text-text-muted mt-1">Files: {item.files.join(', ')}</p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
-                    {item.includesTests && (
-                      <span className="inline-flex items-center gap-1 text-xs text-success">
-                        <CheckSquare size={11} />
-                        Includes tests
-                      </span>
-                    )}
-                    {item.dependsOn.length > 0 && (
-                      <span className="text-xs text-text-muted">
-                        Depends on: {item.dependsOn.join(', ')}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Decisions by track */}
-            {structuredPlan.decisions.length > 0 && (
-              <PlanDecisionGroups decisions={structuredPlan.decisions} />
-            )}
-
-            {/* Requirement Document — the artifact handed to MPA / Council */}
-            {structuredPlan.requirementDocument && (
-              <RequirementDocumentPanel text={structuredPlan.requirementDocument} />
-            )}
-
-            {/* Risks */}
-            {structuredPlan.risks.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-text-primary">⚠️ Risks</h3>
-                <ul className="list-disc list-inside space-y-1">
-                  {structuredPlan.risks.map((risk, i) => (
-                    <li key={i} className="text-xs text-text-secondary">
-                      {risk}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Constraints */}
-            {structuredPlan.constraints.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-text-primary">🔒 Constraints</h3>
-                <ul className="list-disc list-inside space-y-1">
-                  {structuredPlan.constraints.map((c, i) => (
-                    <li key={i} className="text-xs text-text-secondary">
-                      {c}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
+        <GrillCompletedPlanView plan={structuredPlan} />
       ) : session.phase === 'selecting' ? (
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="max-w-3xl mx-auto space-y-6">
@@ -432,33 +471,7 @@ export default function GrillPage({
         onSubmit={session.handleSubmit}
         onGeneratePlan={handleGeneratePlan}
         onBackToGrill={reviewMode ? undefined : handleBackToGrill}
-        onCouncilSweep={
-          structuredPlan
-            ? async () => {
-                if (!activeWorkspace) return
-                const councilStore = useCouncilStore.getState()
-                councilStore.startCouncil()
-                // Send the structured plan to the council
-                const { sessionId } = await window.api.councilStart({
-                  workspaceId: activeWorkspace.id,
-                  inputType: 'plan',
-                  planContent: structuredPlan.requirementDocument,
-                  structuredPlan,
-                  originalUserRequest: ideaTitle,
-                  grillSessionId: conversationId
-                })
-                councilStore.setSessionIdentity(sessionId, activeWorkspace.id)
-                onNavigateToCouncil?.()
-
-                // Final handoff — strip transient chat/decisions, keep the plan-only view.
-                try {
-                  await window.api.grillComplete({ ideaId })
-                } catch (err) {
-                  console.error('grillComplete failed:', err)
-                }
-              }
-            : undefined
-        }
+        onCouncilSweep={structuredPlan ? handleCouncilSweep : undefined}
       />
     </div>
   )

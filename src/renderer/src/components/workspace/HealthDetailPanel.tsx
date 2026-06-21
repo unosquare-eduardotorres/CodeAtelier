@@ -132,7 +132,7 @@ export default function HealthDetailPanel({
   // ── B) Track selected, no run exists yet ──
   if (!currentRun || !status) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+      <div data-testid="health-detail-panel" className="flex-1 flex flex-col items-center justify-center p-8 text-center">
         <div className="w-16 h-16 rounded-2xl bg-surface-overlay flex items-center justify-center mb-4">
           <Icon size={32} className="text-text-muted" />
         </div>
@@ -161,7 +161,7 @@ export default function HealthDetailPanel({
   // ── C) Pending ──
   if (status === 'pending') {
     return (
-      <div className="flex-1 flex flex-col">
+      <div data-testid="health-detail-panel" className="flex-1 flex flex-col">
         <TrackHeader icon={Icon} name={track.name} description={track.description} />
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2 text-sm text-text-muted">
@@ -331,7 +331,7 @@ export default function HealthDetailPanel({
     const passedChecks = findings.filter((f) => f.severity === 'info')
 
     return (
-      <div className="flex-1 flex flex-col min-h-0">
+      <div data-testid="health-detail-panel" className="flex-1 flex flex-col min-h-0">
         <AuditScoreHero
           trackName={track.name}
           TrackIcon={Icon}

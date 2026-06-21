@@ -184,7 +184,7 @@ const AgentManagementSection = forwardRef<AgentManagementHandle, AgentManagement
 
     return (
       <>
-        <section>
+        <section data-testid="agent-management-section">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Bot size={16} className="text-info" />
@@ -359,6 +359,7 @@ const AgentCard = forwardRef<HTMLDivElement, AgentCardProps>(function AgentCard(
   return (
     <div
       ref={ref}
+      data-testid="agent-management-card"
       onClick={onExpand}
       className={`group relative bg-surface-overlay border rounded p-3.5 cursor-pointer transition-all duration-200 min-h-[88px] ${
         isExpanded

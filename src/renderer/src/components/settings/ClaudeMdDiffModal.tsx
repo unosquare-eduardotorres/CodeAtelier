@@ -42,7 +42,7 @@ export default function ClaudeMdDiffModal({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-base min-w-0">
+    <div data-testid="claude-md-diff" className="flex-1 flex flex-col bg-surface-base min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-base">
         <div className="flex items-center gap-3">
@@ -63,6 +63,7 @@ export default function ClaudeMdDiffModal({
             Cancel
           </button>
           <button
+            data-testid="claude-md-approve"
             onClick={() => onConfirm(editedContent)}
             disabled={isConfirming}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-success hover:bg-success/90 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

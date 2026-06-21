@@ -377,6 +377,7 @@ export default function NewConversationModal({
               </button>
             )}
             <button
+              data-testid="new-conversation-submit"
               onClick={handleSubmit}
               disabled={!isValid}
               className={`px-5 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale ${

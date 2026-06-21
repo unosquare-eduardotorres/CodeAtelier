@@ -3,6 +3,10 @@ import type { BrowserWindow } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 
+// SM-DEAD-CODE-01: The state machine only uses 'idle' and 'chat-agent-streaming'.
+// All error/stop paths use conversationLifecycle.abort() → forceReset() which bypasses
+// the transition table entirely. The 'error' and 'stopped' states are retained in the
+// type for backward compatibility but are unreachable in production.
 export type ConversationState = 'idle' | 'chat-agent-streaming' | 'error' | 'stopped'
 
 export type ConversationTransition =
@@ -24,6 +28,10 @@ const VALID_TRANSITIONS: Record<
   'chat-agent-streaming': {
     chatAgentComplete: 'idle',
     messageFinalised: 'idle',
+    // SM-DEAD-CODE-01: streamError and userStop transitions exist for completeness
+    // but are unreachable — all abort paths use conversationLifecycle.abort() →
+    // forceReset(), bypassing the transition table. If the state machine is
+    // ever used directly (without lifecycle), these provide a valid path.
     streamError: 'error',
     userStop: 'stopped'
   },
@@ -33,9 +41,6 @@ const VALID_TRANSITIONS: Record<
   },
   stopped: {
     cleanupComplete: 'idle'
-    // CHAT-SM-02: Removed streamError transition — once the user has stopped,
-    // late-arriving stream errors should not move the machine to 'error' state
-    // (which would trigger error recovery on an already-stopped stream).
   }
 }
 

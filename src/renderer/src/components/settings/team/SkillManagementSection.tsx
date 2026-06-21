@@ -107,7 +107,7 @@ const SkillManagementSection = forwardRef<SkillManagementHandle, SkillManagement
 
     return (
       <>
-        <section>
+        <section data-testid="skill-management-section">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Sparkles size={16} className="text-mode-build-text" />
@@ -157,6 +157,7 @@ const SkillManagementSection = forwardRef<SkillManagementHandle, SkillManagement
                     <button
                       key={skill.name}
                       id={`skill-tag-${skill.name}`}
+                      data-testid="skill-management-tag"
                       onClick={() => setExpandedSkill(isExpanded ? null : skill.name)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all min-h-[36px] ${
                         isExpanded

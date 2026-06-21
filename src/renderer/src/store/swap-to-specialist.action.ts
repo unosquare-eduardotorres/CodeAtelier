@@ -85,15 +85,6 @@ export function executeSwapToSpecialist(get: GetState, set: SetState): void {
       // to the specialist. Re-sending ensures the specialist picks up
       // immediately instead of sitting idle waiting for new input.
 
-      // SWAP-02: Check streaming state before auto-resend. If the swap
-      // failed silently (e.g. SWAP-01 left the lock stuck), sendMessage()
-      // would throw "A message is already being processed".
-      const chatState = get() as unknown as { isStreaming?: boolean }
-      if (chatState.isStreaming) {
-        rendererLog.warn('swap-to-specialist: still streaming after swap — skipping auto-resend')
-        return
-      }
-
       const { messages: currentMessages } = get()
       const lastUserMessage = [...currentMessages].reverse().find((m) => m.role === 'user')
       if (lastUserMessage?.contentMd?.trim()) {
@@ -115,6 +106,16 @@ export function executeSwapToSpecialist(get: GetState, set: SetState): void {
 
         // Brief delay to let the greeting render and scroll settle
         await new Promise((resolve) => setTimeout(resolve, 300))
+
+        // SWAP-AUTORESEND-01: Re-check streaming state AFTER the delay, not before.
+        // The original check at T=0 is stale by T=300ms — streaming could have
+        // started or stopped in that window.
+        const postDelayState = get() as unknown as { isStreaming?: boolean; isSending?: boolean }
+        if (postDelayState.isStreaming || postDelayState.isSending) {
+          rendererLog.warn('swap-to-specialist: streaming active after delay — skipping auto-resend')
+          return
+        }
+
         await get().sendMessage(lastUserMessage.contentMd, attachments)
       }
     })

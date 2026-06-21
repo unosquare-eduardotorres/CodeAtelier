@@ -509,7 +509,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
-        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds),
+        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
       }))
     } else if (activeConversation) {
       // No partial content — still show a local indicator
@@ -523,10 +527,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       )
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
-        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds),
+        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
       }))
     } else {
-      set(buildStreamingResetState(null, get().streamingConversationIds))
+      set({
+        ...buildStreamingResetState(null, get().streamingConversationIds),
+        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
+      })
     }
 
     internals.resetAccumulator()
@@ -537,7 +551,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // SEND-RACE-01: Guard against rapid double-clicks. isSending is set synchronously
     // before the async IPC call, so it can't be bypassed by stale React closures.
     if (!activeConversation || alreadyStreaming || isSending) return
-    set({ isSending: true })
+    set({
+      isSending: true,
+      // SEND-ASKUSER-01: Clear stale pending questions so the card doesn't persist alongside new stream
+      pendingQuestions: null,
+      pendingQuestionAction: null,
+      pendingQuestionRequestId: null
+    })
     // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
     internals.bumpGeneration()
 
@@ -713,7 +733,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       conversations: newConversations,
       activeConversation: activeConversation?.id === id ? null : activeConversation,
-      messages: activeConversation?.id === id ? [] : get().messages
+      messages: activeConversation?.id === id ? [] : get().messages,
+      // CONV-CLOSE-ASKUSER-01: Clear pending questions when closing a conversation
+      ...(activeConversation?.id === id
+        ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
+        : {})
     })
   },
 

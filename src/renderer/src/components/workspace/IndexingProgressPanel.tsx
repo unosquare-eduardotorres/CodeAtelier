@@ -117,7 +117,7 @@ export default function IndexingProgressPanel({
     computeIndexingProgress(state)
 
   return (
-    <div className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-3 space-y-2">
+    <div data-testid="indexing-progress-panel" className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-3 space-y-2">
       {/* Status line */}
       <div className="flex items-center gap-2">
         {isActive && <Loader2 size={12} className="animate-spin text-primary" />}

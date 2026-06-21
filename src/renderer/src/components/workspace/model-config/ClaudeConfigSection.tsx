@@ -63,7 +63,7 @@ export default function ClaudeConfigSection({
   onToneChange
 }: ClaudeConfigSectionProps): React.JSX.Element {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div data-testid="claude-config-section" className="grid grid-cols-1 md:grid-cols-2 gap-6">
       {/* Speed */}
       <div>
         <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">

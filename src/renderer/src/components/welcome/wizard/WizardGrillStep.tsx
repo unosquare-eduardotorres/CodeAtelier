@@ -16,12 +16,9 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   ArrowRight,
   Pause,
-  CheckCircle2,
   Loader2,
   SkipForward,
-  RefreshCw,
-  Circle,
-  Minus
+  RefreshCw
 } from 'lucide-react'
 import {
   useGrillStreamStore,
@@ -40,6 +37,7 @@ import type {
   GrillDecision
 } from '../../../../../shared/types'
 import { GRILL_TRACKS } from '../../../../../shared/constants'
+import TrackProgressBar, { type TrackStatus } from './TrackProgressBar'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -65,8 +63,6 @@ interface GrillIteration {
   trackId?: GrillTrackId
   suggestedNextTrack?: { trackId: GrillTrackId; reason: string }
 }
-
-type TrackStatus = 'pending' | 'active' | 'completed' | 'skipped'
 
 // ── Shared helpers ────────────────────────────────────────────────────────
 
@@ -253,34 +249,45 @@ function useWizardGrillEvalHandler(opts: {
   }, [activeTrack, trackScores, onTrackScoresChange])
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
+// ── Track progression hook ──────────────────────────────────────────────
 
-export default function WizardGrillStep({
-  workspaceId,
-  projectName,
-  projectDescription,
-  selectedTracks,
-  grillDecisions,
-  trackScores,
-  onDecisionsChange,
-  onTrackScoresChange,
-  onDone,
-  onBack
-}: WizardGrillStepProps): React.JSX.Element {
-  const [phase, setPhase] = useState<GrillPhase>('selecting')
-  const [currentIteration, setCurrentIteration] = useState<GrillIteration | null>(null)
-  const [iterationCount, setIterationCount] = useState(0)
-  const [questionStates, setQuestionStates] = useState<Record<string, QuestionState>>({})
-  const [chatMessages, setChatMessages] = useState<GrillChatMessage[]>([])
+function useWizardGrillHandlers(opts: {
+  workspaceId: string
+  projectName: string
+  projectDescription: string
+  selectedTracks: GrillTrackId[]
+  grillDecisions: GrillDecision[]
+  trackScores: GrillTrackScore[]
+  onDecisionsChange: (decisions: GrillDecision[]) => void
+  onDone: () => void
+  currentIteration: GrillIteration | null
+  questionStates: Record<string, QuestionState>
+  setPhase: React.Dispatch<React.SetStateAction<GrillPhase>>
+  setSuggestedNextTrack: React.Dispatch<
+    React.SetStateAction<{ trackId: GrillTrackId; reason: string } | null>
+  >
+  setCurrentIteration: React.Dispatch<React.SetStateAction<GrillIteration | null>>
+  setChatMessages: React.Dispatch<React.SetStateAction<GrillChatMessage[]>>
+}): {
+  startTrackGrill: (trackId: GrillTrackId) => Promise<void>
+  handleSkipTrack: () => void
+  handleSubmitAnswers: () => void
+  handleReEvaluate: () => void
+  activeTrack: GrillTrackId | null
+  getTrackStatus: (trackId: GrillTrackId) => TrackStatus
+  getNextTrack: () => GrillTrackId | null
+  allTracksDone: boolean
+} {
+  const {
+    workspaceId, projectName, projectDescription, selectedTracks,
+    grillDecisions, trackScores, onDecisionsChange, onDone,
+    currentIteration, questionStates,
+    setPhase, setSuggestedNextTrack, setCurrentIteration, setChatMessages
+  } = opts
+
   const [activeTrack, setActiveTrack] = useState<GrillTrackId | null>(null)
-  const [suggestedNextTrack, setSuggestedNextTrack] = useState<{
-    trackId: GrillTrackId
-    reason: string
-  } | null>(null)
   const [completedTracks, setCompletedTracks] = useState<Set<GrillTrackId>>(new Set())
   const [skippedTracks, setSkippedTracks] = useState<Set<GrillTrackId>>(new Set())
-
-  const previousQuestionsRef = useRef<string[]>([])
   const hasAutoStarted = useRef(false)
 
   // ── Track status helpers ──
@@ -308,14 +315,6 @@ export default function WizardGrillStep({
     return selectedTracks.every((t) => completedTracks.has(t) || skippedTracks.has(t))
   }, [selectedTracks, completedTracks, skippedTracks])
 
-  // Answered count for sidebar
-  const answeredCount = useMemo(() => {
-    return Object.values(questionStates).filter((s) => s.selectedOptions.length > 0 || s.skipped)
-      .length
-  }, [questionStates])
-
-  const totalQuestions = currentIteration?.questions?.length ?? 0
-
   // ── Start track evaluation ──
 
   const startTrackGrill = useCallback(
@@ -332,7 +331,6 @@ export default function WizardGrillStep({
         { type: 'system', content: `Starting ${GRILL_TRACKS[trackId].name} track…` }
       ])
 
-      // Build iteration history from ALL previous decisions (context carry-over)
       const existingTrackScore = trackScores.find((ts) => ts.trackId === trackId)
       const iterationHistory =
         grillDecisions.length > 0
@@ -367,7 +365,8 @@ export default function WizardGrillStep({
         setPhase('paused')
       }
     },
-    [workspaceId, projectName, projectDescription, trackScores, grillDecisions]
+    [workspaceId, projectName, projectDescription, trackScores, grillDecisions,
+     setPhase, setSuggestedNextTrack, setCurrentIteration, setChatMessages]
   )
 
   // ── Auto-start first track on mount ──
@@ -382,16 +381,12 @@ export default function WizardGrillStep({
   const advanceToNextTrack = useCallback(
     (justCompletedTrack: GrillTrackId) => {
       setCompletedTracks((prev) => new Set([...prev, justCompletedTrack]))
-
-      // Find next pending track
       const remaining = selectedTracks.filter(
         (t) => t !== justCompletedTrack && !completedTracks.has(t) && !skippedTracks.has(t)
       )
-
       if (remaining.length > 0) {
         startTrackGrill(remaining[0])
       } else {
-        // All tracks done → auto-transition to Create step
         onDone()
       }
     },
@@ -402,92 +397,46 @@ export default function WizardGrillStep({
   const handleSkipTrack = useCallback(() => {
     if (!activeTrack) return
     setSkippedTracks((prev) => new Set([...prev, activeTrack]))
-
     setChatMessages((prev) => [
       ...prev,
       { type: 'system', content: `Skipped ${GRILL_TRACKS[activeTrack].name} track` }
     ])
-
-    // Find next non-completed, non-skipped track
     const remaining = selectedTracks.filter(
       (t) => t !== activeTrack && !completedTracks.has(t) && !skippedTracks.has(t)
     )
-
     if (remaining.length > 0) {
       startTrackGrill(remaining[0])
     } else {
       onDone()
     }
-  }, [activeTrack, selectedTracks, completedTracks, skippedTracks, startTrackGrill, onDone])
-
-  // ── Grill stream event listeners (extracted hook) ──
-  useWizardGrillEvalHandler({
-    activeTrack,
-    trackScores,
-    onTrackScoresChange,
-    setChatMessages,
-    setCurrentIteration,
-    setPhase,
-    setSuggestedNextTrack,
-    setIterationCount,
-    setQuestionStates,
-    previousQuestionsRef
-  })
+  }, [activeTrack, selectedTracks, completedTracks, skippedTracks, startTrackGrill, onDone, setChatMessages])
 
   // ── Submit answers → capture decisions, advance to next track ──
   const handleSubmitAnswers = useCallback(() => {
     if (!currentIteration || !activeTrack) return
-
-    const merged = captureAndMergeDecisions(
-      currentIteration,
-      activeTrack,
-      questionStates,
-      grillDecisions
-    )
+    const merged = captureAndMergeDecisions(currentIteration, activeTrack, questionStates, grillDecisions)
     onDecisionsChange(merged)
-
     const userSummary = buildUserAnswerSummary(currentIteration, questionStates)
     setChatMessages((prev) => [...prev, { type: 'user', content: userSummary }])
-
     advanceToNextTrack(activeTrack)
-  }, [
-    currentIteration,
-    activeTrack,
-    questionStates,
-    grillDecisions,
-    onDecisionsChange,
-    advanceToNextTrack
-  ])
+  }, [currentIteration, activeTrack, questionStates, grillDecisions, onDecisionsChange, advanceToNextTrack, setChatMessages])
 
   // ── Re-evaluate same track (new round, no advance) ──
   const handleReEvaluate = useCallback(() => {
     if (!currentIteration || !activeTrack) return
-
-    const merged = captureAndMergeDecisions(
-      currentIteration,
-      activeTrack,
-      questionStates,
-      grillDecisions
-    )
+    const merged = captureAndMergeDecisions(currentIteration, activeTrack, questionStates, grillDecisions)
     onDecisionsChange(merged)
-
     const userSummary = buildUserAnswerSummary(currentIteration, questionStates)
     setChatMessages((prev) => [...prev, { type: 'user', content: userSummary }])
-
-    // Build iteration history from ALL decisions so far
     const iterationHistory = merged
       .map(
         (d) =>
           `- [${GRILL_TRACKS[d.trackId]?.name ?? d.trackId}] **${d.questionText}**: ${d.selectedOption}${d.otherText ? ` (${d.otherText})` : ''}`
       )
       .join('\n')
-
-    // Re-evaluate same track (non-advancing)
     setPhase('evaluating')
     useGrillStreamStore.getState().reset()
-
     const existingTrackScore = trackScores.find((ts) => ts.trackId === activeTrack)
-
     window.api
       .grillEvaluate({
         workspaceId,
@@ -504,16 +453,95 @@ export default function WizardGrillStep({
         setPhase('answering')
       })
   }, [
-    workspaceId,
-    currentIteration,
-    activeTrack,
-    questionStates,
-    grillDecisions,
-    onDecisionsChange,
-    trackScores,
-    projectName,
-    projectDescription
+    workspaceId, currentIteration, activeTrack, questionStates, grillDecisions,
+    onDecisionsChange, trackScores, projectName, projectDescription, setPhase, setChatMessages
   ])
+
+  return {
+    startTrackGrill,
+    handleSkipTrack,
+    handleSubmitAnswers,
+    handleReEvaluate,
+    activeTrack,
+    getTrackStatus,
+    getNextTrack,
+    allTracksDone
+  }
+}
+
+// ── Component ─────────────────────────────────────────────────────────────
+
+export default function WizardGrillStep({
+  workspaceId,
+  projectName,
+  projectDescription,
+  selectedTracks,
+  grillDecisions,
+  trackScores,
+  onDecisionsChange,
+  onTrackScoresChange,
+  onDone,
+  onBack
+}: WizardGrillStepProps): React.JSX.Element {
+  const [phase, setPhase] = useState<GrillPhase>('selecting')
+  const [currentIteration, setCurrentIteration] = useState<GrillIteration | null>(null)
+  const [iterationCount, setIterationCount] = useState(0)
+  const [questionStates, setQuestionStates] = useState<Record<string, QuestionState>>({})
+  const [chatMessages, setChatMessages] = useState<GrillChatMessage[]>([])
+  const [suggestedNextTrack, setSuggestedNextTrack] = useState<{
+    trackId: GrillTrackId
+    reason: string
+  } | null>(null)
+
+  const previousQuestionsRef = useRef<string[]>([])
+
+  const {
+    startTrackGrill,
+    handleSkipTrack,
+    handleSubmitAnswers,
+    handleReEvaluate,
+    activeTrack,
+    getTrackStatus,
+    getNextTrack,
+    allTracksDone
+  } = useWizardGrillHandlers({
+    workspaceId,
+    projectName,
+    projectDescription,
+    selectedTracks,
+    grillDecisions,
+    trackScores,
+    onDecisionsChange,
+    onDone,
+    currentIteration,
+    questionStates,
+    setPhase,
+    setSuggestedNextTrack,
+    setCurrentIteration,
+    setChatMessages
+  })
+
+  // Answered count for sidebar
+  const answeredCount = useMemo(() => {
+    return Object.values(questionStates).filter((s) => s.selectedOptions.length > 0 || s.skipped)
+      .length
+  }, [questionStates])
+
+  const totalQuestions = currentIteration?.questions?.length ?? 0
+
+  // ── Grill stream event listeners (extracted hook) ──
+  useWizardGrillEvalHandler({
+    activeTrack,
+    trackScores,
+    onTrackScoresChange,
+    setChatMessages,
+    setCurrentIteration,
+    setPhase,
+    setSuggestedNextTrack,
+    setIterationCount,
+    setQuestionStates,
+    previousQuestionsRef
+  })
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -628,84 +656,6 @@ export default function WizardGrillStep({
           suggestedNextTrack={suggestedNextTrack}
         />
       </div>
-    </div>
-  )
-}
-
-// ── Track Progress Bar ────────────────────────────────────────────────────
-
-function TrackProgressBar({
-  selectedTracks,
-  getTrackStatus,
-  trackScores
-}: {
-  selectedTracks: GrillTrackId[]
-  getTrackStatus: (trackId: GrillTrackId) => TrackStatus
-  trackScores: GrillTrackScore[]
-}): React.JSX.Element {
-  return (
-    <div className="flex items-center gap-1 px-4 py-2.5 border-b border-border-subtle bg-surface-overlay/50">
-      {selectedTracks.map((trackId, idx) => {
-        const status = getTrackStatus(trackId)
-        const track = GRILL_TRACKS[trackId]
-        const score = trackScores.find((ts) => ts.trackId === trackId)?.score
-
-        return (
-          <div key={trackId} className="flex items-center gap-1">
-            {idx > 0 && (
-              <div
-                className={`w-6 h-px mx-0.5 ${
-                  status === 'completed' || status === 'skipped'
-                    ? 'bg-text-muted/40'
-                    : 'bg-border-subtle'
-                }`}
-              />
-            )}
-
-            <div className="flex items-center gap-1.5">
-              {/* Status icon */}
-              {status === 'completed' && (
-                <CheckCircle2 size={14} className="text-success flex-shrink-0" />
-              )}
-              {status === 'skipped' && (
-                <Minus size={14} className="text-text-muted flex-shrink-0" />
-              )}
-              {status === 'active' && (
-                <div className="relative flex-shrink-0">
-                  <Circle size={14} className="text-primary" />
-                  <div className="absolute inset-0 rounded-full animate-ping bg-primary/20" />
-                </div>
-              )}
-              {status === 'pending' && (
-                <Circle size={14} className="text-text-muted/40 flex-shrink-0" />
-              )}
-
-              {/* Track name */}
-              <span
-                className={`text-xs font-medium whitespace-nowrap ${
-                  status === 'active'
-                    ? 'text-primary font-semibold'
-                    : status === 'completed'
-                      ? 'text-text-primary'
-                      : status === 'skipped'
-                        ? 'text-text-muted line-through'
-                        : 'text-text-muted'
-                }`}
-              >
-                {track.name}
-              </span>
-
-              {/* Score badge */}
-              {status === 'completed' && score !== undefined && (
-                <span className="text-[10px] font-semibold text-success">{score}</span>
-              )}
-              {status === 'skipped' && (
-                <span className="text-[10px] text-text-muted italic">skipped</span>
-              )}
-            </div>
-          </div>
-        )
-      })}
     </div>
   )
 }

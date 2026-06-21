@@ -263,7 +263,7 @@ export default function TaskPlanCard({
 
       {/* ── Inline plan content (from ```plan block) ── */}
       {isInlinePlan && structuredPlan && (
-        <div className="px-5 py-4 space-y-4">{renderSectionsForType()}</div>
+        <div data-testid="task-plan-sections" className="px-5 py-4 space-y-4">{renderSectionsForType()}</div>
       )}
       {isInlinePlan && !structuredPlan && (
         <div className="px-5 py-4 prose prose-sm prose-invert max-w-none">
