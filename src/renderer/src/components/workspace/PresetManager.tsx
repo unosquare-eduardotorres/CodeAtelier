@@ -30,7 +30,7 @@ export function PresetManager(): React.JSX.Element {
   if (!activeWorkspace) return <></>
 
   return (
-    <div className="mt-8 border-t border-border-subtle pt-6">
+    <div data-testid="preset-manager" className="mt-8 border-t border-border-subtle pt-6">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-sm font-semibold text-text-primary">LLM Presets</h3>
@@ -98,7 +98,7 @@ function PresetCard({
   const totalCount = Object.keys(DEFAULT_MODEL_CONFIG).length
 
   return (
-    <div className="flex items-center justify-between p-3 rounded-lg border border-border-subtle bg-surface-secondary">
+    <div data-testid="preset-card" className="flex items-center justify-between p-3 rounded-lg border border-border-subtle bg-surface-secondary">
       <div className="flex items-center gap-3">
         <button
           onClick={onSetDefault}

@@ -138,6 +138,8 @@ export class GrillAgentService extends EventEmitter {
     iterationHistory?: string
     previousScore?: number
     llmProvider?: import('../../shared/types').LLMProvider
+    /** GRILL-04: Synthetic workspaceId for event routing in multi-window mode. */
+    workspaceId?: string
   }): Promise<void> {
     grillLog.info(
       `[grill] evaluateGreenfield called — track=${params.trackId} project="${params.projectName}"`
@@ -160,15 +162,17 @@ export class GrillAgentService extends EventEmitter {
     const session = new AgentSessionService(adapter)
     this.greenfieldSession = { session, running: true }
 
+    // GRILL-04: Include workspaceId in all greenfield events for correct routing
+    const wsId = params.workspaceId
+
     // Wire streaming events for live output
     session.on('chunk', (chunk: StreamChunk) => {
-      this.emit('stream', { chunk })
+      this.emit('stream', { workspaceId: wsId, chunk })
     })
 
     // Wire status updates so the modal's live counters move during a greenfield grill.
-    // No workspaceId exists yet; the IPC status listener's guard passes when undefined.
     session.on('statusUpdate', (status: AgentStatus) => {
-      this.emit('status', { status })
+      this.emit('status', { workspaceId: wsId, status })
     })
 
     try {
@@ -189,7 +193,7 @@ export class GrillAgentService extends EventEmitter {
 
       if (evaluation) {
         grillLog.info(`[grill:greenfield:${params.trackId}] completed — score=${evaluation.score}`)
-        this.emit('evaluation', evaluation)
+        this.emit('evaluation', { workspaceId: wsId, ...evaluation })
       } else {
         grillLog.warn(
           `[grill:greenfield:${params.trackId}] completed but no grill-evaluation block found`
@@ -204,7 +208,7 @@ export class GrillAgentService extends EventEmitter {
         grillLog.debug('[grill:greenfield] session.stop() cleanup failed (non-fatal):', e)
       }
       this.greenfieldSession = null
-      this.emit('complete')
+      this.emit('complete', { workspaceId: wsId })
     }
   }
 

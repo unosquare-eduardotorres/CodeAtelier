@@ -66,7 +66,7 @@ export default function SpecialistOrder(): React.JSX.Element {
   if (orderedList.length === 0) return <></>
 
   return (
-    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+    <div data-testid="specialist-order" className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
       <h4 className="text-sm font-medium text-text-primary">Specialist Priority Order</h4>
       <p className="text-xs text-text-secondary mt-0.5 mb-4">
         Drag to reorder. Specialists listed first are presented first to the generalist when
@@ -80,6 +80,7 @@ export default function SpecialistOrder(): React.JSX.Element {
             onDragStart={() => handleDragStart(index)}
             onDragOver={(e) => handleDragOver(e, index)}
             onDragEnd={handleDragEnd}
+            data-testid="specialist-order-item"
             className={`
               flex items-center gap-3 px-3 py-2 rounded-lg border transition-all cursor-grab active:cursor-grabbing
               ${

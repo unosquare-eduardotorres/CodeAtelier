@@ -106,6 +106,7 @@ export default function ChatItem({
 
   return (
     <div
+      data-testid="chat-item"
       className={`group flex items-center gap-3 px-3 py-3 cursor-pointer rounded-lg transition-colors press-scale ${
         isActive
           ? 'bg-primary-muted border-l-2 border-l-primary border border-primary/20'

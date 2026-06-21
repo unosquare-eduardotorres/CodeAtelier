@@ -106,6 +106,11 @@ export class ChatStreamService {
   /** Cleanup functions for all persistent event listeners registered in registerEventForwarders(). */
   private eventCleanups: Array<() => void> = []
 
+  // CHAT-LEAK-01: Guard against callbacks firing after service disposal.
+  // If dispose() runs while a queued callback is in the event loop, the
+  // callback would execute against stale state without this flag.
+  private isDisposed = false
+
   // N14: Track hook lifecycle listener for cleanup
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private hookLifecycleHandler?: ((...args: any[]) => void) | undefined
@@ -162,6 +167,7 @@ export class ChatStreamService {
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
     const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
+      if (this.isDisposed) return
       this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
@@ -182,6 +188,7 @@ export class ChatStreamService {
       action?: string
       requestId?: string
     }): void => {
+      if (this.isDisposed) return
       this.safeWindowSend(IPC_CHANNELS.CHAT_ASK_QUESTION, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         questions: data.questions,
@@ -194,6 +201,7 @@ export class ChatStreamService {
 
     // Elicitation — MCP server user input requests forwarded to renderer
     const onElicitation = (data: ElicitationEvent): void => {
+      if (this.isDisposed) return
       this.safeWindowSend(IPC_CHANNELS.ELICITATION_REQUEST, {
         conversationId: chatAgentService.getCurrentConversationId() || '',
         ...data
@@ -204,6 +212,7 @@ export class ChatStreamService {
 
     // Budget cap reached — forward as a CHAT_MESSAGE_CHUNK with budgetCapReached field
     const onBudgetCapReached = (data: { conversationId: string; message: string }): void => {
+      if (this.isDisposed) return
       this.safeWindowSend(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: data.conversationId,
         requestId: this.activeRequestId ?? undefined,
@@ -228,6 +237,7 @@ export class ChatStreamService {
     // Typed intent handler — routes post-stream intents (regex fallback + grill events)
     // via IntentRouter. Skips plan/askUser if they were already sent by MCP forwarders above.
     const onIntent = (intent: AgentIntent): void => {
+      if (this.isDisposed) return
       const conversationId = chatAgentService.getCurrentConversationId() || ''
 
       // Skip types that were already forwarded by MCP legacy listeners
@@ -429,9 +439,13 @@ export class ChatStreamService {
     }, 30_000)
 
     // Main-process safety timeout (5 min) — last-resort recovery
+    // CHAT-TIMER-01: Added safetyCleared flag for idempotent safety. If an earlier
+    // disposer throws and the clearTimeout disposer doesn't run, the flag prevents
+    // the timer from firing on an already-completed stream.
     const MAIN_PROCESS_SAFETY_TIMEOUT_MS = 5 * 60 * 1000
+    let safetyCleared = false
     const safetyTimer = setTimeout(() => {
-      if (this.streamingLock) {
+      if (!safetyCleared && this.streamingLock) {
         log.error(
           '[STREAM:main-safety-timeout] Streaming lock stuck for 5 minutes — force-resetting. ' +
             `conversationId=${conversationId} requestId=${requestId}`
@@ -443,6 +457,7 @@ export class ChatStreamService {
     }, MAIN_PROCESS_SAFETY_TIMEOUT_MS)
 
     conversationLifecycle.onDispose(() => {
+      safetyCleared = true
       clearTimeout(safetyTimer)
       if (this.keepaliveTimer) {
         clearInterval(this.keepaliveTimer)
@@ -469,6 +484,18 @@ export class ChatStreamService {
       // Resetting to 'da-vinci' corrupts any event forwarders that fire
       // between dispose and the next stream() call (e.g. compactNeeded).
     })
+
+    // COMPACT-ABORT-01: Clear per-conversation adapter state (pending compaction,
+    // pending context injection) on lifecycle abort. Without this, stale state
+    // from an aborted stream is consumed by the next message.
+    // Only clears adapter pending state — not the session map (conversation should
+    // still be resumable after stop).
+    const streamConvId = conversationLifecycle.conversationId
+    if (streamConvId) {
+      conversationLifecycle.onDispose(() => {
+        chatAgentService.clearConversationPendingState(streamConvId)
+      })
+    }
 
     // Remove per-stream listeners
     conversationLifecycle.onDispose(() => {
@@ -651,29 +678,29 @@ export class ChatStreamService {
         )
       }
 
-      const savedMessage = messageRepository.create(
-        ctx.conversationId,
-        ctx.streamingRole,
-        cleanedContent || '**Error:** Agent produced no response. Check the app logs for details.',
-        ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
-      )
-      log.info('Agent message saved, id:', savedMessage.id)
-
-      // Persist tool activities accumulated during streaming
+      // FINALIZE-ATOM-01: Wrap message creation + tool activity persistence in a
+      // transaction. If the conversation is cascade-deleted between the two calls,
+      // both operations roll back together instead of leaving orphaned data.
       const toolActivities = getAndClearToolActivities(ctx.conversationId)
-      if (toolActivities.length > 0) {
-        try {
-          messageRepository.updateToolActivities(savedMessage.id, toolActivities)
+      const { getDatabase } = await import('../db/index')
+      const db = getDatabase()
+      const savedMessage = db.transaction(() => {
+        const msg = messageRepository.create(
+          ctx.conversationId,
+          ctx.streamingRole,
+          cleanedContent ||
+            '**Error:** Agent produced no response. Check the app logs for details.',
+          ctx.specialistMeta?.specialist ?? ctx.adapterAgentId
+        )
+        if (toolActivities.length > 0) {
+          messageRepository.updateToolActivities(msg.id, toolActivities)
           log.info(
-            `[PIPELINE:tool-activities-persisted] messageId=${savedMessage.id} count=${toolActivities.length}`
-          )
-        } catch (toolErr) {
-          log.error(
-            `[PIPELINE:tool-activities-lost] messageId=${savedMessage.id} count=${toolActivities.length}:`,
-            toolErr
+            `[PIPELINE:tool-activities-persisted] messageId=${msg.id} count=${toolActivities.length}`
           )
         }
-      }
+        return msg
+      })()
+      log.info('Agent message saved, id:', savedMessage.id)
 
       // Process memory blocks
       this.processMemoryBlocks(ctx)
@@ -800,7 +827,13 @@ export class ChatStreamService {
       // Flush any pending batched text deltas before finalizing
       flushTextBatcher(ctx.conversationId)
 
-      if (this.isStopped) {
+      // CHAT-DUP-01 + CHAT-RACE-01: Use the lifecycle abort signal (set atomically
+      // by lifecycle.abort()) instead of the isStopped boolean flag. This prevents
+      // the TOCTOU race where isStopped is checked here but stop() sets it between
+      // this check and the first await inside finalizeStreamMessage(). The signal
+      // is set once and stays aborted — no race window.
+      const signal = conversationLifecycle.signal
+      if (this.isStopped || signal?.aborted) {
         cleanupListeners()
         resolveDone()
         return
@@ -1082,9 +1115,11 @@ export class ChatStreamService {
    * Called by the workspace switch IPC handler to prevent cross-workspace lock contamination.
    */
   forceResetIfStuck(): void {
-    if (this.streamingLock) {
+    const lockStuck = this.streamingLock
+    const smStuck = !conversationStateMachine.isIdle()
+    if (lockStuck || smStuck) {
       log.warn(
-        '[STREAM:workspace-switch-reset] Streaming lock active during workspace switch — force-resetting'
+        `[STREAM:force-reset] lock=${lockStuck} smState=${conversationStateMachine.currentState} — force-resetting`
       )
       conversationLifecycle.abort('workspace-switch')
     }
@@ -1092,6 +1127,8 @@ export class ChatStreamService {
 
   // N14: Clean up all persistent listeners when the service is replaced
   dispose(): void {
+    this.isDisposed = true
+
     // Clean up all persistent event forwarders registered in registerEventForwarders()
     for (const cleanup of this.eventCleanups) {
       cleanup()

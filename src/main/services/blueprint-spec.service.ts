@@ -164,7 +164,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 11. Get accumulated text and parse completion
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       // 12. Save spec artifact to phase
       if (specifyPhase) {
@@ -334,7 +334,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Check if the first turn already produced a completion block
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       if (completion) {
         // Clarify completed in first turn (no gaps found)
@@ -386,7 +386,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Check accumulated text for completion block
       const text = sessionState.session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       if (completion) {
         // Clarify phase complete — agent is satisfied

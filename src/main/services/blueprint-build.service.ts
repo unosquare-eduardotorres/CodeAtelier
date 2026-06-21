@@ -52,9 +52,9 @@ interface BuildResult {
 }
 
 export class BlueprintBuildService extends EventEmitter {
-  /** Active session for the currently executing task (used for cancel). */
-  private activeSession: AgentSessionService | null = null
-  private activeBlueprintId: string | null = null
+  /** BP-05: Per-workspace active sessions to prevent cross-workspace cancel. */
+  private activeSessions = new Map<string, AgentSessionService>()
+  private activeBlueprintIds = new Map<string, string>()
 
   async startBuildPhase(params: {
     blueprintId: string
@@ -67,7 +67,7 @@ export class BlueprintBuildService extends EventEmitter {
 
     // 1. Pipeline + DB state
     blueprintService.markPipelineRunning(workspaceId, blueprintId, 'build')
-    this.activeBlueprintId = blueprintId
+    this.activeBlueprintIds.set(workspaceId, blueprintId)
 
     const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
     if (buildPhase) {
@@ -139,6 +139,16 @@ export class BlueprintBuildService extends EventEmitter {
       }
 
       if (result.failed) {
+        // BP-SKIP-01: Mark all remaining pending tasks across subsequent waves as 'skipped'
+        for (const waveNum of sortedWaves) {
+          const waveTasks = waveMap.get(waveNum) ?? []
+          for (const task of waveTasks) {
+            const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+            if (currentStatus === 'pending') {
+              blueprintTaskRepository.updateStatus(task.id, 'skipped')
+            }
+          }
+        }
         this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
       } else {
         this.finalizeSuccess(
@@ -155,8 +165,8 @@ export class BlueprintBuildService extends EventEmitter {
       bpLog.error(`[startBuildPhase] BUILD phase failed:`, err)
       this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
     } finally {
-      this.activeSession = null
-      this.activeBlueprintId = null
+      this.activeSessions.delete(workspaceId)
+      this.activeBlueprintIds.delete(workspaceId)
       // Only mark pipeline stopped if verify was NOT auto-triggered.
       // When verify is triggered, its own finally block owns markPipelineStopped()
       // to avoid destroying the AbortController that the verify phase needs.
@@ -250,6 +260,17 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
+    // BP-SKIP-01: Mark remaining tasks in this wave as 'skipped' so the UI
+    // can distinguish "never ran because dependency failed" from "pending".
+    if (waveFailed || result.failed) {
+      for (const task of waveTasks) {
+        const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+        if (currentStatus === 'pending') {
+          blueprintTaskRepository.updateStatus(task.id, 'skipped')
+        }
+      }
+    }
+
     const waveStatus = waveFailed || result.failed ? 'failed' : 'complete'
     this.emit('waveComplete', {
       blueprintId,
@@ -314,6 +335,8 @@ export class BlueprintBuildService extends EventEmitter {
       phase: 'build',
       status: 'complete',
       completion: {
+        phase: 'build',
+        status: 'complete',
         tasksCompleted: result.tasksCompleted,
         totalTasks,
         filesCreated: result.filesCreated,
@@ -345,6 +368,10 @@ export class BlueprintBuildService extends EventEmitter {
       })
       .catch((err) => {
         bpLog.error('[build→verify] Verify phase failed:', err)
+        // BP-02: If verify rejects, pipeline is never marked stopped.
+        // Clean up here so the workspace isn't permanently locked.
+        blueprintService.markPipelineStopped(workspaceId)
+        blueprintRepository.updateStatus(blueprintId, 'failed')
       })
   }
 
@@ -378,7 +405,7 @@ export class BlueprintBuildService extends EventEmitter {
     adapter.setGoalCondition(buildBuildGoalCondition(task.taskId, task.description))
 
     const session = new AgentSessionService(adapter)
-    this.activeSession = session
+    this.activeSessions.set(workspaceId, session)
 
     // Wire streaming — forward progress events
     const onChunk = (chunk: StreamChunk): void => {
@@ -460,8 +487,8 @@ export class BlueprintBuildService extends EventEmitter {
       session.removeListener('chunk', onChunk)
       session.removeListener('statusUpdate', onStatus)
       await session.stop()
-      if (this.activeSession === session) {
-        this.activeSession = null
+      if (this.activeSessions.get(workspaceId) === session) {
+        this.activeSessions.delete(workspaceId)
       }
     }
   }
@@ -531,20 +558,28 @@ export class BlueprintBuildService extends EventEmitter {
   // ── Cancel / Shutdown ──
 
   async cancelBlueprint(blueprintId: string): Promise<void> {
-    if (this.activeBlueprintId === blueprintId && this.activeSession) {
-      bpLog.info(`[cancelBlueprint] Stopping active session for blueprint ${blueprintId}`)
-      await this.activeSession.stop()
-      this.activeSession = null
-      this.activeBlueprintId = null
+    // BP-05: Find the workspace whose active blueprint matches
+    for (const [wsId, bpId] of this.activeBlueprintIds) {
+      if (bpId === blueprintId) {
+        const session = this.activeSessions.get(wsId)
+        if (session) {
+          bpLog.info(`[cancelBlueprint] Stopping active session for blueprint ${blueprintId}`)
+          await session.stop()
+          this.activeSessions.delete(wsId)
+          this.activeBlueprintIds.delete(wsId)
+        }
+        break
+      }
     }
   }
 
   async shutdown(): Promise<void> {
-    if (this.activeSession) {
-      await this.activeSession.stop()
-      this.activeSession = null
-      this.activeBlueprintId = null
+    for (const [wsId, session] of this.activeSessions) {
+      await session.stop()
+      this.activeBlueprintIds.delete(wsId)
     }
+    this.activeSessions.clear()
+    this.activeBlueprintIds.clear()
   }
 }
 

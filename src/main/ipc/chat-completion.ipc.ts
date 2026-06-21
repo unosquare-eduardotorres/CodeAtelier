@@ -4,6 +4,7 @@ import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
+import { conversationLifecycle } from '../services/conversation-lifecycle'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
@@ -22,6 +23,13 @@ export function registerChatCompletionIpc(): void {
     validateSender(event)
     const closeArgs = requireObject(rawArgs, IPC_CHANNELS.CHAT_CLOSE)
     const conversationId = requireString(closeArgs, 'conversationId', IPC_CHANNELS.CHAT_CLOSE)
+
+    // CONV-DEL-01: Abort active stream if it's for this conversation.
+    // Without this, the backend continues streaming chunks for the deleted conversation,
+    // leading to FK constraint violations when finalizeStreamMessage() tries to INSERT.
+    if (conversationLifecycle.conversationId === conversationId) {
+      conversationLifecycle.abort('conversation-deleted')
+    }
 
     // Stop running agents for this conversation
     chatAgentService.clearSession(conversationId)
@@ -159,6 +167,9 @@ export function registerChatCompletionIpc(): void {
             title: commitMessage,
             body: description
           })
+          // ATOM-05: Log PR URL before DB write so it's recoverable from logs
+          // if updatePrInfo() fails (conversation is about to be deleted).
+          log.info(`[chat:complete] PR created: ${prResult.prUrl} (pr#${prResult.prNumber})`)
           prUrl = prResult.prUrl
           conversationRepository.updatePrInfo(
             conversationId,
@@ -167,11 +178,14 @@ export function registerChatCompletionIpc(): void {
             branchName
           )
         } catch (e) {
-          log.warn('GitHub PR creation failed (push succeeded):', e)
+          log.warn('GitHub PR creation/persistence failed (push succeeded):', e)
         }
       }
 
-      // 8. Cleanup: stop agents, delete conversation
+      // 8. Cleanup: abort active stream + stop agents, delete conversation
+      if (conversationLifecycle.conversationId === conversationId) {
+        conversationLifecycle.abort('conversation-completed')
+      }
       chatAgentService.clearSession(conversationId)
       conversationRepository.delete(conversationId)
 

@@ -23,6 +23,7 @@ export default function SessionRecoveryBanner({
 
   return (
     <div
+      data-testid="session-recovery-banner"
       className={`
         mx-4 mt-2 flex items-center gap-3 rounded-lg border px-4 py-3
         ${

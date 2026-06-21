@@ -85,21 +85,27 @@ describe('GreenfieldGrillRoleAdapter', () => {
       'TaskCreate',
       'TaskUpdate'
     ]
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
     for (const tool of expected) {
-      assert.ok(result.disallowedTools.includes(tool), `Expected ${tool} in disallowedTools`)
+      assert.ok(disallowedTools.includes(tool), `Expected ${tool} in disallowedTools`)
     }
   })
 
   test('buildMcpConfig_has_no_code_graph_tools', () => {
     const adapter = createAdapter()
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(!result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 
   test('buildMcpConfig_has_no_semantic_search_tools', () => {
     const adapter = createAdapter()
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(!result.allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
   })
 
   // ── buildPrompts ──
@@ -113,6 +119,7 @@ describe('GreenfieldGrillRoleAdapter', () => {
           conversationId: 'c1',
           hasImages: false,
           turnCount: 1,
+          sessionId: undefined,
           mode: 'plan',
           workspacePath: '/tmp',
           workspaceId: null,

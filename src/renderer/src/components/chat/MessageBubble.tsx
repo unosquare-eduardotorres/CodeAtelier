@@ -408,11 +408,11 @@ function MessageBubbleInner({
   // Extracted hook: parses message content to detect structured blocks
   const content = useMessageContent(message.contentMd, message.attachmentsJson, isUser)
   const {
-    imageAttachments,
-    fileAttachments,
-    isGrillActivation,
-    ideaToRefineMatch,
-    displayContent,
+    imageAttachments: _imageAttachments,
+    fileAttachments: _fileAttachments,
+    isGrillActivation: _isGrillActivation,
+    ideaToRefineMatch: _ideaToRefineMatch,
+    displayContent: _displayContent,
     planContent,
     structuredPlan,
     buildSummaryData

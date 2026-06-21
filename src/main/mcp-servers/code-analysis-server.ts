@@ -32,32 +32,158 @@ const server = new McpServer(
   { capabilities: { tools: {} } }
 )
 
+// ── Complexity Analysis ──
+
+interface ComplexityResult {
+  file: string
+  function: string
+  line: number
+  column: number
+  complexity: number
+}
+
+/**
+ * Parse ESLint complexity rule messages to extract function name and score.
+ * ESLint messages follow patterns like:
+ *   "Arrow function has a complexity of 15. Maximum allowed is 0."
+ *   "Function 'handleRequest' has a complexity of 8. Maximum allowed is 0."
+ *   "Method 'render' has a complexity of 12. Maximum allowed is 0."
+ */
+export function parseComplexityMessage(
+  msg: { message: string; line: number; column: number; ruleId: string | null },
+  filePath: string
+): ComplexityResult | null {
+  if (msg.ruleId !== 'complexity') return null
+  const scoreMatch = msg.message.match(/complexity of (\d+)/)
+  if (!scoreMatch) return null
+  const complexity = parseInt(scoreMatch[1], 10)
+
+  // Extract function name — patterns: "Function 'name'", "Method 'name'", "Arrow function"
+  const nameMatch = msg.message.match(/(?:Function|Method)\s+'([^']+)'/)
+  const funcName = nameMatch ? nameMatch[1] : 'anonymous'
+
+  return { file: filePath, function: funcName, line: msg.line, column: msg.column, complexity }
+}
+
+const SUPPORTED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'])
+
+async function handleAnalyzeComplexity(args: {
+  path: string
+  threshold: number
+  maxResults: number
+}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  const targetPath = sanitizePath(args.path)
+
+  // Check for non-JS/TS files (single file mode)
+  if (targetPath.includes('.')) {
+    const ext = '.' + targetPath.split('.').pop()!.toLowerCase()
+    if (!SUPPORTED_EXTENSIONS.has(ext)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `[analyze_complexity] Language not supported: ${ext}\nCurrently supports: ${[...SUPPORTED_EXTENSIONS].join(', ')}\n\nFuture: tree-sitter based analysis for Python, Rust, Go, etc.`
+          }
+        ]
+      }
+    }
+  }
+
+  try {
+    // Run ESLint with complexity rule at max:0 to report ALL functions
+    const { stdout } = runEslint(
+      ['--format', 'json', '--rule', '"complexity: [\\"warn\\", {\\"max\\": 0}]"', quotePaths([targetPath])],
+      WORKSPACE_PATH
+    )
+
+    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+    const results: ComplexityResult[] = []
+
+    for (const diag of diagnostics) {
+      for (const msg of diag.messages) {
+        const parsed = parseComplexityMessage(msg, diag.filePath)
+        if (parsed && parsed.complexity >= args.threshold) {
+          results.push(parsed)
+        }
+      }
+    }
+
+    // Sort by complexity descending
+    results.sort((a, b) => b.complexity - a.complexity)
+    const capped = results.slice(0, args.maxResults)
+
+    // Build output
+    const lines: string[] = [
+      `## Cyclomatic Complexity Analysis`,
+      ``,
+      `**Path:** ${args.path}`,
+      `**Threshold:** ${args.threshold}`,
+      `**Functions above threshold:** ${results.length}`,
+      ``
+    ]
+
+    if (capped.length === 0) {
+      lines.push(`✅ No functions exceed complexity ${args.threshold}.`)
+    } else {
+      lines.push('| Complexity | Function | File | Line |')
+      lines.push('|------------|----------|------|------|')
+      for (const r of capped) {
+        const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
+        const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
+        lines.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
+      }
+
+      if (results.length > args.maxResults) {
+        lines.push(``, `_...and ${results.length - args.maxResults} more above threshold_`)
+      }
+
+      // Summary stats
+      const avg = results.reduce((s, r) => s + r.complexity, 0) / results.length
+      lines.push(
+        ``,
+        `**Summary:** avg=${avg.toFixed(1)}, max=${results[0].complexity}, total=${results.length} functions above threshold`
+      )
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 15_000) }]
+    }
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `[analyze_complexity] Error: ${err instanceof Error ? err.message : String(err)}`
+        }
+      ]
+    }
+  }
+}
+
 async function registerTools(): Promise<void> {
   server.tool(
     'analyze_complexity',
-    'Analyze code complexity metrics for a file or directory.',
+    'Analyze cyclomatic complexity of functions in a file or directory. Reports functions exceeding a threshold, sorted by complexity. Uses ESLint complexity rule for JS/TS files.',
     {
-      path: z.string().describe('File or directory path to analyze'),
+      path: z.string().describe('File or directory path to analyze (relative to workspace root)'),
       threshold: z
         .number()
         .int()
         .min(1)
         .max(100)
         .optional()
-        .default(10)
-        .describe('Cyclomatic complexity threshold')
+        .default(5)
+        .describe('Report functions with cyclomatic complexity >= this value (default: 5)'),
+      maxResults: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .default(50)
+        .describe('Maximum functions to return (default: 50)')
     },
-    async (args) => {
-      // Delegate to in-process service
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `[analyze_complexity] path=${args.path} threshold=${args.threshold} — delegating to in-process service`
-          }
-        ]
-      }
-    }
+    handleAnalyzeComplexity
   )
 
   server.tool(

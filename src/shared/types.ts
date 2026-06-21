@@ -761,6 +761,8 @@ export interface StructuredPlan {
   expectedOutcome?: string
   deferredItems?: string[]
   diagrams?: Array<{ title: string; mermaid: string }>
+  /** Architectural constraints from grill decisions (PLAN-GEN-05) */
+  constraints?: string[]
 }
 
 export interface PlanDetectedEvent {

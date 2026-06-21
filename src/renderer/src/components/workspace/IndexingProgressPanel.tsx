@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Loader2, Pause, Play, X, Check } from 'lucide-react'
 import { useIndexingStore } from '@renderer/store'
-import type { IndexingState } from '@shared/types'
+import type { IndexingState } from '../../../../shared/types'
 
 // ── Pure progress computation ──────────────────────────────────────
 

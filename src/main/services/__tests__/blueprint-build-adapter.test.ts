@@ -16,7 +16,7 @@ const basePhaseContext: PhaseContext = {
     title: 'Test Blueprint',
     shortName: 'test-bp',
     description: 'A test blueprint',
-    priority: 'medium',
+    priority: 'P2',
     currentPhase: 'build',
     settings: {}
   },
@@ -32,6 +32,7 @@ function makePromptCtx(): AdapterPromptContext {
     conversationId: 'c1',
     hasImages: false,
     turnCount: 1,
+    sessionId: undefined,
     mode: 'build',
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
@@ -134,10 +135,12 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build'
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Write'))
-    assert.ok(result.allowedTools.includes('Edit'))
-    assert.ok(result.allowedTools.includes('Bash'))
-    assert.ok(result.allowedTools.includes('ListDir'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Write'))
+    assert.ok(allowedTools.includes('Edit'))
+    assert.ok(allowedTools.includes('Bash'))
+    assert.ok(allowedTools.includes('ListDir'))
   })
 
   test('buildMcpConfig_disallowedTools_includes_agent_toolsearch_askuser', () => {
@@ -148,9 +151,11 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build'
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('ToolSearch'))
-    assert.ok(result.disallowedTools.includes('AskUserQuestion'))
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Agent'))
+    assert.ok(disallowedTools.includes('ToolSearch'))
+    assert.ok(disallowedTools.includes('AskUserQuestion'))
   })
 
   test('buildMcpConfig_includes_code_graph_when_repomapEnabled_and_workspaceId', () => {
@@ -161,7 +166,9 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build'
     })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
-    assert.ok(result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 
   test('buildMcpConfig_excludes_code_graph_without_workspaceId', () => {
@@ -172,7 +179,9 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build'
     })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
-    assert.ok(!result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 
   test('buildMcpConfig_includes_semantic_search_when_enabled_and_workspaceId', () => {
@@ -183,7 +192,9 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build'
     })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
-    assert.ok(result.allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
   })
 
   // ── buildPrompts guard ──

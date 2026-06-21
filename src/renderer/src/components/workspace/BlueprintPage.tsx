@@ -11,6 +11,7 @@ import {
   BlueprintHistoryItem,
   formatTimeAgo
 } from './blueprints'
+import type { BlueprintPhaseType } from '../../../../shared/blueprint-types'
 
 // ── View States ──
 
@@ -21,6 +22,212 @@ type ViewState = 'landing' | 'input' | 'active' | 'detail'
 interface BlueprintPageProps {
   onNavigateToChat?: () => void
 }
+
+// ── getEffectiveView ──
+
+function getEffectiveView(
+  viewState: ViewState,
+  isRunning: boolean,
+  pendingApproval: unknown,
+  selectedId: string | null
+): ViewState {
+  if (isRunning || pendingApproval) return 'active'
+  if (selectedId) return 'detail'
+  return viewState
+}
+
+// ── BlueprintStatusIcon ──
+
+function BlueprintStatusIcon({ status, size = 14 }: { status: string; size?: number }): JSX.Element {
+  if (status === 'complete')
+    return <CheckCircle2 size={size} className="text-success flex-shrink-0" />
+  if (status === 'failed')
+    return <XCircle size={size} className="text-danger flex-shrink-0" />
+  const sizeClass = size >= 14 ? 'w-3.5 h-3.5' : 'w-3 h-3'
+  return <div className={`${sizeClass} rounded-full border border-border-subtle flex-shrink-0`} />
+}
+
+// ── BlueprintActiveView ──
+
+function BlueprintActiveView({
+  pendingApproval,
+  currentPhase,
+  currentPhaseStream,
+  currentWave,
+  waveTasks,
+  onApprove,
+  onReject,
+  onCancel
+}: {
+  pendingApproval: { blueprintId: string; planSummary: string } | null
+  currentPhase: BlueprintPhaseType | null
+  currentPhaseStream: string
+  currentWave: { wave: number; taskCount: number } | null
+  waveTasks: React.ComponentProps<typeof BlueprintWaveProgress>['waveTasks']
+  onApprove: () => void
+  onReject: (feedback: string) => void
+  onCancel: () => void
+}): JSX.Element {
+  return (
+    <>
+      {pendingApproval && (
+        <div
+          data-testid="blueprint-approval-gate"
+          className="bg-surface-raised rounded-xl border border-emerald-400/30 p-4"
+        >
+          <BlueprintApprovalGate
+            planSummary={pendingApproval.planSummary}
+            onApprove={onApprove}
+            onReject={onReject}
+            onCancel={onCancel}
+          />
+        </div>
+      )}
+
+      <div
+        data-testid="blueprint-phase-timeline"
+        className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden"
+      >
+        <div className="grid grid-cols-[200px_1fr] divide-x divide-border-subtle h-[400px]">
+          <div className="p-4 overflow-y-auto">
+            <BlueprintPhaseTimeline
+              currentPhase={currentPhase}
+              awaitingApproval={!!pendingApproval}
+            />
+          </div>
+          <div className="flex flex-col">
+            {currentPhase ? (
+              <BlueprintPhaseStream phaseType={currentPhase} streamText={currentPhaseStream} />
+            ) : (
+              <div className="flex items-center justify-center h-full text-text-muted text-xs">
+                Waiting for pipeline to start...
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {currentPhase === 'build' && currentWave && (
+        <div className="bg-surface-raised rounded-xl border border-border-subtle p-4">
+          <BlueprintWaveProgress
+            wave={currentWave.wave}
+            taskCount={currentWave.taskCount}
+            waveTasks={waveTasks}
+          />
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── BlueprintDetailView ──
+
+function BlueprintDetailView({
+  selectedId,
+  currentBlueprint,
+  onBack
+}: {
+  selectedId: string
+  currentBlueprint: ReturnType<typeof useBlueprintStore.getState>['currentBlueprint']
+  onBack: () => void
+}): JSX.Element {
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="text-xs text-text-secondary hover:text-text-primary transition-colors"
+      >
+        ← Back to list
+      </button>
+
+      {currentBlueprint && currentBlueprint.id === selectedId ? (
+        <div className="space-y-4">
+          {/* Blueprint header */}
+          <div className="bg-surface-raised rounded-xl border border-border-subtle p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-text-primary">
+                {currentBlueprint.title}
+              </h4>
+              <StatusBadge status={currentBlueprint.status} />
+              <span className="text-[10px] text-text-muted">{currentBlueprint.priority}</span>
+            </div>
+            {currentBlueprint.description && (
+              <p className="text-xs text-text-secondary">{currentBlueprint.description}</p>
+            )}
+            <div className="flex items-center gap-2 text-[10px] text-text-muted">
+              <Clock size={10} />
+              <span>Created {formatTimeAgo(new Date(currentBlueprint.createdAt))}</span>
+            </div>
+          </div>
+
+          {/* Phase list */}
+          <div className="space-y-2">
+            <h5 className="text-xs font-medium text-text-secondary">Phases</h5>
+            {currentBlueprint.phases.map((phase) => (
+              <div
+                key={phase.id}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg bg-surface-base border border-border-subtle"
+              >
+                <BlueprintStatusIcon status={phase.status} size={14} />
+                <span className="text-xs font-medium text-text-primary capitalize">
+                  {phase.phase}
+                </span>
+                <StatusBadge status={phase.status} />
+                {phase.completedAt && (
+                  <span className="text-[10px] text-text-muted ml-auto">
+                    {formatTimeAgo(new Date(phase.completedAt))}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Tasks */}
+          {currentBlueprint.tasks.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-xs font-medium text-text-secondary">
+                Tasks ({currentBlueprint.tasks.length})
+              </h5>
+              {currentBlueprint.tasks.map((task) => (
+                <div
+                  key={task.id}
+                  className="px-3 py-2 rounded-lg bg-surface-base border border-border-subtle"
+                >
+                  <div className="flex items-center gap-2">
+                    <BlueprintStatusIcon status={task.status} size={12} />
+                    <span className="text-xs text-text-primary flex-1">
+                      {task.description}
+                    </span>
+                    <span className="text-[10px] text-text-muted">Wave {task.wave}</span>
+                  </div>
+                  {task.filePathsJson.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5 ml-5">
+                      {task.filePathsJson.map((f) => (
+                        <span
+                          key={f}
+                          className="text-[10px] font-mono text-text-muted bg-surface-hover px-1.5 py-0.5 rounded"
+                        >
+                          {f}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-xs text-text-muted animate-pulse text-center py-8">
+          Loading blueprint...
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── BlueprintPage ──
 
 export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   const workspace = useWorkspaceStore((s) => s.activeWorkspace)
@@ -61,13 +268,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   }, [workspaceId, loadHistory])
 
   // ── Derive view state ──
-  const effectiveView: ViewState = isRunning
-    ? 'active'
-    : pendingApproval
-      ? 'active'
-      : selectedId
-        ? 'detail'
-        : viewState
+  const effectiveView = getEffectiveView(viewState, isRunning, pendingApproval, selectedId)
 
   // ── Actions ──
   const handleStart = useCallback(async () => {
@@ -336,171 +537,25 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
 
         {/* ── Active Pipeline View ── */}
         {effectiveView === 'active' && (
-          <>
-            {/* Approval Gate overlay */}
-            {pendingApproval && (
-              <div
-                data-testid="blueprint-approval-gate"
-                className="bg-surface-raised rounded-xl border border-emerald-400/30 p-4"
-              >
-                <BlueprintApprovalGate
-                  planSummary={pendingApproval.planSummary}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onCancel={handleCancel}
-                />
-              </div>
-            )}
-
-            {/* Timeline + Stream */}
-            <div
-              data-testid="blueprint-phase-timeline"
-              className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden"
-            >
-              <div className="grid grid-cols-[200px_1fr] divide-x divide-border-subtle h-[400px]">
-                {/* Timeline sidebar */}
-                <div className="p-4 overflow-y-auto">
-                  <BlueprintPhaseTimeline
-                    currentPhase={currentPhase}
-                    awaitingApproval={!!pendingApproval}
-                  />
-                </div>
-
-                {/* Stream output */}
-                <div className="flex flex-col">
-                  {currentPhase ? (
-                    <BlueprintPhaseStream
-                      phaseType={currentPhase}
-                      streamText={currentPhaseStream}
-                    />
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-text-muted text-xs">
-                      Waiting for pipeline to start...
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Wave Progress — shown during build phase */}
-            {currentPhase === 'build' && currentWave && (
-              <div className="bg-surface-raised rounded-xl border border-border-subtle p-4">
-                <BlueprintWaveProgress
-                  wave={currentWave.wave}
-                  taskCount={currentWave.taskCount}
-                  waveTasks={waveTasks}
-                />
-              </div>
-            )}
-          </>
+          <BlueprintActiveView
+            pendingApproval={pendingApproval}
+            currentPhase={currentPhase}
+            currentPhaseStream={currentPhaseStream}
+            currentWave={currentWave}
+            waveTasks={waveTasks}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onCancel={handleCancel}
+          />
         )}
 
         {/* ── Detail View (past blueprint) ── */}
         {effectiveView === 'detail' && selectedId && (
-          <div className="space-y-4">
-            <button
-              type="button"
-              onClick={handleBackFromDetail}
-              className="text-xs text-text-secondary hover:text-text-primary transition-colors"
-            >
-              ← Back to list
-            </button>
-
-            {currentBlueprint && currentBlueprint.id === selectedId ? (
-              <div className="space-y-4">
-                {/* Blueprint header */}
-                <div className="bg-surface-raised rounded-xl border border-border-subtle p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-semibold text-text-primary">
-                      {currentBlueprint.title}
-                    </h4>
-                    <StatusBadge status={currentBlueprint.status} />
-                    <span className="text-[10px] text-text-muted">{currentBlueprint.priority}</span>
-                  </div>
-                  {currentBlueprint.description && (
-                    <p className="text-xs text-text-secondary">{currentBlueprint.description}</p>
-                  )}
-                  <div className="flex items-center gap-2 text-[10px] text-text-muted">
-                    <Clock size={10} />
-                    <span>Created {formatTimeAgo(new Date(currentBlueprint.createdAt))}</span>
-                  </div>
-                </div>
-
-                {/* Phase list */}
-                <div className="space-y-2">
-                  <h5 className="text-xs font-medium text-text-secondary">Phases</h5>
-                  {currentBlueprint.phases.map((phase) => (
-                    <div
-                      key={phase.id}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg bg-surface-base border border-border-subtle"
-                    >
-                      {phase.status === 'complete' ? (
-                        <CheckCircle2 size={14} className="text-success flex-shrink-0" />
-                      ) : phase.status === 'failed' ? (
-                        <XCircle size={14} className="text-danger flex-shrink-0" />
-                      ) : (
-                        <div className="w-3.5 h-3.5 rounded-full border border-border-subtle flex-shrink-0" />
-                      )}
-                      <span className="text-xs font-medium text-text-primary capitalize">
-                        {phase.phase}
-                      </span>
-                      <StatusBadge status={phase.status} />
-                      {phase.completedAt && (
-                        <span className="text-[10px] text-text-muted ml-auto">
-                          {formatTimeAgo(new Date(phase.completedAt))}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Tasks */}
-                {currentBlueprint.tasks.length > 0 && (
-                  <div className="space-y-2">
-                    <h5 className="text-xs font-medium text-text-secondary">
-                      Tasks ({currentBlueprint.tasks.length})
-                    </h5>
-                    {currentBlueprint.tasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="px-3 py-2 rounded-lg bg-surface-base border border-border-subtle"
-                      >
-                        <div className="flex items-center gap-2">
-                          {task.status === 'complete' ? (
-                            <CheckCircle2 size={12} className="text-success" />
-                          ) : task.status === 'failed' ? (
-                            <XCircle size={12} className="text-danger" />
-                          ) : (
-                            <div className="w-3 h-3 rounded-full border border-border-subtle" />
-                          )}
-                          <span className="text-xs text-text-primary flex-1">
-                            {task.description}
-                          </span>
-                          <span className="text-[10px] text-text-muted">Wave {task.wave}</span>
-                        </div>
-                        {task.filePathsJson.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-1.5 ml-5">
-                            {task.filePathsJson.map((f) => (
-                              <span
-                                key={f}
-                                className="text-[10px] font-mono text-text-muted bg-surface-hover px-1.5 py-0.5 rounded"
-                              >
-                                {f}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-xs text-text-muted animate-pulse text-center py-8">
-                Loading blueprint...
-              </div>
-            )}
-          </div>
+          <BlueprintDetailView
+            selectedId={selectedId}
+            currentBlueprint={currentBlueprint}
+            onBack={handleBackFromDetail}
+          />
         )}
       </div>
     </div>

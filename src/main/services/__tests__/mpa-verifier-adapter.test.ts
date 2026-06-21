@@ -15,6 +15,7 @@ function makePromptCtx(): AdapterPromptContext {
     conversationId: 'c1',
     hasImages: false,
     turnCount: 1,
+    sessionId: undefined,
     mode: 'plan',
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
@@ -40,7 +41,7 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify implementation',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     assert.equal(adapter.role, 'mpa-verifier')
   })
@@ -49,7 +50,7 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-99',
       goal: 'Verify',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     assert.equal(adapter.agentId, 'mpa-verifier-ws-99')
   })
@@ -60,7 +61,7 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
     const result = adapter.buildPrompts(makePromptCtx())
@@ -74,7 +75,7 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     assert.throws(
       () => adapter.buildPrompts(makePromptCtx()),
@@ -88,24 +89,28 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.includes('Glob'))
-    assert.ok(result.allowedTools.includes('Grep'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
   })
 
   test('buildMcpConfig_disallows_write_edit_bash', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Write'))
+    assert.ok(disallowedTools.includes('Edit'))
+    assert.ok(disallowedTools.includes('Bash'))
   })
 
   // ── onSessionStop clears state ──
@@ -114,7 +119,7 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { phases: [], summary: 'plan', planId: 'p1', estimatedEffort: 'medium', riskAssessment: 'low' }
+      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
     })
     adapter.setGoalCondition('All tests pass')
     ;(adapter as any).systemPrompt = 'some prompt'

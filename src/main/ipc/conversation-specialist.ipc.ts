@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { conversationSpecialistRepository } from '../db/repositories'
+import { getDatabase } from '../db/index'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalBoolean } from './validate-args'
 
@@ -44,8 +45,13 @@ export function registerConversationSpecialistIpc(): void {
     const args = requireObject(rawArgs, ch)
     const conversationId = requireString(args, 'conversationId', ch)
 
-    conversationSpecialistRepository.removeAll(conversationId)
-    conversationSpecialistRepository.initFromWorkspaceDefaults(conversationId)
+    // ATOM-02: Wrap in transaction so removeAll + initFromWorkspaceDefaults
+    // are atomic — if init fails, removeAll is rolled back.
+    const db = getDatabase()
+    db.transaction(() => {
+      conversationSpecialistRepository.removeAll(conversationId)
+      conversationSpecialistRepository.initFromWorkspaceDefaults(conversationId)
+    })()
   })
 
   ipcMain.handle(IPC_CHANNELS.CONV_SPECIALIST_ESTIMATE, async (event, rawArgs: unknown) => {

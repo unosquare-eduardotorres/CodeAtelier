@@ -121,7 +121,7 @@ export class BlueprintReviewService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       // 8. Save phase artifact
       if (reviewPhase) {
@@ -157,7 +157,7 @@ export class BlueprintReviewService extends EventEmitter {
       }
 
       // 10. Emit approval gate — human must approve before BUILD
-      const planSummary = this.buildApprovalSummary(completion)
+      const planSummary = this.buildApprovalSummary(completion ?? null)
       this.emit('approvalNeeded', {
         blueprintId,
         workspaceId,

@@ -229,4 +229,9 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
   clearConversation(conversationId: string): void {
     this.promptAssembler.clearConversation(conversationId)
   }
+
+  // COMPACT-LOST-01: Confirm that pending injections were sent successfully.
+  onSendSuccess(conversationId: string): void {
+    this.promptAssembler.confirmPendingConsumed(conversationId)
+  }
 }

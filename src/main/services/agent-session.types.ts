@@ -155,6 +155,13 @@ export interface AgentRoleAdapter {
    */
   emitDetectedIntents(ctx: AdapterIntentContext): void
 
+  /**
+   * COMPACT-LOST-01: Called after executeStream() succeeds.
+   * Adapters with pending per-conversation state (compaction, context injection)
+   * should confirm consumption here. Default: no-op.
+   */
+  onSendSuccess?(conversationId: string): void
+
   /** Reset adapter state when the session stops. */
   onSessionStop(): void
 }

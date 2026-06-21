@@ -184,62 +184,10 @@ export class AgentStreamProcessor {
   ): 'next' | 'break' | 'continue' | 'return' {
     const { conversationId, isBuildMode, streamState } = ctx
 
-    if (chunk.type === 'error' && chunk.error?.includes('No conversation found with session ID')) {
-      this.s.log.warn(
-        `[PIPELINE:session-recovery] Stale session detected for conversationId=${conversationId} — initiating recovery`
-      )
-
-      this.s.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'started',
-        content: 'Session expired — recovering conversation context...'
-      } as StreamChunk)
-
-      this.s.clearSession(conversationId)
-      try {
-        conversationRepository.updateSessionId(conversationId, '')
-      } catch (err) {
-        this.s.log.error('[PIPELINE:session-recovery] Failed to clear DB session:', err)
-      }
-
-      this.s.emit('chunk', {
-        type: 'session_recovery',
-        recoveryPhase: 'building_context',
-        content: 'Rebuilding conversation context from history...'
-      } as StreamChunk)
-
-      streamState.sessionRecoveryNeeded = true
-      return 'break'
-    }
-
-    // Intercept SDK abort errors that weren't user-initiated
-    if (
-      chunk.type === 'error' &&
-      chunk.error?.includes('Claude Code process aborted by user') &&
-      this.s.currentStatus !== 'idle'
-    ) {
-      this.s.log.warn(
-        `[PIPELINE:unexpected-abort] Session was aborted without user action — ` +
-          `status=${this.s.currentStatus} conversationId=${conversationId}`
-      )
-      this.s.emit('chunk', {
-        type: 'error',
-        error:
-          'The agent session was interrupted unexpectedly. This can happen during app reloads. Please resend your message to continue.'
-      } as StreamChunk)
-      return 'break'
-    }
-
-    // Intercept budget cap exceeded
-    if (chunk.type === 'error' && chunk.error?.includes('budget cap exceeded')) {
-      this.s.log.warn(
-        `[PIPELINE:budget-cap-reached] conversationId=${conversationId} — offering continuation`
-      )
-      this.s.emit('budgetCapReached', {
-        conversationId,
-        message: chunk.error
-      })
-      return 'break'
+    // Error handling (stale session, unexpected abort, budget cap)
+    if (chunk.type === 'error') {
+      const result = this.handleErrorChunk(chunk, conversationId, streamState)
+      if (result !== 'next') return result
     }
 
     if (chunk.type === 'text' && chunk.content) {
@@ -267,107 +215,21 @@ export class AgentStreamProcessor {
     }
 
     if (chunk.type === 'tool_use') {
-      const isControlTool = chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)
-      if (isControlTool) {
-        this.s.log.debug(`[PIPELINE:control-tool-use] ${chunk.toolName}`)
-        return 'continue'
-      }
-
-      this.s.toolActivityAccumulator.record({
-        toolName: chunk.toolName ?? 'unknown',
-        input: (chunk as unknown as Record<string, unknown>).toolInput,
-        outputLength: chunk.content?.length ?? 0
-      })
-
-      streamState.hasTextAfterLastTool = false
-      const isLocalForCb = this.s.llmProvider === 'local-llm'
-      const cbResult = this.s.circuitBreaker.onToolUse({
-        isBuildMode,
-        accumulatedTextLength: this.s.accumulatedText.length,
-        conversationId,
-        isLocalProvider: isLocalForCb,
-        contextTier: ctx.contextTier
-      })
-
-      // Emit early warning nudge
-      if (cbResult.additionalContext) {
-        this.s.emit('chunk', {
-          type: 'text',
-          content: `\n\n> ⚠️ ${cbResult.additionalContext}\n\n`
-        } as StreamChunk)
-      }
-
-      if (cbResult.broken) {
-        // Local plan mode: treat as a continuable turn-limit rather than a hard error.
-        // Save plan state and let finalizeStream → handleResponseComplete auto-continue.
-        if (cbResult.isLocalPlanBreak) {
-          this.s.log.info(
-            `[PIPELINE:local-plan-break] Circuit breaker fired for local plan — ` +
-              `saving progress and allowing auto-continuation`
-          )
-          streamState.lastTerminalReason = 'max_turns'
-          // Save partial plan state so continuation has context
-          if (conversationId) {
-            this.s.saveCurrentPlanState(conversationId)
-          }
-          return 'break'
-        }
-
-        this.s.currentStatus = 'failed'
-        this.s.emit('statusUpdate', this.s.getStatus())
-        if (cbResult.errorChunk) {
-          this.s.emit('chunk', cbResult.errorChunk)
-        }
-        this.s.emit('complete')
-        return 'return'
-      }
-
-      this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
+      const result = this.handleToolUseChunk(chunk, ctx)
+      if (result !== 'next') return result
     }
 
     if (chunk.type === 'subagent_start') {
-      // Count sub-agent spawns against the circuit breaker — each sub-agent
-      // makes 20-90+ internal tool calls that bypass the normal tool_use count.
-      // Count the spawn itself as 10 tool calls (conservative estimate of cost).
-      for (let i = 0; i < 10; i++) {
-        const cbResult = this.s.circuitBreaker.onToolUse({
-          isBuildMode,
-          accumulatedTextLength: this.s.accumulatedText.length,
-          conversationId,
-          isLocalProvider: this.s.llmProvider === 'local-llm',
-          contextTier: ctx.contextTier
-        })
-        if (cbResult.broken) {
-          this.s.log.warn(
-            `[PIPELINE:subagent-circuit-break] Sub-agent spawn tripped circuit breaker at ${this.s.circuitBreaker.count} tool calls`
-          )
-          if (cbResult.errorChunk) {
-            this.s.emit('chunk', cbResult.errorChunk)
-          }
-          return 'break'
-        }
-      }
+      const result = this.handleSubagentStartChunk(ctx)
+      if (result !== 'next') return result
     }
 
     // F12: Removed dead `promptSuggestion` event emission — no listener exists.
     // The chunk is already forwarded to the renderer via emit('chunk', chunk) below,
     // which the chunk-router routes through handlePromptSuggestion.
 
-    // Track server overload from api_retry chunks
     if (chunk.type === 'api_retry') {
-      const errorStatus = (chunk as StreamChunk & { retryInfo?: { errorStatus?: number | null } })
-        .retryInfo?.errorStatus
-      const content = chunk.content ?? ''
-      if (
-        errorStatus === 529 ||
-        errorStatus === 503 ||
-        /overloaded|server_is_overloaded/i.test(content)
-      ) {
-        streamState.overloadDetected = true
-        this.s.log.warn(
-          `[PIPELINE:overload-detected] API overload detected (status=${errorStatus}) for conversationId=${conversationId}`
-        )
-      }
+      this.handleApiRetryChunk(chunk, conversationId, streamState)
     }
 
     if (chunk.type === 'text') this.s.currentStatus = 'writing'
@@ -375,6 +237,181 @@ export class AgentStreamProcessor {
     this.s.emit('statusUpdate', this.s.getStatus())
     this.s.emit('chunk', chunk)
     return 'next'
+  }
+
+  // ── Content chunk handlers ──────────────────────────────────────────────
+
+  private handleErrorChunk(
+    chunk: StreamChunk & { error?: string },
+    conversationId: string,
+    streamState: StreamLoopState
+  ): 'next' | 'break' {
+    const error = chunk.error ?? ''
+
+    if (error.includes('No conversation found with session ID')) {
+      this.s.log.warn(
+        `[PIPELINE:session-recovery] Stale session detected for conversationId=${conversationId} — initiating recovery`
+      )
+      this.s.emit('chunk', {
+        type: 'session_recovery',
+        recoveryPhase: 'started',
+        content: 'Session expired — recovering conversation context...'
+      } as StreamChunk)
+      this.s.clearSession(conversationId)
+      try {
+        conversationRepository.updateSessionId(conversationId, '')
+      } catch (err) {
+        this.s.log.error('[PIPELINE:session-recovery] Failed to clear DB session:', err)
+      }
+      this.s.emit('chunk', {
+        type: 'session_recovery',
+        recoveryPhase: 'building_context',
+        content: 'Rebuilding conversation context from history...'
+      } as StreamChunk)
+      streamState.sessionRecoveryNeeded = true
+      return 'break'
+    }
+
+    if (error.includes('Claude Code process aborted by user') && this.s.currentStatus !== 'idle') {
+      this.s.log.warn(
+        `[PIPELINE:unexpected-abort] Session was aborted without user action — ` +
+          `status=${this.s.currentStatus} conversationId=${conversationId}`
+      )
+      this.s.emit('chunk', {
+        type: 'error',
+        error:
+          'The agent session was interrupted unexpectedly. This can happen during app reloads. Please resend your message to continue.'
+      } as StreamChunk)
+      return 'break'
+    }
+
+    if (error.includes('budget cap exceeded')) {
+      this.s.log.warn(
+        `[PIPELINE:budget-cap-reached] conversationId=${conversationId} — offering continuation`
+      )
+      this.s.emit('budgetCapReached', { conversationId, message: error })
+      return 'break'
+    }
+
+    return 'next'
+  }
+
+  private handleToolUseChunk(
+    chunk: StreamChunk & { toolName?: string; content?: string },
+    ctx: {
+      conversationId: string
+      isBuildMode: boolean
+      streamState: StreamLoopState
+      contextTier?: ContextWindowTier
+    }
+  ): 'next' | 'break' | 'continue' | 'return' {
+    const { conversationId, isBuildMode, streamState } = ctx
+
+    if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) {
+      this.s.log.debug(`[PIPELINE:control-tool-use] ${chunk.toolName}`)
+      return 'continue'
+    }
+
+    this.s.toolActivityAccumulator.record({
+      toolName: chunk.toolName ?? 'unknown',
+      input: (chunk as unknown as Record<string, unknown>).toolInput,
+      outputLength: chunk.content?.length ?? 0
+    })
+
+    streamState.hasTextAfterLastTool = false
+    const cbResult = this.s.circuitBreaker.onToolUse({
+      isBuildMode,
+      accumulatedTextLength: this.s.accumulatedText.length,
+      conversationId,
+      isLocalProvider: this.s.llmProvider === 'local-llm',
+      contextTier: ctx.contextTier
+    })
+
+    if (cbResult.additionalContext) {
+      this.s.emit('chunk', {
+        type: 'text',
+        content: `\n\n> ⚠️ ${cbResult.additionalContext}\n\n`
+      } as StreamChunk)
+    }
+
+    if (cbResult.broken) {
+      return this.applyCircuitBreakerResult(cbResult, conversationId, streamState)
+    }
+
+    this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
+    return 'next'
+  }
+
+  private applyCircuitBreakerResult(
+    cbResult: { isLocalPlanBreak?: boolean; errorChunk?: StreamChunk },
+    conversationId: string,
+    streamState: StreamLoopState
+  ): 'break' | 'return' {
+    if (cbResult.isLocalPlanBreak) {
+      this.s.log.info(
+        `[PIPELINE:local-plan-break] Circuit breaker fired for local plan — ` +
+          `saving progress and allowing auto-continuation`
+      )
+      streamState.lastTerminalReason = 'max_turns'
+      if (conversationId) {
+        this.s.saveCurrentPlanState(conversationId)
+      }
+      return 'break'
+    }
+
+    this.s.currentStatus = 'failed'
+    this.s.emit('statusUpdate', this.s.getStatus())
+    if (cbResult.errorChunk) {
+      this.s.emit('chunk', cbResult.errorChunk)
+    }
+    this.s.emit('complete')
+    return 'return'
+  }
+
+  private handleSubagentStartChunk(ctx: {
+    isBuildMode: boolean
+    conversationId: string
+    contextTier?: ContextWindowTier
+  }): 'next' | 'break' {
+    const { isBuildMode, conversationId } = ctx
+    for (let i = 0; i < 10; i++) {
+      const cbResult = this.s.circuitBreaker.onToolUse({
+        isBuildMode,
+        accumulatedTextLength: this.s.accumulatedText.length,
+        conversationId,
+        isLocalProvider: this.s.llmProvider === 'local-llm',
+        contextTier: ctx.contextTier
+      })
+      if (cbResult.broken) {
+        this.s.log.warn(
+          `[PIPELINE:subagent-circuit-break] Sub-agent spawn tripped circuit breaker at ${this.s.circuitBreaker.count} tool calls`
+        )
+        if (cbResult.errorChunk) {
+          this.s.emit('chunk', cbResult.errorChunk)
+        }
+        return 'break'
+      }
+    }
+    return 'next'
+  }
+
+  private handleApiRetryChunk(
+    chunk: StreamChunk & { retryInfo?: { errorStatus?: number | null }; content?: string },
+    conversationId: string,
+    streamState: StreamLoopState
+  ): void {
+    const errorStatus = chunk.retryInfo?.errorStatus
+    const content = chunk.content ?? ''
+    if (
+      errorStatus === 529 ||
+      errorStatus === 503 ||
+      /overloaded|server_is_overloaded/i.test(content)
+    ) {
+      streamState.overloadDetected = true
+      this.s.log.warn(
+        `[PIPELINE:overload-detected] API overload detected (status=${errorStatus}) for conversationId=${conversationId}`
+      )
+    }
   }
 
   // ── Compaction ────────────────────────────────────────────────────────

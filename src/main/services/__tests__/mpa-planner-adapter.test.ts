@@ -15,6 +15,7 @@ function makePromptCtx(): AdapterPromptContext {
     conversationId: 'c1',
     hasImages: false,
     turnCount: 1,
+    sessionId: undefined,
     mode: 'plan',
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
@@ -50,11 +51,11 @@ describe('MpaPlannerAdapter', () => {
       goal: 'Implement feature X',
       previousPlan: {
         contentJson: {
-          phases: [],
+          goalType: 'feature' as const,
           summary: 'old plan',
-          planId: 'p1',
-          estimatedEffort: 'medium',
-          riskAssessment: 'low'
+          items: [],
+          risks: [],
+          existingPatterns: []
         }
       },
       userFeedback: 'Please add error handling'
@@ -84,11 +85,11 @@ describe('MpaPlannerAdapter', () => {
       goal: 'Feature Y',
       previousPlan: {
         contentJson: {
-          phases: [],
+          goalType: 'feature' as const,
           summary: 'old plan',
-          planId: 'p1',
-          estimatedEffort: 'medium',
-          riskAssessment: 'low'
+          items: [],
+          risks: [],
+          existingPatterns: []
         }
       }
       // no userFeedback — both conditions needed for 'revise'

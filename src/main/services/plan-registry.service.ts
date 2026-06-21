@@ -160,7 +160,7 @@ class PlanRegistryService {
         source: 'council',
         sourceId: params.councilSessionId,
         title: params.originalPlan.title || 'Council-Reviewed Plan',
-        summary: params.verdict.summary || params.originalPlan.summary || '',
+        summary: params.verdict.sections.recommendation || params.originalPlan.summary || '',
         planType: params.originalPlan.type ?? null,
         structuredPlan: params.originalPlan,
         sourcePlanJson: JSON.stringify(params.verdict),
@@ -168,7 +168,7 @@ class PlanRegistryService {
       })
 
       svcLog.info(
-        `[register-council] ✓ Plan registered: id=${record.id}, verdict=${params.verdict.verdict}`
+        `[register-council] ✓ Plan registered: id=${record.id}, score=${params.verdict.overallScore}`
       )
       return record
     } catch (err) {

@@ -49,6 +49,7 @@ import { registerBlueprintIpc } from './blueprint.ipc'
 import { registerPlanIpc } from './plan.ipc'
 import { registerPresetIpc } from './preset.ipc'
 import { initSessionEventRouter } from '../services/session-event-router'
+import { registerStreamDiagnosticsIpc } from './chunk-router'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   // Initialize session event router FIRST — other IPC handlers may need it
@@ -103,4 +104,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerBlueprintIpc(mainWindow)
   registerPlanIpc()
   registerPresetIpc()
+  registerStreamDiagnosticsIpc()
 }

@@ -15,6 +15,7 @@ function makePromptCtx(): AdapterPromptContext {
     conversationId: 'c1',
     hasImages: false,
     turnCount: 1,
+    sessionId: undefined,
     mode: 'build',
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
@@ -34,11 +35,11 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
 }
 
 const basePlan = {
-  phases: [],
+  goalType: 'feature' as const,
   summary: 'test plan',
-  planId: 'p1',
-  estimatedEffort: 'medium' as const,
-  riskAssessment: 'low' as const
+  items: [],
+  risks: [],
+  existingPatterns: []
 }
 
 describe('MpaBuilderAdapter', () => {
@@ -74,9 +75,14 @@ describe('MpaBuilderAdapter', () => {
       goal: 'Build',
       plan: basePlan,
       verifierFeedback: {
-        status: 'needs-fixes',
-        issues: [{ description: 'Missing test', severity: 'major' }],
-        summary: 'Issues found'
+        allComplete: false,
+        totalItems: 1,
+        implemented: 0,
+        partial: 0,
+        missing: 1,
+        issues: [{ planItemId: 'item-1', status: 'missing' as const, detail: 'Missing test', filesChecked: [] }],
+        crossCutting: { frontendBackendConnected: false, backendDatabaseConnected: false, routesRegistered: false, testsPass: false },
+        testOutput: ''
       }
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
@@ -97,37 +103,45 @@ describe('MpaBuilderAdapter', () => {
   test('buildMcpConfig_allowedTools_includes_write_edit_bash', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Write'))
-    assert.ok(result.allowedTools.includes('Edit'))
-    assert.ok(result.allowedTools.includes('Bash'))
-    assert.ok(result.allowedTools.includes('ListDir'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Write'))
+    assert.ok(allowedTools.includes('Edit'))
+    assert.ok(allowedTools.includes('Bash'))
+    assert.ok(allowedTools.includes('ListDir'))
   })
 
   test('buildMcpConfig_allowedTools_includes_read_search', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.includes('Glob'))
-    assert.ok(result.allowedTools.includes('Grep'))
-    assert.ok(result.allowedTools.includes('WebSearch'))
-    assert.ok(result.allowedTools.includes('WebFetch'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
+    assert.ok(allowedTools.includes('WebSearch'))
+    assert.ok(allowedTools.includes('WebFetch'))
   })
 
   test('buildMcpConfig_disallowedTools_includes_agent_toolsearch', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('ToolSearch'))
-    assert.ok(result.disallowedTools.includes('AskUserQuestion'))
-    assert.ok(result.disallowedTools.includes('TodoWrite'))
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Agent'))
+    assert.ok(disallowedTools.includes('ToolSearch'))
+    assert.ok(disallowedTools.includes('AskUserQuestion'))
+    assert.ok(disallowedTools.includes('TodoWrite'))
   })
 
   test('buildMcpConfig_includes_code_graph_when_repomapEnabled_and_workspaceId', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     // repomapEnabled defaults to true in BaseRoleAdapter
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+      allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
       'Should include code-graph tools when repomapEnabled and workspaceId set'
     )
   })
@@ -135,8 +149,10 @@ describe('MpaBuilderAdapter', () => {
   test('buildMcpConfig_excludes_code_graph_without_workspaceId', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      !result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+      !allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
       'Should exclude code-graph tools when workspaceId is null'
     )
   })
@@ -145,8 +161,10 @@ describe('MpaBuilderAdapter', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     // semanticSearchEnabled defaults to true in BaseRoleAdapter
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__semantic-search__')),
+      allowedTools.some((t) => t.startsWith('mcp__semantic-search__')),
       'Should include semantic-search tools when enabled and workspaceId set'
     )
   })
@@ -154,8 +172,10 @@ describe('MpaBuilderAdapter', () => {
   test('buildMcpConfig_excludes_semantic_search_without_workspaceId', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      !result.allowedTools.some((t) => t.startsWith('mcp__semantic-search__')),
+      !allowedTools.some((t) => t.startsWith('mcp__semantic-search__')),
       'Should exclude semantic-search tools when workspaceId is null'
     )
   })
@@ -163,8 +183,10 @@ describe('MpaBuilderAdapter', () => {
   test('buildMcpConfig_includes_git_context_tools', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__git-context__')),
+      allowedTools.some((t) => t.startsWith('mcp__git-context__')),
       'Should include git context tools'
     )
   })
@@ -172,8 +194,10 @@ describe('MpaBuilderAdapter', () => {
   test('buildMcpConfig_includes_code_analysis_tools', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const result = adapter.buildMcpConfig(makeMcpCtx())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
+      allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
       'Should include code analysis tools'
     )
   })

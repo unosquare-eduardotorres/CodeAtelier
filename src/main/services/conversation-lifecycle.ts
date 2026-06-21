@@ -22,6 +22,7 @@ export class ConversationLifecycle {
   private disposers: Array<() => void> = []
   private _requestId: string | null = null
   private _conversationId: string | null = null
+  private isDisposing = false
 
   /** Current request ID for this lifecycle (null when idle) */
   get requestId(): string | null {
@@ -108,17 +109,23 @@ export class ConversationLifecycle {
   }
 
   private runDisposers(): void {
-    const count = this.disposers.length
-    for (const fn of this.disposers) {
+    if (this.isDisposing) return // Prevent re-entrance from disposers calling abort()/complete()
+    this.isDisposing = true
+
+    const snapshot = this.disposers // Snapshot the array
+    this.disposers = []              // Clear BEFORE iteration
+
+    for (const fn of snapshot) {
       try {
         fn()
       } catch (e) {
         log.warn('[ConversationLifecycle] Disposer error:', e)
       }
     }
-    this.disposers = []
-    if (count > 0) {
-      log.info(`[ConversationLifecycle] Ran ${count} disposer(s)`)
+
+    this.isDisposing = false
+    if (snapshot.length > 0) {
+      log.info(`[ConversationLifecycle] Ran ${snapshot.length} disposer(s)`)
     }
   }
 }

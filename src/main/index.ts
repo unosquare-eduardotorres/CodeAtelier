@@ -28,6 +28,7 @@ import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
 import { grillAgentService } from './services/grill-agent.service'
+import { grillPersistenceController } from './services/grill-persistence.controller'
 import { auditAgentService } from './services/audit-agent.service'
 import { mpaOrchestrationService } from './services/mpa-orchestration.service'
 import { councilService } from './services/council.service'
@@ -464,6 +465,14 @@ app.on('before-quit', async (event) => {
     await grillAgentService.shutdown()
   } catch (e) {
     log.debug('Grill shutdown error (expected during quit):', e)
+  }
+
+  // GRILL-SHUTDOWN-01: Flush pending grill persistence buffers and clear timers
+  // before DB closes. Without this, scheduled flush timers fire after DB closes.
+  try {
+    grillPersistenceController.clearTracking()
+  } catch (e) {
+    log.debug('Grill persistence cleanup error (expected during quit):', e)
   }
 
   // Cleanup audit operations

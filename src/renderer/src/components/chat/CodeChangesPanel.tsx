@@ -35,7 +35,7 @@ export default function CodeChangesPanel({
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div data-testid="code-changes-panel" className="flex-1 flex flex-col min-h-0">
       {/* Master-detail layout */}
       <div className="flex-1 flex min-h-0">
         {/* Left: File list */}

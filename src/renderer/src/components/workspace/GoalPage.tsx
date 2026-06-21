@@ -48,12 +48,9 @@ interface GoalPageProps {
   onNavigateToChat?: () => void
 }
 
-// `onNavigateToChat` is reserved for future use (e.g., linking goal results
-// back to chat) — accepted in props but not yet consumed.
-export default function GoalPage(_props: GoalPageProps): JSX.Element {
-  const workspace = useWorkspaceStore((s) => s.activeWorkspace)
-  const workspaceId = workspace?.id ?? ''
+// ── useGoalPageState ──
 
+function useGoalPageState(workspaceId: string) {
   const {
     status,
     isRunning,
@@ -76,15 +73,11 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
   } = useMpaStore()
 
   const hasAnyHistory = history.length > 0 || campaignHistory.length > 0
-
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [showCampaignPanel, setShowCampaignPanel] = useState(false)
   const campaignActive =
     !!activeCampaign && (activeCampaign.status === 'running' || activeCampaign.status === 'paused')
 
-  // Listeners are registered globally in AppLayout — no need to duplicate here
-
-  // Load history on workspace change (reset selected run on workspace switch)
   useEffect(() => {
     if (workspaceId) {
       loadHistory(workspaceId)
@@ -94,7 +87,6 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
     }
   }, [workspaceId, loadHistory, loadCampaignHistory])
 
-  // Auto-open the campaign panel when a plan is handed off from the grill/wizard
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- auto-open panel from preloaded goal
     if (preloadedGoal) setShowCampaignPanel(true)
@@ -139,10 +131,185 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
     [workspaceId]
   )
 
-  // Get current phase stream text
   const currentPhaseEntries = Object.entries(phaseStreamText)
   const latestPhaseEntry =
     currentPhaseEntries.length > 0 ? currentPhaseEntries[currentPhaseEntries.length - 1] : null
+
+  return {
+    status,
+    isRunning,
+    currentRun,
+    runPhases,
+    artifacts,
+    pendingApproval,
+    configuredPhases,
+    history,
+    hasAnyHistory,
+    campaignActive,
+    latestPhaseEntry,
+    selectedRunId,
+    showCampaignPanel,
+    setShowCampaignPanel,
+    handleApprove,
+    handleReject,
+    handleCancel,
+    handleSelectRun,
+    handleBackFromDetail,
+    handleResume
+  }
+}
+
+// ── EmptyGoalState ──
+
+function EmptyGoalState({
+  onStartCampaign
+}: {
+  onStartCampaign: () => void
+}): JSX.Element {
+  return (
+    <div className="flex flex-col items-center justify-center py-10 px-4">
+      <div className="max-w-2xl w-full space-y-6">
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-cyan-500/15 mb-2">
+            <Target size={28} className="text-cyan-400" />
+          </div>
+          <h2 className="text-lg font-semibold text-text-primary inline-flex items-center gap-2">
+            Your Goals
+            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/30">
+              Experimental
+            </span>
+          </h2>
+          <p className="text-sm text-text-secondary max-w-md mx-auto">
+            Describe what you want to achieve. The agent will
+            <span className="text-text-primary font-medium">
+              {' '}
+              plan, execute, and verify{' '}
+            </span>
+            autonomously — pausing for your approval before writing code.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3">
+          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+                <ClipboardList size={14} className="text-cyan-400" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Plan</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Agent analyzes your goal and produces a step-by-step implementation plan.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/5 p-3 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+                <UserCheck size={14} className="text-cyan-400" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Review</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              You approve, reject, or refine the plan before any code is written.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center">
+                <Code2 size={14} className="text-accent" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Execute</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Agent implements the approved plan across your codebase.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-success/15 flex items-center justify-center">
+                <CheckCircle2 size={14} className="text-success" />
+              </div>
+              <span className="text-sm font-semibold text-text-primary">Verify</span>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              Runs quality checks and confirms the implementation is correct.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex justify-center">
+          <button
+            onClick={onStartCampaign}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 rounded-xl transition-colors"
+          >
+            <Plus size={16} />
+            Start Your First Goal
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── GoalHistorySection ──
+
+function GoalHistorySection({
+  onNewGoal,
+  onSelectRun,
+  hasRunHistory
+}: {
+  onNewGoal: () => void
+  onSelectRun: (runId: string) => void
+  hasRunHistory: boolean
+}): JSX.Element {
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onNewGoal}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 rounded-lg transition-colors"
+        >
+          <Plus size={14} />
+          New Goal
+        </button>
+      </div>
+      <GoalCampaignHistory onSelectRun={onSelectRun} />
+      {hasRunHistory && <GoalRunHistory onSelectRun={onSelectRun} />}
+    </div>
+  )
+}
+
+// ── GoalPage ──
+
+export default function GoalPage(_props: GoalPageProps): JSX.Element {
+  const workspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const workspaceId = workspace?.id ?? ''
+
+  const {
+    status,
+    isRunning,
+    currentRun,
+    runPhases,
+    artifacts,
+    pendingApproval,
+    configuredPhases,
+    history,
+    hasAnyHistory,
+    campaignActive,
+    latestPhaseEntry,
+    selectedRunId,
+    showCampaignPanel,
+    setShowCampaignPanel,
+    handleApprove,
+    handleReject,
+    handleCancel,
+    handleSelectRun,
+    handleBackFromDetail,
+    handleResume
+  } = useGoalPageState(workspaceId)
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
@@ -190,92 +357,7 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
           !pendingApproval &&
           !selectedRunId &&
           !hasAnyHistory && (
-            <div className="flex flex-col items-center justify-center py-10 px-4">
-              <div className="max-w-2xl w-full space-y-6">
-                {/* Header */}
-                <div className="text-center space-y-2">
-                  <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-cyan-500/15 mb-2">
-                    <Target size={28} className="text-cyan-400" />
-                  </div>
-                  <h2 className="text-lg font-semibold text-text-primary inline-flex items-center gap-2">
-                    Your Goals
-                    <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-warning/15 text-warning border border-warning/30">
-                      Experimental
-                    </span>
-                  </h2>
-                  <p className="text-sm text-text-secondary max-w-md mx-auto">
-                    Describe what you want to achieve. The agent will
-                    <span className="text-text-primary font-medium">
-                      {' '}
-                      plan, execute, and verify{' '}
-                    </span>
-                    autonomously — pausing for your approval before writing code.
-                  </p>
-                </div>
-
-                {/* 4-phase workflow cards */}
-                <div className="grid grid-cols-4 gap-3">
-                  <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-cyan-500/15 flex items-center justify-center">
-                        <ClipboardList size={14} className="text-cyan-400" />
-                      </div>
-                      <span className="text-sm font-semibold text-text-primary">Plan</span>
-                    </div>
-                    <p className="text-xs text-text-secondary leading-relaxed">
-                      Agent analyzes your goal and produces a step-by-step implementation plan.
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/5 p-3 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-cyan-500/15 flex items-center justify-center">
-                        <UserCheck size={14} className="text-cyan-400" />
-                      </div>
-                      <span className="text-sm font-semibold text-text-primary">Review</span>
-                    </div>
-                    <p className="text-xs text-text-secondary leading-relaxed">
-                      You approve, reject, or refine the plan before any code is written.
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center">
-                        <Code2 size={14} className="text-accent" />
-                      </div>
-                      <span className="text-sm font-semibold text-text-primary">Execute</span>
-                    </div>
-                    <p className="text-xs text-text-secondary leading-relaxed">
-                      Agent implements the approved plan across your codebase.
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-success/15 flex items-center justify-center">
-                        <CheckCircle2 size={14} className="text-success" />
-                      </div>
-                      <span className="text-sm font-semibold text-text-primary">Verify</span>
-                    </div>
-                    <p className="text-xs text-text-secondary leading-relaxed">
-                      Runs quality checks and confirms the implementation is correct.
-                    </p>
-                  </div>
-                </div>
-
-                {/* CTA */}
-                <div className="flex justify-center">
-                  <button
-                    onClick={() => setShowCampaignPanel(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 rounded-xl transition-colors"
-                  >
-                    <Plus size={16} />
-                    Start Your First Goal
-                  </button>
-                </div>
-              </div>
-            </div>
+            <EmptyGoalState onStartCampaign={() => setShowCampaignPanel(true)} />
           )}
 
         {/* Approval Gate — shown when awaiting approval */}
@@ -335,27 +417,18 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
             />
           )}
 
-        {/* Past Goals + Campaigns — shown when no run is selected and history exists */}
+        {/* Past Goals + Campaigns */}
         {!showCampaignPanel &&
           !campaignActive &&
           !isRunning &&
           !pendingApproval &&
           !selectedRunId &&
           hasAnyHistory && (
-            <div className="space-y-4">
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowCampaignPanel(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 rounded-lg transition-colors"
-                >
-                  <Plus size={14} />
-                  New Goal
-                </button>
-              </div>
-              <GoalCampaignHistory onSelectRun={handleSelectRun} />
-              {history.length > 0 && <GoalRunHistory onSelectRun={handleSelectRun} />}
-            </div>
+            <GoalHistorySection
+              onNewGoal={() => setShowCampaignPanel(true)}
+              onSelectRun={handleSelectRun}
+              hasRunHistory={history.length > 0}
+            />
           )}
       </div>
     </div>

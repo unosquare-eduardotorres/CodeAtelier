@@ -129,8 +129,11 @@ function handleMessageChunk(
     return
   }
 
+  // CHUNK-LEAK-01: Always drop chunks when no active conversation (null guard
+  // was previously bypassed when activeConvId was null, leaking stale chunks).
   const activeConvId = useChatStore.getState().activeConversation?.id
-  if (activeConvId && data.conversationId !== activeConvId) return
+  if (!activeConvId) return
+  if (data.conversationId !== activeConvId) return
 
   if (data.turnBoundary && data.turnId) {
     actions.finalizeTurnBubble(

@@ -116,7 +116,7 @@ export class BlueprintPlanService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
       const planJson = parseBlueprintPlan(text)
 
       // 8. Save artifacts
@@ -131,7 +131,8 @@ export class BlueprintPlanService extends EventEmitter {
       }
 
       // 9. Advance to TASKS phase
-      blueprintRepository.updateStatus(blueprintId, 'planning')
+      // BP-04: Use correct status 'tasking' (not 'planning') for tasks phase
+      blueprintRepository.updateStatus(blueprintId, 'tasking')
       blueprintRepository.update(blueprintId, { currentPhase: 'tasks' })
 
       const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')

@@ -16,7 +16,7 @@ const basePhaseContext: PhaseContext = {
     title: 'Test Blueprint',
     shortName: 'test-bp',
     description: 'A test blueprint',
-    priority: 'medium',
+    priority: 'P2',
     currentPhase: 'verify',
     settings: {}
   },
@@ -32,6 +32,7 @@ function makePromptCtx(): AdapterPromptContext {
     conversationId: 'c1',
     hasImages: false,
     turnCount: 1,
+    sessionId: undefined,
     mode: 'plan',
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
@@ -130,11 +131,13 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.includes('Bash'))
-    assert.ok(result.allowedTools.includes('ListDir'))
-    assert.ok(result.allowedTools.includes('Glob'))
-    assert.ok(result.allowedTools.includes('Grep'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Bash'))
+    assert.ok(allowedTools.includes('ListDir'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
   })
 
   test('buildMcpConfig_allowedTools_does_NOT_include_Write_Edit', () => {
@@ -144,8 +147,10 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(!result.allowedTools.includes('Write'))
-    assert.ok(!result.allowedTools.includes('Edit'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.includes('Write'))
+    assert.ok(!allowedTools.includes('Edit'))
   })
 
   test('buildMcpConfig_disallowedTools_includes_Write_Edit_Agent', () => {
@@ -155,10 +160,12 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('ToolSearch'))
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Write'))
+    assert.ok(disallowedTools.includes('Edit'))
+    assert.ok(disallowedTools.includes('Agent'))
+    assert.ok(disallowedTools.includes('ToolSearch'))
   })
 
   test('buildMcpConfig_includes_code_graph_when_repomapEnabled_and_workspaceId', () => {
@@ -168,7 +175,9 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
-    assert.ok(result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 
   test('buildMcpConfig_excludes_code_graph_without_workspaceId', () => {
@@ -178,7 +187,9 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
-    assert.ok(!result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 
   // ── buildPrompts guard ──

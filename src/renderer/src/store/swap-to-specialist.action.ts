@@ -84,6 +84,16 @@ export function executeSwapToSpecialist(get: GetState, set: SetState): void {
       // The swap was triggered by a user request that DaVinci deferred
       // to the specialist. Re-sending ensures the specialist picks up
       // immediately instead of sitting idle waiting for new input.
+
+      // SWAP-02: Check streaming state before auto-resend. If the swap
+      // failed silently (e.g. SWAP-01 left the lock stuck), sendMessage()
+      // would throw "A message is already being processed".
+      const chatState = get() as unknown as { isStreaming?: boolean }
+      if (chatState.isStreaming) {
+        rendererLog.warn('swap-to-specialist: still streaming after swap — skipping auto-resend')
+        return
+      }
+
       const { messages: currentMessages } = get()
       const lastUserMessage = [...currentMessages].reverse().find((m) => m.role === 'user')
       if (lastUserMessage?.contentMd?.trim()) {

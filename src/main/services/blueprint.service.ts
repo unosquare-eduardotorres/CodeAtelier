@@ -19,6 +19,7 @@ import { workspaceRepository } from '../db/repositories'
 import { ideaRepository } from '../db/repositories'
 import { buildPhaseSystemPrompt } from './blueprint-prompt-loader'
 import { safeParseJSON } from '../db/json-utils'
+import { validateTaskGraph } from './blueprint-task-validator'
 import type {
   Blueprint,
   BlueprintPhase,
@@ -71,6 +72,8 @@ interface BlueprintPipelineState {
 
 export class BlueprintService extends EventEmitter {
   private pipelines = new Map<string, BlueprintPipelineState>()
+  /** BP-01: Concurrency lock — prevents overlapping pipeline starts per workspace. */
+  private readonly startLocks = new Set<string>()
 
   // ── Pipeline State ──
 
@@ -103,7 +106,15 @@ export class BlueprintService extends EventEmitter {
 
   /** Mark a pipeline as running for a workspace. Called by BlueprintSpecService. */
   markPipelineRunning(workspaceId: string, blueprintId: string, phase: BlueprintPhaseType): void {
+    // BP-01: Guard against concurrent pipeline starts
+    if (this.startLocks.has(workspaceId)) {
+      throw new Error(`Blueprint start lock held for workspace ${workspaceId}`)
+    }
     const state = this.getOrCreatePipeline(workspaceId)
+    if (state.running) {
+      throw new Error(`Blueprint pipeline already running for workspace ${workspaceId}`)
+    }
+    this.startLocks.add(workspaceId)
     state.running = true
     state.blueprintId = blueprintId
     state.currentPhase = phase
@@ -112,6 +123,7 @@ export class BlueprintService extends EventEmitter {
 
   /** Mark a pipeline as stopped for a workspace. Called by BlueprintSpecService. */
   markPipelineStopped(workspaceId: string): void {
+    this.startLocks.delete(workspaceId)
     const state = this.pipelines.get(workspaceId)
     if (state) {
       state.running = false
@@ -188,6 +200,7 @@ export class BlueprintService extends EventEmitter {
 
     state.abortController?.abort()
     state.running = false
+    this.startLocks.delete(workspaceId)
 
     blueprintRepository.updateStatus(state.blueprintId, 'cancelled')
 
@@ -411,6 +424,28 @@ export class BlueprintService extends EventEmitter {
       dependsOn?: string[]
     }>
   ): BlueprintTask[] {
+    // BP-STALE-01: Prevent task regeneration while the blueprint is being built.
+    // The build service assembles a task map at start — regenerating tasks mid-build
+    // would leave the in-memory map referencing stale/deleted task IDs.
+    for (const [, state] of this.pipelines) {
+      if (state.running && state.blueprintId === blueprintId && state.currentPhase === 'build') {
+        throw new Error(
+          `Cannot regenerate tasks while blueprint ${blueprintId} is being built. ` +
+            `Cancel the build first.`
+        )
+      }
+    }
+
+    // TASK-01: Validate the task dependency graph before persisting.
+    // Checks reference integrity, cycles, and cross-wave ordering.
+    const validation = validateTaskGraph(parsedTasks)
+    if (!validation.valid) {
+      bpLog.warn(
+        `[populateTasks] Task graph has ${validation.errors.length} issue(s) for blueprint=${blueprintId}. ` +
+          `Proceeding with persistence but downstream build may encounter dependency issues.`
+      )
+    }
+
     // Clear existing tasks
     blueprintTaskRepository.deleteByBlueprint(blueprintId)
 
@@ -529,6 +564,7 @@ export class BlueprintService extends EventEmitter {
       }
     }
     this.pipelines.clear()
+    this.startLocks.clear()
   }
 }
 

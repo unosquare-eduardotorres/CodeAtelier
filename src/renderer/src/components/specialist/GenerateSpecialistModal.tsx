@@ -84,6 +84,7 @@ export default function GenerateSpecialistModal({
       role="presentation"
     >
       <div
+        data-testid="generate-specialist-modal"
         className="relative w-full max-w-md mx-4 bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300 motion-reduce:animate-none"
         role="dialog"
         aria-modal="true"

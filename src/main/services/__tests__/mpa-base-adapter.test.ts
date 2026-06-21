@@ -87,6 +87,7 @@ describe('MpaBaseAdapter', () => {
           conversationId: 'c1',
           hasImages: false,
           turnCount: 1,
+          sessionId: undefined,
           mode: 'plan',
           workspacePath: '/tmp/test',
           workspaceId: 'ws-1',
@@ -101,29 +102,35 @@ describe('MpaBaseAdapter', () => {
   test('buildMcpConfig_allowedTools_includes_read_glob_grep', () => {
     const adapter = new TestMpaAdapter({ workspaceId: 'ws-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.includes('Glob'))
-    assert.ok(result.allowedTools.includes('Grep'))
-    assert.ok(result.allowedTools.includes('WebSearch'))
-    assert.ok(result.allowedTools.includes('WebFetch'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
+    assert.ok(allowedTools.includes('WebSearch'))
+    assert.ok(allowedTools.includes('WebFetch'))
   })
 
   test('buildMcpConfig_disallowedTools_includes_write_edit_bash', () => {
     const adapter = new TestMpaAdapter({ workspaceId: 'ws-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('ToolSearch'))
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Write'))
+    assert.ok(disallowedTools.includes('Edit'))
+    assert.ok(disallowedTools.includes('Bash'))
+    assert.ok(disallowedTools.includes('Agent'))
+    assert.ok(disallowedTools.includes('ToolSearch'))
   })
 
   test('buildMcpConfig_includes_code_graph_when_repomap_enabled_and_workspaceId', () => {
     const adapter = new TestMpaAdapter({ workspaceId: 'ws-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
     // repomapEnabled defaults to true — should include code-graph tools
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+      allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
       'Should include code-graph tools when repomapEnabled and workspaceId set'
     )
   })
@@ -131,8 +138,10 @@ describe('MpaBaseAdapter', () => {
   test('buildMcpConfig_excludes_code_graph_when_no_workspaceId', () => {
     const adapter = new TestMpaAdapter({ workspaceId: 'ws-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      !result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+      !allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
       'Should exclude code-graph tools when workspaceId is null'
     )
   })
@@ -140,8 +149,10 @@ describe('MpaBaseAdapter', () => {
   test('buildMcpConfig_includes_git_context_tools', () => {
     const adapter = new TestMpaAdapter({ workspaceId: 'ws-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__git-context__')),
+      allowedTools.some((t) => t.startsWith('mcp__git-context__')),
       'Should include git context tools'
     )
   })
@@ -149,8 +160,10 @@ describe('MpaBaseAdapter', () => {
   test('buildMcpConfig_includes_code_analysis_tools', () => {
     const adapter = new TestMpaAdapter({ workspaceId: 'ws-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
+      allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
       'Should include code analysis tools'
     )
   })

@@ -362,6 +362,9 @@ export const IPC_CHANNELS = {
   // SDK Diagnostics (0.2.138+) — @alpha
   SDK_RESOLVE_SETTINGS: 'sdk:resolveSettings',
 
+  // Stream Diagnostics — aggregated streaming health metrics
+  STREAM_METRICS_GET: 'stream:metricsGet',
+
   // SDK Elicitation (enriched — via elicitation.service)
   SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
   SDK_ELICITATION_RESPONSE: 'sdk:elicitationResponse',
@@ -1715,7 +1718,12 @@ export const MCP_TOOLS = {
     ),
     ESLINT_CHECK: mcpTool('code-analysis', 'eslint_check', 'Analysis · eslint_check'),
     ESLINT_FIX: mcpTool('code-analysis', 'eslint_fix', 'Analysis · eslint_fix'),
-    ESLINT_RULES: mcpTool('code-analysis', 'eslint_rules', 'Analysis · eslint_rules')
+    ESLINT_RULES: mcpTool('code-analysis', 'eslint_rules', 'Analysis · eslint_rules'),
+    ANALYZE_COMPLEXITY: mcpTool(
+      'code-analysis',
+      'analyze_complexity',
+      'Analysis · analyze_complexity'
+    )
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),

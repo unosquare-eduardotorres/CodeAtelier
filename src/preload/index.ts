@@ -1636,6 +1636,16 @@ const api = {
     error?: string
   }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_RESOLVE_SETTINGS),
 
+  // Stream Diagnostics — aggregated streaming health metrics
+  getStreamMetrics: (): Promise<{
+    completionRate: number
+    ttftP50: number | null
+    ttftP95: number | null
+    ttftP99: number | null
+    sampleSize: number
+    outcomeCounts: Record<string, number>
+  }> => ipcRenderer.invoke(IPC_CHANNELS.STREAM_METRICS_GET),
+
   // Chat resume at checkpoint — undo to a specific message point
   chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args),

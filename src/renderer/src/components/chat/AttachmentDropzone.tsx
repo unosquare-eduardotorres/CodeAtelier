@@ -140,6 +140,7 @@ export default function AttachmentDropzone({
     <div
       {...getRootProps()}
       onPaste={handlePaste}
+      data-testid="attachment-dropzone"
       className={`relative rounded-xl transition-colors ${
         isDragActive
           ? 'border border-primary bg-primary-muted border-dashed'
@@ -176,6 +177,7 @@ export default function AttachmentDropzone({
           {fileAttachments.map(({ path, idx }) => (
             <span
               key={idx}
+              data-testid="attachment-chip"
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-raised text-xs text-text-secondary"
             >
               <Paperclip size={10} />

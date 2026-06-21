@@ -224,7 +224,7 @@ export class LibraryDocService {
    */
   async queryDocs(
     workspaceId: string,
-    workspacePath: string,
+    _workspacePath: string,
     packageName: string,
     query: string,
     context7ApiKey?: string,

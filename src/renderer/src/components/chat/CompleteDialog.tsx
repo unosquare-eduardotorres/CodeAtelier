@@ -167,7 +167,7 @@ export default function CompleteDialog({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
       {/* Dialog */}
-      <div className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
+      <div data-testid="complete-dialog" className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-success-muted flex items-center justify-center">

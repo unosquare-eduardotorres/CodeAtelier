@@ -125,7 +125,7 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       // 8. Save phase artifact
       if (verifyPhase) {
@@ -144,11 +144,12 @@ export class BlueprintVerifyService extends EventEmitter {
       )
 
       // 9. Determine final blueprint status
-      if (overallStatus === 'gaps_found') {
-        blueprintRepository.updateStatus(blueprintId, 'failed')
-      } else {
-        // 'passed' or 'human_needed' or unknown → complete
+      // BP-03: Only explicit 'passed' or 'human_needed' → complete.
+      // 'unknown' (parse failure / truncation) and 'gaps_found' → failed.
+      if (overallStatus === 'passed' || overallStatus === 'human_needed') {
         blueprintRepository.updateStatus(blueprintId, 'complete')
+      } else {
+        blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
       // 10. Emit phaseComplete

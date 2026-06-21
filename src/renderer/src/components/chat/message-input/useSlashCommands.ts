@@ -19,7 +19,8 @@ import {
   ClipboardCheck,
   Undo2,
   History,
-  ScrollText
+  ScrollText,
+  SearchCheck
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTodoStore } from '@renderer/store/todo.store'
@@ -144,6 +145,12 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
     iconColor: 'text-purple-400'
   },
   {
+    command: '/audit',
+    description: 'Audit the current implementation for bugs, dead code, and missed tests',
+    icon: SearchCheck,
+    iconColor: 'text-emerald-400'
+  },
+  {
     command: '/help',
     description: 'Show available commands',
     icon: HelpCircle,
@@ -165,8 +172,114 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/rewind': 'Rewind to a previous checkpoint — reverts code AND removes messages after that point',
   '/recap': 'Get a summary of what was done in this conversation',
   '/council': 'Run the LLM Council — 5 independent AI advisors review and cross-examine your plan',
+  '/audit': 'Post-implementation audit — checks wiring, bugs, tests, complexity, dead code, and runs a premortem',
   '/help': 'Show available commands'
 }
+
+// ── Audit prompt ──
+
+const AUDIT_PROMPT = `You are performing a **post-implementation audit** of the code we built in this conversation. Systematically verify quality before this work is considered done.
+
+## Step 0 — Scope
+Before running any checks:
+1. List all files you created, modified, or deleted in this conversation
+2. Run \`git diff --name-only\` to cross-check against uncommitted changes
+3. Use the UNION as your audit scope — but if git diff shows files NOT discussed in this conversation, note them as "out-of-scope modifications" and do NOT audit them
+4. Print the final file list as a header so the user can verify
+
+---
+
+Perform these 6 checks IN ORDER on the scoped files.
+
+### Check 1 — Wiring & Integration
+Verify everything is properly connected — no dangling exports, missing imports, or unregistered components.
+- Run **file_dependents** on each changed file — verify all new exports have at least one importer
+- Run **find_references** on key new symbols (functions, classes, types) — confirm they're actually called, not just exported
+- Check: new IPC handlers registered? New routes mounted? New components rendered? New test files imported in the test runner?
+
+### Check 2 — Bug & Anti-Pattern Detection
+Combine tool-based scanning with reasoning:
+
+**Automated scans** (run these first):
+- Run **eslint_check** on changed files — report any errors or warnings
+- Grep for \`as any\`, \`// TODO\`, \`// HACK\`, \`// FIXME\`, empty catch blocks (\`catch {}\` or \`catch (e) {}\` with no body)
+
+**Then reason about:**
+- **Edge cases:** empty arrays, null/undefined, zero-length strings, boundary values
+- **Error handling:** uncaught exceptions, swallowed errors, missing error messages
+- **Race conditions:** async interleaving, shared mutable state
+- **Type safety:** \`as\` casts, \`any\` types, unchecked type narrowing
+- **Off-by-one:** array indexing, pagination, loop boundaries
+- **State consistency:** stale closures, partial updates, missing cleanup
+
+### Check 3 — Test Coverage
+Use tools + reasoning to evaluate test adequacy:
+- Run **test_coverage_map** — identify which changed files lack corresponding test files
+- Check if new test files are registered in the test runner (e.g. run-tests.ts imports)
+- Are critical paths tested (happy path + main error paths)?
+- Are edge cases covered (empty inputs, nulls, boundary values)?
+- Are assertions meaningful (not just "it doesn't throw")?
+- List what IS tested, what IS NOT, and what SHOULD be added (with specific test case suggestions)
+
+### Check 4 — Cyclomatic Complexity
+- Run **analyze_complexity** scoped to each changed file with threshold 5
+- Flag any function with complexity > 10 as high
+- Note functions at 7–10 as "approaching threshold"
+- For high-complexity functions, suggest specific extraction or simplification strategies
+
+### Check 5 — Dead Code & Tech Debt
+- Run **find_dead_code** scoped to changed files — identify unreferenced functions, types, constants
+- Run **todo_scanner** — check for TODO/FIXME/HACK markers introduced by this implementation
+- Check for commented-out code blocks
+- Check for unused imports added by the implementation
+
+### Check 6 — Premortem: 1 Year From Now 🔮
+Position yourself 1 year in the future. This implementation has caused production incidents. For each failure scenario, state the failure AND a concrete prevention step:
+- **Scaling:** What breaks at 10x/100x volume? → Prevention?
+- **Maintenance:** What will confuse the next developer? → What doc/comment would prevent it?
+- **Silent corruption:** Where could bad data accumulate? → What validation or monitoring catches it?
+- **Security:** What attack vectors exist? → What guardrail closes them?
+- **Assumptions:** What implicit assumptions could become false? → How to make them explicit?
+
+---
+
+## Output Format
+
+Use EXACTLY this structure:
+
+## 🔍 Implementation Audit
+
+**Scope:** [list of files being audited]
+
+### 1. Wiring & Integration [✅|⚠️|❌]
+[findings]
+
+### 2. Bug & Anti-Pattern Detection [✅|⚠️|❌]
+[findings with file paths and line numbers, severity: Critical/Major/Minor for each]
+
+### 3. Test Coverage [✅|⚠️|❌]
+[what's tested, what's missing, specific test cases to add]
+
+### 4. Cyclomatic Complexity [✅|⚠️|❌]
+[table of functions with scores, refactoring suggestions for any above threshold]
+
+### 5. Dead Code & Tech Debt [✅|⚠️|❌]
+[unreferenced symbols with file paths, TODO/FIXME markers found]
+
+### 6. Premortem — 1 Year From Now 🔮
+[failure scenario → prevention for each category]
+
+### Summary
+| Severity | Count | Key Items |
+|----------|-------|-----------|
+| 🔴 Critical | N | [items] |
+| 🟡 Major | N | [items] |
+| 🔵 Minor | N | [items] |
+
+**Top 3 action items (by severity):**
+1. ...
+2. ...
+3. ...`
 
 // ── Hook ──
 
@@ -328,6 +441,11 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               `**Council failed:** ${err instanceof Error ? err.message : String(err)}`
             )
           }
+        },
+
+        '/audit': async () => {
+          opts.onClearAttachments()
+          await opts.sendMessage(AUDIT_PROMPT)
         },
 
         '/help': () => {

@@ -463,7 +463,7 @@ export class AgentSessionService extends AgentBaseService {
 
     // Adapter may adjust internal turn counters on resume
     this.adapter.refreshFeatureFlags({
-      workspacePath: this.workspacePath,
+      workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
       conversationId
     })
@@ -494,7 +494,7 @@ export class AgentSessionService extends AgentBaseService {
       turnCount,
       sessionId,
       mode: this.currentMode,
-      workspacePath: this.workspacePath,
+      workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
       costPreference: this.costPreference,
       presetId: conversationPresetId
@@ -534,7 +534,7 @@ export class AgentSessionService extends AgentBaseService {
 
     const mcpResult = this.adapter.buildMcpConfig({
       mode: this.currentMode,
-      workspacePath: this.workspacePath,
+      workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
       conversationId: this.currentConversationId,
       controlCallbacks,
@@ -580,6 +580,10 @@ export class AgentSessionService extends AgentBaseService {
       contextTier,
       presetId: conversationPresetId
     })
+
+    // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
+    // If executeStream() threw, this line is skipped and the pending state is preserved for retry.
+    this.adapter.onSendSuccess?.(conversationId)
   }
 
   /** Cancels the current in-flight query (SDK, CLI, or OpenCode). */

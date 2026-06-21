@@ -36,6 +36,7 @@ function makePromptCtx(): AdapterPromptContext {
     conversationId: 'c1',
     hasImages: false,
     turnCount: 1,
+    sessionId: undefined,
     mode: 'plan',
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
@@ -123,28 +124,34 @@ describe('BlueprintBaseAdapter', () => {
   test('buildMcpConfig_allowedTools_includes_read_glob_grep_websearch_webfetch', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.includes('Glob'))
-    assert.ok(result.allowedTools.includes('Grep'))
-    assert.ok(result.allowedTools.includes('WebSearch'))
-    assert.ok(result.allowedTools.includes('WebFetch'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
+    assert.ok(allowedTools.includes('WebSearch'))
+    assert.ok(allowedTools.includes('WebFetch'))
   })
 
   test('buildMcpConfig_disallowedTools_includes_write_edit_bash_agent', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('ToolSearch'))
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Write'))
+    assert.ok(disallowedTools.includes('Edit'))
+    assert.ok(disallowedTools.includes('Bash'))
+    assert.ok(disallowedTools.includes('Agent'))
+    assert.ok(disallowedTools.includes('ToolSearch'))
   })
 
   test('buildMcpConfig_includes_code_graph_when_repomapEnabled_and_workspaceId', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+      allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
       'Should include code-graph tools'
     )
   })
@@ -152,8 +159,10 @@ describe('BlueprintBaseAdapter', () => {
   test('buildMcpConfig_excludes_code_graph_without_workspaceId', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      !result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+      !allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
       'Should exclude code-graph tools when workspaceId null'
     )
   })
@@ -161,8 +170,10 @@ describe('BlueprintBaseAdapter', () => {
   test('buildMcpConfig_includes_git_context_tools', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__git-context__')),
+      allowedTools.some((t) => t.startsWith('mcp__git-context__')),
       'Should include git context tools'
     )
   })
@@ -170,8 +181,10 @@ describe('BlueprintBaseAdapter', () => {
   test('buildMcpConfig_includes_code_analysis_tools', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      result.allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
+      allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
       'Should include code analysis tools'
     )
   })

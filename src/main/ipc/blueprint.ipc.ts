@@ -213,6 +213,20 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       }
     ) => {
       validateSender(event)
+
+      // TASK-02: Validate input bounds before passing to service
+      if (!args.blueprintId || typeof args.blueprintId !== 'string') {
+        throw new Error('BLUEPRINT_POPULATE_TASKS: blueprintId is required')
+      }
+      if (!Array.isArray(args.tasks)) {
+        throw new Error('BLUEPRINT_POPULATE_TASKS: tasks must be an array')
+      }
+      if (args.tasks.length > 500) {
+        throw new Error(
+          `BLUEPRINT_POPULATE_TASKS: tasks array too large (${args.tasks.length}, max 500)`
+        )
+      }
+
       return blueprintService.populateTasks(args.blueprintId, args.tasks)
     }
   )

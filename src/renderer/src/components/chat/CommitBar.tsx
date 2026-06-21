@@ -35,7 +35,7 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
 
   return (
     <>
-      <div className="shrink-0 border-t border-border-subtle bg-surface-float/80 backdrop-blur-sm px-4 py-3">
+      <div data-testid="commit-bar" className="shrink-0 border-t border-border-subtle bg-surface-float/80 backdrop-blur-sm px-4 py-3">
         {error && (
           <div className="mb-2 px-3 py-1.5 rounded-md bg-danger/10 border border-danger/20 text-xs text-danger">
             {error}

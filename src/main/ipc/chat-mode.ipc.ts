@@ -6,6 +6,7 @@ import {
   specialistRepository
 } from '../db/repositories'
 import { chatAgentService } from '../services'
+import { chatStreamService } from '../services/chat-stream.service'
 import { modelConfigService } from '../services/model-config.service'
 import { contextWindowResolver } from '../services/context-window-resolver'
 import {
@@ -98,6 +99,11 @@ export function registerChatModeIpc(): void {
     const swapSettings = workspaceRepository.getSettings(workspace.id)
     swapSettings.specialistSwapAccepted = true
     workspaceRepository.updateSettings(workspace.id, swapSettings)
+
+    // SWAP-01: Force-reset any active stream before tearing down session.
+    // Without this, a swap triggered mid-stream orphans the onComplete listener,
+    // leaving streamingLock permanently stuck.
+    chatStreamService.forceResetIfStuck()
 
     // Re-start so resolveAdapter() now picks the ProjectSpecialistRoleAdapter,
     // which tears down the DaVinci session and rebuilds as the specialist.

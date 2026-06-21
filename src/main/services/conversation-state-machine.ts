@@ -32,8 +32,10 @@ const VALID_TRANSITIONS: Record<
     userStop: 'stopped'
   },
   stopped: {
-    cleanupComplete: 'idle',
-    streamError: 'error'
+    cleanupComplete: 'idle'
+    // CHAT-SM-02: Removed streamError transition — once the user has stopped,
+    // late-arriving stream errors should not move the machine to 'error' state
+    // (which would trigger error recovery on an already-stopped stream).
   }
 }
 

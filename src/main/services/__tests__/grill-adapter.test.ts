@@ -55,8 +55,10 @@ describe('GrillRoleAdapter', () => {
     // Verified through getIncludeGitContext — claude → true
     const mcpConfig = adapter.buildMcpConfig(makeMcpCtx())
     // For claude provider, git context should be included in readonly MCP
+    const { allowedTools } = mcpConfig
+    assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(
-      mcpConfig.allowedTools.some((t) => t.startsWith('mcp__git-context__')),
+      allowedTools.some((t) => t.startsWith('mcp__git-context__')),
       'Claude provider should include git context tools'
     )
   })
@@ -67,10 +69,13 @@ describe('GrillRoleAdapter', () => {
     const adapter = createAdapter()
     const result = adapter.buildMcpConfig(makeMcpCtx())
     // Readonly: Read allowed, Write disallowed
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
+    const { allowedTools, disallowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(disallowedTools.includes('Write'))
+    assert.ok(disallowedTools.includes('Edit'))
+    assert.ok(disallowedTools.includes('Bash'))
   })
 
   // ── getIncludeGitContext ──
@@ -78,13 +83,17 @@ describe('GrillRoleAdapter', () => {
   test('claude_provider_includes_git_context', () => {
     const adapter = createAdapter({ llmProvider: 'claude' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.some((t) => t.startsWith('mcp__git-context__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__git-context__')))
   })
 
   test('local_llm_provider_excludes_git_context', () => {
     const adapter = createAdapter({ llmProvider: 'local-llm' })
     const result = adapter.buildMcpConfig(makeMcpCtx())
-    assert.ok(!result.allowedTools.some((t) => t.startsWith('mcp__git-context__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__git-context__')))
   })
 
   // ── buildPrompts ──
@@ -98,6 +107,7 @@ describe('GrillRoleAdapter', () => {
           conversationId: 'c1',
           hasImages: false,
           turnCount: 1,
+          sessionId: undefined,
           mode: 'plan',
           workspacePath: '/tmp',
           workspaceId: 'ws-1',
@@ -115,7 +125,9 @@ describe('GrillRoleAdapter', () => {
     // Should reset feature flags
     const result = adapter.buildMcpConfig(makeMcpCtx())
     // After stop, repomapEnabled and semanticSearchEnabled are reset to true
-    assert.ok(result.allowedTools.includes('Read'))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('Read'))
   })
 
   test('onSessionStop_is_safe_to_call_twice', () => {
@@ -158,13 +170,17 @@ describe('GrillRoleAdapter', () => {
   test('buildMcpConfig_includes_code_graph_with_workspace', () => {
     const adapter = createAdapter()
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
-    assert.ok(result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 
   test('buildMcpConfig_excludes_code_graph_without_workspace', () => {
     const adapter = createAdapter()
     const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
-    assert.ok(!result.allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
   })
 })
 

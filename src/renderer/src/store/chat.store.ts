@@ -45,6 +45,9 @@ export interface ChatState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
+  /** SEND-RACE-01: Immediate mutex — prevents rapid double-clicks from bypassing the isStreaming check
+   *  (which relies on React re-render and suffers from stale closure capture). */
+  isSending: boolean
   /** Conversations that are currently streaming (backend still processing) — enables per-conversation streaming indicators in sidebar */
   streamingConversationIds: Set<string>
   activeRequestId: string | null
@@ -216,6 +219,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
+  isSending: false,
   streamingConversationIds: previousChatState?.streamingConversationIds ?? new Set<string>(),
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
@@ -380,6 +384,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectConversation: async (id: string) => {
     const conversation = get().conversations.find((c) => c.id === id)
     if (!conversation) return
+    // MSG-RELOAD-01: Bump generation so any in-flight DB reload from a previous
+    // conversation is discarded instead of overwriting this conversation's messages.
+    internals.bumpGeneration()
 
     const messages = await window.api.getMessages({ conversationId: id })
 
@@ -526,8 +533,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (text: string, attachments?: string[]) => {
-    const { activeConversation, updateMode } = get()
-    if (!activeConversation) return
+    const { activeConversation, updateMode, isStreaming: alreadyStreaming, isSending } = get()
+    // SEND-RACE-01: Guard against rapid double-clicks. isSending is set synchronously
+    // before the async IPC call, so it can't be bypassed by stale React closures.
+    if (!activeConversation || alreadyStreaming || isSending) return
+    set({ isSending: true })
+    // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
+    internals.bumpGeneration()
 
     // Auto-detect plan intent in build mode → switch to plan
     if (activeConversation.mode === 'build' && detectPlanIntent(text)) {
@@ -578,6 +590,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else {
         set(buildStreamingResetState(null, get().streamingConversationIds))
       }
+    } finally {
+      set({ isSending: false })
     }
   },
 

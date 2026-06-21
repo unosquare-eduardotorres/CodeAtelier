@@ -56,6 +56,128 @@ type McpSubTab = 'external' | 'system'
 const TITLE_MAX = 500
 const DESCRIPTION_MAX = 15_000
 
+// ── buildMcpPayload — lean MCP override payload ──────────────────────────
+
+function buildMcpPayload(
+  availableLocalMcps: LocalMcpDefinition[],
+  availableIntegrations: ExternalMcpDefinition[],
+  mcpOverrides: Record<string, boolean>
+): Record<string, boolean> | undefined {
+  const payload: Record<string, boolean> = {}
+  for (const lm of availableLocalMcps) {
+    if (mcpOverrides[lm.id] === false) payload[lm.id] = false
+  }
+  for (const ext of availableIntegrations) {
+    if (mcpOverrides[ext.id]) payload[ext.id] = true
+  }
+  return Object.keys(payload).length > 0 ? payload : undefined
+}
+
+// ── useWorkspaceSettings — loads provider + MCP config ───────────────────
+
+function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
+  const [localModelInfo, setLocalModelInfo] = useState<{ backend: string; model: string } | null>(
+    null
+  )
+  const [mcpOverrides, setMcpOverrides] = useState<Record<string, boolean>>({})
+  const [showMcpTools, setShowMcpTools] = useState(false)
+  const [availableIntegrations, setAvailableIntegrations] = useState<ExternalMcpDefinition[]>([])
+  const [availableLocalMcps, setAvailableLocalMcps] = useState<LocalMcpDefinition[]>([])
+
+  useEffect(() => {
+    if (!activeWorkspace) return
+    window.api
+      .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+      .then((s) => {
+        setLlmProvider((s.llmProvider as LLMProvider) ?? 'claude')
+        setLocalModelInfo({
+          backend: (s.localLlmBackend as string) ?? 'ollama',
+          model: (s.localModel as string) ?? (s.ollamaModel as string) ?? 'unknown'
+        })
+        const available = EXTERNAL_MCP_INTEGRATIONS.filter((i) => !!s[`${i.id}Available`])
+        setAvailableIntegrations(available)
+        setShowMcpTools(available.length > 0)
+        const availableLocal = LOCAL_MCP_INTEGRATIONS.filter((lm) => {
+          if (!lm.featureFlagKey) return true
+          return !!s[lm.featureFlagKey]
+        })
+        setAvailableLocalMcps(availableLocal)
+        const localDefaults: Record<string, boolean> = {}
+        for (const lm of availableLocal) {
+          localDefaults[lm.id] = lm.defaultEnabled
+        }
+        setMcpOverrides((prev) => ({ ...localDefaults, ...prev }))
+      })
+      .catch((err) =>
+        console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err)
+      )
+  }, [activeWorkspace])
+
+  return {
+    llmProvider,
+    setLlmProvider,
+    localModelInfo,
+    availableIntegrations,
+    availableLocalMcps,
+    showMcpTools,
+    setShowMcpTools,
+    mcpOverrides,
+    setMcpOverrides
+  }
+}
+
+// ── ToneSelector ─────────────────────────────────────────────────────────
+
+function ToneSelector({
+  value,
+  onChange
+}: {
+  value: CommunicationTone | null
+  onChange: (tone: CommunicationTone | null) => void
+}): React.JSX.Element {
+  return (
+    <div data-testid="new-chat-tone-selector" className="w-full mb-5">
+      <label className="block text-sm font-medium text-text-primary mb-1.5">
+        Tone{' '}
+        <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+      </label>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          onClick={() => onChange(null)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+            value === null
+              ? 'bg-primary-muted text-primary-text border border-primary/20'
+              : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+          }`}
+        >
+          Workspace Default
+        </button>
+        {COMMUNICATION_TONES.filter((t) => t.id !== 'default').map((tone) => {
+          const Icon = TONE_ICON_MAP[tone.icon] ?? MessageSquare
+          const isActive = value === tone.id
+          return (
+            <button
+              key={tone.id}
+              onClick={() => onChange(tone.id as CommunicationTone)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                isActive
+                  ? 'bg-primary-muted text-primary-text border border-primary/20'
+                  : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+              }`}
+            >
+              <Icon size={12} />
+              {tone.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── NewChatPage ──────────────────────────────────────────────────────────
+
 export default function NewChatPage({
   onCreateChat,
   onCreateIdea
@@ -71,16 +193,19 @@ export default function NewChatPage({
   const [communicationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
-  const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
-  const [localModelInfo, setLocalModelInfo] = useState<{ backend: string; model: string } | null>(
-    null
-  )
+  const {
+    llmProvider,
+    setLlmProvider,
+    localModelInfo,
+    availableIntegrations,
+    availableLocalMcps,
+    showMcpTools,
+    setShowMcpTools,
+    mcpOverrides,
+    setMcpOverrides
+  } = useWorkspaceSettings(activeWorkspace)
   const [presetId, setPresetId] = useState<string | null>(null)
-  const [mcpOverrides, setMcpOverrides] = useState<Record<string, boolean>>({})
-  const [showMcpTools, setShowMcpTools] = useState(false)
   const [mcpSubTab, setMcpSubTab] = useState<McpSubTab>('external')
-  const [availableIntegrations, setAvailableIntegrations] = useState<ExternalMcpDefinition[]>([])
-  const [availableLocalMcps, setAvailableLocalMcps] = useState<LocalMcpDefinition[]>([])
   const titleInputRef = useRef<HTMLInputElement>(null)
 
   // Auto-focus title input on mount
@@ -88,41 +213,6 @@ export default function NewChatPage({
     const timer = setTimeout(() => titleInputRef.current?.focus(), 100)
     return (): void => clearTimeout(timer)
   }, [])
-
-  // Load saved provider + available integrations from workspace settings on mount
-  useEffect(() => {
-    if (!activeWorkspace) return
-    window.api
-      .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
-      .then((s) => {
-        setLlmProvider((s.llmProvider as LLMProvider) ?? 'claude')
-        setLocalModelInfo({
-          backend: (s.localLlmBackend as string) ?? 'ollama',
-          model: (s.localModel as string) ?? (s.ollamaModel as string) ?? 'unknown'
-        })
-        // Resolve available external MCP integrations for this workspace
-        const available = EXTERNAL_MCP_INTEGRATIONS.filter((i) => !!s[`${i.id}Available`])
-        setAvailableIntegrations(available)
-
-        // Expand MCP section by default only when external integrations exist
-        setShowMcpTools(available.length > 0)
-
-        // Resolve available local MCP integrations from workspace flags
-        const availableLocal = LOCAL_MCP_INTEGRATIONS.filter((lm) => {
-          if (!lm.featureFlagKey) return true
-          return !!s[lm.featureFlagKey]
-        })
-        setAvailableLocalMcps(availableLocal)
-
-        // Initialize local MCP defaults — all enabled unless explicitly overridden
-        const localDefaults: Record<string, boolean> = {}
-        for (const lm of availableLocal) {
-          localDefaults[lm.id] = lm.defaultEnabled
-        }
-        setMcpOverrides((prev) => ({ ...localDefaults, ...prev }))
-      })
-      .catch((err) => console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err))
-  }, [activeWorkspace])
 
   // Pre-fill from audit fix context on mount (once)
 
@@ -145,15 +235,7 @@ export default function NewChatPage({
     const trimmedTitle = title.trim()
     if (!trimmedTitle) return
 
-    // Lean storage: only store local MCPs that are OFF and external MCPs that are ON
-    const mcpPayload: Record<string, boolean> = {}
-    for (const lm of availableLocalMcps) {
-      if (mcpOverrides[lm.id] === false) mcpPayload[lm.id] = false
-    }
-    for (const ext of availableIntegrations) {
-      if (mcpOverrides[ext.id]) mcpPayload[ext.id] = true
-    }
-    const mcpOverridesPayload = Object.keys(mcpPayload).length > 0 ? mcpPayload : undefined
+    const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
 
     onCreateChat({
       title: trimmedTitle,
@@ -287,42 +369,7 @@ export default function NewChatPage({
         )}
 
         {/* Communication Tone */}
-        <div data-testid="new-chat-tone-selector" className="w-full mb-5">
-          <label className="block text-sm font-medium text-text-primary mb-1.5">
-            Tone{' '}
-            <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
-          </label>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              onClick={() => setConversationTone(null)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                communicationTone === null
-                  ? 'bg-primary-muted text-primary-text border border-primary/20'
-                  : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-              }`}
-            >
-              Workspace Default
-            </button>
-            {COMMUNICATION_TONES.filter((t) => t.id !== 'default').map((tone) => {
-              const Icon = TONE_ICON_MAP[tone.icon] ?? MessageSquare
-              const isActive = communicationTone === tone.id
-              return (
-                <button
-                  key={tone.id}
-                  onClick={() => setConversationTone(tone.id as CommunicationTone)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                    isActive
-                      ? 'bg-primary-muted text-primary-text border border-primary/20'
-                      : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-                  }`}
-                >
-                  <Icon size={12} />
-                  {tone.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
+        <ToneSelector value={communicationTone} onChange={setConversationTone} />
 
         {/* Description */}
         <div className="w-full mb-5">

@@ -209,6 +209,19 @@ import '../services/__tests__/greenfield-grill-adapter.test'
 import '../services/__tests__/blueprint-service-logic.test'
 import '../services/__tests__/cli-mcp-config-writer-logic.test'
 
+// ─── Run 35: Adapter subclass family + pure functions + config builders ───
+import '../services/__tests__/mpa-planner-adapter.test'
+import '../services/__tests__/mpa-verifier-adapter.test'
+import '../services/__tests__/mpa-builder-adapter.test'
+import '../services/__tests__/blueprint-base-adapter.test'
+import '../services/__tests__/blueprint-build-adapter.test'
+import '../services/__tests__/blueprint-verify-adapter.test'
+import '../services/__tests__/preset-service-logic.test'
+import '../services/__tests__/repo-service-pure.test'
+import '../services/__tests__/opencode-config-writer-logic.test'
+import '../services/__tests__/description-cache-pure.test'
+import '../services/__tests__/workspace-mcp-config-logic.test'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────

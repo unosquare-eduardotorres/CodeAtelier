@@ -15,6 +15,7 @@ export default function BudgetCapBanner({
 }: BudgetCapBannerProps): React.JSX.Element {
   return (
     <div
+      data-testid="budget-cap-banner"
       className="
         mx-4 mt-2 flex flex-col gap-3 rounded-lg border px-4 py-3
         border-primary/20 bg-primary/5 text-text-primary

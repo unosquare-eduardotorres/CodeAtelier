@@ -53,7 +53,7 @@ interface CommandContext {
   selectedCommandIndex: number
   setSelectedCommandIndex: React.Dispatch<React.SetStateAction<number>>
   setText: (value: string) => void
-  executeCommand: (command: string) => Promise<void>
+  executeCommand: (command: string) => Promise<boolean>
 }
 
 /**
@@ -354,7 +354,10 @@ export default function MessageInput({
 
   const handleSend = async (): Promise<void> => {
     const trimmed = text.trim()
-    if (!trimmed || isStreaming || !activeConversation) return
+    // SEND-RACE-01: Read live store state (not stale React closure) to prevent
+    // rapid double-clicks from bypassing the guard between render cycles.
+    const { isStreaming: liveStreaming, isSending } = useChatStore.getState()
+    if (!trimmed || liveStreaming || isSending || !activeConversation) return
 
     if (trimmed.startsWith('/')) {
       setText('')

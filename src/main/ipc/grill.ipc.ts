@@ -33,7 +33,7 @@ import { runOneShotClaude } from '../services/one-shot-claude'
 import { grillPlanToStructuredPlan } from '../services/grill-plan-mapper'
 import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
-import { requireObject, requireString } from './validate-args'
+import { requireObject, requireString, optionalString } from './validate-args'
 import log from 'electron-log'
 
 const grillLog = log.scope('grill-ipc')
@@ -99,7 +99,8 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
           projectDescription: ideaDescription,
           iterationHistory,
           previousScore,
-          llmProvider
+          llmProvider,
+          workspaceId  // GRILL-04: pass for event routing
         })
         .catch((err) => {
           grillLog.error('[grill:evaluate:greenfield] evaluate failed:', err)
@@ -148,10 +149,14 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
 
   // ── grill:cancel — abort running evaluation ────────────────────────
 
-  ipcMain.handle(IPC_CHANNELS.GRILL_CANCEL, (event): void => {
+  // GRILL-02: Accept workspaceId so cancel targets the correct workspace
+  ipcMain.handle(IPC_CHANNELS.GRILL_CANCEL, (event, rawArgs?: unknown): void => {
     validateSender(event)
-    grillAgentService.cancel()
-    grillPersistenceController.clearTracking()
+    const workspaceId = rawArgs && typeof rawArgs === 'object'
+      ? optionalString(rawArgs as Record<string, unknown>, 'workspaceId', IPC_CHANNELS.GRILL_CANCEL)
+      : undefined
+    grillAgentService.cancel(workspaceId ?? undefined)
+    grillPersistenceController.clearTracking(workspaceId ?? undefined)
   })
 
   // ── grill:getStatus — current grill status for a workspace ────────
@@ -232,10 +237,24 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
       const ch = IPC_CHANNELS.GRILL_GENERATE_PLAN_FROM_DECISIONS
       const args = requireObject(rawArgs, ch)
       const workspaceId = requireString(args, 'workspaceId', ch)
-      const projectName = (args.projectName as string) ?? ''
-      const description = (args.description as string) ?? ''
-      const grillDecisions = (args.grillDecisions as GrillDecision[]) ?? []
-      const trackScores = args.trackScores as GrillTrackScore[] | undefined
+      const projectName = ((args.projectName as string) ?? '').slice(0, 10_000)
+      const description = ((args.description as string) ?? '').slice(0, 50_000)
+
+      // PLAN-GEN-02 + GRILL-IPC-01: Validate grillDecisions is actually an array with bounded size
+      if (args.grillDecisions != null && !Array.isArray(args.grillDecisions)) {
+        throw new Error(`${ch}: grillDecisions must be an array`)
+      }
+      const grillDecisions = (Array.isArray(args.grillDecisions) ? args.grillDecisions : []).slice(
+        0,
+        200
+      ) as GrillDecision[]
+
+      // Validate trackScores if present
+      const rawTrackScores = args.trackScores
+      const trackScores =
+        Array.isArray(rawTrackScores)
+          ? (rawTrackScores.slice(0, 100) as GrillTrackScore[])
+          : undefined
 
       grillLog.info(
         `[grill:generatePlanFromDecisions] Generating plan for project="${projectName}" (${grillDecisions?.length ?? 0} decisions)`

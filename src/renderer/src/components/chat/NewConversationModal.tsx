@@ -158,7 +158,7 @@ export default function NewConversationModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl max-w-2xl w-full mx-4 animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]">
+      <div data-testid="new-conversation-modal" className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl max-w-2xl w-full mx-4 animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border-subtle">
           <h2 id="new-conversation-title" className="text-lg font-semibold text-text-primary">

@@ -10,6 +10,7 @@ import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { planRepository } from '../db/repositories/plan.repository'
 import { conversationRepository, messageRepository } from '../db/repositories'
+import { getDatabase } from '../db/index'
 import { validateSender } from './validate-sender'
 import type { PlanFilters, PlanStatus } from '../../shared/types'
 
@@ -81,21 +82,19 @@ export function registerPlanIpc(): void {
 
       const messageContent = `I have a plan I'd like to implement:\n\n${planContent}`
 
-      // Create conversation in plan mode
-      const conversation = conversationRepository.create(args.workspaceId, plan.title, 'plan')
+      // ATOM-03: Wrap all three writes in a transaction so partial failure
+      // doesn't leave an orphaned conversation or un-linked plan.
+      const db = getDatabase()
+      const result = db.transaction(() => {
+        const conversation = conversationRepository.create(args.workspaceId, plan.title, 'plan')
+        messageRepository.create(conversation.id, 'user', messageContent)
+        planRepository.markHandedOff(plan.id, conversation.id)
+        return { conversationId: conversation.id, planId: plan.id }
+      })()
 
-      // Create the first user message with plan content
-      messageRepository.create(conversation.id, 'user', messageContent)
+      planLog.info(`[plan:import] Plan ${result.planId} imported into conversation ${result.conversationId}`)
 
-      // Update plan status to handed_off with linked conversation
-      planRepository.markHandedOff(plan.id, conversation.id)
-
-      planLog.info(`[plan:import] Plan ${plan.id} imported into conversation ${conversation.id}`)
-
-      return {
-        conversationId: conversation.id,
-        planId: plan.id
-      }
+      return result
     }
   )
 }

@@ -5,6 +5,9 @@
  * Respects markdown: won't split inside code blocks, inline code, or URLs.
  */
 
+/** Common TLDs to detect bare domain names (e.g. example.com) and avoid false sentence splits. */
+const COMMON_TLDS = /\.(com|org|net|io|dev|ai|app|co|edu|gov)\b/i
+
 export class SentenceBuffer {
   private buffer = ''
   private flushedLength = 0
@@ -125,8 +128,13 @@ export class SentenceBuffer {
         // Skip common abbreviations and decimals
         const charBefore = line[match.index - 1]
         if (charBefore && /\d/.test(charBefore) && line[match.index] === '.') continue
-        // Skip URLs
+        // Skip URLs (protocol-prefixed)
         if (line.slice(Math.max(0, match.index - 10), match.index).includes('://')) continue
+        // Skip bare domains (e.g. example.com, docs.dev)
+        if (
+          line[match.index] === '.' &&
+          COMMON_TLDS.test(line.slice(match.index, match.index + 6))
+        ) continue
 
         lastBoundary = lineStart + match.index + match[0].length
         stateAtBoundary = localInCodeBlock

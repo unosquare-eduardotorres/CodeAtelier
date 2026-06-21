@@ -189,6 +189,19 @@ import './greenfield-grill-adapter.test'
 import './blueprint-service-logic.test'
 import './cli-mcp-config-writer-logic.test'
 
+// ─── Run 35: Adapter subclass family + pure functions + config builders ───
+import './mpa-planner-adapter.test'
+import './mpa-verifier-adapter.test'
+import './mpa-builder-adapter.test'
+import './blueprint-base-adapter.test'
+import './blueprint-build-adapter.test'
+import './blueprint-verify-adapter.test'
+import './preset-service-logic.test'
+import './repo-service-pure.test'
+import './opencode-config-writer-logic.test'
+import './description-cache-pure.test'
+import './workspace-mcp-config-logic.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

@@ -503,6 +503,15 @@ export class ChatAgentService extends EventEmitter {
 
   clearSession(conversationId: string): void {
     this.getActiveSession()?.clearSession(conversationId)
+    this.clearConversationPendingState(conversationId)
+  }
+
+  /**
+   * COMPACT-ABORT-01: Clear only the adapter's per-conversation pending state
+   * (compaction, context injection) without touching the session map.
+   * Safe to call on abort — the conversation remains resumable.
+   */
+  clearConversationPendingState(conversationId: string): void {
     const adapter = this.getActiveAdapter()
     if (adapter === this.daVinciAdapter) {
       this.daVinciAdapter.clearConversation(conversationId)

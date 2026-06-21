@@ -3,7 +3,7 @@
  * Replaces the 264-line if/else chain in forwardChunkToRenderer.
  */
 
-import type { BrowserWindow } from 'electron'
+import { ipcMain, type BrowserWindow } from 'electron'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { ConversationMode, ConversationPhase, ToolActivity } from '../../shared/types'
@@ -84,8 +84,10 @@ type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout'
 interface StreamMetrics {
   startedAt: number
   firstTokenAt: number | null
+  lastChunkAt: number | null
   chunkCount: number
   totalChars: number
+  maxITL: number // max inter-token latency (ms)
 }
 
 interface AggregatedStreamRecord {
@@ -155,8 +157,10 @@ export function startStreamMetrics(conversationId: string): void {
   streamMetricsStore.set(conversationId, {
     startedAt: Date.now(),
     firstTokenAt: null,
+    lastChunkAt: null,
     chunkCount: 0,
-    totalChars: 0
+    totalChars: 0,
+    maxITL: 0
   })
 }
 
@@ -181,7 +185,7 @@ export function completeStreamMetrics(
   chatIpcLogger.info(
     `[METRIC:STREAM_COMPLETE] ` +
       `outcome=${outcome} duration=${duration}ms ttft=${ttft}ms ` +
-      `chunks=${metrics.chunkCount} chars=${metrics.totalChars} ` +
+      `maxITL=${metrics.maxITL}ms chunks=${metrics.chunkCount} chars=${metrics.totalChars} ` +
       `conversationId=${conversationId.slice(0, 8)} ` +
       `completionRate=${(streamAggregator.completionRate * 100).toFixed(1)}% ` +
       `ttftP95=${streamAggregator.ttftP95}ms ` +
@@ -264,6 +268,11 @@ function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
       const ttft = metrics.firstTokenAt - metrics.startedAt
       chatIpcLogger.info(`[METRIC:TTFT] ${ttft}ms conversationId=${ctx.conversationId.slice(0, 8)}`)
     }
+    if (metrics.lastChunkAt !== null) {
+      const itl = Date.now() - metrics.lastChunkAt
+      metrics.maxITL = Math.max(metrics.maxITL, itl)
+    }
+    metrics.lastChunkAt = Date.now()
     metrics.chunkCount++
     metrics.totalChars += chunk.content.length
   }
@@ -646,4 +655,24 @@ export function routeChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
  */
 export function flushTextBatcher(conversationId?: string): void {
   textBatcher.reset(conversationId)
+}
+
+// ── Stream Diagnostics IPC ────────────────────────────────────────────
+// Exposes the StreamMetricsAggregator data via IPC so the renderer
+// (future Performance tab, dev tools) can read streaming SLO metrics.
+
+import { validateSender } from './validate-sender'
+
+export function registerStreamDiagnosticsIpc(): void {
+  ipcMain.handle(IPC_CHANNELS.STREAM_METRICS_GET, (event) => {
+    validateSender(event)
+    return {
+      completionRate: streamAggregator.completionRate,
+      ttftP50: streamAggregator.ttftPercentile(0.50),
+      ttftP95: streamAggregator.ttftP95,
+      ttftP99: streamAggregator.ttftPercentile(0.99),
+      sampleSize: streamAggregator.sampleSize,
+      outcomeCounts: streamAggregator.outcomeCounts
+    }
+  })
 }

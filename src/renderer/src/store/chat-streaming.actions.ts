@@ -28,6 +28,7 @@ export interface ChatStreamingState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
+  isSending: boolean
   streamingConversationIds: Set<string>
   activeRequestId: string | null
   streamingPhase: ConversationPhase | null
@@ -61,6 +62,21 @@ export class ChatStreamingInternals {
   private accumulator: StreamSegmentAccumulator | null = null
   private storeGet: GetFn | null = null
   private storeSet: SetFn | null = null
+
+  /**
+   * MSG-RELOAD-01: Monotonically increasing generation counter.
+   * Bumped on every sendMessage() and selectConversation().
+   * The async DB reload after stream finalize captures the current generation
+   * and discards the result if it changed (meaning a new message or conv switch
+   * happened while the reload was in flight).
+   */
+  private _messageGeneration = 0
+  get messageGeneration(): number {
+    return this._messageGeneration
+  }
+  bumpGeneration(): void {
+    this._messageGeneration++
+  }
 
   /** Bind the Zustand get/set refs — called once during store creation */
   bind(get: GetFn, set: SetFn): void {
@@ -139,6 +155,14 @@ export function appendStreamChunkAction(
   requestId?: string
 ): void {
   const activeRequestId = get().activeRequestId
+  const isCurrentlyStreaming = get().isStreaming
+
+  // CHUNK-LEAK-01: Drop chunks when no active request is expected AND not streaming.
+  // Previously, the null-guard was inverted: when activeRequestId was null (e.g. after
+  // conv switch), the check was bypassed, leaking chunks to the wrong conversation.
+  if (!activeRequestId && !isCurrentlyStreaming) return
+
+  // Drop stale chunks (mismatched request)
   if (activeRequestId && requestId && requestId !== activeRequestId) {
     rendererLog.debug(
       `[appendStreamChunk] Dropped stale chunk: expected=${activeRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
@@ -283,12 +307,11 @@ export function finalizeStreamAction(
     })
     // Reload messages from DB asynchronously.
     // DB is the source of truth — no optimistic message preservation.
-    // The previous merge strategy incorrectly kept temp-* optimistic messages
-    // (whose IDs never exist in the DB), causing duplicate user bubbles.
-    // Guarded: if the user sends a new message or switches conversations before
-    // the reload completes, the stale DB result is discarded to prevent overwriting
-    // optimistic messages with outdated data.
+    // MSG-RELOAD-01: Capture generation counter BEFORE the async reload.
+    // If a new sendMessage() or selectConversation() fires during the await,
+    // the generation will have bumped and the stale result is discarded.
     const reloadConversationId = activeConversation.id
+    const reloadGeneration = streamingInternals.messageGeneration
     window.api
       .getMessages({ conversationId: reloadConversationId })
       .then((dbMessages) => {
@@ -296,6 +319,7 @@ export function finalizeStreamAction(
         if (
           current.activeConversation?.id === reloadConversationId &&
           !current.isStreaming &&
+          streamingInternals.messageGeneration === reloadGeneration &&
           dbMessages.length > 0
         ) {
           set({ messages: dbMessages })

@@ -132,6 +132,7 @@ export default function CreatePrModal({
                 <span className="font-mono">{pushStatus?.branch ?? 'unknown'}</span>
                 <span className="text-text-muted">→</span>
                 <input
+                  data-testid="create-pr-base-branch"
                   type="text"
                   value={baseBranch}
                   onChange={(e) => setBaseBranch(e.target.value)}
@@ -144,6 +145,7 @@ export default function CreatePrModal({
               <div>
                 <label className="block text-xs font-medium text-text-secondary mb-1">Title</label>
                 <input
+                  data-testid="create-pr-title"
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -171,6 +173,7 @@ export default function CreatePrModal({
                   </button>
                 </div>
                 <textarea
+                  data-testid="create-pr-description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Describe your changes..."
