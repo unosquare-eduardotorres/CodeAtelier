@@ -259,6 +259,11 @@ import '../services/__tests__/memory-service-logic.test'
 import '../services/__tests__/plan-registry-helpers.test'
 import '../services/__tests__/zero-coverage-services.test'
 
+// ─── Phase 15: Coverage Mega-Push — pure function tests ───
+import '../services/__tests__/default-prompts-constants.test'
+import '../services/__tests__/preprocessing-pure.test'
+import '../services/__tests__/vector-search-pure.test'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,6 +272,24 @@ import '../db/repositories/__tests__/conversation.repository.test'
 import '../db/repositories/__tests__/workspace.repository.test'
 import '../db/repositories/__tests__/usage-log.repository.test'
 import '../db/repositories/__tests__/migration-v102.test'
+
+// ─── Phase 15: Coverage Mega-Push — repository tests ───
+import '../db/repositories/__tests__/specialist.repository.test'
+import '../db/repositories/__tests__/skill.repository.test'
+import '../db/repositories/__tests__/bug.repository.test'
+import '../db/repositories/__tests__/preset.repository.test'
+import '../db/repositories/__tests__/idea.repository.test'
+import '../db/repositories/__tests__/memory.repository.test'
+import '../db/repositories/__tests__/event.repository.test'
+import '../db/repositories/__tests__/blueprint.repository.test'
+import '../db/repositories/__tests__/audit.repository.test'
+import '../db/repositories/__tests__/mpa-run.repository.test'
+import '../db/repositories/__tests__/council-session.repository.test'
+import '../db/repositories/__tests__/plan.repository.test'
+import '../db/repositories/__tests__/remaining-repos.test'
+import '../db/repositories/__tests__/code-graph-repos.test'
+import '../db/repositories/__tests__/migration-suite.test'
+
 // Single summary at the end — awaits all pending async tests, prints totals,
 // and exits with code 1 on any failure.
 import { summaryAsync } from '../services/__tests__/test-harness'

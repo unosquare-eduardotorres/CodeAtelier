@@ -1672,7 +1672,8 @@ export const MCP_TOOLS = {
       'code-graph',
       'module_boundary_health',
       'Code Graph · module_boundary_health'
-    )
+    ),
+    WIRING_CHECK: mcpTool('code-graph', 'wiring_check', 'Code Graph · wiring_check')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
     SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),

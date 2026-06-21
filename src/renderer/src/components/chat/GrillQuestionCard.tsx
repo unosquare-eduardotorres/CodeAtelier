@@ -80,6 +80,7 @@ function OptionRow({
   return (
     <button
       key={option.label}
+      data-testid="grill-question-option"
       data-option-index={optionIndex}
       role={multiSelect ? 'checkbox' : 'radio'}
       aria-checked={isSelected}

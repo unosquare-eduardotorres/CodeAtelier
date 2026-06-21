@@ -198,6 +198,104 @@ function FloatingPillBar({
   )
 }
 
+// ── useChatPanelLocalEffects ────────────────────────────────────────────
+
+function useChatPanelLocalEffects({
+  conversationId,
+  isStreaming,
+  showSearch,
+  searchInputRef,
+  loadFiles,
+  loadContextUsage,
+  setActiveTab,
+  setShowSearch
+}: {
+  conversationId: string | undefined
+  isStreaming: boolean
+  showSearch: boolean
+  searchInputRef: React.RefObject<HTMLInputElement | null>
+  loadFiles: (id: string) => Promise<void>
+  loadContextUsage: (id: string) => Promise<void>
+  setActiveTab: (tab: ChatTab) => void
+  setShowSearch: React.Dispatch<React.SetStateAction<boolean>>
+}): void {
+  useEffect(() => {
+    if (conversationId) void loadFiles(conversationId)
+  }, [conversationId, loadFiles])
+
+  useEffect(() => {
+    if (showSearch) searchInputRef.current?.focus()
+  }, [showSearch, searchInputRef])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveTab('chat')
+  }, [conversationId, setActiveTab])
+
+  useEffect(() => {
+    if (conversationId) void loadContextUsage(conversationId)
+    if (!isStreaming && conversationId) {
+      const timer = setTimeout(() => void loadContextUsage(conversationId), 2000)
+      return (): void => { clearTimeout(timer) }
+    }
+    return undefined
+  }, [conversationId, isStreaming, loadContextUsage])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault()
+        setShowSearch((prev) => !prev)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [setShowSearch])
+}
+
+// ── EmptyConversationState ──────────────────────────────────────────────
+
+function EmptyConversationState({
+  showNewChat,
+  generateModal,
+  onCreateChat,
+  onCreateIdea
+}: {
+  showNewChat?: boolean
+  generateModal: React.ReactNode
+  onCreateChat: (data: {
+    title: string
+    description?: string
+    mode: ConversationMode
+    communicationTone?: import('../../../../shared/types').CommunicationTone | null
+    attachments?: string[]
+    useIsolatedBranch?: boolean
+    llmProvider?: string
+    mcpOverrides?: Record<string, boolean>
+    presetId?: string | null
+  }) => Promise<void>
+  onCreateIdea?: (data: { title: string; description?: string }) => void
+}): React.JSX.Element {
+  if (showNewChat) {
+    return (
+      <>
+        {generateModal}
+        <NewChatPage onCreateChat={onCreateChat} onCreateIdea={onCreateIdea} />
+      </>
+    )
+  }
+  return (
+    <>
+      {generateModal}
+      <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
+        <p className="text-sm text-text-secondary">
+          Select a conversation from the sidebar or start a new one.
+        </p>
+      </div>
+    </>
+  )
+}
+
 // ── ChatPanel ───────────────────────────────────────────────────────────
 
 export default function ChatPanel({
@@ -234,57 +332,19 @@ export default function ChatPanel({
 
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
-
-  // Load code changes when conversation changes
   const loadFiles = useCodeChangesStore((s) => s.loadFiles)
-  useEffect(() => {
-    if (activeConversation?.id) {
-      void loadFiles(activeConversation.id)
-    }
-  }, [activeConversation?.id, loadFiles])
 
-  // Focus search input when opened
-  useEffect(() => {
-    if (showSearch) {
-      searchInputRef.current?.focus()
-    }
-  }, [showSearch])
-
-  // Reset tab when conversation changes
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on conversation switch
-    setActiveTab('chat')
-  }, [activeConversation?.id])
-
-  // Load context usage when conversation changes or streaming ends.
-  // Delayed re-fetch after stream ends catches post-compaction state.
-  useEffect(() => {
-    if (activeConversation?.id) {
-      void loadContextUsage(activeConversation.id)
-    }
-    if (!isStreaming && activeConversation?.id) {
-      const convId = activeConversation.id
-      const timer = setTimeout(() => {
-        void loadContextUsage(convId)
-      }, 2000)
-      return (): void => {
-        clearTimeout(timer)
-      }
-    }
-    return undefined
-  }, [activeConversation?.id, isStreaming, loadContextUsage])
-
-  // ⌘F / Ctrl+F toggle for search
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        e.preventDefault()
-        setShowSearch((prev) => !prev)
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [])
+  // ── Side effects ──
+  useChatPanelLocalEffects({
+    conversationId: activeConversation?.id,
+    isStreaming,
+    showSearch,
+    searchInputRef,
+    loadFiles,
+    loadContextUsage,
+    setActiveTab,
+    setShowSearch
+  })
 
   const handleCreateChat = async (data: {
     title: string
@@ -332,23 +392,13 @@ export default function ChatPanel({
 
   // Workspace selected but no active conversation
   if (!activeConversation) {
-    if (showNewChat) {
-      return (
-        <>
-          {generateModal}
-          <NewChatPage onCreateChat={handleCreateChat} onCreateIdea={onCreateIdea} />
-        </>
-      )
-    }
     return (
-      <>
-        {generateModal}
-        <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
-          <p className="text-sm text-text-secondary">
-            Select a conversation from the sidebar or start a new one.
-          </p>
-        </div>
-      </>
+      <EmptyConversationState
+        showNewChat={showNewChat}
+        generateModal={generateModal}
+        onCreateChat={handleCreateChat}
+        onCreateIdea={onCreateIdea}
+      />
     )
   }
 

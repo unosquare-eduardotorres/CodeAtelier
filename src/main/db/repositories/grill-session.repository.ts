@@ -141,10 +141,14 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
 
   /** Update score, label, and feedback after evaluation */
   updateScore(id: string, score: number, scoreLabel: string, feedback: string): void {
+    // GRILL-ITERATION-01: Increment iteration_count so the DB tracks actual
+    // re-evaluation count. Without this, iteration_count stays at 0 forever
+    // and useGrillSessionRestore() shows stale progress after app restart.
     this.db()
       .prepare(
         `UPDATE grill_sessions
        SET current_score = ?, score_label = ?, feedback = ?,
+           iteration_count = iteration_count + 1,
            updated_at = datetime('now')
        WHERE id = ?`
       )

@@ -96,14 +96,14 @@ export class BlueprintTasksService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
         if (abortSignal?.aborted) {
-          reject(new Error('Phase cancelled'))
-          return
+          onAbort()
         }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), {
-          once: true
-        })
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)

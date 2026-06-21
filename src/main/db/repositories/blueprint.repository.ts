@@ -270,12 +270,36 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
   // ── Stale detection ──
 
   markStaleAsFailed(): number {
-    return this.db()
+    const db = this.db()
+    const changes = db
       .prepare(
         `UPDATE blueprints SET status = 'failed', updated_at = datetime('now')
          WHERE status IN ('specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying')`
       )
       .run().changes
+
+    // BP-STALE-RECONCILE-01: Cascade cleanup to phases and tasks stuck in
+    // active/running states. Without this, the UI shows permanently stuck
+    // tasks and phases after an app crash during a BUILD phase.
+    if (changes > 0) {
+      db.prepare(
+        `UPDATE blueprint_phases SET status = 'failed', completed_at = datetime('now')
+         WHERE status = 'active'
+           AND blueprint_id IN (
+             SELECT id FROM blueprints WHERE status = 'failed'
+           )`
+      ).run()
+
+      db.prepare(
+        `UPDATE blueprint_tasks SET status = 'failed', completed_at = datetime('now')
+         WHERE status = 'running'
+           AND blueprint_id IN (
+             SELECT id FROM blueprints WHERE status = 'failed'
+           )`
+      ).run()
+    }
+
+    return changes
   }
 }
 

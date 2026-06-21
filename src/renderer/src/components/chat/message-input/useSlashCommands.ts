@@ -197,8 +197,7 @@ Perform these 6 checks IN ORDER on the scoped files.
 
 ### Check 1 — Wiring & Integration
 Verify everything is properly connected — no dangling exports, missing imports, or unregistered components.
-- Run **file_dependents** on each changed file — verify all new exports have at least one importer
-- Run **find_references** on key new symbols (functions, classes, types) — confirm they're actually called, not just exported
+- Run **wiring_check** with all changed file paths + key new symbol names in a single call — verifies exports have importers and new symbols are referenced
 - Check: new IPC handlers registered? New routes mounted? New components rendered? New test files imported in the test runner?
 
 ### Check 2 — Bug & Anti-Pattern Detection
@@ -253,6 +252,9 @@ Position yourself 1 year in the future. This implementation has caused productio
 - Prefer **audit_scan** over individual eslint_check + analyze_complexity + find_dead_code calls
 - Scale maxResults by scope: 1–3 files → maxResults: 10, 4–10 files → maxResults: 20, 10+ files → maxResults: 30
 - Do NOT call find_dead_code, analyze_complexity, or eslint_check individually if you already called audit_scan — it covers all three
+- When calling find_dead_code, find_callers, find_callees, or find_references, pass format: 'markdown' for compact table output
+- When calling graph_map, pass tokenLimit: 4000 — audit needs less repo context than full exploration
+- Keep narration minimal between tool calls — state only the check number and what you're looking for, not full reasoning
 
 ## Output Format
 
@@ -302,7 +304,7 @@ const AUDIT_PROMPT_LEAN = `You are performing a **post-implementation audit** of
 List files from conversation + \`git diff --name-only\`. Print scope. Exclude out-of-scope files.
 
 ## Checks (in order)
-1. **Wiring** — Run file_dependents + find_references on changed files. Verify exports have importers, new symbols are called, IPC/routes/tests registered.
+1. **Wiring** — Run wiring_check with all changed file paths + key new symbol names in a single call. Verify exports have importers, new symbols are called, IPC/routes/tests registered.
 2. **Bugs** — Run audit_scan on changed files (combines eslint_check + analyze_complexity + find_dead_code). Grep for \`as any\`, TODO, HACK, empty catches. Reason about edge cases, error handling, races, type safety, off-by-one, stale state.
 3. **Tests** — Run test_coverage_map. Check test runner registration. Evaluate happy path + error path + edge case coverage.
 4. **Complexity** — Check audit_scan results for functions above threshold. Flag >10 as high, 7–10 as approaching.
@@ -315,6 +317,9 @@ List files from conversation + \`git diff --name-only\`. Print scope. Exclude ou
 - Prefer **audit_scan** over individual eslint_check + analyze_complexity + find_dead_code calls
 - Scale maxResults by scope: 1–3 files → maxResults: 10, 4–10 files → maxResults: 20, 10+ files → maxResults: 30
 - Do NOT call find_dead_code, analyze_complexity, or eslint_check individually if you already called audit_scan — it covers all three
+- When calling find_dead_code, find_callers, find_callees, or find_references, pass format: 'markdown' for compact table output
+- When calling graph_map, pass tokenLimit: 4000 — audit needs less repo context than full exploration
+- Keep narration minimal between tool calls — state only the check number and what you're looking for, not full reasoning
 
 ## Output
 Use: \`## 🔍 Implementation Audit\` header, **Scope** list, then checks 1–6 with [✅|⚠️|❌] markers. End with severity table (🔴Critical/🟡Major/🔵Minor counts) and top 3 action items.`

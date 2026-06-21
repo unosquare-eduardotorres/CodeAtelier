@@ -211,6 +211,88 @@ export function appendStreamChunkAction(
   streamingInternals.getOrCreateAccumulator().appendText(chunk)
 }
 
+// ── finalizeStream helpers ───────────────────────────────────────────────
+
+function mergeStreamedContent(
+  streamingSegments: StreamSegment[],
+  streamingContent: string,
+  toolActivities: ToolActivity[]
+): { mergedContent: string; mergedTools: ToolActivity[] } {
+  const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  const mergedTools = [
+    ...streamingSegments.flatMap((s) => s.toolActivities),
+    ...toolActivities
+  ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
+  return { mergedContent, mergedTools }
+}
+
+function computeFinalizeStateDelta(
+  taskId: string | undefined,
+  activeConversation: { id: string } | null,
+  currentStreamingIds: Set<string>
+): Partial<ChatState> {
+  const newStreamingIds = taskId
+    ? currentStreamingIds
+    : (() => {
+        const s = new Set(currentStreamingIds)
+        if (activeConversation) s.delete(activeConversation.id)
+        return s
+      })()
+
+  const base: Partial<ChatState> = {
+    streamingContent: '',
+    streamingSegments: [],
+    isStreaming: !!taskId,
+    activeRequestId: taskId ? undefined : null,
+    streamingPhase: taskId ? undefined : null,
+    streamingTaskId: null,
+    streamingConversationIds: newStreamingIds
+  }
+
+  if (!taskId) {
+    Object.assign(base, {
+      toolActivities: [],
+      streamingSpecialist: null,
+      pendingQuestions: null,
+      pendingQuestionAction: null,
+      pendingQuestionRequestId: null
+    })
+  }
+
+  return base
+}
+
+function reloadMessagesFromDb(
+  conversationId: string,
+  get: GetFn,
+  set: SetFn
+): void {
+  const reloadGeneration = streamingInternals.messageGeneration
+  window.api
+    .getMessages({ conversationId })
+    .then((dbMessages) => {
+      const current = get()
+      if (
+        current.activeConversation?.id === conversationId &&
+        !current.isStreaming &&
+        streamingInternals.messageGeneration === reloadGeneration &&
+        dbMessages.length > 0
+      ) {
+        set({ messages: dbMessages })
+      }
+    })
+    .catch((error) => {
+      rendererLog.error('Failed to reload messages after stream finalize:', error)
+    })
+}
+
+// ── finalizeStreamAction ──────────────────────────────────────────────
+
 export function finalizeStreamAction(
   get: GetFn,
   set: SetFn,
@@ -218,16 +300,12 @@ export function finalizeStreamAction(
   taskId?: string,
   requestId?: string
 ): void {
-  // Force-flush any remaining buffered content before finalizing
   streamingInternals.flushAccumulator()
 
   const activeRequestId = get().activeRequestId
   if (activeRequestId && requestId && requestId !== activeRequestId) return
 
-  // Clear safety timer on normal stream completion (only on final complete, not per-task)
-  if (!taskId) {
-    streamingInternals.clearSafetyTimer()
-  }
+  if (!taskId) streamingInternals.clearSafetyTimer()
 
   const {
     streamingSegments,
@@ -238,17 +316,11 @@ export function finalizeStreamAction(
     toolActivities
   } = get()
 
+  // Main path: streamed content exists and we have a conversation
   if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
-    // Merge all segments + current content into a single message
-    const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
-      .map((c) => c.trim())
-      .filter(Boolean)
-      .join('\n\n')
-
-    const mergedTools = [
-      ...streamingSegments.flatMap((s) => s.toolActivities),
-      ...toolActivities
-    ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+    const { mergedContent, mergedTools } = mergeStreamedContent(
+      streamingSegments, streamingContent, toolActivities
+    )
 
     const newMessages: Message[] = []
     if (mergedContent || mergedTools.length > 0) {
@@ -269,39 +341,22 @@ export function finalizeStreamAction(
       })
     }
 
-    set((state) => {
-      // Remove from per-conversation streaming set on final complete
-      const newStreamingIds = taskId
-        ? state.streamingConversationIds
-        : (() => {
-            const s = new Set(state.streamingConversationIds)
-            if (activeConversation) s.delete(activeConversation.id)
-            return s
-          })()
-      return {
-        messages: [...state.messages, ...newMessages],
-        streamingContent: '',
-        streamingSegments: [],
-        // Only stop streaming if this is the final complete (no taskId = final summary)
-        isStreaming: !!taskId,
-        activeRequestId: taskId ? state.activeRequestId : null,
-        streamingPhase: taskId ? state.streamingPhase : null,
-        toolActivities: taskId ? state.toolActivities : [],
-        streamingTaskId: null,
-        streamingSpecialist: taskId ? state.streamingSpecialist : null,
-        streamingConversationIds: newStreamingIds,
-        // Clear stale ask-question state on final complete
-        ...(!taskId
-          ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
-          : {})
-      }
-    })
+    set((state) => ({
+      messages: [...state.messages, ...newMessages],
+      ...computeFinalizeStateDelta(taskId, activeConversation, state.streamingConversationIds),
+      // Preserve mutable refs when task is still active
+      ...(taskId ? {
+        activeRequestId: state.activeRequestId,
+        streamingPhase: state.streamingPhase,
+        toolActivities: state.toolActivities,
+        streamingSpecialist: state.streamingSpecialist
+      } : {})
+    }))
   } else if (taskId) {
-    // Per-task complete with no accumulated content — just reset task tracking
+    // Per-task complete with no accumulated content
     set({ streamingContent: '', streamingSegments: [], streamingTaskId: null })
   } else if (activeConversation) {
-    // Clear streaming state synchronously to prevent the thinking indicator
-    // from hanging while the DB reload completes.
+    // Clear streaming state + reload from DB
     set((state) => {
       const newStreamingIds = new Set(state.streamingConversationIds)
       newStreamingIds.delete(activeConversation.id)
@@ -313,35 +368,12 @@ export function finalizeStreamAction(
         toolActivities: [],
         streamingTaskId: null,
         streamingConversationIds: newStreamingIds,
-        // Clear stale ask-question state
         pendingQuestions: null,
         pendingQuestionAction: null,
         pendingQuestionRequestId: null
       }
     })
-    // Reload messages from DB asynchronously.
-    // DB is the source of truth — no optimistic message preservation.
-    // MSG-RELOAD-01: Capture generation counter BEFORE the async reload.
-    // If a new sendMessage() or selectConversation() fires during the await,
-    // the generation will have bumped and the stale result is discarded.
-    const reloadConversationId = activeConversation.id
-    const reloadGeneration = streamingInternals.messageGeneration
-    window.api
-      .getMessages({ conversationId: reloadConversationId })
-      .then((dbMessages) => {
-        const current = get()
-        if (
-          current.activeConversation?.id === reloadConversationId &&
-          !current.isStreaming &&
-          streamingInternals.messageGeneration === reloadGeneration &&
-          dbMessages.length > 0
-        ) {
-          set({ messages: dbMessages })
-        }
-      })
-      .catch((error) => {
-        rendererLog.error('Failed to reload messages after stream finalize:', error)
-      })
+    reloadMessagesFromDb(activeConversation.id, get, set)
   } else {
     set({
       streamingContent: '',

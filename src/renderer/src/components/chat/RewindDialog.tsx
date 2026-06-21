@@ -162,6 +162,7 @@ export default function RewindDialog({
               {sortedCheckpoints.map((cp) => (
                 <button
                   key={cp.id}
+                  data-testid="rewind-checkpoint-item"
                   onClick={() => setSelectedId(cp.id)}
                   disabled={isRewinding}
                   className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${
@@ -219,6 +220,7 @@ export default function RewindDialog({
             Cancel
           </button>
           <button
+            data-testid="rewind-confirm-btn"
             onClick={handleRewind}
             disabled={isRewinding || !selectedId}
             className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 bg-orange-500 hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"

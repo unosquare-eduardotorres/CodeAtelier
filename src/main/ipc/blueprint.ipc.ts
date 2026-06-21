@@ -117,19 +117,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.BLUEPRINT_CANCEL, async (event, args: { workspaceId: string }) => {
     validateSender(event)
 
-    // Cancel phase-service sessions first (CLARIFY may be streaming)
-    const activeBlueprintId = blueprintService.getActiveBlueprintId(args.workspaceId)
-    if (activeBlueprintId) {
-      await blueprintSpecService.cancelBlueprint(activeBlueprintId)
-      await blueprintPlanService.cancelBlueprint(activeBlueprintId)
-      await blueprintTasksService.cancelBlueprint(activeBlueprintId)
-      await blueprintReviewService.cancelBlueprint(activeBlueprintId)
-      await blueprintBuildService.cancelBlueprint(activeBlueprintId)
-      await blueprintVerifyService.cancelBlueprint(activeBlueprintId)
+    // BP-CANCEL-LOCK-01: Wrap in try/finally to guarantee blueprintService.cancel()
+    // always runs — even if a phase cancel throws. Without this, a single phase
+    // cancel failure orphans the startLock and permanently blocks new blueprints.
+    try {
+      const activeBlueprintId = blueprintService.getActiveBlueprintId(args.workspaceId)
+      if (activeBlueprintId) {
+        // Best-effort cancel each phase service — don't let one failure block others
+        const phaseServices = [
+          blueprintSpecService, blueprintPlanService, blueprintTasksService,
+          blueprintReviewService, blueprintBuildService, blueprintVerifyService
+        ]
+        for (const svc of phaseServices) {
+          try { await svc.cancelBlueprint(activeBlueprintId) }
+          catch (e) { bpLog.error(`[cancel] Phase cancel failed:`, e) }
+        }
+      }
+    } finally {
+      // ALWAYS release the lock, even if phase cancels threw
+      blueprintService.cancel(args.workspaceId)
     }
-
-    // Then cancel the main pipeline (aborts signal, updates DB, clears state)
-    blueprintService.cancel(args.workspaceId)
     return { cancelled: true }
   })
 

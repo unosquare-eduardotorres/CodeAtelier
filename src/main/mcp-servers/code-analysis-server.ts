@@ -163,7 +163,7 @@ async function handleAnalyzeComplexity(args: {
 async function registerTools(): Promise<void> {
   server.tool(
     'analyze_complexity',
-    'Analyze cyclomatic complexity of functions in a file or directory. Reports functions exceeding a threshold, sorted by complexity. Uses ESLint complexity rule for JS/TS files.',
+    'Cyclomatic complexity analysis for JS/TS files.',
     {
       path: z.string().describe('File or directory path to analyze (relative to workspace root)'),
       threshold: z
@@ -895,7 +895,7 @@ function registerEslintTools(): void {
 
   server.tool(
     'audit_scan',
-    'Run a combined audit scan: ESLint check + cyclomatic complexity + dead code detection in a single call. Returns one consolidated report. Prefer this over calling eslint_check, analyze_complexity, and find_dead_code separately.',
+    'Combined ESLint + complexity + dead code scan. Use instead of separate eslint_check/analyze_complexity/find_dead_code calls.',
     {
       paths: z.array(z.string()).min(1).describe('Files or directories to scan'),
       complexityThreshold: z

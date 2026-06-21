@@ -252,12 +252,127 @@ export class OpenCodeExecutor {
     }
   }
 
+  // ── Event stream processing ────────────────────────────────────────────────
+
+  /**
+   * Handle a transient error chunk: yield recovery events, wait, resend.
+   * Returns the updated retry count, or -1 if max retries are exhausted.
+   */
+  private async *handleTransientRetry(
+    chunk: StreamChunk,
+    retryCount: number,
+    sessionId: string,
+    promptBody: SessionPromptData
+  ): AsyncGenerator<StreamChunk, number> {
+    const retry = this.computeTransientRetry(retryCount, chunk.error!)
+    if (!retry) {
+      // Max retries exhausted
+      this.consecutiveErrors++
+      openCodeLog.warn(
+        `[opencode] Max transient retries exhausted (${this.consecutiveErrors} consecutive errors)`
+      )
+      return -1
+    }
+
+    yield {
+      type: 'session_recovery',
+      recoveryPhase: 'started',
+      content: retry.startedMessage
+    } as StreamChunk
+
+    await new Promise((r) => setTimeout(r, retry.delayMs))
+    this.resendPrompt(sessionId, promptBody)
+
+    yield {
+      type: 'session_recovery',
+      recoveryPhase: 'resuming',
+      content: retry.resumingMessage
+    } as StreamChunk
+
+    return retry.attemptNumber
+  }
+
+  /**
+   * Process the event stream, handling transient retries and turn counting.
+   * Yields StreamChunks and collects resultText + maxTurnsReached status.
+   */
+  private async *processEventStream(params: {
+    events: { stream: AsyncIterable<unknown> }
+    openCodeSessionId: string
+    promptBody: SessionPromptData
+    tokenUsage: ExecutorTokenUsage
+    maxTurns: number
+    abortController?: AbortController
+  }): AsyncGenerator<StreamChunk, { resultText: string; maxTurnsReached: boolean }> {
+    const { events, openCodeSessionId, promptBody, tokenUsage, maxTurns, abortController } = params
+    let resultText = ''
+    let turnCount = 0
+    let maxTurnsReached = false
+    let transientRetryCount = 0
+
+    for await (const event of events.stream) {
+      if (abortController?.signal.aborted) break
+
+      const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
+      for (const chunk of chunks) {
+        if (chunk.type === 'text' && chunk.content) {
+          resultText += chunk.content
+        }
+
+        // Handle transient errors with retry
+        if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
+          const retryGen = this.handleTransientRetry(
+            chunk, transientRetryCount, openCodeSessionId, promptBody
+          )
+          let retryResult = await retryGen.next()
+          while (!retryResult.done) {
+            yield retryResult.value
+            retryResult = await retryGen.next()
+          }
+          const newRetryCount = retryResult.value
+          if (newRetryCount >= 0) {
+            transientRetryCount = newRetryCount
+            continue
+          }
+          // Max retries exhausted — fall through to emit the error
+        }
+
+        // Count tool invocations as turns
+        if (chunk.type === 'tool_use') {
+          turnCount++
+          if (maxTurns > 0 && turnCount >= maxTurns) {
+            openCodeLog.info(
+              `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
+            )
+            maxTurnsReached = true
+            if (this.client) {
+              this.client.session
+                .abort({ path: { id: openCodeSessionId } })
+                .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
+            }
+          }
+        }
+
+        yield chunk
+      }
+
+      if (maxTurnsReached) break
+
+      // Check for session completion — skip error-based termination during active retries
+      const retriesAvailable = transientRetryCount < MAX_TRANSIENT_RETRIES
+      if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable)) {
+        break
+      }
+    }
+
+    return { resultText, maxTurnsReached }
+  }
+
+  // ── execute ──────────────────────────────────────────────────────────
+
   /**
    * Execute a prompt through OpenCode's agent loop.
    * Streams events as StreamChunks for UI display.
-   *
-   * #3: Includes transient error detection with exponential backoff retry.
-   * Circuit breaker trips after MAX consecutive errors across interactions.
    */
   async *execute(
     options: OpenCodeExecuteOptions
@@ -267,7 +382,7 @@ export class OpenCodeExecutor {
       return
     }
 
-    // #3: Circuit breaker check — prevent repeated failures from hammering the provider
+    // Circuit breaker check
     if (this.consecutiveErrors >= OpenCodeExecutor.CIRCUIT_BREAKER_THRESHOLD) {
       yield {
         type: 'error',
@@ -288,7 +403,6 @@ export class OpenCodeExecutor {
     }
 
     let openCodeSessionId: string | undefined
-    let resultText = ''
 
     try {
       // C-4: Wait for server.connected before first prompt to ensure MCP handshakes complete
@@ -319,7 +433,7 @@ export class OpenCodeExecutor {
           body: { title: sessionTitle }
         })
         ?.catch(() => {
-          /* non-fatal: session title is cosmetic — does not affect execution */
+          /* non-fatal: session title is cosmetic */
         })
 
       // OC-04: Track prompt promise to surface send errors to the stream consumer
@@ -334,79 +448,25 @@ export class OpenCodeExecutor {
           promptSendError = err instanceof Error ? err : new Error(String(err))
         })
 
-      // Stream events → StreamChunks
-      let turnCount = 0
+      // Process event stream
+      let resultText = ''
       let maxTurnsReached = false
-      const maxTurns = options.maxTurns ?? 0 // 0 = unlimited
-      let transientRetryCount = 0
 
       if (events.stream) {
-        for await (const event of events.stream) {
-          if (abortController?.signal.aborted) break
-
-          const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
-          for (const chunk of chunks) {
-            if (chunk.type === 'text' && chunk.content) {
-              resultText += chunk.content
-            }
-
-            // #3: Handle transient errors with retry
-            if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
-              const retry = this.computeTransientRetry(transientRetryCount, chunk.error)
-              if (retry) {
-                transientRetryCount = retry.attemptNumber
-
-                yield {
-                  type: 'session_recovery',
-                  recoveryPhase: 'started',
-                  content: retry.startedMessage
-                } as StreamChunk
-
-                await new Promise((r) => setTimeout(r, retry.delayMs))
-                this.resendPrompt(openCodeSessionId!, promptBody)
-
-                yield {
-                  type: 'session_recovery',
-                  recoveryPhase: 'resuming',
-                  content: retry.resumingMessage
-                } as StreamChunk
-
-                continue
-              }
-              // Max retries exhausted — fall through to emit the error
-              this.consecutiveErrors++
-              openCodeLog.warn(
-                `[opencode] Max transient retries exhausted (${this.consecutiveErrors} consecutive errors)`
-              )
-            }
-
-            // Count tool invocations as turns
-            if (chunk.type === 'tool_use') {
-              turnCount++
-              if (maxTurns > 0 && turnCount >= maxTurns) {
-                openCodeLog.info(
-                  `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
-                )
-                maxTurnsReached = true
-                if (this.client) {
-                  this.client.session
-                    .abort({ path: { id: openCodeSessionId } })
-                    .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
-                }
-              }
-            }
-
-            yield chunk
-          }
-
-          if (maxTurnsReached) break
-
-          // Check for session completion — skip error-based termination during active retries
-          const retriesAvailable = transientRetryCount < MAX_TRANSIENT_RETRIES
-          if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable)) {
-            break
-          }
+        const streamGen = this.processEventStream({
+          events: events as { stream: AsyncIterable<unknown> },
+          openCodeSessionId,
+          promptBody,
+          tokenUsage,
+          maxTurns: options.maxTurns ?? 0,
+          abortController
+        })
+        let streamResult = await streamGen.next()
+        while (!streamResult.done) {
+          yield streamResult.value
+          streamResult = await streamGen.next()
         }
+        ;({ resultText, maxTurnsReached } = streamResult.value)
       }
 
       // OC-04: If prompt send failed before/during streaming, surface the error

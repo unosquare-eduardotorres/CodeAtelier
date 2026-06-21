@@ -94,12 +94,18 @@ export class AgentRecoveryManager {
         : 'Continue your analysis from where you left off. Do not repeat completed work.'
     }
 
+    // AUTOCONT-TURN-DUP-01: Increment turn counter before continuation to avoid
+    // duplicate turn_usage rows. Without this, the same turn_number is reused,
+    // causing inflated token counts and impossible cache hit rates (>100%).
+    const nextTurnCount = (this.s.turnCounts.get(conversationId) ?? 0) + 1
+    this.s.turnCounts.set(conversationId, nextTurnCount)
+
     await this.s.executeStream({
       sdkPrompt: continuationPrompt,
       systemPrompt,
       sessionId: isLocal ? undefined : this.s.sessionMap.get(conversationId),
       conversationId,
-      turnCount: this.s.turnCounts.get(conversationId) ?? 1,
+      turnCount: nextTurnCount,
       isBuildMode,
       mcpResult,
       llmProvider,
@@ -176,41 +182,25 @@ export class AgentRecoveryManager {
     }
   }
 
-  // ── finalizeStream ────────────────────────────────────────────────────
+  // ── finalizeStream sub-methods ──────────────────────────────────────
 
-  async finalizeStream(params: {
+  /**
+   * Handle overload detection and max_turns auto-continue.
+   * Returns 'handled' when the method emits complete, 'continue' when
+   * finalization should proceed to recovery/summary.
+   */
+  private async handleOverloadOrMaxTurns(params: {
+    streamState: StreamLoopState
     conversationId: string
     systemPrompt: string
     isBuildMode: boolean
-    recoveryDepth: number
-    timedOut: boolean
-    streamState: StreamLoopState
     mcpResult: AdapterMcpResult
     llmProvider: LLMProvider
-  }): Promise<void> {
-    const {
-      conversationId,
-      systemPrompt,
-      isBuildMode,
-      recoveryDepth,
-      timedOut,
-      streamState,
-      mcpResult,
-      llmProvider
-    } = params
+    recoveryDepth: number
+  }): Promise<'handled' | 'continue'> {
+    const { streamState, conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth } = params
 
-    if (!streamState.messageStopReceived && !this.s.circuitBreaker.isBroken && !timedOut) {
-      this.s.log.warn(
-        `[PIPELINE:stream-incomplete] Stream ended without MessageStop event for conversationId=${conversationId}`
-      )
-    }
-
-    this.s.log.info(
-      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${this.s.accumulatedText.length}`
-    )
-
-    // ── Auto-continue on max_turns (also triggered by local plan circuit breaker) ──
-    // BUT: skip if the underlying cause was API overload — retrying is pointless
+    // Skip if the underlying cause was API overload
     if (streamState.overloadDetected && streamState.lastTerminalReason === 'max_turns') {
       this.s.log.warn(
         `[PIPELINE:overload-skip-continue] Skipping auto-continue — API overload detected for conversationId=${conversationId}`
@@ -227,23 +217,17 @@ export class AgentRecoveryManager {
       this.s.flushTokenUsage()
       this.s.emit('statusUpdate', this.s.getStatus())
       this.s.emit('complete')
-      return
+      return 'handled'
     }
 
     if (
       streamState.lastTerminalReason === 'max_turns' &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
-      // N7: Shared continuation logic
       await this.continueTurnLimit({
-        conversationId,
-        systemPrompt,
-        isBuildMode,
-        mcpResult,
-        llmProvider,
-        recoveryDepth
+        conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth
       })
-      return // executeStream handles its own finalization
+      return 'handled'
     }
 
     // All auto-continuations exhausted
@@ -261,10 +245,23 @@ export class AgentRecoveryManager {
       } as StreamChunk)
     }
 
-    // ── Plan-mode tool-block recovery ───────────────────────────────────────
-    // The model tried a blocked Write/Edit in Plan mode (auto-flagged by the
-    // stream processor). Fire a deterministic emit_plan recovery so the user
-    // still gets a plan card. Skip the silent-completion nudge below if we do.
+    return 'continue'
+  }
+
+  /**
+   * Plan-mode tool-block recovery + nudge attempt.
+   */
+  private async attemptStreamRecovery(params: {
+    streamState: StreamLoopState
+    conversationId: string
+    systemPrompt: string
+    isBuildMode: boolean
+    timedOut: boolean
+  }): Promise<void> {
+    const { streamState, conversationId, systemPrompt, isBuildMode, timedOut } = params
+
+    // Plan-mode tool-block recovery: fire a deterministic emit_plan recovery
+    // so the user still gets a plan card.
     let planRecoveryAttempted = false
     if (
       streamState.planModeToolBlock &&
@@ -294,10 +291,10 @@ export class AgentRecoveryManager {
         planRecoveryAttempted = result.attempted
       } catch (err) {
         this.s.log.warn('[PIPELINE:plan-recovery-failed] Non-critical:', err)
-        // Continue finalization without plan tool recovery
       }
     }
 
+    // Nudge: attempt recovery if tool calls occurred without trailing text
     const skipNudgeReasons = new Set([
       'max_turns',
       'hook_stopped',
@@ -341,7 +338,16 @@ export class AgentRecoveryManager {
       )
       this.s.accumulatedText += recoveryResult.text
     }
+  }
 
+  /**
+   * Capture summary, detect intents, mark plan completed, emit baseline response.
+   */
+  private captureSummaryAndIntents(
+    conversationId: string,
+    llmProvider: LLMProvider,
+    recoveryDepth: number
+  ): void {
     // Auto-capture conversation summary for ALL providers
     if (this.s.accumulatedText.length > 100) {
       try {
@@ -404,6 +410,143 @@ export class AgentRecoveryManager {
     this.s.emit('complete')
   }
 
+  // ── finalizeStream ────────────────────────────────────────────────────
+
+  async finalizeStream(params: {
+    conversationId: string
+    systemPrompt: string
+    isBuildMode: boolean
+    recoveryDepth: number
+    timedOut: boolean
+    streamState: StreamLoopState
+    mcpResult: AdapterMcpResult
+    llmProvider: LLMProvider
+  }): Promise<void> {
+    const {
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      recoveryDepth,
+      timedOut,
+      streamState,
+      mcpResult,
+      llmProvider
+    } = params
+
+    if (!streamState.messageStopReceived && !this.s.circuitBreaker.isBroken && !timedOut) {
+      this.s.log.warn(
+        `[PIPELINE:stream-incomplete] Stream ended without MessageStop event for conversationId=${conversationId}`
+      )
+    }
+
+    this.s.log.info(
+      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${this.s.accumulatedText.length}`
+    )
+
+    // Step 1: Handle overload / max_turns auto-continue
+    const overloadResult = await this.handleOverloadOrMaxTurns({
+      streamState, conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth
+    })
+    if (overloadResult === 'handled') return
+
+    // Step 2: Plan-mode tool-block recovery + nudge
+    await this.attemptStreamRecovery({
+      streamState, conversationId, systemPrompt, isBuildMode, timedOut
+    })
+
+    // Step 3: Summary capture, intent detection, completion
+    this.captureSummaryAndIntents(conversationId, llmProvider, recoveryDepth)
+  }
+
+  // ── handleStreamError helpers ──────────────────────────────────────────
+
+  /** Save partial progress on error (local LLMs only). */
+  private saveErrorProgress(): void {
+    if (
+      this.s.llmProvider !== 'local-llm' ||
+      this.s.accumulatedText.length <= 50 ||
+      !this.s.currentConversationId
+    ) {
+      return
+    }
+    try {
+      const summary = this.extractStructuredSummary(this.s.currentConversationId)
+      if (summary) {
+        conversationRepository.updateSummary(this.s.currentConversationId, summary)
+        this.s.log.info(
+          `[S6:error-summary-saved] conversationId=${this.s.currentConversationId} len=${summary.length}`
+        )
+      }
+    } catch {
+      /* non-fatal */
+    }
+    this.saveCurrentPlanState(this.s.currentConversationId)
+  }
+
+  /** Classify a stream error into one of the known categories. */
+  private classifyStreamError(
+    error: Error,
+    timedOut: boolean
+  ): {
+    isOverload: boolean
+    isMaxTurns: boolean
+    isContextOverflow: boolean
+    isAbort: boolean
+  } {
+    const isAbort = error.name === 'AbortError'
+    const isOverload =
+      !timedOut &&
+      !isAbort &&
+      /529|overloaded|server_is_overloaded|503 Service/i.test(error.message)
+    const isMaxTurns =
+      !timedOut && !isAbort && error.message?.includes('maximum number of turns')
+    const isContextOverflow =
+      !timedOut &&
+      !isAbort &&
+      this.s.llmProvider === 'local-llm' &&
+      (error.message?.includes('context length') ||
+        error.message?.includes('maximum context') ||
+        error.message?.includes('too many tokens') ||
+        error.message?.includes('exceeds max context') ||
+        error.message?.includes('context window') ||
+        error.message?.includes('token limit'))
+    return { isOverload, isMaxTurns, isContextOverflow, isAbort }
+  }
+
+  /** Handle AbortError — either timeout or user cancellation. */
+  private handleAbortOrTimeout(
+    error: Error,
+    timedOut: boolean,
+    effectiveTimeoutMs?: number
+  ): void {
+    if (timedOut) {
+      const actualTimeoutMin = Math.round(
+        (effectiveTimeoutMs ?? SESSION_CONSTANTS.MAX_INTERACTION_TIMEOUT_MS) / 60_000
+      )
+      this.s.log.error('SDK query timed out')
+      this.s.emit('chunk', {
+        type: 'text',
+        content:
+          '\n\n---\n\n' +
+          `⏱️ **Session timed out** after ${actualTimeoutMin} minutes ` +
+          `(${this.s.circuitBreaker.count} tool calls made). ` +
+          'This usually means the task is taking longer than expected, not that something is broken.\n\n' +
+          'The session is preserved — send another message to continue where I left off, ' +
+          'or try breaking the task into smaller steps.'
+      } as StreamChunk)
+    } else {
+      this.s.log.info('SDK query cancelled by user')
+    }
+  }
+
+  /** Emit idle status + complete for graceful early-return paths. */
+  private emitIdleComplete(): void {
+    this.s.currentStatus = 'idle'
+    this.s.flushTokenUsage()
+    this.s.emit('statusUpdate', this.s.getStatus())
+    this.s.emit('complete')
+  }
+
   // ── handleStreamError ─────────────────────────────────────────────────
 
   async handleStreamError(
@@ -413,33 +556,12 @@ export class AgentRecoveryManager {
     effectiveTimeoutMs?: number
   ): Promise<void> {
     this.s.sdkAbortController = null
+    this.saveErrorProgress()
 
-    // Save partial progress on error (local LLMs)
-    if (
-      this.s.llmProvider === 'local-llm' &&
-      this.s.accumulatedText.length > 50 &&
-      this.s.currentConversationId
-    ) {
-      try {
-        const summary = this.extractStructuredSummary(this.s.currentConversationId)
-        if (summary) {
-          conversationRepository.updateSummary(this.s.currentConversationId, summary)
-          this.s.log.info(
-            `[S6:error-summary-saved] conversationId=${this.s.currentConversationId} len=${summary.length}`
-          )
-        }
-      } catch {
-        /* non-fatal */
-      }
-      this.saveCurrentPlanState(this.s.currentConversationId)
-    }
+    const { isOverload, isMaxTurns, isContextOverflow, isAbort } =
+      this.classifyStreamError(error, timedOut)
 
-    // ── Detect API overload errors — don't auto-continue ──
-    const isOverload =
-      !timedOut &&
-      error.name !== 'AbortError' &&
-      /529|overloaded|server_is_overloaded|503 Service/i.test(error.message)
-
+    // API overload — don't auto-continue
     if (isOverload) {
       this.s.log.warn(`[PIPELINE:overload-error] API overload error: ${error.message}`)
       this.s.emit('chunk', {
@@ -450,37 +572,42 @@ export class AgentRecoveryManager {
           'This is a server-side issue and not a problem with your request.\n\n' +
           'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).'
       } as StreamChunk)
-      this.s.currentStatus = 'idle'
-      this.s.flushTokenUsage()
-      this.s.emit('statusUpdate', this.s.getStatus())
-      this.s.emit('complete')
+      this.emitIdleComplete()
       return
     }
 
-    // ── Auto-continue on max_turns error ──
-    const isMaxTurns =
-      !timedOut && error.name !== 'AbortError' && error.message?.includes('maximum number of turns')
-
+    // Auto-continue on max_turns error
     if (
       isMaxTurns &&
       this.s.lastStreamOpts &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
-      // N7: Shared continuation logic
-      const { conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider } =
+      // AUTOCONT-STALE-MCP-01: Rebuild mcpResult from adapter to pick up any
+      // MCP config changes made since the stream started. lastStreamOpts captured
+      // mcpResult at executeStream() entry — using it directly risks invoking
+      // disabled tools or missing newly-enabled ones.
+      const { conversationId, systemPrompt, isBuildMode, llmProvider } =
         this.s.lastStreamOpts
+      let freshMcpResult = this.s.lastStreamOpts.mcpResult
+      try {
+        freshMcpResult = this.s.adapter.buildMcpConfig({
+          mode: this.s.currentMode,
+          workspacePath: this.s.workspacePath!,
+          workspaceId: this.s.workspaceId,
+          conversationId: this.s.currentConversationId,
+          contextTier: this.s.lastStreamOpts.contextTier
+        })
+      } catch {
+        // Non-fatal: fall back to stale mcpResult
+        this.s.log.warn('[PIPELINE:error-autocont] Failed to rebuild mcpResult — using stale config')
+      }
       await this.continueTurnLimit({
-        conversationId,
-        systemPrompt,
-        isBuildMode,
-        mcpResult,
-        llmProvider,
-        recoveryDepth
+        conversationId, systemPrompt, isBuildMode, mcpResult: freshMcpResult, llmProvider, recoveryDepth
       })
       return
     }
 
-    // Max turns as SDK error — all continuations exhausted
+    // Max turns — all continuations exhausted
     if (isMaxTurns) {
       this.s.log.info(
         `[PIPELINE:max-turns-exhausted-error] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
@@ -490,33 +617,17 @@ export class AgentRecoveryManager {
         type: 'text',
         content: TURN_LIMIT_EXHAUSTED_MSG
       } as StreamChunk)
-      this.s.currentStatus = 'idle'
-      this.s.flushTokenUsage()
-      this.s.emit('statusUpdate', this.s.getStatus())
-      this.s.emit('complete')
+      this.emitIdleComplete()
       return
     }
 
-    // Context overflow detection — graceful handling for local LLMs
-    const isContextOverflow =
-      !timedOut &&
-      error.name !== 'AbortError' &&
-      this.s.llmProvider === 'local-llm' &&
-      (error.message?.includes('context length') ||
-        error.message?.includes('maximum context') ||
-        error.message?.includes('too many tokens') ||
-        error.message?.includes('exceeds max context') ||
-        error.message?.includes('context window') ||
-        error.message?.includes('token limit'))
-
+    // Context overflow — graceful handling for local LLMs
     if (isContextOverflow && this.s.currentConversationId) {
       this.s.log.warn(
         `[S10:context-overflow] conversationId=${this.s.currentConversationId} — ` +
           `saving progress and emitting recovery message. Error: ${error.message}`
       )
-
       this.saveCurrentPlanState(this.s.currentConversationId)
-
       this.s.emit('chunk', {
         type: 'text',
         content:
@@ -526,33 +637,13 @@ export class AgentRecoveryManager {
           "I'll pick up the plan from the saved context.\n\n" +
           '_Tip: Try breaking complex requests into smaller, focused steps._'
       } as StreamChunk)
-
-      this.s.currentStatus = 'idle'
-      this.s.flushTokenUsage()
-      this.s.emit('statusUpdate', this.s.getStatus())
-      this.s.emit('complete')
+      this.emitIdleComplete()
       return
     }
 
-    if (error.name === 'AbortError') {
-      if (timedOut) {
-        const actualTimeoutMin = Math.round(
-          (effectiveTimeoutMs ?? SESSION_CONSTANTS.MAX_INTERACTION_TIMEOUT_MS) / 60_000
-        )
-        this.s.log.error('SDK query timed out')
-        this.s.emit('chunk', {
-          type: 'text',
-          content:
-            '\n\n---\n\n' +
-            `⏱️ **Session timed out** after ${actualTimeoutMin} minutes ` +
-            `(${this.s.circuitBreaker.count} tool calls made). ` +
-            'This usually means the task is taking longer than expected, not that something is broken.\n\n' +
-            'The session is preserved — send another message to continue where I left off, ' +
-            'or try breaking the task into smaller steps.'
-        } as StreamChunk)
-      } else {
-        this.s.log.info('SDK query cancelled by user')
-      }
+    // Abort / timeout / generic error
+    if (isAbort) {
+      this.handleAbortOrTimeout(error, timedOut, effectiveTimeoutMs)
     } else {
       this.s.log.error('SDK send failed:', error)
       this.s.emit('chunk', {
@@ -560,6 +651,7 @@ export class AgentRecoveryManager {
         error: `${this.s.adapter.role} SDK error: ${error.message}`
       } as StreamChunk)
     }
+
     this.s.currentStatus = 'failed'
     this.s.flushTokenUsage()
     this.s.emit('statusUpdate', this.s.getStatus())

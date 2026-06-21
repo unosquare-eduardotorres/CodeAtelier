@@ -222,7 +222,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   const summarySection = false
 
   const problemAnalysisSection = structuredPlan?.problemSummary && (
-    <div className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3">
+    <div data-testid="task-plan-investigation" className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3">
       <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)] mb-2">
         <Search size={14} className="text-[var(--color-plan-card)]" />
         Problem Analysis
@@ -288,7 +288,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   )
 
   const filesChangedSection = visibleFilesChanged.length > 0 && (
-    <div className="space-y-2">
+    <div data-testid="task-plan-implementation" className="space-y-2">
       <div className="flex items-center gap-2 text-sm font-semibold text-text-primary">
         <FileCode size={14} className="text-[var(--color-plan-card)]" />
         Files Changed

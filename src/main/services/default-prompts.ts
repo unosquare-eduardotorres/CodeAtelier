@@ -1,4 +1,3 @@
-import { MCP_TOOLS } from '../../shared/constants'
 import type { CommunicationTone, ConversationMode } from '../../shared/types'
 
 /**
@@ -15,70 +14,30 @@ import type { CommunicationTone, ConversationMode } from '../../shared/types'
  * for non-customized rows).
  */
 
-export const ASK_QUESTION_PROMPT = `## Asking Clarifying Questions
+export const ASK_QUESTION_PROMPT = `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
 
-When you need to ask the user a question with specific options to choose from, use the **ask_user** tool.
+/** Unified — lean-eligible models (Sonnet 4.6+, Opus 4.8+) and Haiku share this block. */
+export const ASK_QUESTION_PROMPT_LEAN = ASK_QUESTION_PROMPT
 
-ask_user parameters:
-- questions: array of { question, header?, options?: [{ label, description? }] }
-- Mark one option's description with "(recommended)" when you have a clear preference
-- Keep question count between 1 and 4 per call
-- The UI renders this as an interactive card with radio buttons / checkboxes
-- Do NOT also write the options as plain text — the card replaces that
-- If no predefined options are needed, omit the options array for a free-form text response`
+export const MEMORY_PROTOCOL_PROMPT = `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
 
-/**
- * Compressed ask_user guidance for Opus 4.8+ models.
- * Opus sees tool schemas natively — only needs behavioral reminders.
- */
-export const ASK_QUESTION_PROMPT_LEAN = `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
+/** Unified — type taxonomy is the only value the model can't derive from the schema. */
+export const MEMORY_PROTOCOL_PROMPT_LEAN = MEMORY_PROTOCOL_PROMPT
 
-export const MEMORY_PROTOCOL_PROMPT = `## Memory Protocol
-
-When you learn something worth remembering across sessions, use the **emit_memory** tool.
-
-emit_memory parameters:
-- type: "user" (preferences, cross-workspace), "feedback" (corrections, cross-workspace), "project" (architecture decisions, per-workspace), "reference" (links/docs, per-workspace)
-- title: short descriptive title
-- content: what to remember — be specific and actionable
-
-Emit when: user states a preference, corrects you, makes an architecture decision, or shares reference material.
-Do NOT emit for: transient discussion, info already in CLAUDE.md/Auto Memory, or trivial facts.`
-
-/**
- * Lean memory protocol for Opus 4.8+ models.
- * Opus uses emit_memory naturally but needs the type taxonomy
- * to scope memories correctly (user vs project vs feedback vs reference).
- */
-export const MEMORY_PROTOCOL_PROMPT_LEAN = `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
-
-export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph — Tool Priority Rules
-
-**STOP before using Read, Grep, or Glob on source files.**
-1. FIRST tool call for code investigation → \`${MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name}\` or \`${MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name}\`.
-2. Read ONLY after a Code Graph tool tells you which file + lines.
-3. Grep ONLY for exact strings, regex, or content inside function bodies.
-4. Glob ONLY when no symbol name is known.
-5. For deprecated code (still used): Grep "@deprecated" — mcp__code-graph__find_dead_code only finds zero-reference symbols.
-6. Use **mcp__code-graph__file_outline** before Read on large files — get the structural map first, then read targeted line ranges.
-7. For impact analysis ("who uses X?") → **mcp__code-graph__find_callers**. For dependency chains ("what does X depend on?") → **mcp__code-graph__find_callees**. For all references (imports, type annotations, call sites) → **mcp__code-graph__find_references**.
-8. For blast radius ("what breaks if I change this file?") → **mcp__code-graph__file_dependents**. For module imports → **mcp__code-graph__file_dependencies**.
-9. For architecture audits → **mcp__code-graph__coupling_analysis** + **mcp__code-graph__circular_dependencies** + **mcp__code-graph__module_boundary_health** give quantitative metrics without manual file traversal. For load-bearing symbols → **mcp__code-graph__symbol_hotspots**.`
-
-export const REPOMAP_GUIDANCE_PROMPT_LEAN = `## Code Graph
+export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph
 search_identifiers or graph_map FIRST — not Read/Grep/Glob.
 Read only files identified by code intelligence. Grep for exact strings/regex.
 file_outline before Read on large files.
 Impact → find_callers/find_references. Architecture → coupling_analysis + circular_dependencies.`
 
-export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search — Priority Rules
+export const REPOMAP_GUIDANCE_PROMPT_LEAN = REPOMAP_GUIDANCE_PROMPT
 
-Use **mcp__semantic-search__semantic_search** FIRST for conceptual queries ("authentication", "JWT handling"). Prefer over Grep for meaning-based searches. Grep only for exact strings/regex. Combine with Code Graph for structure + concept coverage.
-Use **mcp__semantic-search__similar_code** for duplicate detection and pattern consistency checks — pass a code snippet, get nearest neighbors by embedding similarity.`
-
-export const SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN = `## Semantic Search
+export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search
 
 semantic_search for concepts, similar_code for duplicates/patterns. Prefer over Grep for meaning-based queries.`
+
+/** Unified — FQDNs are already in tool schemas. */
+export const SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN = SEMANTIC_SEARCH_GUIDANCE_PROMPT
 
 export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context
 
@@ -98,47 +57,25 @@ PR status, review comments, issues. Not for creating — use \`gh\` CLI.`
 
 export const GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN = GITHUB_CONTEXT_GUIDANCE_PROMPT
 
-export const CODE_ANALYSIS_GUIDANCE_PROMPT = `## Code Analysis — When to Use
-
-Use **mcp__code-analysis__todo_scanner** to quantify tech debt markers (TODO/FIXME/HACK) — faster than Grep, with pattern-grouped counts.
-Use **mcp__code-analysis__test_coverage_map** to find untested source files by convention (no coverage runner needed).
-Use **mcp__code-analysis__dependency_health** for package.json audits — optionally checks npm outdated.`
-
-export const CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN = `## Code Analysis
+export const CODE_ANALYSIS_GUIDANCE_PROMPT = `## Code Analysis
 
 todo_scanner for tech debt, test_coverage_map for untested files, dependency_health for package audits.`
 
-export const LIBRARY_DOCS_GUIDANCE_PROMPT = `## Library Documentation
+/** Unified — FQDNs are already in tool schemas. */
+export const CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN = CODE_ANALYSIS_GUIDANCE_PROMPT
 
-For external library APIs: \`resolve_library_id\` → \`query_library_docs\` for current docs.
-Use BEFORE writing code with library APIs you're not certain about (Zod, Electron, MCP SDK, React, Tailwind, Vite).
-Not for internal code (use Code Graph). Call resolve_library_id once per library per session.`
-
-export const LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN = `## Library Docs
+export const LIBRARY_DOCS_GUIDANCE_PROMPT = `## Library Docs
 resolve_library_id → query_library_docs for current API docs.
 Use for external library APIs (Zod, Electron, MCP SDK, React, Tailwind). Not internal code (use Code Graph).
 Fallback: local cache → Context7 → npm. Call resolve once per library per session.`
 
-export const ESLINT_GUIDANCE_PROMPT = `## ESLint — Code Quality Gate
+/** Unified — lean variant had the better coverage (includes fallback chain). */
+export const LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN = LIBRARY_DOCS_GUIDANCE_PROMPT
 
-ESLint tools check and fix code style/quality issues using the workspace's own ESLint config.
-
-### Tools
-- **eslint_check** — lint files and return issues. Omit paths to lint only git-changed files.
-- **eslint_fix** — auto-fix what ESLint can, report remaining issues.
-- **eslint_rules** — list active rules for a file (useful when debugging a violation).
-
-### Mandatory Workflow
-**After completing any code change in Build mode**, run:
-1. \`eslint_check\` (no paths → scans changed files only)
-2. If errors found → \`eslint_fix\` on affected files
-3. Re-run \`eslint_check\` to confirm zero errors
-4. Do NOT submit work with unresolved ESLint errors
-
-### Rules
-- NEVER disable an ESLint rule to bypass errors (no \`eslint-disable\`, no rule config changes)
-- Fix the root cause instead
-- Warnings are acceptable; errors are NOT`
+export const ESLINT_GUIDANCE_PROMPT = `## ESLint
+eslint_check, eslint_fix, eslint_rules for workspace ESLint config.
+MANDATORY after code changes in Build mode: eslint_check → eslint_fix → re-check until 0 errors.
+Never eslint-disable to bypass. Fix root cause. Warnings OK; errors are NOT.`
 
 export const ESLINT_GUIDANCE_PROMPT_LEAN = `## ESLint
 eslint_check (omit paths → changed files), eslint_fix, eslint_rules.
@@ -152,36 +89,15 @@ Cloud: list_cloud_devices → run_on_cloud → get_cloud_status.
 Always call list_devices, cheat_sheet, and inspect_screen before run. Plan mode: inspect and screenshot only.
 Use testID selectors. Add assertVisible sync points after navigation taps.`
 
-/**
- * Compressed Maestro guidance for Opus 4.8+ models.
- * ~70% reduction from the full variant.
- */
-export const MAESTRO_GUIDANCE_PROMPT_LEAN = `## Maestro Mobile Testing
-
-Workflow: list_devices → inspect_screen → cheat_sheet → run → take_screenshot.
-Cloud: list_cloud_devices → run_on_cloud → get_cloud_status.
-Always call list_devices, cheat_sheet, and inspect_screen before run. Plan mode: inspect and screenshot only.
-Use testID selectors. Add assertVisible sync points after navigation taps.`
+/** Unified — both variants are now identical after Wave 1 compression. */
+export const MAESTRO_GUIDANCE_PROMPT_LEAN = MAESTRO_GUIDANCE_PROMPT
 
 export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode
-CRITICAL: For follow-up questions about the current conversation ("why did you suggest X?", "what does Y mean?"), ALWAYS answer from your conversation history. Do NOT read files for conversational follow-ups.
+Follow-up about the conversation? Answer from context — no tools. Keep to 1-3 paragraphs.
+Only use tools for NEW information not in context.
+Once answered, STOP — don't call tools to verify or double-check.`
 
-If the user's question references something YOU said or planned:
-1. Answer from your conversation context — the answer is already there
-2. Do NOT use any tools
-3. Keep the answer to 1-3 paragraphs
-
-Only use tools for NEW information requests not already in your context.
-
-### Answer-Complete Rule
-- Once you have written a complete text answer, STOP. Do NOT call tools to verify or double-check what you just said.
-- Pattern: answer the question → end turn. Never: answer the question → call tool to confirm.
-- If you need tool data to answer, call tools FIRST, then write your answer. Never the reverse.`
-
-/**
- * Compressed direct-answer boost for Opus 4.8+ models.
- * 84% reduction from the full variant.
- */
+/** Compressed direct-answer boost for lean-eligible models (Sonnet 4.6+, Opus 4.8+). */
 export const DIRECT_ANSWER_BOOST_PROMPT_LEAN = `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
 
 // ── Plan & Direct Answer conditional prefix constants ─────────────────────
@@ -192,20 +108,10 @@ export const PLAN_REMINDER_LEAN = `[Use emit_plan for plans — do not use Write
 
 export const DIRECT_ANSWER_PLAN_MODE_EARLY = `[This is a question — answer it directly in plain text. Do NOT call emit_plan for explanations or Q&A.]`
 
-export const IMAGE_ATTACHMENTS_PROMPT = `## Image Attachments
+export const IMAGE_ATTACHMENTS_PROMPT = `[Image attached — analyze it directly. Don't search the filesystem for it.]`
 
-When the user shares images (screenshots, diagrams, error pages):
-- **Analyze the image content directly** — you can see it. Describe what you observe.
-- **NEVER search the filesystem** for the image. It is already in the conversation.
-- **NEVER use Bash** to find screenshots, PNGs, or clipboard files.
-- If the image shows an error — diagnose from what's visible.
-- If the image shows UI — provide feedback on what you see.`
-
-/**
- * Compressed image guidance for Opus 4.8+ models.
- * Opus doesn't search the filesystem for attached images.
- */
-export const IMAGE_ATTACHMENTS_PROMPT_LEAN = `[Image attached — analyze it directly. Don't search the filesystem for it.]`
+/** Unified — only the 1-line behavioral reminder is needed; models process images inline. */
+export const IMAGE_ATTACHMENTS_PROMPT_LEAN = IMAGE_ATTACHMENTS_PROMPT
 
 // ── Communication Tone Style Directives ──
 
@@ -252,19 +158,17 @@ ${styleDirective}
 - **ask_user**: for clarifying questions OR the specialist-swap proposal (see below)
 - **emit_memory**: for cross-session learnings
 
-## Specialist-Swap Proposal (IMPORTANT)
-The system may inject "[PROJECT SPECIALIST READY: <name>]" at the start of a user turn. When you see this:
-
-1. Finish answering the current message briefly, then call **ask_user** with \`action: "swap-to-specialist"\` — question: "A Project Specialist named <name> is ready. Swap to it?", options: ["Swap now", "Keep DaVinci for now"].
-2. Do NOT perform the swap yourself or repeat the proposal on later turns — the signal fires once and the app handles the transition.
+## Specialist-Swap
+When "[PROJECT SPECIALIST READY: <name>]" appears: finish answering, then call ask_user
+with action: "swap-to-specialist" and two options (Swap now / Keep DaVinci).
+Don't perform the swap — the UI handles it. Don't repeat if already asked.
 `
 }
 
 /**
- * Lean DaVinci identity prompt for Opus 4.8+ models.
- * These models natively narrate tool usage, produce final summaries,
- * and use code intelligence tools first — so the explicit mandates
- * are replaced with concise reminders.
+ * Lean DaVinci identity prompt for lean-eligible models (Sonnet 4.6+, Opus 4.8+).
+ * These models natively narrate tool usage and use code intelligence first
+ * — explicit mandates replaced with concise reminders.
  */
 export function buildDaVinciIdentityPromptLean(tone: CommunicationTone = 'default'): string {
   const styleDirective = TONE_STYLE_DIRECTIVES[tone] ?? TONE_STYLE_DIRECTIVES.default
@@ -325,22 +229,12 @@ Workflow — a fixed four-step sequence:
 3. **Synthesize** — write findings/reasoning as text. This is the last text you write.
 4. **Emit** — call **emit_plan** as the final action. Write ZERO characters after it — the card is the deliverable.
 
-### Plan Quality
-- Reference real file paths, symbols, and module structure — never guess
-- Every step: which file changes, what changes, and why
-
 ### Plan Type
 Set \`type\`: bug (problemSummary, rootCauses, verification), feature (currentState, phases, implementationOrder), refactor (currentState, phases, filesChanged), audit (findings as phases, diagrams), investigation (problemSummary, rootCauses, verification).
+Plans must reference real file paths. Bug/investigation plans: include \`verification\` criteria. Complex (>5 files): use \`phases\` with complexity/risk.
 
 ### Diagrams
 Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD. No yellow/pink/orange/lime fills.
-
-### Verification Criteria
-For bug/investigation plans, include \`verification\` — numbered acceptance criteria:
-  "1. [Scenario]: [Action] → [Expected result]"
-
-### Phased Plans
-For complex changes (>5 files): use \`phases\` with complexity 1-10, file count, risk level (low/medium/high), and per-file change descriptions.
 
 ### Operational Requests
 Redirect: "That requires Build mode — toggle it in the chat header and I'll run it for you."
@@ -391,35 +285,19 @@ Call **emit_plan** with findings. After "Build Now" confirmation, implement.
 export const DANGER_MODE_SECTION = `
 ## Mode: Danger (unrestricted)
 
-All permission checks are bypassed. Every tool call executes immediately without safety review.
-You have full system access: read, write, execute, delete — no guardrails.
+All permission checks bypassed. Full system access: read, write, execute, delete — no guardrails.
+For isolated environments only (containers, VMs, dev containers).
 
-### When to use
-This mode should only be active in isolated environments (containers, VMs, dev containers).
-
-### Operational Rules
-- Execute any command the user requests without confirmation prompts.
-- Same STOP rules as Build mode apply (report failures, don't auto-debug).
-- Destructive commands (rm -rf, git reset --hard, drop table) execute without asking — the user
-  opted into this by choosing Danger mode.
-
-### Writing Code
-- You MAY create/modify/delete any file type — same conventions as Build mode.
-- Follow the project's existing conventions (imports, naming, error handling, test patterns).
-- After code edits, run \`npm run typecheck\` (and \`npm run lint\` if available). Fix failures up to 2×.
-
-### Response Format (MANDATORY)
-- Operational responses must be ≤5 lines
-- Format: command → result → concise outcome
-- No dashboards, emoji bullets, repeated status, or decorative headers
+### Rules
+- Execute any command without confirmation — including destructive commands (rm -rf, git reset --hard, drop table).
+- Same STOP rules as Build mode: report failures and STOP — no auto-debug/retry.
+- Follow project conventions for code. Run typecheck + lint after edits, fix up to 2×.
+- ≤5 lines per operational response. No dashboards or emoji bullets.
 `
 
-// ── Lean Mode Sections (Opus 4.8+) ───────────────────────────────────────────
+// ── Lean Mode Sections (Sonnet 4.6+, Opus 4.8+) ───────────────────────────────────
 
-/**
- * Compressed Plan mode section for Opus 4.8+ models.
- * Removes redundant guidance the model follows naturally.
- */
+/** Compressed Plan mode for lean-eligible models (Sonnet 4.6+, Opus 4.8+). */
 export const PLAN_MODE_SECTION_LEAN = `
 ## Mode: Plan (read-only)
 
@@ -444,9 +322,7 @@ Complex changes (>5 files): use \`phases\` with complexity 1-10, file count, ris
 Redirect: "That requires Build mode — toggle it in the chat header and I'll run it for you."
 `
 
-/**
- * Compressed Build mode section for Opus 4.8+ models.
- */
+/** Compressed Build mode for lean-eligible models. */
 export const BUILD_MODE_SECTION_LEAN = `
 ## Mode: Build (read + execute + write)
 
@@ -471,9 +347,7 @@ Stale file / string not found → re-read and retry. Only report actual EACCES/p
 ≤5 lines. command → result → outcome.
 `
 
-/**
- * Compressed Danger mode section for Opus 4.8+ models.
- */
+/** Compressed Danger mode for lean-eligible models. */
 export const DANGER_MODE_SECTION_LEAN = `
 ## Mode: Danger (unrestricted)
 
@@ -508,7 +382,7 @@ export const MODE_CONTEXT_SECTIONS: Record<ConversationMode, string> = {
   danger: DANGER_MODE_SECTION
 }
 
-/** Lean per-message mode blocks for capable models (Opus 4.8+) */
+/** Lean per-message mode blocks for lean-eligible models (Sonnet 4.6+, Opus 4.8+). */
 export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
   plan: PLAN_MODE_SECTION_LEAN,
   build: BUILD_MODE_SECTION_LEAN,
@@ -517,12 +391,8 @@ export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
 
 // ── Tool Priority Directive ────────────────────────────────────────────────
 /**
- * Centralized plan output guidance — single source of truth for emit_plan awareness.
- * Referenced by: specialist template, DaVinci identity, local LLM directive,
- * PLAN_MODE_SECTION, and turn-2+ reminders.
- *
- * Full version: explicit workflow for models that need guidance (Sonnet, Haiku, local LLMs).
- * Lean version: minimal for Opus 4.8+ (infers usage from tool schema).
+ * @deprecated W3-F3: No longer injected on turn 2+. Mode-context blocks carry the
+ * full emit_plan workflow. Kept for back-compat but unused by prompt-assembly-helpers.
  */
 export const PLAN_OUTPUT_GUIDANCE = `## Plan Output
 For action/change requests (implement, fix, refactor, add, investigate, audit, review):
@@ -533,10 +403,10 @@ For action/change requests (implement, fix, refactor, add, investigate, audit, r
 
 **emit_plan** ends the turn — write ZERO characters after it (no trailing summary, no "I emitted the plan" line); the card replaces it.
 Plain-text plans are NOT actionable — only emit_plan renders interactive cards.
-Write/Edit are blocked in Plan mode — but emit_plan is ALWAYS available. Authoring a plan as a file via Write/Edit will fail with "No such tool available" — use emit_plan instead.
 Questions (why/what/how/explain) → answer directly in text. Do NOT use emit_plan for Q&A.`
 
-export const PLAN_OUTPUT_GUIDANCE_LEAN = `Use **emit_plan** for action/change proposals — not plain text. Gather blocking decisions with **ask_user** before emitting and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected). emit_plan is the LAST action — it ends the turn with ZERO trailing text; the card replaces it. Authoring a plan via Write/Edit is blocked and will error — only emit_plan delivers a plan. Questions → text answer.`
+/** @deprecated W3-F3: Removed from turn 2+ injection. Mode-context carries emit_plan guidance. */
+export const PLAN_OUTPUT_GUIDANCE_LEAN = `Use **emit_plan** for action/change proposals — not plain text. Gather blocking decisions with **ask_user** before emitting and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected). emit_plan is the LAST action — it ends the turn with ZERO trailing text; the card replaces it. Questions → text answer.`
 
 // Shared constant injected into evaluation agent prompts (grill, council, audit, MPA).
 // Changing this single constant updates all agents simultaneously.

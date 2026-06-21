@@ -283,6 +283,7 @@ function BubbleContentBody({
 
   return (
     <div
+      data-testid="message-bubble-content"
       className={`rounded shadow-sm ${
         isUser
           ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${isGrillActivation ? 'border-grill' : 'border-primary'}`
@@ -476,7 +477,7 @@ function MessageBubbleInner({
         }`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
-          <span className="text-sm font-semibold text-text-primary leading-tight">
+          <span data-testid="message-bubble-identity" className="text-sm font-semibold text-text-primary leading-tight">
             {identity.displayName}
           </span>
           {identity.subtitle && (

@@ -44,6 +44,93 @@ import {
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
+// ── useAppLayoutEffects ───────────────────────────────────────────────
+
+function useAppLayoutEffects({
+  activeConversation,
+  workspaceSpecialistsLength,
+  loadSpecialists,
+  hydrateConversationSpecialists,
+  setShowNewChat,
+  setAppVersion
+}: {
+  activeConversation: { id: string } | null
+  workspaceSpecialistsLength: number
+  loadSpecialists: () => Promise<void>
+  hydrateConversationSpecialists: (id: string) => Promise<void>
+  setShowNewChat: (v: boolean) => void
+  setAppVersion: (v: string) => void
+}): void {
+  // Load app version
+  useEffect(() => {
+    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
+  }, [setAppVersion])
+
+  // Auto-reset showNewChat when a conversation is selected
+  useEffect(() => {
+    if (activeConversation) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowNewChat(false)
+    }
+  }, [activeConversation, setShowNewChat])
+
+  // Load workspace specialists if empty
+  useEffect(() => {
+    if (workspaceSpecialistsLength === 0) {
+      void loadSpecialists().catch(() => undefined)
+    }
+  }, [workspaceSpecialistsLength, loadSpecialists])
+
+  // Hydrate conversation specialists
+  useEffect(() => {
+    if (!activeConversation?.id) return
+    void hydrateConversationSpecialists(activeConversation.id).catch((error) => {
+      console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
+    })
+  }, [activeConversation?.id, hydrateConversationSpecialists])
+}
+
+// ── HeaderIconButton ─────────────────────────────────────────────────
+
+function HeaderIconButton({
+  icon: Icon,
+  isActive,
+  onClick,
+  title,
+  ariaLabel,
+  badge
+}: {
+  icon: typeof Home
+  isActive: boolean
+  onClick: () => void
+  title: string
+  ariaLabel: string
+  badge?: number
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+        isActive
+          ? 'text-primary-text bg-surface-overlay'
+          : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
+      }`}
+      title={title}
+      aria-label={ariaLabel}
+    >
+      <Icon size={16} />
+      {badge !== undefined && badge > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
+// ── AppLayout ─────────────────────────────────────────────────────────
+
 export default function AppLayout(): React.JSX.Element {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [view, setView] = useState<'chat' | 'app-settings' | 'help' | 'bugs'>('chat')
@@ -104,11 +191,6 @@ export default function AppLayout(): React.JSX.Element {
   )
   const councilPhase = useCouncilStore((s) => (s.isActive ? s.phase : null))
 
-  // Load app version once on mount
-  useEffect(() => {
-    window.api.getPlatformInfo().then((info) => setAppVersion(info.appVersion))
-  }, [])
-
   // Bug tracker + audit status for UI
   const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
   const auditRunning = useAuditStore((s) => s.isRunning)
@@ -129,14 +211,6 @@ export default function AppLayout(): React.JSX.Element {
   )
   const indexingState = useIndexingStore((s) => s.indexingState)
 
-  // Auto-reset showNewChat when a conversation is selected
-  useEffect(() => {
-    if (activeConversation) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on selection change
-      setShowNewChat(false)
-    }
-  }, [activeConversation])
-
   const handleZoomIn = useCallback(() => {
     window.api.zoomIn()
   }, [])
@@ -150,19 +224,23 @@ export default function AppLayout(): React.JSX.Element {
   const workspaceSpecialists = useSpecialistStore((state) => state.specialists)
   const loadSpecialists = useSpecialistStore((state) => state.loadSpecialists)
 
-  // Ensure workspace specialists are loaded for downstream components
-  useEffect(() => {
-    if (workspaceSpecialists.length === 0) {
-      void loadSpecialists().catch(() => undefined)
-    }
-  }, [workspaceSpecialists.length, loadSpecialists])
+  // ── Side effects ──
+  useAppLayoutEffects({
+    activeConversation,
+    workspaceSpecialistsLength: workspaceSpecialists.length,
+    loadSpecialists,
+    hydrateConversationSpecialists,
+    setShowNewChat,
+    setAppVersion
+  })
 
-  useEffect(() => {
-    if (!activeConversation?.id) return
-    void hydrateConversationSpecialists(activeConversation.id).catch((error) => {
-      console.error('[AppLayout] Failed to hydrate conversation specialists:', error)
-    })
-  }, [activeConversation?.id, hydrateConversationSpecialists])
+  // Toggle a view — if already active, go to chat; otherwise switch to it
+  const toggleView = useCallback(
+    (target: 'app-settings' | 'help' | 'bugs') => {
+      setView((current) => (current === target ? 'chat' : target))
+    },
+    []
+  )
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
@@ -244,47 +322,10 @@ export default function AppLayout(): React.JSX.Element {
           className="flex items-center gap-1.5 ml-auto relative z-10"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <button
-            type="button"
-            onClick={handleGoHome}
-            className="p-2.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors focus-visible:ring-2 focus-visible:ring-primary/50"
-            title="Home"
-            aria-label="Home"
-          >
-            <Home size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setView(view === 'app-settings' ? 'chat' : 'app-settings')}
-            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'app-settings' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-            title="Settings"
-            aria-label="Settings"
-          >
-            <Sliders size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setView(view === 'bugs' ? 'chat' : 'bugs')}
-            className={`relative p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'bugs' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-            title="Bug Tracker"
-            aria-label="Bug Tracker"
-          >
-            <Bug size={16} />
-            {unresolvedBugCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full">
-                {unresolvedBugCount > 99 ? '99+' : unresolvedBugCount}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setView(view === 'help' ? 'chat' : 'help')}
-            className={`p-2.5 rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${view === 'help' ? 'text-primary-text bg-surface-overlay' : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'}`}
-            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
-            aria-label="Help"
-          >
-            <CircleHelp size={16} />
-          </button>
+          <HeaderIconButton icon={Home} isActive={false} onClick={handleGoHome} title="Home" ariaLabel="Home" />
+          <HeaderIconButton icon={Sliders} isActive={view === 'app-settings'} onClick={() => toggleView('app-settings')} title="Settings" ariaLabel="Settings" />
+          <HeaderIconButton icon={Bug} isActive={view === 'bugs'} onClick={() => toggleView('bugs')} title="Bug Tracker" ariaLabel="Bug Tracker" badge={unresolvedBugCount} />
+          <HeaderIconButton icon={CircleHelp} isActive={view === 'help'} onClick={() => toggleView('help')} title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`} ariaLabel="Help" />
         </div>
       </div>
 

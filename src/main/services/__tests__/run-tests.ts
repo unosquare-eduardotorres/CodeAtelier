@@ -237,6 +237,11 @@ import './memory-service-logic.test'
 import './plan-registry-helpers.test'
 import './zero-coverage-services.test'
 
+// ─── Phase 15: Coverage Mega-Push — pure function tests ───
+import './default-prompts-constants.test'
+import './preprocessing-pure.test'
+import './vector-search-pure.test'
+
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls
 // with `if (import.meta.url === file://${process.argv[1]})` so they only

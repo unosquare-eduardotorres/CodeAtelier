@@ -75,7 +75,7 @@ async function registerTools(): Promise<void> {
   // ── graph_map ──
   server.tool(
     'graph_map',
-    'Generate a ranked repository map of code definitions via PageRank.',
+    'Ranked repository map via PageRank.',
     {
       projectRoot: z.string().describe('Absolute path to the repository root'),
       focusFiles: z.array(z.string()).optional(),
@@ -107,7 +107,7 @@ async function registerTools(): Promise<void> {
   // ── search_identifiers ──
   server.tool(
     'search_identifiers',
-    'Search for code identifiers across the repository via Tree-sitter AST analysis.',
+    'Search code identifiers by name (substring match).',
     {
       query: z.string().describe('Identifier name (case-insensitive substring match)'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
@@ -203,7 +203,7 @@ async function registerTools(): Promise<void> {
   // ── find_callers ──
   server.tool(
     'find_callers',
-    'Find all call-sites and references to a symbol — who calls/imports/references it.',
+    'Find callers of a symbol.',
     {
       symbolName: z.string().describe('Symbol name to find callers of'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
@@ -258,7 +258,7 @@ async function registerTools(): Promise<void> {
   // ── find_callees ──
   server.tool(
     'find_callees',
-    'Find what a symbol depends on — what does it call, import, or reference.',
+    'Find callees of a symbol.',
     {
       symbolName: z.string().describe('Symbol name to find callees of'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
@@ -303,7 +303,7 @@ async function registerTools(): Promise<void> {
   // ── find_references ──
   server.tool(
     'find_references',
-    'Find all cross-file reference sites for a symbol (excluding definitions).',
+    'Find cross-file references to a symbol.',
     {
       symbolName: z.string().describe('Symbol name to find references for'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
@@ -356,7 +356,7 @@ async function registerTools(): Promise<void> {
   // ── file_dependencies ──
   server.tool(
     'file_dependencies',
-    'Find files that a given file depends on (imports, calls, references).',
+    'Find files a file depends on.',
     {
       filePath: z.string().describe('Relative file path to analyze')
     },
@@ -417,7 +417,7 @@ async function registerTools(): Promise<void> {
   // ── symbol_hotspots ──
   server.tool(
     'symbol_hotspots',
-    'Find the most-referenced symbols in the codebase (load-bearing abstractions).',
+    'Find most-referenced symbols.',
     {
       maxResults: z.number().int().min(1).max(500).optional().default(30),
       path: z.string().optional().describe('Filter to symbols in files under this directory')
@@ -486,7 +486,7 @@ async function registerTools(): Promise<void> {
   // ── module_boundary_health ──
   server.tool(
     'module_boundary_health',
-    'Quantify separation of concerns by measuring intra-module vs cross-module edges.',
+    'Measure module boundary health (intra vs cross-module edges).',
     {
       depth: z
         .number()
@@ -506,6 +506,77 @@ async function registerTools(): Promise<void> {
             text: truncateToolOutput(JSON.stringify({ modules: metrics, count: metrics.length }), 10_000)
           }
         ]
+      }
+    }
+  )
+
+  // ── wiring_check ──
+  server.tool(
+    'wiring_check',
+    'Check wiring for multiple files: verifies exports have importers and new symbols are referenced. Use instead of calling file_dependents + find_references separately per file.',
+    {
+      filePaths: z.array(z.string()).min(1).max(20).describe('Files to check wiring for'),
+      symbolNames: z.array(z.string()).optional().describe('Key symbols to verify references for')
+    },
+    async (args) => {
+      const fileResults: Array<{ file: string; dependentCount: number; status: string }> = []
+      for (const filePath of args.filePaths) {
+        const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, filePath)
+        // Deduplicate by source file
+        const uniqueFiles = new Set(deps.map((d) => d.sourceFile))
+        fileResults.push({
+          file: filePath,
+          dependentCount: uniqueFiles.size,
+          status: uniqueFiles.size > 0 ? '✅ Wired' : '❌ No importers'
+        })
+      }
+
+      const symbolResults: Array<{ symbol: string; refCount: number; status: string }> = []
+      if (args.symbolNames) {
+        for (const sym of args.symbolNames) {
+          const refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, sym, {
+            maxResults: 50,
+            includeDefinitions: false,
+            includeReferences: true
+          })
+          // Deduplicate by file+line
+          const seen = new Set<string>()
+          const uniqueRefs = refs.filter((r) => {
+            const key = `${r.relFname}::${r.line}`
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+          symbolResults.push({
+            symbol: sym,
+            refCount: uniqueRefs.length,
+            status: uniqueRefs.length > 0 ? '✅ Used' : '❌ Unreferenced'
+          })
+        }
+      }
+
+      // Build markdown report
+      const lines: string[] = [
+        `### Wiring Check (${fileResults.length} files${symbolResults.length > 0 ? `, ${symbolResults.length} symbols` : ''})\n`
+      ]
+
+      lines.push('| File | Dependents | Status |')
+      lines.push('|------|-----------|--------|')
+      for (const f of fileResults) {
+        lines.push(`| ${f.file} | ${f.dependentCount} | ${f.status} |`)
+      }
+
+      if (symbolResults.length > 0) {
+        lines.push('')
+        lines.push('| Symbol | References | Status |')
+        lines.push('|--------|-----------|--------|')
+        for (const s of symbolResults) {
+          lines.push(`| ${s.symbol} | ${s.refCount} | ${s.status} |`)
+        }
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }]
       }
     }
   )

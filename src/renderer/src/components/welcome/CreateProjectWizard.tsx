@@ -494,7 +494,7 @@ export default function CreateProjectWizard({
         )}
 
         {currentStep === 'grill' && workspaceId && (
-          /* data-testid="wizard-grill-step" is on the WizardGrillStep root */
+          /* data-testid="wizard-grill-step" is on the WizardGrillStep root div */
           <WizardGrillStep
             workspaceId={workspaceId}
             projectName={projectName}

@@ -63,46 +63,19 @@ Create a 2-4 word short name for this feature:
 
 ### Step 4: Generate Specification
 
-Using the template structure, generate a complete spec.md with:
+Generate a complete spec.md with these sections:
 
-1. **User Stories** (mandatory):
-   - At least 2-3 prioritized user stories (P1, P2, P3)
-   - Each must be independently testable
-   - Each must have Given/When/Then acceptance scenarios
-   - P1 must deliver a viable MVP
-
-2. **Requirements** (mandatory):
-   - Functional requirements with unique IDs (FR-001, FR-002, etc.)
-   - Use MUST/SHOULD/MAY language
-   - Mark unclear items with [NEEDS CLARIFICATION: reason]
-   - Key entities if the feature involves data
-
-3. **Success Criteria** (mandatory):
-   - Measurable, technology-agnostic outcomes
-   - At least one user-facing metric
-   - No implementation-specific criteria
-
-4. **Assumptions**:
-   - Document all assumptions explicitly
-   - Include scope boundaries
-
-5. **Edge Cases**:
-   - Boundary conditions
-   - Error scenarios
-   - Security considerations
+| Section | Requirement |
+|---------|-------------|
+| **User Stories** (mandatory) | 2–3 prioritized (P1/P2/P3), each with Given/When/Then acceptance scenarios. P1 = MVP. |
+| **Requirements** (mandatory) | Functional IDs (FR-001+), MUST/SHOULD/MAY language, [NEEDS CLARIFICATION] for unclear items. Include key entities for data-heavy features. |
+| **Success Criteria** (mandatory) | Measurable, technology-agnostic outcomes with ≥1 user-facing metric. No implementation-specific criteria. |
+| **Assumptions** | Explicit assumptions and scope boundaries. |
+| **Edge Cases** | Boundary conditions, error scenarios, security considerations. |
 
 ### Step 5: Quality Validation
 
-After generating the spec, self-validate against this checklist:
-
-- [ ] Every user story has priority + acceptance scenarios
-- [ ] Every requirement has an ID and uses MUST/SHOULD/MAY
-- [ ] Success criteria are measurable (not "system works well")
-- [ ] No implementation details leak into requirements
-- [ ] [NEEDS CLARIFICATION] markers are specific (not vague)
-- [ ] If constitution exists, no violations
-
-Count the passing items. If score < 80%, iterate and fix before completing.
+Validate: (1) stories have priority + scenarios, (2) requirements have IDs + MUST/SHOULD/MAY, (3) success criteria are measurable, (4) no implementation details in requirements, (5) [NEEDS CLARIFICATION] markers are specific, (6) no constitution violations. If score < 80%, iterate.
 
 ### Step 6: Assess Clarification Need
 
@@ -113,21 +86,11 @@ Count [NEEDS CLARIFICATION] markers in the spec.
 ## Quick Guidelines
 
 - **WHAT, not HOW**: "Users can search by keyword" ✓ / "Use Elasticsearch" ✗
-- **Measurable**: "Response under 2 seconds" ✓ / "System is fast" ✗
+- **Measurable**: "Response under 2s" ✓ / "System is fast" ✗
 - **Specific**: "Support 1000 concurrent users" ✓ / "Handle many users" ✗
-- **Testable**: Every requirement must map to a test scenario
+- **Testable**: Every requirement maps to a test scenario
 
-### Success Criteria Guidelines
-
-**Good examples**:
-- "Users can complete account creation in under 2 minutes"
-- "System handles 1000 concurrent users without degradation"
-- "90% of users successfully complete primary task on first attempt"
-
-**Bad examples** (implementation-focused):
-- "Use React for the frontend" (HOW, not WHAT)
-- "Database queries under 50ms" (implementation detail)
-- "100% code coverage" (process metric, not outcome)
+Success criteria: "Users complete registration in <2 min" ✓ / "Use React" ✗ (HOW) / "100% coverage" ✗ (process metric)
 
 ## Completion
 

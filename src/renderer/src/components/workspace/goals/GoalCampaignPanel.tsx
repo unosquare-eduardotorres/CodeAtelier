@@ -229,21 +229,33 @@ function GoalCard({
 
 // ── Panel ────────────────────────────────────────────────────────────────────
 
-export default function GoalCampaignPanel({
-  workspaceId,
-  onClose
-}: GoalCampaignPanelProps): JSX.Element {
+// ── useCampaignActions ──────────────────────────────────────────────────────
+
+interface CampaignActions {
+  step: Step
+  setStep: (s: Step) => void
+  input: string
+  setInput: (v: string) => void
+  originalPlan: string | null
+  goals: MeasurableGoal[]
+  busy: boolean
+  error: string | null
+  canGenerate: boolean
+  handleGenerate: () => Promise<void>
+  handleRegenerateAll: () => Promise<void>
+  updateGoal: (index: number, next: MeasurableGoal) => void
+  deleteGoal: (index: number) => void
+  moveGoal: (index: number, dir: -1 | 1) => void
+  addGoal: () => void
+  handleStart: () => Promise<void>
+}
+
+function useCampaignActions(workspaceId: string, onClose: () => void): CampaignActions {
   const { decomposeGoals, startCampaign, preloadedGoal, setPreloadedGoal } = useMpaStore()
 
   const [step, setStep] = useState<Step>('describe')
-  // Pre-fill from a grill / wizard handoff: land on Step 1 with the original
-  // plan shown read-only and pre-filled into the editable input (Q11). Read the
-  // handoff once at mount via lazy initializers (the panel only mounts after the
-  // preloaded goal is set), then clear it in an effect.
   const [input, setInput] = useState(() => preloadedGoal?.text ?? '')
   const [originalPlan] = useState<string | null>(() => preloadedGoal?.text ?? null)
-  // Captured once at mount: a successful greenfield handoff asks the panel to
-  // decompose immediately so the user lands on editable goals, not a text box.
   const [autoDecompose] = useState(() => preloadedGoal?.autoDecompose ?? false)
   const [goals, setGoals] = useState<MeasurableGoal[]>([])
   const [busy, setBusy] = useState(false)
@@ -329,9 +341,7 @@ export default function GoalCampaignPanel({
     }
   }, [goals, startCampaign, workspaceId, originalPlan, input, onClose])
 
-  // Auto-decompose once on a successful handoff so the user lands on editable
-  // goals. If decomposition fails, handleGenerate surfaces the error and leaves
-  // the user on the describe step to refine — never a silent dead end.
+  // Auto-decompose once on a successful handoff.
   const autoRanRef = useRef(false)
   useEffect(() => {
     if (autoDecompose && !autoRanRef.current && input.trim().length >= 15) {
@@ -340,7 +350,132 @@ export default function GoalCampaignPanel({
     }
   }, [autoDecompose, input, handleGenerate])
 
-  const canGenerate = input.trim().length >= 15 && !busy
+  return {
+    step,
+    setStep,
+    input,
+    setInput,
+    originalPlan,
+    goals,
+    busy,
+    error,
+    canGenerate: input.trim().length >= 15 && !busy,
+    handleGenerate,
+    handleRegenerateAll,
+    updateGoal,
+    deleteGoal,
+    moveGoal,
+    addGoal,
+    handleStart
+  }
+}
+
+// ── GoalEditor (Step 2 body) ────────────────────────────────────────────────
+
+interface GoalEditorProps {
+  goals: MeasurableGoal[]
+  busy: boolean
+  onUpdate: (index: number, next: MeasurableGoal) => void
+  onDelete: (index: number) => void
+  onMove: (index: number, dir: -1 | 1) => void
+  onAdd: () => void
+  onRegenerateAll: () => Promise<void>
+  onBack: () => void
+  onNext: () => void
+}
+
+function GoalEditor({
+  goals,
+  busy,
+  onUpdate,
+  onDelete,
+  onMove,
+  onAdd,
+  onRegenerateAll,
+  onBack,
+  onNext
+}: GoalEditorProps): JSX.Element {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-text-secondary">
+          {goals.length} goal{goals.length !== 1 ? 's' : ''} — edit, reorder, add or remove
+        </span>
+        <button
+          type="button"
+          onClick={onRegenerateAll}
+          disabled={busy}
+          className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary disabled:opacity-40"
+        >
+          <RefreshCw size={11} className={busy ? 'animate-spin' : ''} /> Regenerate all
+        </button>
+      </div>
+
+      <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+        {goals.map((g, i) => (
+          <GoalCard
+            key={g.id}
+            goal={g}
+            index={i}
+            total={goals.length}
+            onChange={(next) => onUpdate(i, next)}
+            onDelete={() => onDelete(i)}
+            onMove={(dir) => onMove(i, dir)}
+          />
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={onAdd}
+        className="flex items-center gap-1.5 w-full justify-center py-2 text-xs text-text-muted hover:text-text-primary border border-dashed border-border-subtle rounded-lg hover:bg-surface-overlay transition-colors"
+      >
+        <Plus size={13} /> Add goal
+      </button>
+
+      <div className="flex items-center justify-between pt-1">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs text-text-secondary hover:text-text-primary rounded-lg hover:bg-surface-overlay"
+        >
+          <ArrowLeft size={13} /> Back
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={goals.length === 0}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-cyan-400 bg-cyan-500/20 hover:bg-cyan-500/30 rounded-lg disabled:opacity-30"
+        >
+          Review & Run <ArrowRight size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default function GoalCampaignPanel({
+  workspaceId,
+  onClose
+}: GoalCampaignPanelProps): JSX.Element {
+  const {
+    step,
+    setStep,
+    input,
+    setInput,
+    originalPlan,
+    goals,
+    busy,
+    error,
+    canGenerate,
+    handleGenerate,
+    handleRegenerateAll,
+    updateGoal,
+    deleteGoal,
+    moveGoal,
+    addGoal,
+    handleStart
+  } = useCampaignActions(workspaceId, onClose)
 
   return (
     <div data-testid="goal-campaign-panel" className="rounded-xl border border-cyan-400/30 bg-surface-raised overflow-hidden">
@@ -410,61 +545,17 @@ export default function GoalCampaignPanel({
 
         {/* ── Step 2: Review ── */}
         {step === 'review' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-text-secondary">
-                {goals.length} goal{goals.length !== 1 ? 's' : ''} — edit, reorder, add or remove
-              </span>
-              <button
-                type="button"
-                onClick={handleRegenerateAll}
-                disabled={busy}
-                className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary disabled:opacity-40"
-              >
-                <RefreshCw size={11} className={busy ? 'animate-spin' : ''} /> Regenerate all
-              </button>
-            </div>
-
-            <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
-              {goals.map((g, i) => (
-                <GoalCard
-                  key={g.id}
-                  goal={g}
-                  index={i}
-                  total={goals.length}
-                  onChange={(next) => updateGoal(i, next)}
-                  onDelete={() => deleteGoal(i)}
-                  onMove={(dir) => moveGoal(i, dir)}
-                />
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={addGoal}
-              className="flex items-center gap-1.5 w-full justify-center py-2 text-xs text-text-muted hover:text-text-primary border border-dashed border-border-subtle rounded-lg hover:bg-surface-overlay transition-colors"
-            >
-              <Plus size={13} /> Add goal
-            </button>
-
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                onClick={() => setStep('describe')}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs text-text-secondary hover:text-text-primary rounded-lg hover:bg-surface-overlay"
-              >
-                <ArrowLeft size={13} /> Back
-              </button>
-              <button
-                type="button"
-                onClick={() => setStep('run')}
-                disabled={goals.length === 0}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-cyan-400 bg-cyan-500/20 hover:bg-cyan-500/30 rounded-lg disabled:opacity-30"
-              >
-                Review & Run <ArrowRight size={13} />
-              </button>
-            </div>
-          </div>
+          <GoalEditor
+            goals={goals}
+            busy={busy}
+            onUpdate={updateGoal}
+            onDelete={deleteGoal}
+            onMove={moveGoal}
+            onAdd={addGoal}
+            onRegenerateAll={handleRegenerateAll}
+            onBack={() => setStep('describe')}
+            onNext={() => setStep('run')}
+          />
         )}
 
         {/* ── Step 3: Run ── */}

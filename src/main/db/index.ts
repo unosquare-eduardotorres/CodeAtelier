@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 106
+const CURRENT_SCHEMA_VERSION = 107
 
 export interface Migration {
   version: number
@@ -2453,7 +2453,7 @@ export const migrations: Migration[] = [
           is_parallel INTEGER NOT NULL DEFAULT 0,
           depends_on_json TEXT DEFAULT '[]',
           status TEXT NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('pending','running','complete','failed')),
+            CHECK (status IN ('pending','running','complete','failed','skipped')),
           executor_run_id TEXT REFERENCES mpa_runs(id) ON DELETE SET NULL,
           started_at TEXT,
           completed_at TEXT
@@ -2612,6 +2612,42 @@ export const migrations: Migration[] = [
         );
       `)
       dbLogger.info('[migration-106] ✓ Created library_docs table + FTS5 index')
+    }
+  },
+
+  // ── Migration 107: Add 'skipped' to blueprint_tasks CHECK constraint ──
+  // BP-TASK-CHECK-01: The CHECK constraint on blueprint_tasks.status was missing
+  // 'skipped', causing SQLite CHECK constraint failures when the build service
+  // tries to mark remaining tasks as 'skipped' after a task failure.
+  {
+    version: 107,
+    name: 'fix-blueprint-tasks-skipped-status',
+    up: (db) => {
+      // SQLite cannot ALTER CHECK constraints — must rebuild the table
+      db.exec(`
+        CREATE TABLE blueprint_tasks_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL,
+          wave INTEGER NOT NULL DEFAULT 1,
+          user_story TEXT,
+          description TEXT NOT NULL,
+          file_paths_json TEXT DEFAULT '[]',
+          is_parallel INTEGER NOT NULL DEFAULT 0,
+          depends_on_json TEXT DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','running','complete','failed','skipped')),
+          executor_run_id TEXT REFERENCES mpa_runs(id) ON DELETE SET NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+        INSERT INTO blueprint_tasks_new SELECT * FROM blueprint_tasks;
+        DROP TABLE blueprint_tasks;
+        ALTER TABLE blueprint_tasks_new RENAME TO blueprint_tasks;
+        CREATE INDEX IF NOT EXISTS idx_bp_tasks_blueprint ON blueprint_tasks(blueprint_id);
+        CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);
+      `)
+      dbLogger.info('[migration-107] ✓ Added skipped to blueprint_tasks CHECK constraint')
     }
   }
 ]

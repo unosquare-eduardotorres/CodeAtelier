@@ -107,6 +107,7 @@ export default function CloseDialog({
             Cancel
           </button>
           <button
+            data-testid="close-dialog-confirm"
             onClick={handleConfirm}
             disabled={isSubmitting}
             className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger bg-danger hover:brightness-110 text-white disabled:opacity-50"

@@ -8,6 +8,101 @@ import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettin
 
 type SidebarTab = 'chats' | 'settings'
 
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function SettingsMenuGroup({
+  group,
+  isCollapsed,
+  activeTab,
+  onSelect
+}: {
+  group: 'tools' | 'configuration'
+  isCollapsed: boolean
+  activeTab: SettingsTab
+  onSelect: (tab: SettingsTab) => void
+}): React.JSX.Element {
+  const items = SETTINGS_MENU.filter((item) => item.group === group)
+  return (
+    <div className="space-y-0.5">
+      {items.map((item) => {
+        const Icon = item.icon
+        const isActive = activeTab === item.id
+        return (
+          <button
+            key={item.id}
+            onClick={() => onSelect(item.id)}
+            className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-2.5'} w-full ${isCollapsed ? 'px-2 py-2' : 'px-3 py-2'} rounded-lg ${isCollapsed ? '' : 'text-sm font-medium'} transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+              isActive
+                ? 'bg-primary-muted text-primary-text border border-primary/20'
+                : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
+            }`}
+            title={item.label}
+          >
+            <Icon size={16} className={isActive ? undefined : item.iconColor} />
+            {!isCollapsed && <span>{item.label}</span>}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function ConversationListContent({
+  conversations,
+  activeConversation,
+  streamingConversationIds,
+  activeWorkspace,
+  onSelect,
+  onDelete,
+  onRename
+}: {
+  conversations: { id: string; title: string; createdAt: string }[]
+  activeConversation: { id: string } | null
+  streamingConversationIds: Set<string>
+  activeWorkspace: { id: string; name: string } | null
+  onSelect: (id: string) => void
+  onDelete: (id: string) => void
+  onRename: (id: string, title: string) => void
+}): React.JSX.Element {
+  if (!activeWorkspace) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+        <FolderOpen size={32} className="text-border-default mb-3" />
+        <p className="text-sm text-text-secondary mb-1">No workspace selected</p>
+        <p className="text-xs text-text-muted">Select a workspace to start</p>
+      </div>
+    )
+  }
+
+  if (conversations.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+        <MessageSquare size={32} className="text-border-default mb-3" />
+        <p className="text-sm text-text-secondary mb-1">No conversations yet</p>
+        <p className="text-xs text-text-muted">Click + to start a chat</p>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {conversations.map((conv) => (
+        <ChatItem
+          key={conv.id}
+          conversation={conv}
+          isActive={activeConversation?.id === conv.id}
+          isStreaming={streamingConversationIds.has(conv.id)}
+          onSelect={onSelect}
+          onDelete={onDelete}
+          onRename={onRename}
+        />
+      ))}
+    </>
+  )
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
+
 interface UnifiedSidebarProps {
   isCollapsed?: boolean
   onToggleCollapse?: () => void
@@ -154,52 +249,9 @@ export default function UnifiedSidebar({
           )}
           {activeTab === 'settings' && (
             <div className="w-full px-1.5">
-              {/* Tools group (collapsed — icons only) */}
-              <div className="space-y-0.5">
-                {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
-                  const Icon = item.icon
-                  const isActive = activeSettingsTab === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onSettingsTabChange(item.id)}
-                      className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                        isActive
-                          ? 'bg-primary-muted text-primary-text border border-primary/20'
-                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
-                      }`}
-                      title={item.label}
-                    >
-                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* Divider */}
+              <SettingsMenuGroup group="tools" isCollapsed activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
               <div className="my-2 mx-1 border-t border-border-subtle" />
-
-              {/* Configuration group (collapsed — icons only) */}
-              <div className="space-y-0.5">
-                {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
-                  const Icon = item.icon
-                  const isActive = activeSettingsTab === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onSettingsTabChange(item.id)}
-                      className={`flex items-center justify-center w-full px-2 py-2 rounded-lg transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                        isActive
-                          ? 'bg-primary-muted text-primary-text border border-primary/20'
-                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
-                      }`}
-                      title={item.label}
-                    >
-                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
-                    </button>
-                  )
-                })}
-              </div>
+              <SettingsMenuGroup group="configuration" isCollapsed activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
             </div>
           )}
         </div>
@@ -252,103 +304,45 @@ export default function UnifiedSidebar({
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'chats' && (
             <div className="p-3 space-y-1.5">
-              {!activeWorkspace ? (
-                <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                  <FolderOpen size={32} className="text-border-default mb-3" />
-                  <p className="text-sm text-text-secondary mb-1">No workspace selected</p>
-                  <p className="text-xs text-text-muted">Select a workspace to start</p>
-                </div>
-              ) : sortedConversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                  <MessageSquare size={32} className="text-border-default mb-3" />
-                  <p className="text-sm text-text-secondary mb-1">No conversations yet</p>
-                  <p className="text-xs text-text-muted">Click + to start a chat</p>
-                </div>
-              ) : (
-                sortedConversations.map((conv) => (
-                  <ChatItem
-                    key={conv.id}
-                    conversation={conv}
-                    isActive={activeConversation?.id === conv.id}
-                    isStreaming={streamingConversationIds.has(conv.id)}
-                    onSelect={(id) => {
-                      selectConversation(id)
-                      // Ensure main content shows chat when selecting a conversation
-                      onViewChange('chat')
-                    }}
-                    onDelete={(id) => {
-                      const target = conversations.find((c) => c.id === id)
-                      if (target && target.title === 'New Conversation') {
-                        closeConversation(id)
-                      } else {
-                        setDeleteTarget(id)
-                      }
-                    }}
-                    onRename={renameConversation}
-                  />
-                ))
-              )}
+              <ConversationListContent
+                conversations={sortedConversations}
+                activeConversation={activeConversation}
+                streamingConversationIds={streamingConversationIds}
+                activeWorkspace={activeWorkspace}
+                onSelect={(id) => {
+                  selectConversation(id)
+                  onViewChange('chat')
+                }}
+                onDelete={(id) => {
+                  const target = conversations.find((c) => c.id === id)
+                  if (target && target.title === 'New Conversation') {
+                    closeConversation(id)
+                  } else {
+                    setDeleteTarget(id)
+                  }
+                }}
+                onRename={renameConversation}
+              />
             </div>
           )}
 
           {activeTab === 'settings' && (
             <nav className="p-2">
-              {/* Tools group */}
               <div className="px-3 pt-1 pb-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                   Tools
                 </span>
               </div>
-              <div className="space-y-0.5">
-                {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
-                  const Icon = item.icon
-                  const isActive = activeSettingsTab === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onSettingsTabChange(item.id)}
-                      className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 px-3 py-2 ${
-                        isActive
-                          ? 'bg-primary-muted text-primary-text border border-primary/20'
-                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
-                      }`}
-                    >
-                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
-                      <span>{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
+              <SettingsMenuGroup group="tools" isCollapsed={false} activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
 
-              {/* Divider between groups */}
               <div className="my-2 mx-2 border-t border-border-subtle" />
 
-              {/* Configuration group */}
               <div className="px-3 pt-1 pb-1.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
                   Configuration
                 </span>
               </div>
-              <div className="space-y-0.5">
-                {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
-                  const Icon = item.icon
-                  const isActive = activeSettingsTab === item.id
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onSettingsTabChange(item.id)}
-                      className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 px-3 py-2 ${
-                        isActive
-                          ? 'bg-primary-muted text-primary-text border border-primary/20'
-                          : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-transparent'
-                      }`}
-                    >
-                      <Icon size={16} className={isActive ? undefined : item.iconColor} />
-                      <span>{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
+              <SettingsMenuGroup group="configuration" isCollapsed={false} activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
             </nav>
           )}
         </div>

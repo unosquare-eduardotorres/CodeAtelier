@@ -39,6 +39,124 @@ interface NewConversationModalProps {
 const TITLE_MAX = 500
 const DESCRIPTION_MAX = 15_000
 
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function ModeToggle({
+  mode,
+  onModeChange
+}: {
+  mode: ConversationMode
+  onModeChange: (mode: ConversationMode) => void
+}): React.JSX.Element {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-text-primary mb-1.5">Mode</label>
+      <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
+        <button
+          onClick={() => onModeChange('plan')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+            mode === 'plan'
+              ? 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          <ClipboardList size={16} />
+          Plan
+        </button>
+        <button
+          onClick={() => onModeChange('build')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+            mode === 'build'
+              ? 'bg-mode-build-muted text-mode-build-text border border-mode-build-border'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          <Hammer size={16} />
+          Build
+        </button>
+      </div>
+      <p className="text-xs text-text-muted mt-1.5">
+        {mode === 'plan'
+          ? 'Plan mode — read-only analysis, brainstorming, code review'
+          : 'Build mode — the agent can create and modify files in your workspace'}
+      </p>
+    </div>
+  )
+}
+
+function ToneSelector({
+  value,
+  onChange
+}: {
+  value: CommunicationTone | null
+  onChange: (tone: CommunicationTone | null) => void
+}): React.JSX.Element {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-text-primary mb-1.5">
+        Tone{' '}
+        <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+      </label>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          onClick={() => onChange(null)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+            value === null
+              ? 'bg-primary-muted text-primary-text border border-primary/20'
+              : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+          }`}
+        >
+          Workspace Default
+        </button>
+        {COMMUNICATION_TONES.filter((t) => t.id !== 'default').map((tone) => {
+          const Icon = TONE_ICON_MAP[tone.icon] ?? MessageSquare
+          const isActive = value === tone.id
+          return (
+            <button
+              key={tone.id}
+              onClick={() => onChange(tone.id as CommunicationTone)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                isActive
+                  ? 'bg-primary-muted text-primary-text border border-primary/20'
+                  : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
+              }`}
+            >
+              <Icon size={12} />
+              {tone.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Hooks ───────────────────────────────────────────────────────────────
+
+function useModalKeyboard(
+  isOpen: boolean,
+  onClose: () => void,
+  onSubmit: () => void
+): void {
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        onClose()
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault()
+        onSubmit()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose, onSubmit])
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
+
 export default function NewConversationModal({
   isOpen,
   onClose,
@@ -58,7 +176,6 @@ export default function NewConversationModal({
   // Auto-focus title input when opened
   useEffect(() => {
     if (isOpen) {
-      // Small delay to ensure the modal is rendered before focusing
       const timer = setTimeout(() => titleInputRef.current?.focus(), 50)
       return (): void => clearTimeout(timer)
     }
@@ -78,20 +195,6 @@ export default function NewConversationModal({
       setPresetId(null)
     }
   }, [isOpen])
-
-  // Escape key closes modal
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        onClose()
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose])
 
   const handleSubmit = useCallback((): void => {
     const trimmedTitle = title.trim()
@@ -128,20 +231,7 @@ export default function NewConversationModal({
     onClose()
   }, [title, description, onCreateIdea, onClose])
 
-  // Submit on Cmd/Ctrl+Enter
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault()
-        handleSubmit()
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, handleSubmit])
+  useModalKeyboard(isOpen, onClose, handleSubmit)
 
   if (!isOpen) return null
 
@@ -202,40 +292,7 @@ export default function NewConversationModal({
           </div>
 
           {/* Mode Toggle */}
-          <div>
-            <label className="block text-sm font-medium text-text-primary mb-1.5">Mode</label>
-            <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit">
-              <button
-                onClick={() => setMode('plan')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  mode === 'plan'
-                    ? 'bg-mode-plan-muted text-mode-plan-text border border-mode-plan-border'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                <ClipboardList size={16} />
-                Plan
-              </button>
-              <button
-                onClick={() => {
-                  setMode('build')
-                }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  mode === 'build'
-                    ? 'bg-mode-build-muted text-mode-build-text border border-mode-build-border'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                <Hammer size={16} />
-                Build
-              </button>
-            </div>
-            <p className="text-xs text-text-muted mt-1.5">
-              {mode === 'plan'
-                ? 'Plan mode — read-only analysis, brainstorming, code review'
-                : 'Build mode — the agent can create and modify files in your workspace'}
-            </p>
-          </div>
+          <ModeToggle mode={mode} onModeChange={setMode} />
 
           {/* LLM Preset Selector */}
           {activeWorkspace && (
@@ -247,42 +304,7 @@ export default function NewConversationModal({
           )}
 
           {/* Communication Tone */}
-          <div>
-            <label className="block text-sm font-medium text-text-primary mb-1.5">
-              Tone{' '}
-              <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
-            </label>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                onClick={() => setConversationTone(null)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  conversationTone === null
-                    ? 'bg-primary-muted text-primary-text border border-primary/20'
-                    : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-                }`}
-              >
-                Workspace Default
-              </button>
-              {COMMUNICATION_TONES.filter((t) => t.id !== 'default').map((tone) => {
-                const Icon = TONE_ICON_MAP[tone.icon] ?? MessageSquare
-                const isActive = conversationTone === tone.id
-                return (
-                  <button
-                    key={tone.id}
-                    onClick={() => setConversationTone(tone.id as CommunicationTone)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                      isActive
-                        ? 'bg-primary-muted text-primary-text border border-primary/20'
-                        : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-                    }`}
-                  >
-                    <Icon size={12} />
-                    {tone.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+          <ToneSelector value={conversationTone} onChange={setConversationTone} />
 
           {/* Description */}
           <div>

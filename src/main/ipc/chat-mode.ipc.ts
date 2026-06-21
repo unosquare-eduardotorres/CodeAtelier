@@ -35,6 +35,14 @@ export function registerChatModeIpc(): void {
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_UPDATE_MODE)
     const mode = requireString(args, 'mode', IPC_CHANNELS.CHAT_UPDATE_MODE)
 
+    // CONV-MODIFY-RACE-01: Prevent mode changes during active streaming
+    if (
+      conversationLifecycle.conversationId === conversationId &&
+      conversationLifecycle.isActive
+    ) {
+      throw new Error('Cannot change mode while streaming — stop or wait for completion')
+    }
+
     const validModes = ['plan', 'build', 'danger']
     if (!validModes.includes(mode)) {
       throw new Error(`${IPC_CHANNELS.CHAT_UPDATE_MODE}: mode must be "plan", "build", or "danger"`)
@@ -54,6 +62,14 @@ export function registerChatModeIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_UPDATE_EFFORT)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_UPDATE_EFFORT)
     const effort = requireString(args, 'effort', IPC_CHANNELS.CHAT_UPDATE_EFFORT)
+
+    // CONV-MODIFY-RACE-01: Prevent effort changes during active streaming
+    if (
+      conversationLifecycle.conversationId === conversationId &&
+      conversationLifecycle.isActive
+    ) {
+      throw new Error('Cannot change effort while streaming — stop or wait for completion')
+    }
 
     const validEfforts: ThinkingEffort[] = ['low', 'medium', 'high']
     if (!validEfforts.includes(effort as ThinkingEffort)) {
@@ -125,6 +141,15 @@ export function registerChatModeIpc(): void {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_UPDATE_PERSONA)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_UPDATE_PERSONA)
+
+    // CONV-MODIFY-RACE-01: Prevent persona changes during active streaming
+    if (
+      conversationLifecycle.conversationId === conversationId &&
+      conversationLifecycle.isActive
+    ) {
+      throw new Error('Cannot change persona while streaming — stop or wait for completion')
+    }
+
     const personaSpecialistId = (args.personaSpecialistId as string | null) ?? null
     if (personaSpecialistId) {
       const specialist = specialistRepository.findById(personaSpecialistId)

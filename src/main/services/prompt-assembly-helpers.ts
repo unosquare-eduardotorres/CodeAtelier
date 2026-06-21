@@ -9,38 +9,30 @@
  */
 import type { ConversationMode } from '../../shared/types'
 import {
+  // Unified guidance blocks (full === lean after W2 unification)
   ASK_QUESTION_PROMPT,
-  ASK_QUESTION_PROMPT_LEAN,
   CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
-  CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
+  GIT_CONTEXT_GUIDANCE_PROMPT,
+  GITHUB_CONTEXT_GUIDANCE_PROMPT,
+  IMAGE_ATTACHMENTS_PROMPT,
+  LIBRARY_DOCS_GUIDANCE_PROMPT,
+  MAESTRO_GUIDANCE_PROMPT,
+  MEMORY_PROTOCOL_PROMPT,
+  REPOMAP_GUIDANCE_PROMPT,
+  SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+  // Guidance blocks that still differ between full/lean
   ESLINT_GUIDANCE_PROMPT,
   ESLINT_GUIDANCE_PROMPT_LEAN,
-  LIBRARY_DOCS_GUIDANCE_PROMPT,
-  LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN,
   DIRECT_ANSWER_BOOST_PROMPT,
   DIRECT_ANSWER_BOOST_PROMPT_LEAN,
   DIRECT_ANSWER_PLAN_MODE_EARLY,
-  GIT_CONTEXT_GUIDANCE_PROMPT,
-  GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN,
-  IMAGE_ATTACHMENTS_PROMPT,
-  IMAGE_ATTACHMENTS_PROMPT_LEAN,
-  MAESTRO_GUIDANCE_PROMPT,
-  MAESTRO_GUIDANCE_PROMPT_LEAN,
-  MEMORY_PROTOCOL_PROMPT,
-  MEMORY_PROTOCOL_PROMPT_LEAN,
+  // Mode & plan constants
   MODE_CONTEXT_SECTIONS,
   MODE_CONTEXT_SECTIONS_LEAN,
-  PLAN_OUTPUT_GUIDANCE_LEAN,
   PLAN_REMINDER_FULL,
   PLAN_REMINDER_LEAN,
-  REPOMAP_GUIDANCE_PROMPT,
-  REPOMAP_GUIDANCE_PROMPT_LEAN,
-  SEMANTIC_SEARCH_GUIDANCE_PROMPT,
-  SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN
+  TOOL_PRIORITY_DIRECTIVE
 } from './default-prompts'
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { promptBuilder } from './prompt-builder'
@@ -63,72 +55,32 @@ export interface PromptFeatureFlags {
 
 // ── Data-driven guidance configuration ──
 
+/**
+ * W3-F1: Simplified GuidanceSection — single `prompt` field with optional
+ * `leanVariant` override. Only ESLint uses `leanVariant` (8/9 entries
+ * were identical between lean/full after W2 unification).
+ */
 interface GuidanceSection {
   marker: string
   flag: (f: PromptFeatureFlags) => boolean
-  lean: string
-  full: string
+  prompt: string
+  /** Overrides `prompt` when lean verbosity is active. Only set when lean differs. */
+  leanVariant?: string
   /** When set, skip the lean variant if basePrompt already contains this marker. */
   skipLeanWhen?: string
 }
 
 const GUIDANCE_SECTIONS: GuidanceSection[] = [
-  {
-    marker: '## Code Graph',
-    flag: (f) => f.repomapEnabled,
-    lean: REPOMAP_GUIDANCE_PROMPT_LEAN,
-    full: REPOMAP_GUIDANCE_PROMPT,
-    // DaVinci lean identity has ## Code Exploration built-in — skip to avoid duplication.
-    skipLeanWhen: '## Code Exploration'
-  },
-  {
-    marker: '## Semantic Search',
-    flag: (f) => f.semanticSearchEnabled,
-    lean: SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN,
-    full: SEMANTIC_SEARCH_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## Git Context',
-    flag: (f) => f.includeGitContext !== false,
-    lean: GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-    full: GIT_CONTEXT_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## Checkpoint Tools',
-    flag: (f) => f.includeCheckpoint !== false,
-    lean: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-    full: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## GitHub Tools',
-    flag: (f) => f.githubConfigured,
-    lean: GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN,
-    full: GITHUB_CONTEXT_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## Code Analysis',
-    flag: () => true,
-    lean: CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
-    full: CODE_ANALYSIS_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## Library Doc',
-    flag: () => true,
-    lean: LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN,
-    full: LIBRARY_DOCS_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## ESLint',
-    flag: () => true,
-    lean: ESLINT_GUIDANCE_PROMPT_LEAN,
-    full: ESLINT_GUIDANCE_PROMPT
-  },
-  {
-    marker: '## Maestro',
-    flag: (f) => !!f.externalMcpActive?.['maestro'],
-    lean: MAESTRO_GUIDANCE_PROMPT_LEAN,
-    full: MAESTRO_GUIDANCE_PROMPT
-  }
+  { marker: '## Code Graph', flag: (f) => f.repomapEnabled, prompt: REPOMAP_GUIDANCE_PROMPT, skipLeanWhen: '## Code Exploration' },
+  { marker: '## Semantic Search', flag: (f) => f.semanticSearchEnabled, prompt: SEMANTIC_SEARCH_GUIDANCE_PROMPT },
+  { marker: '## Git Context', flag: (f) => f.includeGitContext !== false, prompt: GIT_CONTEXT_GUIDANCE_PROMPT },
+  { marker: '## Checkpoint Tools', flag: (f) => f.includeCheckpoint !== false, prompt: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT },
+  { marker: '## GitHub Tools', flag: (f) => f.githubConfigured, prompt: GITHUB_CONTEXT_GUIDANCE_PROMPT },
+  { marker: '## Code Analysis', flag: () => true, prompt: CODE_ANALYSIS_GUIDANCE_PROMPT },
+  { marker: '## Library Doc', flag: () => true, prompt: LIBRARY_DOCS_GUIDANCE_PROMPT },
+  { marker: '## Maestro', flag: (f) => !!f.externalMcpActive?.['maestro'], prompt: MAESTRO_GUIDANCE_PROMPT },
+  // ESLint: only entry where lean differs (full includes "Warnings OK; errors are NOT")
+  { marker: '## ESLint', flag: () => true, prompt: ESLINT_GUIDANCE_PROMPT, leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN }
 ]
 
 /**
@@ -143,16 +95,13 @@ export function appendMcpToolGuidance(
   featureFlags: PromptFeatureFlags,
   model?: string
 ): string {
-  // Turn 2+: lean reminder (~20 tokens) instead of full guidance (~200 tokens).
+  // W3-F3: Turn 2+ — tool priority reminder only (~20 tokens).
+  // PLAN_OUTPUT_GUIDANCE_LEAN removed: mode-context already carries the full emit_plan workflow.
   // Lean models already have tool priority in their identity prompt every turn.
   if (turnCount > 1) {
     const verbosity2 = resolvePromptVerbosity(model ?? '')
     if (verbosity2 !== 'lean' && featureFlags.repomapEnabled) {
-      return (
-        basePrompt +
-        '\n\n## Tool Priority\nUse Code Graph (search_identifiers, graph_map) and Semantic Search FIRST — not Read/Grep/Glob. Read only files identified by code intelligence.\n\n' +
-        PLAN_OUTPUT_GUIDANCE_LEAN
-      )
+      return basePrompt + TOOL_PRIORITY_DIRECTIVE
     }
     return basePrompt
   }
@@ -162,12 +111,9 @@ export function appendMcpToolGuidance(
 
   for (const section of GUIDANCE_SECTIONS) {
     if (!section.flag(featureFlags) || basePrompt.includes(section.marker)) continue
-    if (verbosity === 'lean') {
-      if (section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen)) continue
-      appendSections.push(section.lean)
-    } else {
-      appendSections.push(section.full)
-    }
+    if (verbosity === 'lean' && section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen)) continue
+    const text = (verbosity === 'lean' && section.leanVariant) ? section.leanVariant : section.prompt
+    appendSections.push(text)
   }
 
   if (appendSections.length === 0) return basePrompt
@@ -196,20 +142,17 @@ export function buildConditionalPrefix(opts: {
   const sections: string[] = []
 
   // Skip ask_user prompt on turns 2+ — already in history from turn 1.
-  // Lean: Opus 4.8+ sees tool schemas natively — use compressed reminder.
   if (conditionalSections.includeAskQuestionPrompt && turnCount <= 1) {
-    sections.push(verbosity === 'lean' ? ASK_QUESTION_PROMPT_LEAN : ASK_QUESTION_PROMPT)
+    sections.push(ASK_QUESTION_PROMPT) // unified: full === lean
   }
 
   // Skip memory-protocol prompt on turns 2+ — already in history from turn 1.
-  // Lean mode: Opus 4.8 uses emit_memory naturally but needs the type taxonomy.
   if (conditionalSections.includeMemoryProtocolPrompt && turnCount <= 1) {
-    sections.push(verbosity === 'lean' ? MEMORY_PROTOCOL_PROMPT_LEAN : MEMORY_PROTOCOL_PROMPT)
+    sections.push(MEMORY_PROTOCOL_PROMPT) // unified: full === lean
   }
 
-  // Lean: Opus 4.8+ doesn't search the filesystem for images — use compressed reminder.
   if (conditionalSections.includeImageAttachmentsPrompt) {
-    sections.push(verbosity === 'lean' ? IMAGE_ATTACHMENTS_PROMPT_LEAN : IMAGE_ATTACHMENTS_PROMPT)
+    sections.push(IMAGE_ATTACHMENTS_PROMPT) // unified: full === lean
   }
 
   // ── isPlanGenerationRequest — moved up to suppress contradictory direct-answer signal ──

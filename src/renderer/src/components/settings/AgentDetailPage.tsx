@@ -56,10 +56,11 @@ export default function AgentDetailPage({
   const allSkillNames = skills.map((s: DiscoveredSkill) => s.name)
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-base min-w-0">
+    <div data-testid="agent-detail-page" className="flex-1 flex flex-col bg-surface-base min-w-0">
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-3 border-b border-border-subtle bg-surface-base">
         <button
+          data-testid="agent-detail-back"
           onClick={onBack}
           className="p-1.5 rounded-md hover:bg-surface-raised text-text-muted hover:text-text-primary transition-colors"
           aria-label="Back to Agents"

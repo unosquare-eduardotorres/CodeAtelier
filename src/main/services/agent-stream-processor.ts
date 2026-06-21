@@ -92,11 +92,19 @@ export class AgentStreamProcessor {
       model: resolvedModel,
       workspaceId: this.s.workspaceId
     })
-    this.s.tokenUsage += totalTokens
-    this.s.inputTokens += meta.tokenUsage.input
-    this.s.outputTokens += meta.tokenUsage.output
-    this.s.cacheReadTokens += meta.tokenUsage.cacheReadInputTokens
-    this.s.cacheCreationTokens += meta.tokenUsage.cacheCreationInputTokens
+    // TOKEN-OVERFLOW-01: Guard against NaN/negative/undefined values from malformed
+    // executor reports. A single corrupt value would silently poison all downstream
+    // budget calculations (NaN + number = NaN propagates through compaction checks).
+    const safeToken = (v: unknown): number => {
+      const n = Number(v)
+      return Number.isFinite(n) && n >= 0 ? n : 0
+    }
+
+    this.s.tokenUsage += safeToken(totalTokens)
+    this.s.inputTokens += safeToken(meta.tokenUsage.input)
+    this.s.outputTokens += safeToken(meta.tokenUsage.output)
+    this.s.cacheReadTokens += safeToken(meta.tokenUsage.cacheReadInputTokens)
+    this.s.cacheCreationTokens += safeToken(meta.tokenUsage.cacheCreationInputTokens)
 
     // Context-window occupancy = the prompt size of the LATEST API round-trip
     // (input + cache_read + cache_creation of the most recent message_start),
@@ -111,10 +119,10 @@ export class AgentStreamProcessor {
     // Fallback to the summed totals only when the backend doesn't report a
     // per-call snapshot (e.g. OpenCode, or a stream with no message_start usage).
     const summedContextTokens =
-      meta.tokenUsage.input +
-      meta.tokenUsage.cacheReadInputTokens +
-      meta.tokenUsage.cacheCreationInputTokens
-    const contextWindowTokens = meta.tokenUsage.contextWindowTokens ?? 0
+      safeToken(meta.tokenUsage.input) +
+      safeToken(meta.tokenUsage.cacheReadInputTokens) +
+      safeToken(meta.tokenUsage.cacheCreationInputTokens)
+    const contextWindowTokens = safeToken(meta.tokenUsage.contextWindowTokens)
     const totalContextTokens = contextWindowTokens > 0 ? contextWindowTokens : summedContextTokens
     const consumedContextTokens = totalContextTokens
 

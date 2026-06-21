@@ -734,9 +734,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversations: newConversations,
       activeConversation: activeConversation?.id === id ? null : activeConversation,
       messages: activeConversation?.id === id ? [] : get().messages,
-      // CONV-CLOSE-ASKUSER-01: Clear pending questions when closing a conversation
+      // CONV-CLOSE-STREAMING-01: Clear streaming state to prevent stale isStreaming
+      // lock and ghost streaming bubbles when a conversation is closed mid-stream.
       ...(activeConversation?.id === id
-        ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
+        ? {
+            isStreaming: false,
+            streamingContent: '',
+            streamingSegments: [],
+            activeRequestId: null,
+            toolActivities: [],
+            // CONV-CLOSE-ASKUSER-01: Clear pending questions when closing a conversation
+            pendingQuestions: null,
+            pendingQuestionAction: null,
+            pendingQuestionRequestId: null
+          }
         : {})
     })
   },

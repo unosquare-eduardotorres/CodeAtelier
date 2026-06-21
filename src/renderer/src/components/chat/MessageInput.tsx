@@ -191,6 +191,71 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   }
 }
 
+// ─── useMessageSubmit Hook ────────────────────────────────
+
+function useMessageSubmit(params: {
+  text: string
+  setText: (val: string) => void
+  attachments: string[]
+  activeConversation: { id?: string } | null
+  executeCommand: (command: string) => Promise<boolean>
+  checkWarning: (text: string, attachments?: string[]) => boolean
+  executeSend: (content: string, sendAttachments?: string[]) => Promise<void>
+}): () => Promise<void> {
+  const { text, setText, attachments, activeConversation, executeCommand, checkWarning, executeSend } = params
+
+  return useCallback(async (): Promise<void> => {
+    const trimmed = text.trim()
+    // SEND-RACE-01: Read live store state (not stale React closure) to prevent
+    // rapid double-clicks from bypassing the guard between render cycles.
+    const { isStreaming: liveStreaming, isSending } = useChatStore.getState()
+    if (!trimmed || liveStreaming || isSending || !activeConversation) return
+
+    if (trimmed.startsWith('/')) {
+      setText('')
+      await executeCommand(trimmed)
+      return
+    }
+
+    const sendAttachments = attachments.length > 0 ? [...attachments] : undefined
+    if (checkWarning(trimmed, sendAttachments)) return
+
+    await executeSend(trimmed, sendAttachments)
+  }, [text, setText, attachments, activeConversation, executeCommand, checkWarning, executeSend])
+}
+
+// ─── useMessageInputEffects Hook ─────────────────────────
+
+function useMessageInputEffects(
+  text: string,
+  conversationId: string | undefined,
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+  loadPreferences: () => Promise<void>,
+  hydrateConversationSpecialists: (id: string) => Promise<void>
+): void {
+  const adjustHeight = useCallback(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
+      const maxHeight = 6 * 24 // ~6 lines
+      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
+    }
+  }, [textareaRef])
+
+  useEffect(() => {
+    adjustHeight()
+  }, [text, adjustHeight])
+
+  useEffect(() => {
+    void loadPreferences().catch(() => undefined)
+  }, [loadPreferences])
+
+  useEffect(() => {
+    if (!conversationId) return
+    void hydrateConversationSpecialists(conversationId).catch(() => undefined)
+  }, [conversationId, hydrateConversationSpecialists])
+}
+
 // ─── Component ────────────────────────────────────────────
 
 interface MessageInputProps {
@@ -276,28 +341,8 @@ export default function MessageInput({
     textareaRef
   })
 
-  // ── Textarea auto-resize ──
-  const adjustHeight = useCallback(() => {
-    const textarea = textareaRef.current
-    if (textarea) {
-      textarea.style.height = 'auto'
-      const maxHeight = 6 * 24 // ~6 lines
-      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
-    }
-  }, [])
-
-  useEffect(() => {
-    adjustHeight()
-  }, [text, adjustHeight])
-
-  useEffect(() => {
-    void loadPreferences().catch(() => undefined)
-  }, [loadPreferences])
-
-  useEffect(() => {
-    if (!conversationId) return
-    void hydrateConversationSpecialists(conversationId).catch(() => undefined)
-  }, [conversationId, hydrateConversationSpecialists])
+  // ── Side effects ──
+  useMessageInputEffects(text, conversationId, textareaRef, loadPreferences, hydrateConversationSpecialists)
 
   // ── Slash commands ──
   const currentProvider = activeConversation?.llmProvider ?? 'claude'
@@ -352,24 +397,15 @@ export default function MessageInput({
     executeSend
   })
 
-  const handleSend = async (): Promise<void> => {
-    const trimmed = text.trim()
-    // SEND-RACE-01: Read live store state (not stale React closure) to prevent
-    // rapid double-clicks from bypassing the guard between render cycles.
-    const { isStreaming: liveStreaming, isSending } = useChatStore.getState()
-    if (!trimmed || liveStreaming || isSending || !activeConversation) return
-
-    if (trimmed.startsWith('/')) {
-      setText('')
-      await executeCommand(trimmed)
-      return
-    }
-
-    const sendAttachments = attachments.length > 0 ? [...attachments] : undefined
-    if (checkWarning(trimmed, sendAttachments)) return
-
-    await executeSend(trimmed, sendAttachments)
-  }
+  const handleSend = useMessageSubmit({
+    text,
+    setText,
+    attachments,
+    activeConversation,
+    executeCommand,
+    checkWarning,
+    executeSend
+  })
 
   const commandCtx: CommandContext = {
     filteredCommands,

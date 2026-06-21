@@ -363,19 +363,28 @@ export class BlueprintBuildService extends EventEmitter {
     // BP-VERIFY-AUTOFIRE-01: Verify event listeners are already wired by the IPC handler
     // that started this build phase (wireBlueprintEvents persists for 180min via
     // scheduleAutoCleanup). No additional wiring needed here.
-    blueprintVerifyService
-      .startVerifyPhase({
-        blueprintId,
-        workspaceId,
-        workspacePath
-      })
-      .catch((err) => {
-        bpLog.error('[build→verify] Verify phase failed:', err)
-        // BP-02: If verify rejects, pipeline is never marked stopped.
-        // Clean up here so the workspace isn't permanently locked.
-        blueprintService.markPipelineStopped(workspaceId)
-        blueprintRepository.updateStatus(blueprintId, 'failed')
-      })
+    // BP-VERIFY-SYNC-01: Wrap in try-catch for synchronous throws (e.g. markPipelineRunning()
+    // throwing if lock is held). .catch() only handles Promise rejections, not sync throws
+    // that occur before the Promise is returned.
+    try {
+      blueprintVerifyService
+        .startVerifyPhase({
+          blueprintId,
+          workspaceId,
+          workspacePath
+        })
+        .catch((err) => {
+          bpLog.error('[build→verify] Verify phase failed:', err)
+          // BP-02: If verify rejects, pipeline is never marked stopped.
+          // Clean up here so the workspace isn't permanently locked.
+          blueprintService.markPipelineStopped(workspaceId)
+          blueprintRepository.updateStatus(blueprintId, 'failed')
+        })
+    } catch (syncErr) {
+      bpLog.error('[build→verify] Verify startup failed (sync):', syncErr)
+      blueprintService.markPipelineStopped(workspaceId)
+      blueprintRepository.updateStatus(blueprintId, 'failed')
+    }
   }
 
   // ── Task Execution ──
@@ -445,11 +454,13 @@ export class BlueprintBuildService extends EventEmitter {
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
       // BP-ABORT-TOCTOU-01: Attach listener BEFORE checking aborted status to
       // close the race window where the signal fires between check and addEventListener.
+      // BP-ABORT-LISTENER-LEAK-01: Hoist handler so it can be removed in finally.
+      let abortHandler: (() => void) | undefined
       const abortPromise = new Promise<void>((_, reject) => {
-        const onAbort = (): void => reject(new Error('Phase cancelled'))
-        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        abortHandler = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', abortHandler, { once: true })
         if (abortSignal?.aborted) {
-          onAbort()
+          abortHandler()
         }
       })
 
@@ -459,6 +470,8 @@ export class BlueprintBuildService extends EventEmitter {
         await Promise.race([sendPromise, timeoutPromise, abortPromise])
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        // BP-ABORT-LISTENER-LEAK-01: Clean up abort listener if task completed normally
+        if (abortHandler) abortSignal?.removeEventListener('abort', abortHandler)
       }
 
       // Parse output
@@ -489,7 +502,13 @@ export class BlueprintBuildService extends EventEmitter {
     } finally {
       session.removeListener('chunk', onChunk)
       session.removeListener('statusUpdate', onStatus)
-      await session.stop()
+      // BP-SESSION-LEAK-01: Wrap session.stop() in its own try-catch so a stop()
+      // failure doesn't skip activeSessions cleanup, causing a resource leak.
+      try {
+        await session.stop()
+      } catch (stopErr) {
+        bpLog.error(`[executeTask] session.stop() failed for task ${task.taskId}:`, stopErr)
+      }
       if (this.activeSessions.get(workspaceId) === session) {
         this.activeSessions.delete(workspaceId)
       }

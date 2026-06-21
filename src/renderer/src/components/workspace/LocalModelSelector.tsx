@@ -78,6 +78,7 @@ function ModelRow({
 }): React.JSX.Element {
   return (
     <div
+      data-testid="local-model-card"
       className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors ${
         selected
           ? 'border-primary bg-primary-muted'
@@ -243,7 +244,7 @@ export default function LocalModelSelector({
   }
 
   return (
-    <div className="space-y-4">
+    <div data-testid="local-model-selector" className="space-y-4">
       {/* Section A: Installed Models (always visible, primary) */}
       <div>
         <label className="text-xs font-medium text-text-secondary">Model</label>

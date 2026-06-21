@@ -3,23 +3,63 @@ import { GitBranch, FileText, Loader2, AlertTriangle } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import InsightsSummary, { type ConversationInsights } from './InsightsSummary'
 
-interface CompleteDialogProps {
-  isOpen: boolean
-  conversationTitle: string
-  conversationId: string
-  onConfirm: (branchName: string, commitMessage: string, description: string) => Promise<void>
-  onCancel: () => void
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Data-driven maps
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CHANGE_TYPE_COLORS: Record<string, string> = {
+  created: 'text-success',
+  modified: 'text-warning',
+  deleted: 'text-danger'
 }
 
-export default function CompleteDialog({
-  isOpen,
-  conversationTitle,
-  conversationId,
-  onConfirm,
-  onCancel
-}: CompleteDialogProps): React.JSX.Element | null {
-  const { repoInfo, githubStatus } = useWorkspaceStore()
+function getRepoConfigLabels(
+  repoInfo: { isRepo: boolean; hasRemote?: boolean } | null,
+  githubConfigured: boolean
+): { buttonLabel: string; subtitle: string } {
+  if (!repoInfo?.isRepo) return { buttonLabel: 'Complete', subtitle: 'Commit changes locally' }
+  if (!repoInfo.hasRemote)
+    return { buttonLabel: 'Complete & Commit', subtitle: 'Create a branch and commit changes' }
+  if (!githubConfigured)
+    return {
+      buttonLabel: 'Complete & Push',
+      subtitle: 'Create a branch, commit changes, and push to remote'
+    }
+  return {
+    buttonLabel: 'Complete & Create PR',
+    subtitle: 'Create a branch, commit changes, and create PR'
+  }
+}
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// useCompleteDialogInit — initialization, async loads, escape key
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+interface DialogInitState {
+  branchName: string
+  setBranchName: (v: string) => void
+  commitMessage: string
+  setCommitMessage: (v: string) => void
+  prDescription: string
+  setPrDescription: (v: string) => void
+  fileChanges: Array<{ filePath: string; changeType: string }>
+  isSubmitting: boolean
+  setIsSubmitting: (v: boolean) => void
+  isGenerating: boolean
+  generationError: string | null
+  error: string | null
+  setError: (v: string | null) => void
+  insights: ConversationInsights | null
+  insightsLoading: boolean
+  inputRef: React.RefObject<HTMLInputElement | null>
+}
+
+function useCompleteDialogInit(
+  isOpen: boolean,
+  conversationTitle: string,
+  conversationId: string,
+  onCancel: () => void
+): DialogInitState {
   const [branchName, setBranchName] = useState('')
   const [commitMessage, setCommitMessage] = useState('')
   const [prDescription, setPrDescription] = useState('')
@@ -46,7 +86,6 @@ export default function CompleteDialog({
       setBranchName(`chat/${slug}-${conversationId.slice(0, 8)}`)
 
       // Pre-fill commit message
-
       setCommitMessage(conversationTitle)
       setError(null)
       setIsSubmitting(false)
@@ -61,8 +100,6 @@ export default function CompleteDialog({
         .then((changes) => {
           const typed = changes as Array<{ filePath: string; changeType: string }>
           setFileChanges(typed)
-
-          // Set initial description from file changes (will be replaced by AI generation)
           const lines = typed.map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
           setPrDescription(lines.length > 0 ? `Changes:\n${lines.join('\n')}` : '')
         })
@@ -103,16 +140,71 @@ export default function CompleteDialog({
 
   useEffect(() => {
     if (!isOpen) return
-
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        onCancel()
-      }
+      if (e.key === 'Escape') onCancel()
     }
-
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onCancel])
+
+  return {
+    branchName,
+    setBranchName,
+    commitMessage,
+    setCommitMessage,
+    prDescription,
+    setPrDescription,
+    fileChanges,
+    isSubmitting,
+    setIsSubmitting,
+    isGenerating,
+    generationError,
+    error,
+    setError,
+    insights,
+    insightsLoading,
+    inputRef
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Component
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+interface CompleteDialogProps {
+  isOpen: boolean
+  conversationTitle: string
+  conversationId: string
+  onConfirm: (branchName: string, commitMessage: string, description: string) => Promise<void>
+  onCancel: () => void
+}
+
+export default function CompleteDialog({
+  isOpen,
+  conversationTitle,
+  conversationId,
+  onConfirm,
+  onCancel
+}: CompleteDialogProps): React.JSX.Element | null {
+  const { repoInfo, githubStatus } = useWorkspaceStore()
+  const {
+    branchName,
+    setBranchName,
+    commitMessage,
+    setCommitMessage,
+    prDescription,
+    setPrDescription,
+    fileChanges,
+    isSubmitting,
+    setIsSubmitting,
+    isGenerating,
+    generationError,
+    error,
+    setError,
+    insights,
+    insightsLoading,
+    inputRef
+  } = useCompleteDialogInit(isOpen, conversationTitle, conversationId, onCancel)
 
   if (!isOpen) return null
 
@@ -128,34 +220,7 @@ export default function CompleteDialog({
     }
   }
 
-  const changeTypeColor = (type: string): string => {
-    switch (type) {
-      case 'created':
-        return 'text-success'
-      case 'modified':
-        return 'text-warning'
-      case 'deleted':
-        return 'text-danger'
-      default:
-        return 'text-text-secondary'
-    }
-  }
-
-  // Determine button label based on repo/GitHub configuration
-  const getButtonLabel = (): string => {
-    if (!repoInfo?.isRepo) return 'Complete'
-    if (!repoInfo.hasRemote) return 'Complete & Commit'
-    if (!githubStatus?.configured) return 'Complete & Push'
-    return 'Complete & Create PR'
-  }
-
-  // Determine subtitle based on config
-  const getSubtitle = (): string => {
-    if (!repoInfo?.isRepo) return 'Commit changes locally'
-    if (!repoInfo.hasRemote) return 'Create a branch and commit changes'
-    if (!githubStatus?.configured) return 'Create a branch, commit changes, and push to remote'
-    return 'Create a branch, commit changes, and create PR'
-  }
+  const { buttonLabel, subtitle } = getRepoConfigLabels(repoInfo, !!githubStatus?.configured)
 
   return (
     <div
@@ -175,7 +240,7 @@ export default function CompleteDialog({
           </div>
           <div>
             <h3 className="text-base font-semibold text-text-primary">Complete Conversation</h3>
-            <p className="text-xs text-text-secondary">{getSubtitle()}</p>
+            <p className="text-xs text-text-secondary">{subtitle}</p>
           </div>
         </div>
 
@@ -187,6 +252,7 @@ export default function CompleteDialog({
           <input
             ref={inputRef}
             id="branch-name"
+            data-testid="complete-dialog-branch"
             type="text"
             value={branchName}
             onChange={(e) => setBranchName(e.target.value)}
@@ -206,6 +272,7 @@ export default function CompleteDialog({
           </label>
           <input
             id="commit-message"
+            data-testid="complete-dialog-commit"
             type="text"
             value={commitMessage}
             onChange={(e) => setCommitMessage(e.target.value)}
@@ -259,7 +326,7 @@ export default function CompleteDialog({
             <div className="max-h-32 overflow-y-auto bg-surface-base border border-border-subtle rounded-lg p-2 space-y-1">
               {fileChanges.map((fc, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs font-mono">
-                  <span className={`${changeTypeColor(fc.changeType)} flex-shrink-0 w-16`}>
+                  <span className={`${CHANGE_TYPE_COLORS[fc.changeType] ?? 'text-text-secondary'} flex-shrink-0 w-16`}>
                     {fc.changeType}
                   </span>
                   <span className="text-text-secondary truncate">{fc.filePath}</span>
@@ -313,7 +380,7 @@ export default function CompleteDialog({
                 Generating...
               </>
             ) : (
-              getButtonLabel()
+              buttonLabel
             )}
           </button>
         </div>

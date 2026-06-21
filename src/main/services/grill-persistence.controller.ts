@@ -83,6 +83,17 @@ export class GrillPersistenceController {
       grillSessionRepository.updateStatus(session.id, 'evaluating')
     }
 
+    // GRILL-TIMER-RACE-01 + GRILL-BUFFER-ORPHAN-01: Clear old flush timer and
+    // flush buffered messages before overwriting tracking state to prevent
+    // dangling timers and orphaned message data.
+    const oldTracking = this.activeSessions.get(workspaceId)
+    if (oldTracking) {
+      if (oldTracking.flushTimer) {
+        clearTimeout(oldTracking.flushTimer)
+      }
+      this.flushToDb(workspaceId)
+    }
+
     // GRILL-01: Store per-workspace tracking state
     this.activeSessions.set(workspaceId, {
       sessionId: session.id,
@@ -244,8 +255,23 @@ export class GrillPersistenceController {
 
     const tracking = this.getTracking(workspaceId)
 
-    // Flush any remaining buffered messages
-    this.flushToDb(workspaceId)
+    // GRILL-FLUSH-UNWAITED-01: Flush remaining buffer using a local reference
+    // instead of going through flushToDb() → getTracking(). If flushToDb()
+    // fails and schedules a retry via scheduleFlush(), the retry fires after
+    // tracking is deleted — permanently orphaning the buffer. By flushing
+    // directly here, we fail-fast on the final flush and avoid dangling retries.
+    if (tracking && tracking.messageBuffer.length > 0) {
+      if (tracking.flushTimer) {
+        clearTimeout(tracking.flushTimer)
+        tracking.flushTimer = null
+      }
+      try {
+        grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+        tracking.messageBuffer = []
+      } catch (err) {
+        ctrlLog.error('[grill-persistence] Final flush failed — messages lost:', err)
+      }
+    }
 
     // GRILL-06: Guard uses per-workspace evaluationHandled flag
     // Guard against the empty-evaluation dead-end: if the stream ended without
@@ -283,7 +309,13 @@ export class GrillPersistenceController {
     const session = grillSessionRepository.findById(sessionId)
     if (!session) return
 
-    grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
+    // GRILL-SAVEANSWERS-NOGUARD-01: Wrap in try-catch to prevent a DB error
+    // from propagating to the IPC handler as an unhandled exception.
+    try {
+      grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
+    } catch (err) {
+      ctrlLog.error(`[grill-persistence] saveAnswers failed for session=${sessionId}:`, err)
+    }
   }
 
   /** Mark session as evaluating (re-evaluation after answers) */
@@ -292,6 +324,16 @@ export class GrillPersistenceController {
 
     const session = grillSessionRepository.findById(sessionId)
     if (session && session.trackId) {
+      // GRILL-TIMER-RACE-01 + GRILL-BUFFER-ORPHAN-01: Clear old timer and flush
+      // buffer before overwriting to prevent dangling timers and data loss.
+      const oldTracking = this.activeSessions.get(workspaceId)
+      if (oldTracking) {
+        if (oldTracking.flushTimer) {
+          clearTimeout(oldTracking.flushTimer)
+        }
+        this.flushToDb(workspaceId)
+      }
+
       // GRILL-01: Update per-workspace tracking state
       this.activeSessions.set(workspaceId, {
         sessionId,
