@@ -582,23 +582,29 @@ export class AgentRecoveryManager {
       this.s.lastStreamOpts &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
+      const { conversationId, systemPrompt, isBuildMode, llmProvider } =
+        this.s.lastStreamOpts
       // AUTOCONT-STALE-MCP-01: Rebuild mcpResult from adapter to pick up any
       // MCP config changes made since the stream started. lastStreamOpts captured
       // mcpResult at executeStream() entry — using it directly risks invoking
       // disabled tools or missing newly-enabled ones.
-      const { conversationId, systemPrompt, isBuildMode, llmProvider } =
-        this.s.lastStreamOpts
       let freshMcpResult = this.s.lastStreamOpts.mcpResult
       try {
+        const controlCallbacks = this.s.adapter.buildControlCallbacks({
+          conversationId,
+          emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload),
+          getAccumulatedText: () => this.s.accumulatedText
+        })
         freshMcpResult = this.s.adapter.buildMcpConfig({
           mode: this.s.currentMode,
           workspacePath: this.s.workspacePath!,
           workspaceId: this.s.workspaceId,
-          conversationId: this.s.currentConversationId,
+          conversationId,
+          controlCallbacks,
           contextTier: this.s.lastStreamOpts.contextTier
         })
       } catch {
-        // Non-fatal: fall back to stale mcpResult
+        // Non-fatal: fall back to stale mcpResult from lastStreamOpts
         this.s.log.warn('[PIPELINE:error-autocont] Failed to rebuild mcpResult — using stale config')
       }
       await this.continueTurnLimit({

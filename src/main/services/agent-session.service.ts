@@ -39,7 +39,7 @@ import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult } from './executor-types'
 import { CLIExecutor } from './cli-executor'
 import type { CLIExecuteOptions, CLIExecuteResult } from './cli-executor'
-import { resolveContextTier } from './context-management'
+import { resolveContextTier, TIER_LIMITS } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { auditContextBudget, estimateToolCount } from './context-budget-auditor'
 import { authProvider } from './auth-provider'
@@ -1264,7 +1264,16 @@ export class AgentSessionService extends AgentBaseService {
       cwd: this.workspacePath!,
       abortController,
       conversationId: this.currentConversationId ?? undefined,
-      maxTurns: isBuildMode ? 50 : 30,
+      // MAXTURNS-HARDCODED-01: Use tier-appropriate maxTurns for local LLMs.
+      // A small-tier model (32K context) with maxTurns=50 will exhaust its
+      // context window long before hitting the turn limit, causing overflow
+      // errors instead of a graceful turn limit stop.
+      maxTurns: (() => {
+        const ctxWindow = this.resolveLocalContextWindow()
+        const tier = resolveContextTier(ctxWindow)
+        const limits = TIER_LIMITS[tier]
+        return isBuildMode ? limits.maxTurnsBuild : limits.maxTurnsPlan
+      })(),
       primingContext
     })) {
       // Forward chunks, converting OpenCode meta to executor meta format
