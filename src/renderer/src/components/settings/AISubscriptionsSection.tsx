@@ -52,7 +52,7 @@ function CheckRow({
   }
 
   return (
-    <div>
+    <div data-testid="ai-check-row">
       <button
         type="button"
         onClick={() => error && setExpanded(!expanded)}
@@ -163,7 +163,7 @@ export default function AISubscriptionsSection(): React.JSX.Element {
   const showAutoConfigureButton = result && !result.claudeCli.installed
 
   return (
-    <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+    <div data-testid="ai-subscriptions-section" className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
       <div className="flex items-center gap-2 mb-0.5">
         <ShieldCheck size={15} className="text-primary-text" />
         <h4 className="text-sm font-medium text-text-primary">AI Subscriptions</h4>
@@ -220,6 +220,7 @@ export default function AISubscriptionsSection(): React.JSX.Element {
         </button>
         {showAutoConfigureButton && (
           <button
+            data-testid="ai-auto-configure-btn"
             onClick={handleAutoConfigure}
             disabled={isConfiguring}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-text-secondary border border-border-subtle hover:bg-surface-float hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

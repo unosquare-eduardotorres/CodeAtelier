@@ -37,7 +37,6 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   EmbeddingModelStatus,
-  EmbeddingModelProgress,
   OllamaStatus,
   PullProgress,
   IndexingState,
@@ -1247,15 +1246,6 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS),
 
   embeddingInitialize: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE),
-
-  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: EmbeddingModelProgress): void =>
-      callback(data)
-    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
-    }
-  },
 
   onEmbeddingModelReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()

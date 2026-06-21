@@ -60,7 +60,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
   }
 
   return (
-    <div className="p-6 max-w-xl">
+    <div data-testid="auth-settings-tab" className="p-6 max-w-xl">
       <div className="flex items-center gap-2 mb-6">
         <Key size={18} className="text-amber-400" />
         <h2 className="text-base font-semibold text-text-primary">Authentication</h2>

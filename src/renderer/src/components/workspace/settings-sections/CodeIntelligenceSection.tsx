@@ -117,20 +117,17 @@ export default function CodeIntelligenceSection({
               {embeddingStatus?.ready ? (
                 <span className="flex items-center gap-1 text-xs text-success">
                   <Check size={10} />
-                  Ready
+                  Ready ({embeddingStatus.omlxEmbeddingModelId ?? 'oMLX'})
                 </span>
-              ) : embeddingStatus?.cached ? (
-                <span className="flex items-center gap-1 text-xs text-text-secondary">
-                  <Check size={10} />
-                  Cached (loads on first use)
-                </span>
+              ) : embeddingStatus?.omlxRunning ? (
+                <span className="text-xs text-warning">oMLX running — no embedding model loaded</span>
               ) : (
                 <button
                   onClick={onShowEmbeddingSetup}
                   className="text-xs text-primary hover:text-primary-hover flex items-center gap-1"
                 >
                   <Info size={10} />
-                  Not downloaded — click to set up
+                  oMLX not running — click to set up
                 </button>
               )}
             </div>

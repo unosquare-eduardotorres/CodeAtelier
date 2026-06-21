@@ -83,7 +83,7 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
 
   return (
     <>
-      <div className="space-y-4">
+      <div data-testid="skills-list" className="space-y-4">
         {/* Section header */}
         <div>
           <h3 className="text-sm font-semibold text-text-primary">Skills</h3>
@@ -113,6 +113,7 @@ export default function SkillsList({ workspacePath }: SkillsListProps): React.JS
               return (
                 <div
                   key={skill.name}
+                  data-testid="skills-list-item"
                   className="bg-surface-overlay border border-border-subtle rounded p-4 hover:border-border-default transition-colors shadow-sm"
                 >
                   <div className="flex items-start gap-3">

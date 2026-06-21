@@ -55,6 +55,7 @@ export default function CouncilFilterBar({
         />
       </div>
       <button
+        data-testid="council-new-btn"
         onClick={onNewCouncil}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-lg transition-colors ml-auto"
       >

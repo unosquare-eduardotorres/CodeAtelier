@@ -139,12 +139,13 @@ export class BlueprintBuildService extends EventEmitter {
       }
 
       if (result.failed) {
-        // BP-SKIP-01: Mark all remaining pending tasks across subsequent waves as 'skipped'
+        // BP-SKIP-01 + BP-CLEANUP-RUNNING-TASKS-01: Mark all remaining pending/running
+        // tasks across subsequent waves as 'skipped'
         for (const waveNum of sortedWaves) {
           const waveTasks = waveMap.get(waveNum) ?? []
           for (const task of waveTasks) {
             const currentStatus = blueprintTaskRepository.findById(task.id)?.status
-            if (currentStatus === 'pending') {
+            if (currentStatus === 'pending' || currentStatus === 'running') {
               blueprintTaskRepository.updateStatus(task.id, 'skipped')
             }
           }
@@ -163,6 +164,21 @@ export class BlueprintBuildService extends EventEmitter {
       }
     } catch (err) {
       bpLog.error(`[startBuildPhase] BUILD phase failed:`, err)
+      // BP-WAVE-EXCEPTION-01: Mark ALL unfinished tasks as 'skipped' when wave throws.
+      // Without this, tasks stuck in 'running'/'pending' permanently after an exception
+      // because lines 141-151 (normal-path cleanup) were skipped.
+      for (const waveNum of sortedWaves) {
+        const waveTasks = waveMap.get(waveNum) ?? []
+        for (const task of waveTasks) {
+          const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+          // BP-CLEANUP-RUNNING-TASKS-01: Include 'running' — tasks marked 'running'
+          // before executeTask() returned are stuck if the wave threw mid-execution.
+          if (currentStatus === 'pending' || currentStatus === 'running') {
+            try { blueprintTaskRepository.updateStatus(task.id, 'skipped') }
+            catch { /* best effort — DB may be the cause of the original throw */ }
+          }
+        }
+      }
       this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
     } finally {
       this.activeSessions.delete(workspaceId)
@@ -194,7 +210,9 @@ export class BlueprintBuildService extends EventEmitter {
     const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } =
       params
 
-    this.emit('waveStart', {
+    // BP-EMIT-UNHANDLED-01: Use safeEmit to isolate listener failures from wave execution.
+    // A listener throw (e.g. IPC channel closed) would otherwise kill the wave loop.
+    this.safeEmit('waveStart', {
       blueprintId,
       workspaceId,
       wave: waveNum,
@@ -214,7 +232,7 @@ export class BlueprintBuildService extends EventEmitter {
         break
       }
 
-      this.emit('waveTaskStart', {
+      this.safeEmit('waveTaskStart', {
         blueprintId,
         workspaceId,
         wave: waveNum,
@@ -246,7 +264,7 @@ export class BlueprintBuildService extends EventEmitter {
         waveFailed = true
       }
 
-      this.emit('waveTaskComplete', {
+      this.safeEmit('waveTaskComplete', {
         blueprintId,
         workspaceId,
         wave: waveNum,
@@ -260,19 +278,19 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
-    // BP-SKIP-01: Mark remaining tasks in this wave as 'skipped' so the UI
-    // can distinguish "never ran because dependency failed" from "pending".
+    // BP-SKIP-01 + BP-CLEANUP-RUNNING-TASKS-01: Mark remaining pending/running tasks
+    // in this wave as 'skipped' so the UI distinguishes "never ran" from "pending".
     if (waveFailed || result.failed) {
       for (const task of waveTasks) {
         const currentStatus = blueprintTaskRepository.findById(task.id)?.status
-        if (currentStatus === 'pending') {
+        if (currentStatus === 'pending' || currentStatus === 'running') {
           blueprintTaskRepository.updateStatus(task.id, 'skipped')
         }
       }
     }
 
     const waveStatus = waveFailed || result.failed ? 'failed' : 'complete'
-    this.emit('waveComplete', {
+    this.safeEmit('waveComplete', {
       blueprintId,
       workspaceId,
       wave: waveNum,
@@ -282,6 +300,23 @@ export class BlueprintBuildService extends EventEmitter {
     if (waveFailed) {
       bpLog.warn(`[executeWave] Wave ${waveNum} failed — aborting remaining waves`)
       result.failed = true
+    }
+  }
+
+  // ── Safe Event Emission ──
+
+  /**
+   * BP-EMIT-UNHANDLED-01: Emit an event with error isolation.
+   * Prevents a listener failure (e.g. renderer closed during build) from
+   * crashing the wave loop. Without this, a listener throw propagates up
+   * and triggers BP-WAVE-EXCEPTION-01.
+   */
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
     }
   }
 

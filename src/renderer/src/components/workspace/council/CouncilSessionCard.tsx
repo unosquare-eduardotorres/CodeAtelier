@@ -137,7 +137,7 @@ export default function CouncilSessionCard({
   const displayTitle = extractDisplayTitle(session)
 
   return (
-    <div className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm">
+    <div data-testid="council-session-card" className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm">
       {/* Icon */}
       <Landmark size={16} className="text-indigo-400/50 flex-shrink-0" />
 

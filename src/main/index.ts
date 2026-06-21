@@ -35,7 +35,7 @@ import { councilService } from './services/council.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
-import { llamafileEmbeddingProvider } from './services/llamafile-embedding.service'
+import { omlxEmbeddingProvider } from './services/omlx-embedding.service'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 
 // Initialize electron-log for the main process
@@ -506,11 +506,11 @@ app.on('before-quit', async (event) => {
   // Stop all file watchers for Code Graph / Semantic Search
   fileWatcherService.stopAll()
 
-  // Kill the llamafile embedding sidecar so it doesn't orphan after quit
+  // Reset the oMLX embedding provider state on quit
   try {
-    llamafileEmbeddingProvider.dispose()
+    omlxEmbeddingProvider.dispose()
   } catch (e) {
-    log.debug('Llamafile embedding dispose error (expected during quit):', e)
+    log.debug('oMLX embedding dispose error (expected during quit):', e)
   }
 
   closeDatabase()

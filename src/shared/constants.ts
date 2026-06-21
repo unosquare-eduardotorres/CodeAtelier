@@ -291,10 +291,9 @@ export const IPC_CHANNELS = {
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
-  // Embedding provider (llamafile sidecar — replaces Ollama/WASM for semantic search)
+  // Embedding provider (oMLX — user must have oMLX running with an embedding model)
   EMBEDDING_CHECK_STATUS: 'embedding:checkStatus',
   EMBEDDING_INITIALIZE: 'embedding:initialize',
-  EMBEDDING_MODEL_PROGRESS: 'embedding:modelProgress',
   EMBEDDING_MODEL_READY: 'embedding:modelReady',
   EMBEDDING_MODEL_ERROR: 'embedding:modelError',
 
@@ -2208,54 +2207,33 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
   }
 ] as const
 
-// ── Llamafile Embedding Sidecar ──────────────────────────────────────────────
+// ── oMLX Embedding Configuration ────────────────────────────────────────────
 //
-// Code-search embeddings run through a downloaded llamafile server (native,
-// multi-threaded, GPU-capable) instead of in-process WASM. Both the engine
-// binary and the GGUF model are downloaded on first use (not bundled) and
-// pinned by SHA-256.
-//
-// Pins verified 2026-06-01 against the GitHub release + Hugging Face APIs.
-// To upgrade: bump the version/file, then update `sha256` + `sizeBytes` from
-//   - GitHub:  https://api.github.com/repos/mozilla-ai/llamafile/releases/latest (asset.digest)
-//   - HF:      https://huggingface.co/api/models/<repo>?blobs=true (siblings[].lfs.sha256)
-export const LLAMAFILE_EMBEDDING = {
-  /** Downloaded llamafile engine binary (Actually-Portable-Executable). */
-  engine: {
-    version: '0.10.2',
-    /** `-thin` build: ~44MB, no prebuilt GPU dylibs (CPU/Metal is plenty for embeddings). */
-    asset: 'llamafile-0.10.2-thin',
-    url: 'https://github.com/mozilla-ai/llamafile/releases/download/0.10.2/llamafile-0.10.2-thin',
-    sha256: '53c638390ba9b49b034615a7e9e3bfa00995f576e7730506d7f7e434ab8684e9',
-    sizeBytes: 44118372
-  },
-  /** Downloaded GGUF embedding model (nomic-embed-text-v1.5, 768-dim). */
-  model: {
-    file: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
-    url: 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf',
-    sha256: 'd4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac',
-    sizeBytes: 84106624,
-    /**
-     * Provenance string stored in indexing_state.embedding_model. Changing this
-     * triggers the existing model-change re-index in vector-search.service.ts.
-     */
-    modelName: 'nomic-embed-text-v1.5'
-  },
-  /** llamafile server launch + request defaults. */
+// Code-search embeddings run through the user's oMLX server (Apple Silicon
+// native, GPU-accelerated). The user must have oMLX installed and running with
+// a compatible embedding model loaded. No artefacts are auto-downloaded.
+export const OMLX_EMBEDDING = {
   server: {
-    host: '127.0.0.1',
-    /** mean pooling + L2 normalize matches the prior WASM pipeline's output shape. */
-    pooling: 'mean',
-    embdNormalize: '2',
-    /** Max seconds to wait for the spawned server to report healthy. */
-    healthTimeoutSec: 60,
-    /**
-     * Defensive per-input character cap. nomic-embed-text-v1.5's context is
-     * 2048 tokens and llama.cpp `/v1/embeddings` ERRORS (not truncates) on
-     * over-length input. ~8000 chars ≈ ~2000 tokens, restoring the prior
-     * "never hard-fail on a big chunk" behavior. A char cap is sufficient here
-     * — no tokenizer needed.
-     */
-    maxInputChars: 8000
-  }
+    /** Defensive per-input character cap. BGE-M3 context is 8192 tokens;
+     *  ~8000 chars ≈ ~2000 tokens keeps the "never hard-fail" behavior. */
+    maxInputChars: 8000,
+    /** Max seconds to wait for an embedding response */
+    requestTimeoutMs: 30_000
+  },
+  /** Recommended embedding model for code semantic search */
+  recommendedModel: {
+    id: 'mlx-community/bge-m3-mlx-8bit',
+    label: 'BGE-M3 (8-bit MLX)',
+    /** Provenance string stored in indexing_state.embedding_model.
+     *  Changing this triggers re-index via existing model-change invalidation. */
+    modelName: 'bge-m3',
+    dimensions: 1024,
+    contextTokens: 8192,
+    estimatedSizeMB: 700
+  },
+  /** Alternative models users can install in oMLX */
+  alternativeModels: [
+    { id: 'mlx-community/bge-m3-mlx-4bit', label: 'BGE-M3 (4-bit, smaller)', modelName: 'bge-m3-4bit', dimensions: 1024, estimatedSizeMB: 350 },
+    { id: 'mlx-community/answerdotai-ModernBERT-base-4bit', label: 'ModernBERT Base (4-bit)', modelName: 'modernbert-base', dimensions: 768, estimatedSizeMB: 150 }
+  ]
 } as const

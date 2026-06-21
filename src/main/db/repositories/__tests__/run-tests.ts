@@ -33,6 +33,13 @@ import './code-graph-repos.test'
 // ─── Phase 15: Track 6: Migration Suite ───
 import './migration-suite.test'
 
+// ─── Phase 16: Track 1 + Track 6: Migration replay + branch coverage ───
+import './migration-replay.test'
+import './repo-branch-coverage.test'
+
+// ─── Phase 17: Track 8: Repo deep branch completion ───
+import './repo-deep-branch.test'
+
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

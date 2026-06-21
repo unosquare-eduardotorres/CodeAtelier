@@ -994,36 +994,20 @@ export interface AutoConfigureResult {
 
 // ── Embedding Provider ──
 
-/** Which embedding backend is active. Currently llamafile-only. */
-export type EmbeddingBackend = 'llamafile'
+/** Which embedding backend is active. oMLX is the only supported backend. */
+export type EmbeddingBackend = 'omlx'
 
-/** Which downloaded artefact a progress/phase event refers to. */
-export type EmbeddingDownloadPhase = 'binary' | 'model'
-
-/** Status of the downloaded embedding sidecar + model */
+/** Status of the oMLX embedding backend */
 export interface EmbeddingModelStatus {
-  /** Server is spawned and ready for inference */
+  /** oMLX is running and an embedding model is loaded + responding */
   ready: boolean
-  /** Both engine binary + GGUF model are present on disk (no download needed) */
-  cached: boolean
-  /** Active embedding backend */
-  backend: EmbeddingBackend
-  /** Engine binary exists + passes the SHA-256/size check */
-  engineInstalled: boolean
-  /** GGUF model exists + passes the SHA-256/size check */
-  modelInstalled: boolean
-}
-
-/** Progress event during model/binary download */
-export interface EmbeddingModelProgress {
-  /** Percentage 0–100 */
-  progress: number
-  /** Bytes downloaded */
-  loaded: number
-  /** Total bytes */
-  total: number
-  /** Which artefact this progress refers to ('binary' = engine, 'model' = GGUF) */
-  phase: EmbeddingDownloadPhase
+  backend: 'omlx'
+  /** oMLX server is reachable */
+  omlxRunning: boolean
+  /** ID of the loaded embedding model (e.g. 'bge-m3') or null if none */
+  omlxEmbeddingModelId: string | null
+  /** Whether the embedding model is loaded in oMLX memory */
+  omlxEmbeddingModelLoaded: boolean
 }
 
 // ── Ollama ──

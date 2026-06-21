@@ -38,7 +38,6 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   EmbeddingModelStatus,
-  EmbeddingModelProgress,
   SemanticSearchResult,
   OllamaStatus,
   OmlxExtendedStatus,
@@ -721,7 +720,6 @@ interface Api {
   // Embedding Provider
   embeddingCheckStatus: () => Promise<EmbeddingModelStatus>
   embeddingInitialize: () => Promise<void>
-  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void) => () => void
   onEmbeddingModelReady: (callback: () => void) => () => void
   onEmbeddingModelError: (callback: (error: string) => void) => () => void
 

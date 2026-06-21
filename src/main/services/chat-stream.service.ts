@@ -261,32 +261,39 @@ export class ChatStreamService {
       output?: string
       outcome?: string
     }) => {
-      const conversationId = chatAgentService.getCurrentConversationId() || ''
-      if (!conversationId) return
-      const chunk: StreamChunk = {
-        type: 'hook_lifecycle',
-        content: '',
-        hookInfo: {
-          hookId: event.hookId,
-          hookName: event.hookName,
-          hookEvent: event.hookEvent,
-          phase: event.phase as 'started' | 'progress' | 'response',
-          output: event.output,
-          outcome: event.outcome as 'success' | 'error' | 'cancelled' | undefined
+      // HOOK-LIFECYCLE-NOISOL-01: Wrap in try-catch to prevent listener errors
+      // from propagating through EventEmitter.emit() and crashing the hook
+      // execution pipeline.
+      try {
+        const conversationId = chatAgentService.getCurrentConversationId() || ''
+        if (!conversationId) return
+        const chunk: StreamChunk = {
+          type: 'hook_lifecycle',
+          content: '',
+          hookInfo: {
+            hookId: event.hookId,
+            hookName: event.hookName,
+            hookEvent: event.hookEvent,
+            phase: event.phase as 'started' | 'progress' | 'response',
+            output: event.output,
+            outcome: event.outcome as 'success' | 'error' | 'cancelled' | undefined
+          }
         }
+        forwardChunkToRenderer(
+          this.mainWindow,
+          conversationId,
+          this.currentStreamingRole,
+          chunk,
+          { value: '' }, // hook chunks don't accumulate content
+          chatAgentService.getWorkspacePath() ?? undefined,
+          undefined,
+          'da-vinci-responding',
+          this.activeRequestId ?? undefined,
+          chatAgentService.getMode()
+        )
+      } catch (error) {
+        log.warn('[STREAM:hook-lifecycle-handler] Error forwarding hook event:', error)
       }
-      forwardChunkToRenderer(
-        this.mainWindow,
-        conversationId,
-        this.currentStreamingRole,
-        chunk,
-        { value: '' }, // hook chunks don't accumulate content
-        chatAgentService.getWorkspacePath() ?? undefined,
-        undefined,
-        'da-vinci-responding',
-        this.activeRequestId ?? undefined,
-        chatAgentService.getMode()
-      )
     }
     hookEngine.on('hookLifecycle', this.hookLifecycleHandler)
   }
@@ -431,6 +438,14 @@ export class ChatStreamService {
         this.keepaliveTimer = null
         return
       }
+      // CHAT-KEEPALIVE-STALE-01: Validate the timer still references the current
+      // lifecycle. If the lifecycle completed and a new stream started before this
+      // interval fires, the captured conversationId/requestId are stale.
+      if (conversationLifecycle.requestId !== requestId) {
+        clearInterval(this.keepaliveTimer!)
+        this.keepaliveTimer = null
+        return
+      }
       this.safeWindowSend(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId,
         requestId,
@@ -494,6 +509,13 @@ export class ChatStreamService {
     if (streamConvId) {
       conversationLifecycle.onDispose(() => {
         chatAgentService.clearConversationPendingState(streamConvId)
+      })
+
+      // CHAT-TEXTBATCHER-ORPHAN-01: Flush/drain the text delta batcher on lifecycle
+      // abort. Without this, buffered text fires 33ms later into an aborted
+      // conversation — stale text appears in UI after the "stopped" indicator.
+      conversationLifecycle.onDispose(() => {
+        flushTextBatcher(streamConvId)
       })
 
       // F-19: Clear accumulated tool activities on lifecycle abort.
@@ -658,6 +680,26 @@ export class ChatStreamService {
    * Extracted from the onComplete closure — all error paths transition the state machine.
    */
   private async finalizeStreamMessage(ctx: StreamContext): Promise<void> {
+    // CHAT-STOP-COMPLETE-RACE-01: Re-check after the async gap between onComplete's
+    // guard and this method's DB write. If stop() ran between the guard passing and
+    // this point, it already saved a "stopped" message — skip to avoid duplicates.
+    if (this.isStopped) {
+      log.info('[PIPELINE:finalize-skipped] Stream was stopped during finalization')
+      return
+    }
+
+    // CHAT-FINALIZE-ORPHAN-01: Verify this finalization still belongs to the
+    // current lifecycle. If a new stream started (superseding this one), the
+    // lifecycle's requestId will have changed. Skip to avoid corrupting the
+    // new stream's state machine.
+    if (conversationLifecycle.requestId !== ctx.requestId) {
+      log.info(
+        `[PIPELINE:finalize-orphaned] requestId mismatch ` +
+        `(lifecycle=${conversationLifecycle.requestId} ctx=${ctx.requestId}) — skipping`
+      )
+      return
+    }
+
     try {
       log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.length })
       const cleanedContent = ctx.streamedContent.trim()
@@ -783,7 +825,16 @@ export class ChatStreamService {
 
     // ALWAYS transition state machine — regardless of success or failure.
     // This is the single point where streaming → idle happens on the happy path.
-    conversationStateMachine.transition('chatAgentComplete')
+    // CHAT-FINALIZE-ORPHAN-01: Re-check before transitioning — the async gap in
+    // the try block above may have allowed a new stream to start.
+    if (conversationLifecycle.requestId === ctx.requestId) {
+      conversationStateMachine.transition('chatAgentComplete')
+    } else {
+      log.info(
+        `[PIPELINE:finalize-orphaned-transition] requestId mismatch after DB write ` +
+        `(lifecycle=${conversationLifecycle.requestId} ctx=${ctx.requestId}) — skipping transition`
+      )
+    }
 
     // Log stream completion metrics (TTFT, duration, chunk count, chars)
     completeStreamMetrics(ctx.conversationId, 'complete')
@@ -871,13 +922,12 @@ export class ChatStreamService {
       // Flush any pending batched text deltas before finalizing
       flushTextBatcher(ctx.conversationId)
 
-      // CHAT-DUP-01 + CHAT-RACE-01: Use the lifecycle abort signal (set atomically
-      // by lifecycle.abort()) instead of the isStopped boolean flag. This prevents
-      // the TOCTOU race where isStopped is checked here but stop() sets it between
-      // this check and the first await inside finalizeStreamMessage(). The signal
-      // is set once and stays aborted — no race window.
-      const signal = conversationLifecycle.signal
-      if (this.isStopped || signal?.aborted) {
+      // CHAT-FINALIZE-DELETE-01: After lifecycle.abort(), the abortController is set
+      // to null, making signal null and signal?.aborted undefined (falsy). Using
+      // !conversationLifecycle.isActive correctly catches both abort-then-complete
+      // and delete-then-complete scenarios. isActive is false when abortController
+      // is null — which happens after both abort() and complete().
+      if (this.isStopped || !conversationLifecycle.isActive) {
         cleanupListeners()
         resolveDone()
         return
@@ -893,7 +943,11 @@ export class ChatStreamService {
           // Safety net: if finalizeStreamMessage's inner catch block threw before
           // reaching the transition (e.g. mainWindow destroyed), ensure the state
           // machine still moves to idle. Idempotent when already idle.
-          conversationStateMachine.transition('chatAgentComplete')
+          // CHAT-FINALIZE-ORPHAN-01: Only transition if lifecycle is still ours —
+          // a new stream may have started during the failed finalization.
+          if (conversationLifecycle.requestId === ctx.requestId) {
+            conversationStateMachine.transition('chatAgentComplete')
+          }
           cleanupListeners()
           rejectDone(err instanceof Error ? err : new Error(String(err)))
         })

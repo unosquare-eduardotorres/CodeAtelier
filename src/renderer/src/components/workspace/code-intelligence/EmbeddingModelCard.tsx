@@ -1,36 +1,39 @@
 import { useState } from 'react'
-import { RefreshCw, Loader2, HardDrive } from 'lucide-react'
+import { RefreshCw, Loader2, Plug, ExternalLink, AlertTriangle } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
-import { LLAMAFILE_EMBEDDING } from '../../../../../shared/constants'
+import { OMLX_EMBEDDING } from '../../../../../shared/constants'
 import type { EmbeddingModelStatus } from '../../../../../shared/types'
-
-const TOTAL_DOWNLOAD_MB = Math.round(
-  (LLAMAFILE_EMBEDDING.engine.sizeBytes + LLAMAFILE_EMBEDDING.model.sizeBytes) / (1024 * 1024)
-)
 
 interface EmbeddingModelCardProps {
   embeddingStatus: EmbeddingModelStatus | null
+  isAppleSilicon: boolean | null // null = loading
   onShowSetup: () => void
 }
 
 export default function EmbeddingModelCard({
   embeddingStatus,
+  isAppleSilicon,
   onShowSetup
 }: EmbeddingModelCardProps): React.JSX.Element {
-  const [isRedownloading, setIsRedownloading] = useState(false)
+  const [isChecking, setIsChecking] = useState(false)
 
-  const handleRedownload = async (): Promise<void> => {
-    setIsRedownloading(true)
+  const handleCheckConnection = async (): Promise<void> => {
+    setIsChecking(true)
     try {
       await window.api.embeddingInitialize()
     } catch {
       // Error will surface via embedding events
     }
-    setIsRedownloading(false)
+    setIsChecking(false)
+  }
+
+  const handleOpenDashboard = async (): Promise<void> => {
+    const url = await window.api.omlxAdminUrl()
+    window.open(url, '_blank')
   }
 
   // Determine status label and color
-  let statusLabel = 'Not downloaded'
+  let statusLabel = 'Not connected'
   let statusColor = 'text-text-muted'
   let statusDot = 'bg-surface-base'
 
@@ -38,8 +41,12 @@ export default function EmbeddingModelCard({
     statusLabel = 'Ready'
     statusColor = 'text-success'
     statusDot = 'bg-success'
-  } else if (embeddingStatus?.cached) {
-    statusLabel = 'Ready (cached)'
+  } else if (embeddingStatus?.omlxRunning && !embeddingStatus?.omlxEmbeddingModelLoaded) {
+    statusLabel = 'No embedding model loaded'
+    statusColor = 'text-warning'
+    statusDot = 'bg-warning'
+  } else if (embeddingStatus?.omlxRunning) {
+    statusLabel = 'Connected'
     statusColor = 'text-success'
     statusDot = 'bg-success'
   }
@@ -47,17 +54,15 @@ export default function EmbeddingModelCard({
   return (
     <SettingsCard>
       <div className="flex items-center gap-2 mb-3">
-        <HardDrive size={14} className="text-text-secondary" />
+        <Plug size={14} className="text-text-secondary" />
         <h3 className="text-sm font-medium text-text-body">Embedding Model</h3>
       </div>
 
       <div className="space-y-2 text-xs">
-        {/* Model name */}
+        {/* Backend */}
         <div className="flex items-baseline justify-between">
-          <span className="text-text-secondary">Model</span>
-          <span className="text-text-body font-mono">
-            {LLAMAFILE_EMBEDDING.model.modelName} (Q4_K_M GGUF)
-          </span>
+          <span className="text-text-secondary">Backend</span>
+          <span className="text-text-body">oMLX (Apple Silicon native)</span>
         </div>
 
         {/* Status */}
@@ -69,51 +74,80 @@ export default function EmbeddingModelCard({
           </span>
         </div>
 
-        {/* Size */}
+        {/* Loaded model */}
         <div className="flex items-baseline justify-between">
-          <span className="text-text-secondary">Size</span>
-          <span className="text-text-body">~{TOTAL_DOWNLOAD_MB} MB (engine + GGUF model)</span>
-        </div>
-
-        {/* Cache location */}
-        <div className="flex items-baseline justify-between">
-          <span className="text-text-secondary">Cache</span>
-          <span className="text-text-muted font-mono text-[10px] truncate max-w-[240px]">
-            ~/Library/Application Support/code-atelier/models
+          <span className="text-text-secondary">Model</span>
+          <span className="text-text-body font-mono">
+            {embeddingStatus?.omlxEmbeddingModelId ?? 'None loaded'}
           </span>
         </div>
 
-        {/* Runtime */}
+        {/* Recommended */}
         <div className="flex items-baseline justify-between">
-          <span className="text-text-secondary">Runtime</span>
-          <span className="text-text-body">llamafile server (native, downloaded on first use)</span>
+          <span className="text-text-secondary">Recommended</span>
+          <span className="text-text-muted font-mono text-[10px] truncate max-w-[240px]">
+            {OMLX_EMBEDDING.recommendedModel.id}
+          </span>
         </div>
       </div>
 
       {/* Action buttons */}
       <div className="mt-4 flex items-center gap-2">
-        {embeddingStatus?.ready || embeddingStatus?.cached ? (
-          <button
-            onClick={handleRedownload}
-            disabled={isRedownloading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isRedownloading ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
-            Repair / Re-initialize
-          </button>
+        {embeddingStatus?.ready ? (
+          <>
+            <button
+              onClick={handleOpenDashboard}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-md transition-colors"
+            >
+              <ExternalLink size={12} />
+              Open oMLX Dashboard
+            </button>
+            <button
+              onClick={handleCheckConnection}
+              disabled={isChecking}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isChecking ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <RefreshCw size={12} />
+              )}
+              Check Connection
+            </button>
+          </>
         ) : (
           <button
             onClick={onShowSetup}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors"
           >
-            Download Model
+            Set Up oMLX
           </button>
         )}
       </div>
+
+      {/* Apple Silicon warning */}
+      {isAppleSilicon === false && (
+        <div className="mt-3 flex items-start gap-2">
+          <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
+          <p className="text-xs text-text-muted leading-relaxed">
+            <span className="font-medium text-text-secondary">Apple Silicon required.</span>{' '}
+            oMLX only runs on Apple Silicon (M1/M2/M3/M4) Macs. Semantic search is not available on
+            Intel-based Macs.
+          </p>
+        </div>
+      )}
+
+      {/* Help text */}
+      {!embeddingStatus?.ready && isAppleSilicon !== false && (
+        <p className="mt-3 text-xs text-text-muted leading-relaxed">
+          Install an embedding model in oMLX to enable semantic search. Open the oMLX admin
+          dashboard and download{' '}
+          <span className="font-mono text-text-secondary">
+            {OMLX_EMBEDDING.recommendedModel.id}
+          </span>{' '}
+          (~{OMLX_EMBEDDING.recommendedModel.estimatedSizeMB} MB).
+        </p>
+      )}
     </SettingsCard>
   )
 }

@@ -83,8 +83,8 @@ import './compaction-thresholds.test'
 import './local-compaction.test'
 import './auto-compact-options.test'
 
-// ─── Run 18: Llamafile embedding sidecar manager ───
-import './llamafile-embedding.test'
+// ─── Run 18: oMLX embedding provider ───
+import './omlx-embedding.test'
 
 // ─── Run 19: Previously-orphaned test files (registered for coverage) ───
 import './context-management.test'
@@ -241,6 +241,23 @@ import './zero-coverage-services.test'
 import './default-prompts-constants.test'
 import './preprocessing-pure.test'
 import './vector-search-pure.test'
+
+// ─── Phase 16: Coverage Mega-Push II — types, services, IPC, MCP ───
+import './type-coverage.test'
+import './mpa-orchestration-deep.test'
+import './service-mid-coverage-deep.test'
+import '../../ipc/__tests__/ipc-zero-coverage.test'
+import '../../ipc/__tests__/ipc-blueprint-handlers.test'
+import '../../ipc/__tests__/ipc-audit-handlers.test'
+import '../../ipc/__tests__/ipc-crud-deep.test'
+import '../../mcp-servers/__tests__/mcp-server-tools-deep.test'
+
+// ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
+import '../../ipc/__tests__/ipc-handler-bodies.test'
+import './service-instance-deep.test'
+import './blueprint-pipeline-instance.test'
+import './adapter-branch-push.test'
+import './migration-metadata.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls

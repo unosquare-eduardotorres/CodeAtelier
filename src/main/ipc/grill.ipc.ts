@@ -38,6 +38,11 @@ import log from 'electron-log'
 
 const grillLog = log.scope('grill-ipc')
 
+// GRILL-DUALSTART-01: Per-workspace start lock prevents the TOCTOU race between
+// the isRunning check and evaluate() registering the session in the Map. The lock
+// is set synchronously before setup and released in evaluate()'s .finally().
+const grillStartLocks = new Set<string>()
+
 export function registerGrillIpc(_mainWindow: BrowserWindow): void {
   // ── grill:evaluate — start a grill evaluation ──────────────────────
 
@@ -63,10 +68,16 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
       greenfield
     })
 
-    if (grillAgentService.isRunning) {
-      throw new Error('A grill evaluation is already running.')
+    // GRILL-DUALSTART-01 + GRILL-ISRUNNING-GLOBAL-01: Per-workspace start lock
+    // prevents the TOCTOU race between isRunning check and evaluate() setting
+    // session.running. Uses isRunningForWorkspace instead of global isRunning
+    // to allow cross-workspace concurrent evaluations.
+    if (grillStartLocks.has(workspaceId) || grillAgentService.isRunningForWorkspace(workspaceId)) {
+      throw new Error('A grill evaluation is already running for this workspace.')
     }
+    grillStartLocks.add(workspaceId)
 
+    try {
     // ── Greenfield path: no workspace lookup needed ──
     if (greenfield) {
       grillLog.info(
@@ -104,6 +115,9 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
         })
         .catch((err) => {
           grillLog.error('[grill:evaluate:greenfield] evaluate failed:', err)
+        })
+        .finally(() => {
+          grillStartLocks.delete(workspaceId)
         })
       return
     }
@@ -145,6 +159,15 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
       .catch((err) => {
         grillLog.error('[grill:evaluate] evaluate failed:', err)
       })
+      .finally(() => {
+        grillStartLocks.delete(workspaceId)
+      })
+    } catch (e) {
+      // GRILL-DUALSTART-01: Release lock if synchronous setup fails
+      // (e.g. workspace not found, startTracking throws)
+      grillStartLocks.delete(workspaceId)
+      throw e
+    }
   })
 
   // ── grill:cancel — abort running evaluation ────────────────────────

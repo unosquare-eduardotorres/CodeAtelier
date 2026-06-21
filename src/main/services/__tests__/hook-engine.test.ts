@@ -9,7 +9,7 @@
  * NOTE: the harness runs async tests inside a describe() concurrently, and this
  * suite mutates the singleton's private state + a shared temp workspace. To keep
  * it deterministic, every scenario is consolidated into a single sequential
- * async test (mirrors llamafile-embedding.test.ts).
+ * async test (mirrors omlx-embedding.test.ts).
  */
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'

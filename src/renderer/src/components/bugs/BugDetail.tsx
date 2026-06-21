@@ -37,7 +37,7 @@ export default function BugDetail({
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
+    <div data-testid="bug-detail-panel" className="flex flex-col h-full overflow-y-auto p-4 gap-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">

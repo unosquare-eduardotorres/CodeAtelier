@@ -666,6 +666,20 @@ export class AgentSessionService extends AgentBaseService {
     if (mode === this.currentMode) return
     if (!this.workspacePath) return
 
+    // MODE-SWITCH-NOLOCK-01: Serialize after the current send (if any) to prevent
+    // mid-stream permission changes and MCP cache invalidation.
+    const conversationId = this.currentConversationId
+    if (!conversationId) return
+    const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
+    const thisLock = prevLock.then(
+      () => this._doSwitchMode(mode),
+      () => this._doSwitchMode(mode)
+    )
+    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    return thisLock
+  }
+
+  private async _doSwitchMode(mode: ConversationMode): Promise<void> {
     const previousMode = this.currentMode
     this.log.info(
       `[PIPELINE:mode-switch] ${previousMode} → ${mode} conversationId=${this.currentConversationId}`
@@ -734,9 +748,25 @@ export class AgentSessionService extends AgentBaseService {
       return
     }
 
+    // COMPACT-NOLOCK-01: Serialize compact after the current send (if any).
+    // Without this, compact() can modify adapter state, send CLI commands,
+    // and mutate counters while executeStream() is actively streaming.
+    const conversationId = this.currentConversationId
+    const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
+    const thisLock = prevLock.then(
+      () => this._doCompact(),
+      () => this._doCompact()
+    )
+    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    return thisLock
+  }
+
+  private async _doCompact(): Promise<void> {
     // OpenCode backend: use session command API for compaction
     if (this.executorBackend === 'opencode') {
-      const openCodeSessionId = openCodeExecutor.getSessionId(this.currentConversationId)
+      const openCodeSessionId = this.currentConversationId
+        ? openCodeExecutor.getSessionId(this.currentConversationId)
+        : undefined
       if (!openCodeSessionId) {
         this.log.warn('[compaction] OpenCode — no session found for this conversation')
         return
@@ -774,7 +804,9 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     // SDK backend: use session resume for compaction
-    const sessionId = this.sessionMap.get(this.currentConversationId)
+    const sessionId = this.currentConversationId
+      ? this.sessionMap.get(this.currentConversationId)
+      : undefined
     if (!sessionId) throw new Error('No session to compact')
 
     this.log.info(`[compaction] compact #${this.compactCount + 1}`)
@@ -783,8 +815,10 @@ export class AgentSessionService extends AgentBaseService {
     this.turnsSinceCompactSuggestion = 0
     // SDK-COMPACT-01: Queue the compaction instruction so the next send() prepends it.
     // Previously only invalidated the snapshot (no-op for compaction).
-    this.adapter.setPendingCompaction?.(this.currentConversationId, '/compact')
-    this.adapter.onConversationSwitch(this.currentConversationId)
+    if (this.currentConversationId) {
+      this.adapter.setPendingCompaction?.(this.currentConversationId, '/compact')
+      this.adapter.onConversationSwitch(this.currentConversationId)
+    }
   }
 
   async resumeAt(messageId: string): Promise<void> {

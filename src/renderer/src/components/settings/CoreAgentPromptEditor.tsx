@@ -99,7 +99,7 @@ export default function CoreAgentPromptEditor({
   }
 
   return (
-    <div className="space-y-3">
+    <div data-testid="core-prompt-editor" className="space-y-3">
       {/* Mode tabs */}
       <div className="flex items-center justify-between">
         <div className="flex items-center bg-surface-base border border-border-subtle rounded-lg p-0.5">

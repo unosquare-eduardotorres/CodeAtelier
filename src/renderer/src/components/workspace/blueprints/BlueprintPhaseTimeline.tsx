@@ -122,7 +122,7 @@ export default function BlueprintPhaseTimeline({
   }
 
   return (
-    <div className="space-y-1">
+    <div data-testid="blueprint-phase-timeline" className="space-y-1">
       <h4 className="text-xs font-medium text-text-secondary mb-2">Pipeline</h4>
       <div className="relative">
         {entries.map((entry, idx) => {

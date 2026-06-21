@@ -213,6 +213,7 @@ export default function HealthConfigure({
                 return (
                   <div
                     key={trackId}
+                    data-testid="health-auditor-card"
                     className={`rounded-xl border p-4 transition-all ${
                       isSelected
                         ? 'border-primary/50 bg-primary-muted/20'

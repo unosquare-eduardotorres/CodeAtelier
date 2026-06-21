@@ -144,6 +144,7 @@ export default function WorkspaceSettingsPanel({
 
   return (
     <div
+      data-testid="workspace-settings-panel"
       className={`flex flex-col h-full bg-surface-raised border-r border-border-subtle transition-all duration-200 ${
         isCollapsed ? 'w-12' : 'w-72'
       }`}
@@ -200,6 +201,7 @@ export default function WorkspaceSettingsPanel({
             return (
               <button
                 key={item.id}
+                data-testid="workspace-settings-tab"
                 onClick={() => onTabChange(item.id)}
                 className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'
@@ -235,6 +237,7 @@ export default function WorkspaceSettingsPanel({
             return (
               <button
                 key={item.id}
+                data-testid="workspace-settings-tab"
                 onClick={() => onTabChange(item.id)}
                 className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'

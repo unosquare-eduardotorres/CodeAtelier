@@ -47,53 +47,61 @@ export class BlueprintVerifyService extends EventEmitter {
 
     bpLog.info(`[startVerifyPhase] Blueprint ${blueprintId} — starting VERIFY`)
 
-    // 1. Pipeline + DB state
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'verify')
-
-    const verifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
-    if (verifyPhase) {
-      blueprintPhaseRepository.updateStatus(verifyPhase.id, 'active')
-    }
-
-    blueprintRepository.updateStatus(blueprintId, 'verifying')
-    blueprintRepository.update(blueprintId, { currentPhase: 'verify' })
-
-    // 2. Assemble context (includes ALL prior artifacts: spec → build)
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'verify')
-
-    // 3. Create adapter + session
-    const adapter = new BlueprintVerifyAdapter({ workspaceId, blueprintId, phaseContext })
-
-    const blueprint = blueprintService.getBlueprint(blueprintId)
-    adapter.setGoalCondition(buildVerifyGoalCondition(blueprint?.title ?? 'Unknown'))
-
-    const session = new AgentSessionService(adapter)
-
-    // 4. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'verify'
-    } satisfies BlueprintPhaseStartPayload)
-
-    // 5. Wire streaming — named handlers for cleanup
-    const onChunk = (chunk: StreamChunk): void => {
-      if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'verify',
-          text: chunk.content
-        } satisfies BlueprintPhaseProgressPayload)
-      }
-    }
-    const onStatus = (status: AgentStatus): void => {
-      this.emit('status', { workspaceId, status })
-    }
-    session.on('chunk', onChunk)
-    session.on('statusUpdate', onStatus)
+    // BP-VERIFY-INIT-OUTSIDE-TRY-01: All initialization is now inside the
+    // try-finally so that session.stop() and markPipelineStopped() always
+    // run, even if markPipelineRunning or adapter creation throws.
+    let session: AgentSessionService | null = null
+    let onChunk: ((chunk: StreamChunk) => void) | null = null
+    let onStatus: ((status: AgentStatus) => void) | null = null
+    let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = null
 
     try {
+      // 1. Pipeline + DB state
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'verify')
+
+      verifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
+      if (verifyPhase) {
+        blueprintPhaseRepository.updateStatus(verifyPhase.id, 'active')
+      }
+
+      blueprintRepository.updateStatus(blueprintId, 'verifying')
+      blueprintRepository.update(blueprintId, { currentPhase: 'verify' })
+
+      // 2. Assemble context (includes ALL prior artifacts: spec → build)
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'verify')
+
+      // 3. Create adapter + session
+      const adapter = new BlueprintVerifyAdapter({ workspaceId, blueprintId, phaseContext })
+
+      const blueprint = blueprintService.getBlueprint(blueprintId)
+      adapter.setGoalCondition(buildVerifyGoalCondition(blueprint?.title ?? 'Unknown'))
+
+      session = new AgentSessionService(adapter)
+
+      // 4. Emit phaseStart
+      this.emit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'verify'
+      } satisfies BlueprintPhaseStartPayload)
+
+      // 5. Wire streaming — named handlers for cleanup
+      onChunk = (chunk: StreamChunk): void => {
+        if (chunk.type === 'text' && chunk.content) {
+          this.emit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'verify',
+            text: chunk.content
+          } satisfies BlueprintPhaseProgressPayload)
+        }
+      }
+      onStatus = (status: AgentStatus): void => {
+        this.emit('status', { workspaceId, status })
+      }
+      session.on('chunk', onChunk)
+      session.on('statusUpdate', onStatus)
+
       // 6. Start session in READ-ONLY mode + send with timeout + abort race
       await session.start(workspacePath, 'plan')
 
@@ -157,10 +165,15 @@ export class BlueprintVerifyService extends EventEmitter {
       // 9. Determine final blueprint status
       // BP-03: Only explicit 'passed' or 'human_needed' → complete.
       // 'unknown' (parse failure / truncation) and 'gaps_found' → failed.
-      if (overallStatus === 'passed' || overallStatus === 'human_needed') {
-        blueprintRepository.updateStatus(blueprintId, 'complete')
-      } else {
-        blueprintRepository.updateStatus(blueprintId, 'failed')
+      // BP-VERIFY-CANCEL-OVERWRITE-01: Guard against overwriting 'cancelled' status.
+      // Matches the existing guard in the error path (line 186-193).
+      const currentStatus = blueprintRepository.findById(blueprintId)?.status
+      if (currentStatus !== 'cancelled') {
+        if (overallStatus === 'passed' || overallStatus === 'human_needed') {
+          blueprintRepository.updateStatus(blueprintId, 'complete')
+        } else {
+          blueprintRepository.updateStatus(blueprintId, 'failed')
+        }
       }
 
       // 10. Emit phaseComplete
@@ -192,7 +205,7 @@ export class BlueprintVerifyService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session.getStreamedContent()
+      const partialText = session?.getStreamedContent()
       if (partialText && verifyPhase) {
         blueprintPhaseRepository.appendArtifact(verifyPhase.id, {
           type: 'verify-partial',
@@ -207,9 +220,11 @@ export class BlueprintVerifyService extends EventEmitter {
         status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
-      session.removeListener('chunk', onChunk)
-      session.removeListener('statusUpdate', onStatus)
-      await session.stop()
+      if (session) {
+        if (onChunk) session.removeListener('chunk', onChunk)
+        if (onStatus) session.removeListener('statusUpdate', onStatus)
+        await session.stop()
+      }
       blueprintService.markPipelineStopped(workspaceId)
     }
   }

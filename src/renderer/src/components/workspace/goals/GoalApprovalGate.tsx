@@ -27,7 +27,7 @@ export default function GoalApprovalGate({
   const [feedback, setFeedback] = useState('')
 
   return (
-    <div className="space-y-4">
+    <div data-testid="goal-approval-gate" className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -160,6 +160,7 @@ export default function GoalApprovalGate({
           </button>
           <button
             type="button"
+            data-testid="goal-approval-approve-btn"
             onClick={onApprove}
             className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-success hover:bg-success/80 rounded-lg transition-colors"
           >

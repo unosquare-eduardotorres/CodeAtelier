@@ -106,8 +106,8 @@ import '../services/__tests__/compaction-thresholds.test'
 import '../services/__tests__/local-compaction.test'
 import '../services/__tests__/auto-compact-options.test'
 
-// ─── Run 18: Llamafile embedding sidecar manager ───
-import '../services/__tests__/llamafile-embedding.test'
+// ─── Run 18: oMLX embedding provider ───
+import '../services/__tests__/omlx-embedding.test'
 
 // ─── Run 19: Previously-orphaned test files (registered for coverage) ───
 import '../services/__tests__/context-management.test'
@@ -264,6 +264,16 @@ import '../services/__tests__/default-prompts-constants.test'
 import '../services/__tests__/preprocessing-pure.test'
 import '../services/__tests__/vector-search-pure.test'
 
+// ─── Phase 16: Coverage Mega-Push II — types, services, IPC, MCP ───
+import '../services/__tests__/type-coverage.test'
+import '../services/__tests__/mpa-orchestration-deep.test'
+import '../services/__tests__/service-mid-coverage-deep.test'
+import '../ipc/__tests__/ipc-zero-coverage.test'
+import '../ipc/__tests__/ipc-blueprint-handlers.test'
+import '../ipc/__tests__/ipc-audit-handlers.test'
+import '../ipc/__tests__/ipc-crud-deep.test'
+import '../mcp-servers/__tests__/mcp-server-tools-deep.test'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,6 +299,18 @@ import '../db/repositories/__tests__/plan.repository.test'
 import '../db/repositories/__tests__/remaining-repos.test'
 import '../db/repositories/__tests__/code-graph-repos.test'
 import '../db/repositories/__tests__/migration-suite.test'
+
+// ─── Phase 16: Track 1 + Track 6 ───
+import '../db/repositories/__tests__/migration-replay.test'
+import '../db/repositories/__tests__/repo-branch-coverage.test'
+
+// ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
+import '../ipc/__tests__/ipc-handler-bodies.test'
+import '../services/__tests__/service-instance-deep.test'
+import '../services/__tests__/blueprint-pipeline-instance.test'
+import '../services/__tests__/adapter-branch-push.test'
+import '../services/__tests__/migration-metadata.test'
+import '../db/repositories/__tests__/repo-deep-branch.test'
 
 // Single summary at the end — awaits all pending async tests, prints totals,
 // and exits with code 1 on any failure.

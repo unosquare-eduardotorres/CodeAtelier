@@ -360,6 +360,7 @@ function CompletePhaseContent({
         {(['overview', 'advisors', 'peer-reviews'] as const).map((tab) => (
           <button
             key={tab}
+            data-testid={`council-advisor-tab-${tab}`}
             onClick={() => setActiveTab(tab)}
             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
               activeTab === tab

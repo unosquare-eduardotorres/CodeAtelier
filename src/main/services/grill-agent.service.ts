@@ -21,6 +21,8 @@ const grillLog = log.scope('grill-agent')
 interface GrillSession {
   session: AgentSessionService
   running: boolean
+  /** GRILL-GREENFIELD-CANCEL-ALWAYS-01: Track workspaceId for targeted cancel of greenfield sessions. */
+  workspaceId?: string
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -167,7 +169,9 @@ export class GrillAgentService extends EventEmitter {
     })
 
     const session = new AgentSessionService(adapter)
-    const greenfieldEntry: GrillSession = { session, running: true }
+    // GRILL-GREENFIELD-CANCEL-ALWAYS-01: Store workspaceId so cancel(wsId) can
+    // verify it matches before cancelling an unrelated greenfield evaluation.
+    const greenfieldEntry: GrillSession = { session, running: true, workspaceId: wsId }
     this.greenfieldSession = greenfieldEntry
 
     // GRILL-04: Include workspaceId in all greenfield events for correct routing
@@ -239,8 +243,10 @@ export class GrillAgentService extends EventEmitter {
         }
         entry.running = false
       }
-      // GRILL-GREENFIELD-WS-01: Also check if the greenfield session matches this workspaceId
-      if (this.greenfieldSession?.running) {
+      // GRILL-GREENFIELD-CANCEL-ALWAYS-01: Only cancel greenfield if its workspaceId
+      // matches the cancel target. Previously, any workspace cancel would kill an
+      // unrelated greenfield evaluation.
+      if (this.greenfieldSession?.running && this.greenfieldSession.workspaceId === workspaceId) {
         try {
           this.greenfieldSession.session.cancelCurrentQuery()
         } catch (e) {
