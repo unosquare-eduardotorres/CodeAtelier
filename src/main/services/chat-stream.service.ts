@@ -712,8 +712,18 @@ export class ChatStreamService {
           }
           return msg
         })()
-      } catch {
-        // Fallback: non-transactional (e.g., test environment without DB)
+      } catch (txErr) {
+        // CHAT-FINALIZE-FALLBACK-01: Distinguish test environment (no DB) from
+        // real DB errors. Only fall back to non-transactional insert for expected
+        // test/no-DB scenarios. Real errors (disk full, FK violation) should surface.
+        const errMsg = txErr instanceof Error ? txErr.message : String(txErr)
+        const isTestEnv = errMsg.includes('getDatabase') || errMsg.includes('not a function') ||
+          errMsg.includes('not initialized')
+        if (!isTestEnv) {
+          log.error('[PIPELINE:finalize-tx-failed] Transaction failed with real DB error:', txErr)
+          throw txErr
+        }
+        // Fallback: non-transactional (test environment without DB)
         savedMessage = messageRepository.create(
           ctx.conversationId,
           ctx.streamingRole,
