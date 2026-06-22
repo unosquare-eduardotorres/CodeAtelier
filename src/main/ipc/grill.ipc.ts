@@ -330,10 +330,15 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
     const ideaId = requireString(args, 'ideaId', IPC_CHANNELS.GRILL_COMPLETE)
 
     grillLog.info(`[grill:complete] Completing + stripping transient state for idea=${ideaId}`)
-    grillSessionRepository.completeAndStrip(ideaId)
-    ideaRepository.clearGrillDecisions(ideaId)
-
-    // Emit terminal status so the renderer badge clears immediately
+    // GRILL-COMPLETE-DISCARD-NOTRYCATCH-01: Wrap DB ops in try-catch so a failure
+    // doesn't prevent the terminal status emission below.
+    try {
+      grillSessionRepository.completeAndStrip(ideaId)
+      ideaRepository.clearGrillDecisions(ideaId)
+    } catch (err) {
+      grillLog.error('[grill:complete] DB operation failed:', err)
+    }
+    // Always emit terminal status — even if DB ops failed
     const workspace = ideaRepository.findById(ideaId)?.workspaceId
     if (workspace) grillPersistenceController.notifyTerminal(workspace, ideaId, 'completed')
   })
@@ -348,10 +353,15 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
     grillLog.info(`[grill:discard] Discarding grill session + snapshot for idea=${ideaId}`)
     // Capture workspaceId BEFORE deleting the session/idea data
     const workspace = ideaRepository.findById(ideaId)?.workspaceId
-    grillSessionRepository.deleteByIdeaId(ideaId)
-    ideaRepository.clearGrillDecisions(ideaId)
-
-    // Emit terminal status so the renderer badge clears immediately
+    // GRILL-COMPLETE-DISCARD-NOTRYCATCH-01: Wrap DB ops in try-catch so a failure
+    // doesn't prevent the terminal status emission below.
+    try {
+      grillSessionRepository.deleteByIdeaId(ideaId)
+      ideaRepository.clearGrillDecisions(ideaId)
+    } catch (err) {
+      grillLog.error('[grill:discard] DB operation failed:', err)
+    }
+    // Always emit terminal status — even if DB ops failed
     if (workspace) grillPersistenceController.notifyTerminal(workspace, ideaId, 'cancelled')
   })
 

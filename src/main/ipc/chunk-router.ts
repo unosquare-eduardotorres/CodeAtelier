@@ -20,10 +20,17 @@ import { chatIpcLogger } from '../logger'
 
 const toolActivityStore = new Map<string, Map<string, ToolActivity>>()
 
+// TOOLACTIVITY-STORE-RECREATED-01: Track recently cleared conversations so
+// late-arriving chunks don't re-create orphaned Map entries after clear.
+const clearedConversations = new Set<string>()
+
 function accumulateToolActivity(
   conversationId: string,
   partial: Partial<ToolActivity> & { id: string; toolName: string }
 ): void {
+  // TOOLACTIVITY-STORE-RECREATED-01: Don't re-create after clear
+  if (clearedConversations.has(conversationId)) return
+
   let convMap = toolActivityStore.get(conversationId)
   if (!convMap) {
     convMap = new Map<string, ToolActivity>()
@@ -52,6 +59,10 @@ function accumulateToolActivity(
  * Returns all activities including 'running' ones (e.g. subagents interrupted mid-execution).
  */
 export function getAndClearToolActivities(conversationId: string): ToolActivity[] {
+  // TOOLACTIVITY-STORE-RECREATED-01: Block re-creation for 10s after clear
+  clearedConversations.add(conversationId)
+  setTimeout(() => clearedConversations.delete(conversationId), 10_000)
+
   const convMap = toolActivityStore.get(conversationId)
   toolActivityStore.delete(conversationId)
   if (!convMap) return []

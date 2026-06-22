@@ -43,6 +43,9 @@ export class TextDeltaBatcher {
   flush(key?: string): void {
     if (key !== undefined) {
       this.flushKey(key)
+      // BATCHER-FLUSH-RETAINS-FLUSHER-01: Clear flusher after flush to prevent
+      // stale callbacks (capturing old ctx/mainWindow) from firing on reuse.
+      this.flushers.delete(key)
       return
     }
     for (const k of [...this.buffers.keys()]) {
