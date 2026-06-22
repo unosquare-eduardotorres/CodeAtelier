@@ -1014,6 +1014,53 @@ export class AgentSessionService extends AgentBaseService {
     this.emit(evt, payload)
   }
 
+  // ── Stream helpers ─────────────────────────────────────────────────
+
+  /** Resolve the executor backend for a given LLM provider override. */
+  private resolveExecutorBackend(llmProvider: LLMProvider | undefined): ExecutorBackend {
+    if (llmProvider === 'local-llm') return 'opencode'
+    if (llmProvider === 'claude') return 'cli'
+    return this.executorBackend
+  }
+
+  /**
+   * Build the interaction timeout timer, extending for external MCP integrations.
+   * Returns the timeout duration and the timer handle for cleanup.
+   */
+  private buildStreamTimeout(
+    mcpServers: Record<string, unknown> | undefined,
+    abortController: AbortController,
+    conversationId: string
+  ): { timeoutMs: number; timer: NodeJS.Timeout } {
+    const baseTimeoutMs =
+      this.adapter.interactionTimeoutMs ?? AgentSessionService.MAX_INTERACTION_TIMEOUT_MS
+
+    const hasExternalMcps =
+      mcpServers &&
+      Object.keys(mcpServers).some((id) =>
+        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id)
+      )
+    const timeoutMs = hasExternalMcps
+      ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
+      : baseTimeoutMs
+
+    const timer = setTimeout(() => {
+      this._lastTimedOut = true
+      this.log.error(
+        `Interaction timeout after ${timeoutMs / 60_000} minutes — ${this.circuitBreaker.count} tool calls made`
+      )
+      eventLoggerService.logAgentTimeout({
+        agentId: this.adapter.agentId,
+        conversationId,
+        elapsedMs: timeoutMs,
+        toolCallCount: this.circuitBreaker.count
+      })
+      abortController.abort()
+    }, timeoutMs)
+
+    return { timeoutMs, timer }
+  }
+
   // ── Stream orchestration ──────────────────────────────────────────
 
   private async executeStream(opts: ExecuteStreamOptions): Promise<void> {
@@ -1042,34 +1089,13 @@ export class AgentSessionService extends AgentBaseService {
     const abortController = new AbortController()
     this.sdkAbortController = abortController
 
-    const baseTimeoutMs =
-      this.adapter.interactionTimeoutMs ?? AgentSessionService.MAX_INTERACTION_TIMEOUT_MS
-
-    // Extend timeout when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each
-    const hasExternalMcps =
-      mcpResult.mcpServers &&
-      Object.keys(mcpResult.mcpServers).some((id) =>
-        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id)
-      )
-    const timeoutMs = hasExternalMcps
-      ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
-      : baseTimeoutMs
-
-    let timedOut = false
-    const interactionTimer = setTimeout(() => {
-      timedOut = true
-      this._lastTimedOut = true
-      this.log.error(
-        `Interaction timeout after ${timeoutMs / 60_000} minutes — ${this.circuitBreaker.count} tool calls made`
-      )
-      eventLoggerService.logAgentTimeout({
-        agentId: this.adapter.agentId,
-        conversationId,
-        elapsedMs: timeoutMs,
-        toolCallCount: this.circuitBreaker.count
-      })
-      abortController.abort()
-    }, timeoutMs)
+    // Reset timeout flag before building timer (buildStreamTimeout sets _lastTimedOut on fire)
+    this._lastTimedOut = false
+    const { timeoutMs, timer: interactionTimer } = this.buildStreamTimeout(
+      mcpResult.mcpServers,
+      abortController,
+      conversationId
+    )
 
     try {
       const streamState: StreamLoopState = {
@@ -1083,15 +1109,7 @@ export class AgentSessionService extends AgentBaseService {
       // ── Select executor backend ──
       const cliPromptInput = await this.extractPromptContent(sdkPrompt)
 
-      // Resolve effective executor backend per-send — respects per-conversation
-      // llmProvider override. The workspace-level this.executorBackend is only
-      // the default; if this conversation explicitly uses 'claude', use CLI.
-      const effectiveBackend: ExecutorBackend =
-        llmProvider === 'local-llm'
-          ? 'opencode'
-          : llmProvider === 'claude'
-            ? 'cli'
-            : this.executorBackend
+      const effectiveBackend = this.resolveExecutorBackend(llmProvider)
 
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
@@ -1176,14 +1194,14 @@ export class AgentSessionService extends AgentBaseService {
         systemPrompt,
         isBuildMode,
         recoveryDepth,
-        timedOut,
+        timedOut: this._lastTimedOut,
         streamState,
         mcpResult,
         llmProvider
       })
     } catch (error) {
       clearTimeout(interactionTimer)
-      await this.handleStreamError(error as Error, timedOut, recoveryDepth, timeoutMs)
+      await this.handleStreamError(error as Error, this._lastTimedOut, recoveryDepth, timeoutMs)
     }
   }
 

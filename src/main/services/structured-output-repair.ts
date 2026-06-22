@@ -191,50 +191,66 @@ function cleanJsonString(text: string): string {
  * Returns an array of error messages (empty = valid).
  */
 export function validateAgainstSchema(data: unknown, schema: JsonSchema): string[] {
+  if (schema.type === 'object') return validateObjectSchema(data, schema)
+  if (schema.type === 'array') return validateArraySchema(data, schema)
+
+  // Primitive type checks
+  if (schema.type === 'string' && typeof data !== 'string') {
+    return [`Expected a string, got ${typeof data}`]
+  }
+  if (schema.type === 'number' && typeof data !== 'number') {
+    return [`Expected a number, got ${typeof data}`]
+  }
+  if (schema.type === 'boolean' && typeof data !== 'boolean') {
+    return [`Expected a boolean, got ${typeof data}`]
+  }
+
+  return []
+}
+
+/** Validate data against an object schema — checks required fields and property types. */
+function validateObjectSchema(data: unknown, schema: JsonSchema): string[] {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return ['Expected an object']
+  }
+
+  const obj = data as Record<string, unknown>
   const errors: string[] = []
 
-  if (schema.type === 'object') {
-    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-      return ['Expected an object']
-    }
-
-    const obj = data as Record<string, unknown>
-
-    // Check required fields
-    if (schema.required) {
-      for (const field of schema.required) {
-        if (!(field in obj)) {
-          errors.push(`Missing required field: ${field}`)
-        }
+  // Check required fields
+  if (schema.required) {
+    for (const field of schema.required) {
+      if (!(field in obj)) {
+        errors.push(`Missing required field: ${field}`)
       }
     }
+  }
 
-    // Check property types
-    if (schema.properties) {
-      for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (key in obj && obj[key] !== null && obj[key] !== undefined) {
-          const propErrors = validateAgainstSchema(obj[key], propSchema)
-          errors.push(...propErrors.map((e) => `${key}: ${e}`))
-        }
+  // Check property types
+  if (schema.properties) {
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      if (key in obj && obj[key] !== null && obj[key] !== undefined) {
+        const propErrors = validateAgainstSchema(obj[key], propSchema)
+        errors.push(...propErrors.map((e) => `${key}: ${e}`))
       }
     }
-  } else if (schema.type === 'array') {
-    if (!Array.isArray(data)) {
-      return ['Expected an array']
-    }
+  }
 
-    if (schema.items) {
-      for (let i = 0; i < (data as unknown[]).length; i++) {
-        const itemErrors = validateAgainstSchema((data as unknown[])[i], schema.items)
-        errors.push(...itemErrors.map((e) => `[${i}]: ${e}`))
-      }
-    }
-  } else if (schema.type === 'string' && typeof data !== 'string') {
-    errors.push(`Expected a string, got ${typeof data}`)
-  } else if (schema.type === 'number' && typeof data !== 'number') {
-    errors.push(`Expected a number, got ${typeof data}`)
-  } else if (schema.type === 'boolean' && typeof data !== 'boolean') {
-    errors.push(`Expected a boolean, got ${typeof data}`)
+  return errors
+}
+
+/** Validate data against an array schema — checks item types recursively. */
+function validateArraySchema(data: unknown, schema: JsonSchema): string[] {
+  if (!Array.isArray(data)) {
+    return ['Expected an array']
+  }
+
+  if (!schema.items) return []
+
+  const errors: string[] = []
+  for (let i = 0; i < (data as unknown[]).length; i++) {
+    const itemErrors = validateAgainstSchema((data as unknown[])[i], schema.items)
+    errors.push(...itemErrors.map((e) => `[${i}]: ${e}`))
   }
 
   return errors

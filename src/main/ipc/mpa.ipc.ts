@@ -251,7 +251,7 @@ const mpaCleanup = createTimedCleanupMap('mpa')
 
 function wireMpaEvents(workspaceId: string): void {
   const cleanups = mpaCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // Lazy router resolution
 
   mpaCleanup.addListener<MpaPhaseStartPayload>(
     cleanups,
@@ -259,7 +259,7 @@ function wireMpaEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       mpaLog.info(`[event] phaseStart: ${payload.phaseType} (iteration ${payload.iteration})`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -272,7 +272,7 @@ function wireMpaEvents(workspaceId: string): void {
     mpaOrchestrationService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -287,7 +287,7 @@ function wireMpaEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -297,7 +297,7 @@ function wireMpaEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       mpaLog.info(`[event] phaseComplete: ${payload.phaseType} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -313,7 +313,7 @@ function wireMpaEvents(workspaceId: string): void {
       mpaLog.info(
         `[event] feedbackLoop: ${payload.fromPhase} → ${payload.toPhase} (iteration ${payload.iteration})`
       )
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_FEEDBACK_LOOP,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -327,7 +327,7 @@ function wireMpaEvents(workspaceId: string): void {
     'approvalNeeded',
     (payload) => {
       mpaLog.info(`[event] approvalNeeded for run ${payload.runId}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_APPROVAL_NEEDED,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -341,7 +341,7 @@ function wireMpaEvents(workspaceId: string): void {
     'pipelineComplete',
     (payload) => {
       mpaLog.info(`[event] pipelineComplete: ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_PIPELINE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -360,7 +360,7 @@ const mpaCampaignCleanup = createTimedCleanupMap('mpa-campaign')
 
 function wireCampaignEvents(workspaceId: string): void {
   const cleanups = mpaCampaignCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // Lazy router resolution
 
   mpaCampaignCleanup.addListener<MpaCampaignStartedPayload>(
     cleanups,
@@ -368,7 +368,7 @@ function wireCampaignEvents(workspaceId: string): void {
     'campaignStarted',
     (payload) => {
       mpaLog.info(`[campaign-event] started: ${payload.campaignId} (${payload.totalGoals} goals)`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_CAMPAIGN_STARTED,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -385,7 +385,7 @@ function wireCampaignEvents(workspaceId: string): void {
       // (Re)wire per-goal MPA phase events so the existing plan-gate / timeline /
       // stream UI works for the goal that is about to run.
       wireMpaEvents(workspaceId)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_CAMPAIGN_GOAL_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -399,7 +399,7 @@ function wireCampaignEvents(workspaceId: string): void {
     'campaignGoalComplete',
     (payload) => {
       mpaLog.info(`[campaign-event] goalComplete: #${payload.orderIndex} ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_CAMPAIGN_GOAL_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -413,7 +413,7 @@ function wireCampaignEvents(workspaceId: string): void {
     'campaignPaused',
     (payload) => {
       mpaLog.info(`[campaign-event] paused: #${payload.orderIndex} ${payload.reason}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_CAMPAIGN_PAUSED,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -427,7 +427,7 @@ function wireCampaignEvents(workspaceId: string): void {
     'campaignComplete',
     (payload) => {
       mpaLog.info(`[campaign-event] complete: ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.MPA_CAMPAIGN_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>

@@ -4,6 +4,7 @@ import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { codeGraphService } from '../services/code-graph.service'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 import { workspaceRepository } from '../db/repositories'
 import type { CodeGraphIndexingState } from '../../shared/types'
 import { libraryDocService } from '../services/library-doc.service'
@@ -11,7 +12,7 @@ import { libraryDocService } from '../services/library-doc.service'
 export function registerCodeGraphIpc(mainWindow: BrowserWindow): void {
   // Forward progress events to renderer
   codeGraphService.on('progress', (state: CodeGraphIndexingState) => {
-    mainWindow.webContents.send(IPC_CHANNELS.CODE_GRAPH_PROGRESS, state)
+    safeWindowSend(mainWindow, IPC_CHANNELS.CODE_GRAPH_PROGRESS, state)
   })
 
   ipcMain.handle(

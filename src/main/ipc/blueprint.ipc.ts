@@ -611,7 +611,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
 export function wireBlueprintEvents(workspaceId: string): void {
   const cleanups = blueprintCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // BLUEPRINT-15: resolve router lazily inside callbacks, not at wire time
 
   blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
     cleanups,
@@ -619,7 +619,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -632,7 +632,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -646,7 +646,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -660,7 +660,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -676,7 +676,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[build-event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -689,7 +689,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintBuildService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -703,7 +703,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[build-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -717,7 +717,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[build-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -732,7 +732,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -744,7 +744,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'waveStart',
     (payload) => {
       bpLog.info(`[build-event] waveStart: wave ${payload.wave} (${payload.taskCount} tasks)`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_WAVE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -757,7 +757,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintBuildService,
     'waveTaskStart',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_WAVE_TASK_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -771,7 +771,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'waveTaskComplete',
     (payload) => {
       bpLog.info(`[build-event] waveTaskComplete: ${payload.taskId} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_WAVE_TASK_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -785,7 +785,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'waveComplete',
     (payload) => {
       bpLog.info(`[build-event] waveComplete: wave ${payload.wave} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -801,7 +801,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[spec-event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -814,7 +814,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintSpecService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -828,7 +828,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[spec-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -842,7 +842,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[spec-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -857,7 +857,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -869,7 +869,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[plan-event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -882,7 +882,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintPlanService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -896,7 +896,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[plan-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -910,7 +910,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[plan-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -925,7 +925,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -937,7 +937,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[tasks-event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -950,7 +950,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintTasksService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -964,7 +964,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[tasks-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -978,7 +978,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[tasks-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -993,7 +993,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -1005,7 +1005,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[review-event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1018,7 +1018,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintReviewService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1032,7 +1032,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[review-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1046,7 +1046,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[review-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1061,7 +1061,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -1072,7 +1072,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'approvalNeeded',
     (payload) => {
       bpLog.info(`[review-event] approvalNeeded: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1088,7 +1088,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseStart',
     (payload) => {
       bpLog.info(`[verify-event] phaseStart: ${payload.phase}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_START,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1101,7 +1101,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     blueprintVerifyService,
     'phaseProgress',
     (payload) => {
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1115,7 +1115,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseComplete',
     (payload) => {
       bpLog.info(`[verify-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1129,7 +1129,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'phaseArtifact',
     (payload) => {
       bpLog.info(`[verify-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      router.sendWorkspaceEvent(
+      getSessionEventRouter().sendWorkspaceEvent(
         IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
         workspaceId,
         payload as unknown as Record<string, unknown>
@@ -1144,7 +1144,7 @@ export function wireBlueprintEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 

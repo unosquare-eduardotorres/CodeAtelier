@@ -19,7 +19,10 @@ import { IPC_CHANNELS } from '../../../shared/constants'
 
 function mockWindow(): { window: BrowserWindow; send: Spy<[string, unknown], void> } {
   const send = createSpy<[string, unknown], void>()
-  const window = { webContents: { send } } as unknown as BrowserWindow
+  const window = {
+    isDestroyed: () => false,
+    webContents: { send }
+  } as unknown as BrowserWindow
   return { window, send }
 }
 

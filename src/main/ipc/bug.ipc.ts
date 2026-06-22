@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { bugRepository } from '../db/repositories/bug.repository'
 import type { CreateBugInput, BugFilters } from '../db/repositories/bug.repository'
 import { validateSender } from './validate-sender'
+import { safeWindowSend } from './safe-send'
 import { requireObject, requireString } from './validate-args'
 
 export function registerBugIpc(_mainWindow: BrowserWindow): void {
@@ -19,7 +20,7 @@ export function registerBugIpc(_mainWindow: BrowserWindow): void {
       // Notify all renderer windows about the new bug
       const bug = bugRepository.getById(result.bugId)
       for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(IPC_CHANNELS.BUG_NEW, bug)
+        safeWindowSend(win, IPC_CHANNELS.BUG_NEW, bug)
       }
     }
 

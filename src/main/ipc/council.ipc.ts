@@ -216,7 +216,7 @@ const councilCleanup = createTimedCleanupMap('council')
  */
 function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
   const cleanups = councilCleanup.prepareCleanups(workspaceId)
-  const router = getSessionEventRouter()
+  // Lazy router resolution
 
   // ── phase-changed — forward to renderer ──
   councilCleanup.addListener<{ workspaceId: string; phase: CouncilPhase }>(
@@ -224,7 +224,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     councilService,
     'phase-changed',
     (data) => {
-      councilPersistenceController.handlePhaseChanged(data, router)
+      councilPersistenceController.handlePhaseChanged(data, getSessionEventRouter())
     }
   )
 
@@ -235,7 +235,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      router.sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
     }
   )
 
@@ -245,7 +245,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     councilService,
     'member-stream',
     (data) => {
-      councilPersistenceController.handleMemberStream(data, workspacePath, router)
+      councilPersistenceController.handleMemberStream(data, workspacePath, getSessionEventRouter())
     }
   )
 
@@ -255,7 +255,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     advisorRole: CouncilAdvisorRole
     review: CouncilReview | null
   }>(cleanups, councilService, 'member-complete', (data) => {
-    councilPersistenceController.handleMemberComplete(data, router)
+    councilPersistenceController.handleMemberComplete(data, getSessionEventRouter())
   })
 
   // ── peer-review-complete — forward rankings ──
@@ -264,7 +264,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     councilService,
     'peer-review-complete',
     (data) => {
-      councilPersistenceController.handlePeerReviewComplete(data, router)
+      councilPersistenceController.handlePeerReviewComplete(data, getSessionEventRouter())
     }
   )
 
@@ -274,7 +274,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     councilService,
     'verdict',
     (data) => {
-      councilPersistenceController.handleVerdict(data, router)
+      councilPersistenceController.handleVerdict(data, getSessionEventRouter())
     }
   )
 
@@ -284,7 +284,7 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     councilService,
     'session-ended',
     (data) => {
-      councilPersistenceController.handleSessionEnded(data, router).catch((err) => {
+      councilPersistenceController.handleSessionEnded(data, getSessionEventRouter()).catch((err) => {
         councilLog.error('[council:session-ended] handleSessionEnded failed:', err)
       })
       councilCleanup.runCleanup(workspaceId)

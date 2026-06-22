@@ -168,7 +168,34 @@ export class CouncilService extends EventEmitter {
 
     this.sessions.set(params.workspaceId, entry)
 
-    // Use pre-created DB session ID if provided (from IPC handler), otherwise create one
+    this.initCouncilDbSession(entry, {
+      workspaceId: params.workspaceId,
+      inputType: params.inputType,
+      planContent: params.planContent,
+      grillSessionId: params.grillSessionId,
+      structuredPlan: params.structuredPlan,
+      conversationId: params.conversationId,
+      dbSessionId: params.dbSessionId
+    })
+
+    await this.runCouncilPipeline(entry)
+  }
+
+  // ── Private: DB session initialization ───────────────────────────
+
+  /** Set up DB session — use pre-created ID or create a new row. */
+  private initCouncilDbSession(
+    entry: CouncilSessionEntry,
+    params: {
+      workspaceId: string
+      inputType: CouncilInputType
+      planContent: string
+      grillSessionId?: string
+      structuredPlan: StructuredPlan | null
+      conversationId?: string
+      dbSessionId?: string
+    }
+  ): void {
     if (params.dbSessionId) {
       entry.dbSessionId = params.dbSessionId
     } else {
@@ -194,7 +221,12 @@ export class CouncilService extends EventEmitter {
         throw new Error(`Council DB session creation failed: ${(err as Error).message}`)
       }
     }
+  }
 
+  // ── Private: council pipeline ───────────────────────────────────
+
+  /** Run the 5-step council pipeline: frame → deliberate → peer-review → synthesize → complete. */
+  private async runCouncilPipeline(entry: CouncilSessionEntry): Promise<void> {
     try {
       // Step 1: Frame the question (context already provided by params)
       this.setPhase(entry, 'framing')
@@ -228,7 +260,7 @@ export class CouncilService extends EventEmitter {
 
       if (verdict) {
         if (entry.dbSessionId) councilSessionRepository.saveVerdict(entry.dbSessionId, verdict)
-        this.emit('verdict', { workspaceId: params.workspaceId, verdict })
+        this.emit('verdict', { workspaceId: entry.workspaceId, verdict })
       }
 
       // Step 5: Complete
@@ -251,9 +283,9 @@ export class CouncilService extends EventEmitter {
           }
         }
       }
-      this.sessions.delete(params.workspaceId)
+      this.sessions.delete(entry.workspaceId)
       // Signal session teardown (NOT 'complete' — that's phase-specific via setPhase)
-      this.emit('session-ended', { workspaceId: params.workspaceId })
+      this.emit('session-ended', { workspaceId: entry.workspaceId })
     }
   }
 
@@ -343,7 +375,7 @@ export class CouncilService extends EventEmitter {
         // Start session in plan mode (read-only)
         await session.start(entry.workspacePath, 'plan')
 
-        const syntheticConvId = `council-${role}-${Date.now()}`
+        const syntheticConvId = `council-${role}-${crypto.randomUUID().slice(0, 8)}`
         await session.send('Begin your review.', syntheticConvId, [])
 
         // Collect response and parse
@@ -525,7 +557,7 @@ Respond ONLY with a JSON block:
       const workDir = os.tmpdir()
 
       await session.start(workDir, 'plan')
-      const syntheticConvId = `council-chairman-${Date.now()}`
+      const syntheticConvId = `council-chairman-${crypto.randomUUID().slice(0, 8)}`
       await session.send('Synthesize the council verdict.', syntheticConvId, [])
 
       const responseText = session.getStreamedContent()
@@ -798,7 +830,7 @@ Respond ONLY with a JSON block:
         })
 
         await session.start(entry.workspacePath, 'plan')
-        const syntheticConvId = `council-resume-${role}-${Date.now()}`
+        const syntheticConvId = `council-resume-${role}-${crypto.randomUUID().slice(0, 8)}`
         await session.send('Begin your review.', syntheticConvId, [])
 
         const responseText = session.getStreamedContent()
