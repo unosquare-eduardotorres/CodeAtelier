@@ -13,7 +13,7 @@ if (!env) {
     test('create() inserts and returns specialist', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { db: _db, wsId: _wsId } = env
   const { specialistRepository } = require('../specialist.repository')
   const { skillRepository } = require('../skill.repository')
 

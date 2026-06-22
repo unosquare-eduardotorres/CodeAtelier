@@ -10,7 +10,7 @@ import { test, describe, summaryAsync } from './test-harness'
 // ── Import actual pure functions where available ──
 
 import { buildPlannerGoalCondition, buildBuilderGoalCondition, buildVerifierGoalCondition } from '../mpa-goal-conditions'
-import { parsePlanArtifact, parseVerifyReport, hasFailingCriteria } from '../mpa-artifact-parsers'
+import { hasFailingCriteria } from '../mpa-artifact-parsers'
 
 // ── Replicated constants ──
 

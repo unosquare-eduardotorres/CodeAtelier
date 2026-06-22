@@ -17,7 +17,6 @@ import {
   type EmbeddingEntry
 } from '../db/repositories/chunk-embedding.repository'
 import { getDatabase } from '../db/index'
-import { OMLX_EMBEDDING } from '../../shared/constants'
 import type { IndexingState, SemanticSearchResult } from '../../shared/types'
 
 /**

@@ -119,7 +119,7 @@ echo "▸ Step 3: Package with electron-builder"
 # npmRebuild: false — we rebuilt native modules in Step 2b.
 # afterPack: copies node_modules + restores package.json in the app bundle.
 set +e
-NODE_OPTIONS="--max-old-space-size=8192" npx electron-builder --mac "$@"
+NODE_OPTIONS="--max-old-space-size=16384" npx electron-builder --mac "$@"
 BUILD_EXIT=$?
 set -e
 

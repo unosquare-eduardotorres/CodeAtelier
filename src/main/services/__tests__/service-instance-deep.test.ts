@@ -166,7 +166,7 @@ describe('CodeGraphService — instance tests', () => {
   test('class is constructable and extends EventEmitter', async () => {
     const mod = await import('../code-graph.service')
     // Check exports
-    assert.ok(mod.codeGraphService || mod.CodeGraphService, 'has export')
+    assert.ok(mod.codeGraphService, 'has export')
   })
 })
 

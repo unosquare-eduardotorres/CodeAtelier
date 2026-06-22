@@ -19,9 +19,12 @@ function makePhaseContext(overrides: Partial<PhaseContext> = {}): PhaseContext {
   return {
     blueprint: {
       id: 'bp-1',
-      name: 'Test Blueprint',
+      title: 'Test Blueprint',
+      shortName: 'test',
       description: 'A test feature',
-      workspaceId: 'ws-1'
+      priority: 'medium' as any,
+      currentPhase: 'specify' as any,
+      settings: {}
     },
     constitution: null,
     previousArtifacts: [],
@@ -52,7 +55,7 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
 
   test('injects_blueprint_context_json', () => {
     const ctx = makePhaseContext({
-      blueprint: { id: 'bp-42', name: 'Login Feature', description: 'Add OAuth2 login', workspaceId: 'ws-1' }
+      blueprint: { id: 'bp-42', title: 'Login Feature', shortName: 'login', description: 'Add OAuth2 login', priority: 'medium' as any, currentPhase: 'specify' as any, settings: {} }
     })
     const result = buildPhaseSystemPrompt('specify', ctx)
     assert.ok(result.includes('bp-42'), 'Should contain blueprint ID from context')
@@ -102,8 +105,8 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
       previousArtifacts: [{
         type: 'spec',
         contentMd: '# Feature Specification\n\nAdd login page with OAuth2.',
-        contentJson: null,
-        filePath: null
+        contentJson: undefined,
+        filePath: undefined
       }]
     }))
     assert.ok(result.includes('Feature Specification'))
@@ -114,9 +117,9 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
     const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
       previousArtifacts: [{
         type: 'plan',
-        contentMd: null,
+        contentMd: undefined,
         contentJson: { phases: [{ name: 'Phase 1' }] },
-        filePath: null
+        filePath: undefined
       }]
     }))
     assert.ok(result.includes('```json'))
@@ -128,7 +131,7 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
       previousArtifacts: [{
         type: 'spec',
         contentMd: 'content',
-        contentJson: null,
+        contentJson: undefined,
         filePath: 'src/features/login.ts'
       }]
     }))
@@ -138,8 +141,8 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
   test('multiple_artifacts_separated_by_dividers', () => {
     const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
       previousArtifacts: [
-        { type: 'spec', contentMd: 'Spec content', contentJson: null, filePath: null },
-        { type: 'plan', contentMd: 'Plan content', contentJson: null, filePath: null }
+        { type: 'spec', contentMd: 'Spec content', contentJson: undefined, filePath: undefined },
+        { type: 'plan', contentMd: 'Plan content', contentJson: undefined, filePath: undefined }
       ]
     }))
     assert.ok(result.includes('Spec content'))

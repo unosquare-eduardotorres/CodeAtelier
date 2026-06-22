@@ -53,7 +53,7 @@ export class BlueprintVerifyService extends EventEmitter {
     let session: AgentSessionService | null = null
     let onChunk: ((chunk: StreamChunk) => void) | null = null
     let onStatus: ((status: AgentStatus) => void) | null = null
-    let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = null
+    let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
 
     try {
       // 1. Pipeline + DB state

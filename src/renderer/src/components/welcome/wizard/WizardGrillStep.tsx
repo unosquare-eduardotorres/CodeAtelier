@@ -496,7 +496,7 @@ export default function WizardGrillStep({
   const previousQuestionsRef = useRef<string[]>([])
 
   const {
-    startTrackGrill,
+    startTrackGrill: _startTrackGrill,
     handleSkipTrack,
     handleSubmitAnswers,
     handleReEvaluate,

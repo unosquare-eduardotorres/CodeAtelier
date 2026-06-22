@@ -111,7 +111,7 @@ export default function GenerateSpecialistModal({
   const error = useProjectSpecialistStore((s) => s.error)
   const clearError = useProjectSpecialistStore((s) => s.clearError)
 
-  const view: ViewState = useMemo(() => resolveViewState(specialist, progress), [specialist, progress])
+  const view: ViewState = useMemo(() => resolveViewState(specialist ?? undefined, progress), [specialist, progress])
 
   // Auto-close 1.5s after success
   useEffect(() => {

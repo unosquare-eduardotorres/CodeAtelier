@@ -10,7 +10,6 @@ import { GRILL_TRACKS } from '../../../shared/constants'
 
 // ── Replicated pure logic from GrillAgentService ──
 
-type GrillTrackId = 'architecture' | 'security' | 'testing' | 'performance' | 'ux' | 'cost' | 'edge-cases' | string
 
 /**
  * Replicated from GrillAgentService.parseGrillEvaluation.

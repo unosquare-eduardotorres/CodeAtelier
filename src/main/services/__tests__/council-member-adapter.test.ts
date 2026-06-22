@@ -25,7 +25,7 @@ function createAdapter(
       planContent: '# Plan\nAdd Redis caching.',
       filesInScope: ['src/cache.ts'],
       structuredPlan: null,
-      workspaceContext: null
+      workspaceContext: ''
     },
     ...overrides
   })
@@ -135,17 +135,17 @@ describe('CouncilMemberRoleAdapter', () => {
     const a = createAdapter('outsider')
     const result = a.buildMcpConfig(makeMcpCtx())
     assert.deepEqual(result.allowedTools, [])
-    assert.ok(result.disallowedTools.includes('Read'))
-    assert.ok(result.disallowedTools.includes('Write'))
+    assert.ok(result.disallowedTools!.includes('Read'))
+    assert.ok(result.disallowedTools!.includes('Write'))
   })
 
   test('contrarian_buildMcpConfig_returns_readonly_tools', () => {
     const a = createAdapter('contrarian')
     const result = a.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
+    assert.ok(result.allowedTools!.includes('Read'))
+    assert.ok(result.disallowedTools!.includes('Write'))
+    assert.ok(result.disallowedTools!.includes('Edit'))
+    assert.ok(result.disallowedTools!.includes('Bash'))
   })
 
   // ── getIncludeGitContext ──

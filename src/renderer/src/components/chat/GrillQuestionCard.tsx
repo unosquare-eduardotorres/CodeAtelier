@@ -134,7 +134,7 @@ function OtherOptionRow({
   onSelect: () => void
   onChange: (state: QuestionState) => void
   onKeyDown: (e: React.KeyboardEvent) => void
-  otherInputRef: React.RefObject<HTMLTextAreaElement>
+  otherInputRef: React.RefObject<HTMLTextAreaElement | null>
 }): React.JSX.Element {
   return (
     <div

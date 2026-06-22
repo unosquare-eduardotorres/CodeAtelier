@@ -14,13 +14,12 @@
  * Covers ~53 IPC files totaling ~7,000+ uncovered lines.
  */
 import assert from 'node:assert/strict'
-import { test, describe, beforeEach, summaryAsync } from '../../services/__tests__/test-harness'
+import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
   setupElectronStub,
   capturedHandlers,
   mockMainWindow,
   mockEvent,
-  resetStub,
   tryInvokeHandler,
 } from '../../services/__tests__/electron-stub'
 
@@ -88,7 +87,7 @@ async function registerIpcModule(
  * - Verify it doesn't crash before validation (or throws expected service errors)
  */
 async function testHandlersForModule(
-  label: string,
+  _label: string,
   modulePath: string,
   needsWindow: boolean,
   argsMap: Record<string, unknown>
@@ -868,7 +867,7 @@ describe('IPC handler validation — error branches', () => {
     const bugList = capturedHandlers.get('bug:list')
     if (bugList) {
       // BUG_LIST accepts optional filters — null should still pass validateSender
-      const result = await tryInvokeHandler('bug:list', null)
+      await tryInvokeHandler('bug:list', null)
       // Either succeeds or throws a service error (NOT validation error)
       assert.ok(true, 'handler entered body')
     }

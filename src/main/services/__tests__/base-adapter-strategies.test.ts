@@ -53,16 +53,16 @@ describe('BaseRoleAdapter — strategy dispatch', () => {
     a.setStrategy('none')
     const result = a.buildMcpConfig(makeMcpCtx())
     assert.deepEqual(result.allowedTools, [])
-    assert.ok(result.disallowedTools.length > 0)
+    assert.ok(result.disallowedTools!.length > 0)
   })
 
   test('strategy_readonly_returns_readonly_config', () => {
     const a = new TestAdapter()
     a.setStrategy('readonly')
     const result = a.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
+    assert.ok(result.allowedTools!.includes('Read'))
+    assert.ok(result.disallowedTools!.includes('Write'))
+    assert.ok(result.disallowedTools!.includes('Edit'))
   })
 
   test('strategy_custom_returns_default_no_tools', () => {
@@ -95,7 +95,7 @@ describe('BaseRoleAdapter — strategy dispatch', () => {
       getAccumulatedText: () => ''
     })
     // Should not throw
-    cbs.onPlan()
+    cbs.onPlan({} as any)
   })
 
   // ── resolveWorkspaceId ──
@@ -196,7 +196,7 @@ describe('BaseRoleAdapter — strategy dispatch', () => {
 
   test('onSessionStart_is_no_op_by_default', async () => {
     const a = new TestAdapter()
-    await a.onSessionStart({ workspacePath: '/tmp', presetId: null })
+    await a.onSessionStart({ workspacePath: '/tmp', workspaceId: null, conversationId: null, presetId: null })
   })
 
   test('onSessionStop_is_no_op_by_default', () => {

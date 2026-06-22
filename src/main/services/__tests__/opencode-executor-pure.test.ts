@@ -40,7 +40,7 @@ function isTransientError(errorMessage: string): boolean {
  */
 function computeTransientRetry(
   currentRetryCount: number,
-  errorMessage: string
+  _errorMessage: string
 ): {
   attemptNumber: number
   delayMs: number

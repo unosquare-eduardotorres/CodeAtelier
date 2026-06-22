@@ -11,36 +11,10 @@ import { test, describe, summaryAsync } from './test-harness'
 // These are pure type files, but importing them in a coverage run
 // exercises the module system and any side-effectful declarations.
 
-import type {
-  Workspace,
-  Conversation,
-  Message,
-  AgentStatus,
-  Specialist,
-  Skill,
-  AppPreferences,
-  UserProfile,
-  WorkspaceSettings,
-  PlatformInfo,
-  AuditTrack,
-  AuditFinding,
-  AuditResult,
-  CouncilSession,
-  CouncilReview,
-  GrillStructuredPlan,
-  PlanRecord
-} from '../../../shared/types'
-
-import type {
-  MpaPhaseType,
-  MpaRunStatus,
-  MpaPlanItem,
-  MpaPlanArtifact,
-  MpaVerifyReport,
-  MpaRun,
-  MpaCampaign,
-  MpaOrchestrateParams
-} from '../../../shared/mpa-types'
+// Type-only imports removed — they exist to exercise module evaluation
+// but were all unused (TS6192). Re-add if runtime coverage checks need them.
+import '../../../shared/types'
+import '../../../shared/mpa-types'
 
 // ── Import runtime constants to verify expected shapes ──
 

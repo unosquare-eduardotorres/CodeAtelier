@@ -62,7 +62,7 @@ function useSkillActions(opts: {
   refreshRecommendations: (sid: string) => Promise<void>
   importSkill: (filePath: string) => Promise<{ success: boolean; error?: string | null }>
   loadForWorkspace: (workspaceId: string) => Promise<void>
-  addToast: (t: { message: string; type: string }) => void
+  addToast: (t: Omit<import('@renderer/store/toast.store').Toast, 'id' | 'createdAt'>) => void
 }): {
   handleImportSkill: () => Promise<void>
   handleToggleSkill: (skillId: string, enabled: boolean) => Promise<void>

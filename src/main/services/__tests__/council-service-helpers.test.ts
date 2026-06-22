@@ -39,7 +39,6 @@ function anonymizeReviews(
 /**
  * Replicated status computation logic.
  */
-type CouncilMemberStatus = 'pending' | 'running' | 'completed' | 'failed'
 type CouncilPhase = 'framing' | 'deliberating' | 'peer-review' | 'synthesizing' | 'complete'
 
 function computeCouncilPhase(params: {

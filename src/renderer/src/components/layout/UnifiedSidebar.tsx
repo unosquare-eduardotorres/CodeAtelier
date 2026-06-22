@@ -5,6 +5,7 @@ import { ChatItem } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import { SETTINGS_MENU } from '@renderer/components/workspace/WorkspaceSettingsPanel'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
+import type { Conversation } from '../../../../shared/types'
 
 type SidebarTab = 'chats' | 'settings'
 
@@ -56,7 +57,7 @@ function ConversationListContent({
   onDelete,
   onRename
 }: {
-  conversations: { id: string; title: string; createdAt: string }[]
+  conversations: Conversation[]
   activeConversation: { id: string } | null
   streamingConversationIds: Set<string>
   activeWorkspace: { id: string; name: string } | null

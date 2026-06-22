@@ -515,7 +515,7 @@ export class AgentRecoveryManager {
 
   /** Handle AbortError — either timeout or user cancellation. */
   private handleAbortOrTimeout(
-    error: Error,
+    _error: Error,
     timedOut: boolean,
     effectiveTimeoutMs?: number
   ): void {

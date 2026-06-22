@@ -16,12 +16,7 @@ import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../../shared/constan
 import {
   requireObject,
   requireString,
-  optionalString,
-  optionalNumber,
-  optionalBoolean,
-  optionalNullableString,
-  requireStringArray,
-  requirePlainObject
+  optionalString
 } from '../validate-args'
 
 // ── §1: Conversation CRUD patterns ───────────────────────────────────────
@@ -66,7 +61,7 @@ describe('Conversation CRUD IPC — validation', () => {
   test('CHAT_CREATE_CONVERSATION_communication_tone_validation', () => {
     assert.ok(Array.isArray(VALID_COMMUNICATION_TONES))
     assert.ok(VALID_COMMUNICATION_TONES.length >= 3)
-    assert.ok(!VALID_COMMUNICATION_TONES.includes('invalid-tone'))
+    assert.ok(!VALID_COMMUNICATION_TONES.includes('invalid-tone' as any))
   })
 
   test('CHAT_DELETE_CONVERSATION_pattern', () => {
@@ -77,7 +72,7 @@ describe('Conversation CRUD IPC — validation', () => {
   })
 
   test('CHAT_RENAME_CONVERSATION_pattern', () => {
-    const ch = IPC_CHANNELS.CHAT_RENAME_CONVERSATION
+    const ch = IPC_CHANNELS.CHAT_RENAME
     const args = requireObject({ conversationId: 'conv-1', title: 'New Title' }, ch)
     requireString(args, 'conversationId', ch)
     requireString(args, 'title', ch)

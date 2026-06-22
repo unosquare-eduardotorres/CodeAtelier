@@ -32,7 +32,7 @@ const MIN_FINDINGS_FOR_ADEQUATE = 8
 // ── Import pure functions that are exported ──
 
 import { buildPlannerGoalCondition, buildBuilderGoalCondition, buildVerifierGoalCondition } from '../mpa-goal-conditions'
-import { parsePlanArtifact, parseVerifyReport, hasFailingCriteria } from '../mpa-artifact-parsers'
+import { parsePlanArtifact, hasFailingCriteria } from '../mpa-artifact-parsers'
 
 // ────────────────────────────────────────────────────────────────────────────
 // §1  MPA Orchestration — deeper state machine tests
@@ -360,7 +360,7 @@ describe('MPA — verify report analysis (deeper)', () => {
 
   test('hasFailingCriteria_empty_criteriaResults', () => {
     const report = { criteriaResults: [], crossCuttingIssues: [] }
-    assert.equal(hasFailingCriteria(report as Parameters<typeof hasFailingCriteria>[0]), false)
+    assert.equal(hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]), false)
   })
 
   test('hasFailingCriteria_all_pass', () => {
@@ -368,7 +368,7 @@ describe('MPA — verify report analysis (deeper)', () => {
       criteriaResults: [{ criterion: 'Tests pass', status: 'pass', evidence: 'All green' }],
       crossCuttingIssues: []
     }
-    assert.equal(hasFailingCriteria(report as Parameters<typeof hasFailingCriteria>[0]), false)
+    assert.equal(hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]), false)
   })
 
   test('hasFailingCriteria_one_fail', () => {
@@ -379,7 +379,7 @@ describe('MPA — verify report analysis (deeper)', () => {
       ],
       crossCuttingIssues: []
     }
-    assert.equal(hasFailingCriteria(report as Parameters<typeof hasFailingCriteria>[0]), true)
+    assert.equal(hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]), true)
   })
 
   test('parsePlanArtifact_with_valid_plan', () => {

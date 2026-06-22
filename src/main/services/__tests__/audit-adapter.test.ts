@@ -17,7 +17,7 @@ function createAdapter(
   return new AuditRoleAdapter({
     workspaceId: 'ws-1',
     trackId: 'code',
-    mode: 'full',
+    mode: 'deep',
     ...overrides
   })
 }
@@ -82,10 +82,10 @@ describe('AuditRoleAdapter', () => {
   test('buildMcpConfig_readonly_includes_read_excludes_write', () => {
     const a = createAdapter()
     const result = a.buildMcpConfig(makeMcpCtx())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
+    assert.ok(result.allowedTools!.includes('Read'))
+    assert.ok(result.disallowedTools!.includes('Write'))
+    assert.ok(result.disallowedTools!.includes('Edit'))
+    assert.ok(result.disallowedTools!.includes('Bash'))
   })
 
   // ── buildPrompts ──

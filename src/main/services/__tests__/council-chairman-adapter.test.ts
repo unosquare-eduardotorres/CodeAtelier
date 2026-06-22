@@ -42,7 +42,7 @@ function createAdapter(
       planContent: '# Plan\nAdd Redis.',
       filesInScope: [],
       structuredPlan: null,
-      workspaceContext: null
+      workspaceContext: ''
     },
     reviews: [dummyReview],
     peerReviews: [dummyPeerReview],
@@ -101,7 +101,7 @@ describe('CouncilChairmanRoleAdapter', () => {
       controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} }
     })
     assert.deepEqual(result.allowedTools, [])
-    assert.ok(result.disallowedTools.length > 0)
+    assert.ok(result.disallowedTools!.length > 0)
   })
 
   // ── buildPrompts ──

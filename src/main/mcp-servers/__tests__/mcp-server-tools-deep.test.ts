@@ -105,7 +105,7 @@ describe('MCP integrations — structure', () => {
 
   test('local_integrations_have_expected_shape', () => {
     for (const integration of LOCAL_MCP_INTEGRATIONS) {
-      const i = integration as Record<string, unknown>
+      const i = integration as unknown as Record<string, unknown>
       assert.ok(typeof i.id === 'string' || typeof i.name === 'string',
         'Each integration should have id or name')
     }
@@ -113,7 +113,7 @@ describe('MCP integrations — structure', () => {
 
   test('external_integrations_have_expected_shape', () => {
     for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-      const i = integration as Record<string, unknown>
+      const i = integration as unknown as Record<string, unknown>
       assert.ok(typeof i.id === 'string' || typeof i.name === 'string',
         'Each integration should have id or name')
     }

@@ -336,7 +336,7 @@ describe('Constants — functions', () => {
 
   test('getModelActionForRole_returns_action_for_known_roles', () => {
     assert.equal(typeof getModelActionForRole, 'function')
-    const action = getModelActionForRole('da-vinci')
+    const action = getModelActionForRole('da-vinci' as any, 'plan')
     assert.equal(typeof action, 'string')
   })
 
@@ -366,7 +366,7 @@ describe('Constants — functions', () => {
     const result = findRecommendedModel('nonexistent-model-xyz')
     assert.equal(result, undefined)
     if (RECOMMENDED_LOCAL_MODELS.length > 0) {
-      const found = findRecommendedModel(RECOMMENDED_LOCAL_MODELS[0].id)
+      const found = findRecommendedModel(RECOMMENDED_LOCAL_MODELS[0].ollamaId)
       assert.ok(found)
     }
   })

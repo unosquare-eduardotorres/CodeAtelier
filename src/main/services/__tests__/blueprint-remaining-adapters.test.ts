@@ -33,11 +33,19 @@ function makePromptCtx(): AdapterPromptContext {
 }
 
 const dummyPhaseContext = {
-  blueprintId: 'bp-1',
-  workspaceName: 'TestProject',
-  detectedTechs: ['typescript', 'react'],
-  artifacts: [],
-  constitutionContent: null,
+  blueprint: {
+    id: 'bp-1',
+    title: 'TestProject',
+    shortName: 'test',
+    description: 'Test blueprint',
+    priority: 'medium' as any,
+    currentPhase: 'specify' as any,
+    settings: {} as Record<string, unknown>
+  },
+  constitution: null as string | null,
+  previousArtifacts: [] as any[],
+  specFilePath: '/tmp/spec.md',
+  blueprintDir: '/tmp/blueprints',
   grillDecisions: []
 }
 

@@ -1,7 +1,7 @@
 import type { JSX } from 'react'
 import { CheckCircle, Circle, Loader2, XCircle, Layers } from 'lucide-react'
 
-type TaskStatus = 'pending' | 'running' | 'complete' | 'failed'
+type TaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
 
 interface BlueprintWaveProgressProps {
   wave: number

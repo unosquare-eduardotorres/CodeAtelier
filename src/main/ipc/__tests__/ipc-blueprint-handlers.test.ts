@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import { IPC_CHANNELS } from '../../../shared/constants'
 import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../../shared/blueprint-types'
-import { requireObject, requireString, optionalString, optionalBoolean } from '../validate-args'
+import { requireObject, requireString } from '../validate-args'
 
 // ── §1: Blueprint channel constant verification ──────────────────────────
 
@@ -110,7 +110,7 @@ describe('Blueprint IPC — handler validation patterns', () => {
   })
 
   test('BLUEPRINT_POPULATE_TASKS_validation', () => {
-    const ch = IPC_CHANNELS.BLUEPRINT_POPULATE_TASKS
+    void IPC_CHANNELS.BLUEPRINT_POPULATE_TASKS
     const rawArgs = { blueprintId: 'bp-1', tasks: [{ title: 'Task 1' }] }
 
     // Simulates the inline validation in the handler

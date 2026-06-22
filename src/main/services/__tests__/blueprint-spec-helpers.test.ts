@@ -178,21 +178,21 @@ describe('Blueprint — verify pass/fail determination', () => {
   })
 
   test('human_needed_status_is_complete', () => {
-    const overallStatus = 'human_needed'
+    const overallStatus: string = 'human_needed'
     const result = overallStatus === 'passed' || overallStatus === 'human_needed'
       ? 'complete' : 'failed'
     assert.equal(result, 'complete')
   })
 
   test('gaps_found_status_is_failed', () => {
-    const overallStatus = 'gaps_found'
+    const overallStatus: string = 'gaps_found'
     const result = overallStatus === 'passed' || overallStatus === 'human_needed'
       ? 'complete' : 'failed'
     assert.equal(result, 'failed')
   })
 
   test('unknown_status_is_failed', () => {
-    const overallStatus = 'unknown'
+    const overallStatus: string = 'unknown'
     const result = overallStatus === 'passed' || overallStatus === 'human_needed'
       ? 'complete' : 'failed'
     assert.equal(result, 'failed')

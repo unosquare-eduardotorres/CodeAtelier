@@ -119,9 +119,9 @@ describe('buildEmbedText', () => {
 describe('buildScopeContexts', () => {
   test('builds scope map from file tags', () => {
     const tags: RawChunk[] = [
-      makeRawChunk({ name: 'MyClass', kind: 'class', startLine: 1, endLine: 50 }),
-      makeRawChunk({ name: 'doWork', kind: 'method', startLine: 5, endLine: 20 }),
-      makeRawChunk({ name: 'cleanup', kind: 'method', startLine: 25, endLine: 35 })
+      makeRawChunk({ symbolName: 'MyClass', symbolKind: 'class', startLine: 1, endLine: 50 }),
+      makeRawChunk({ symbolName: 'doWork', symbolKind: 'method', startLine: 5, endLine: 20 }),
+      makeRawChunk({ symbolName: 'cleanup', symbolKind: 'method', startLine: 25, endLine: 35 })
     ]
     const scopes = buildScopeContexts(tags)
     assert.ok(scopes instanceof Map)
@@ -274,13 +274,13 @@ describe('shouldSkipFile', () => {
 describe('extractRelevantImports', () => {
   test('extracts imports used in chunk body', () => {
     const fileContent = `import { useState, useEffect } from 'react'\nimport { fetchData } from './api'`
-    const chunk = { body: 'useState()' } as ProcessedChunk
+    const chunk = { body: 'useState()' } as unknown as RawChunk
     const imports = extractRelevantImports(fileContent, chunk)
     assert.ok(Array.isArray(imports))
   })
 
   test('returns empty array for no relevant imports', () => {
-    const imports = extractRelevantImports('', { body: 'console.log()' } as ProcessedChunk)
+    const imports = extractRelevantImports('', { body: 'console.log()' } as unknown as RawChunk)
     assert.deepEqual(imports, [])
   })
 })

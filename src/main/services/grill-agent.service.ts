@@ -169,13 +169,13 @@ export class GrillAgentService extends EventEmitter {
     })
 
     const session = new AgentSessionService(adapter)
+    // GRILL-04: Include workspaceId in all greenfield events for correct routing
+    const wsId = params.workspaceId
+
     // GRILL-GREENFIELD-CANCEL-ALWAYS-01: Store workspaceId so cancel(wsId) can
     // verify it matches before cancelling an unrelated greenfield evaluation.
     const greenfieldEntry: GrillSession = { session, running: true, workspaceId: wsId }
     this.greenfieldSession = greenfieldEntry
-
-    // GRILL-04: Include workspaceId in all greenfield events for correct routing
-    const wsId = params.workspaceId
 
     // Wire streaming events for live output
     session.on('chunk', (chunk: StreamChunk) => {

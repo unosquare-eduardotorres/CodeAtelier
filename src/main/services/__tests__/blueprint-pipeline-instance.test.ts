@@ -73,8 +73,8 @@ describe('BlueprintBuildService — instance + EventEmitter', () => {
     const { BlueprintBuildService } = await import('../blueprint-build.service')
     const svc = new BlueprintBuildService()
     const events: string[] = []
-    svc.on('task-start', (d: any) => events.push('start'))
-    svc.on('task-complete', (d: any) => events.push('complete'))
+    svc.on('task-start', (_d: any) => events.push('start'))
+    svc.on('task-complete', (_d: any) => events.push('complete'))
     svc.emit('task-start', { taskId: 't1' })
     svc.emit('task-complete', { taskId: 't1' })
     assert.deepEqual(events, ['start', 'complete'])

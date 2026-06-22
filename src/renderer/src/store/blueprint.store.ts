@@ -24,7 +24,7 @@ interface BlueprintState {
 
   // Build wave tracking
   currentWave: { wave: number; taskCount: number } | null
-  waveTasks: Record<string, 'pending' | 'running' | 'complete' | 'failed'>
+  waveTasks: Record<string, BlueprintTaskStatus>
 
   // History
   history: Blueprint[]

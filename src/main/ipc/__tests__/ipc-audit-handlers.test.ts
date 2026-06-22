@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import { IPC_CHANNELS, AUDIT_TRACKS, GRILL_TRACKS } from '../../../shared/constants'
-import { requireObject, requireString, optionalString, optionalBoolean } from '../validate-args'
+import { requireObject, requireString } from '../validate-args'
 
 // ── §1: Audit channel constants ──────────────────────────────────────────
 
@@ -76,14 +76,14 @@ describe('Audit IPC — validation patterns', () => {
   })
 
   test('AUDIT_GET_RUN_validation', () => {
-    const ch = IPC_CHANNELS.AUDIT_GET_RUN
+    const ch = IPC_CHANNELS.AUDIT_GET_LATEST
     const args = requireObject({ runId: 'run-1' }, ch)
     const runId = requireString(args, 'runId', ch)
     assert.equal(runId, 'run-1')
   })
 
   test('AUDIT_EXPORT_JSON_validation', () => {
-    const ch = IPC_CHANNELS.AUDIT_EXPORT_JSON
+    const ch = IPC_CHANNELS.AUDIT_EXPORT_MARKDOWN
     const args = requireObject({ runId: 'run-1' }, ch)
     const runId = requireString(args, 'runId', ch)
     assert.equal(runId, 'run-1')
@@ -100,8 +100,8 @@ describe('Audit IPC — validation patterns', () => {
     const trackIds = Object.keys(AUDIT_TRACKS)
     assert.ok(trackIds.length >= 4)
     for (const track of Object.values(AUDIT_TRACKS)) {
-      assert.equal(typeof (track as Record<string, unknown>).name, 'string')
-      assert.equal(typeof (track as Record<string, unknown>).description, 'string')
+      assert.equal(typeof (track as unknown as Record<string, unknown>).name, 'string')
+      assert.equal(typeof (track as unknown as Record<string, unknown>).description, 'string')
     }
   })
 })
@@ -179,7 +179,7 @@ describe('Grill IPC — validation patterns', () => {
     const trackIds = Object.keys(GRILL_TRACKS)
     assert.ok(trackIds.length >= 5)
     for (const track of Object.values(GRILL_TRACKS)) {
-      assert.equal(typeof (track as Record<string, unknown>).name, 'string')
+      assert.equal(typeof (track as unknown as Record<string, unknown>).name, 'string')
     }
   })
 })

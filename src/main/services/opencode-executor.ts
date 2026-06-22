@@ -262,7 +262,7 @@ export class OpenCodeExecutor {
     chunk: StreamChunk,
     retryCount: number,
     sessionId: string,
-    promptBody: SessionPromptData
+    promptBody: SessionPromptData['body']
   ): AsyncGenerator<StreamChunk, number> {
     const retry = this.computeTransientRetry(retryCount, chunk.error!)
     if (!retry) {
@@ -299,7 +299,7 @@ export class OpenCodeExecutor {
   private async *processEventStream(params: {
     events: { stream: AsyncIterable<unknown> }
     openCodeSessionId: string
-    promptBody: SessionPromptData
+    promptBody: SessionPromptData['body']
     tokenUsage: ExecutorTokenUsage
     maxTurns: number
     abortController?: AbortController
@@ -471,7 +471,7 @@ export class OpenCodeExecutor {
 
       // OC-04: If prompt send failed before/during streaming, surface the error
       if (promptSendError) {
-        yield { type: 'error', error: `Prompt send failed: ${promptSendError.message}` }
+        yield { type: 'error', error: `Prompt send failed: ${(promptSendError as Error).message}` }
         return
       }
 

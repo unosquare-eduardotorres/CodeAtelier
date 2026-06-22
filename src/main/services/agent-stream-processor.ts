@@ -190,7 +190,7 @@ export class AgentStreamProcessor {
       contextTier?: ContextWindowTier
     }
   ): 'next' | 'break' | 'continue' | 'return' {
-    const { conversationId, isBuildMode, streamState } = ctx
+    const { conversationId, streamState } = ctx
 
     // Error handling (stale session, unexpected abort, budget cap)
     if (chunk.type === 'error') {
