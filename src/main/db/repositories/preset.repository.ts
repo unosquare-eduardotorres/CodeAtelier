@@ -49,8 +49,7 @@ export class PresetRepository extends BaseRepository<PresetRow, LLMPreset> {
   getAll(workspaceId: string): LLMPreset[] {
     const rows = this.db()
       .prepare(
-        `SELECT * FROM llm_presets WHERE workspace_id = ?
-         ORDER BY is_built_in DESC, name ASC`
+        `SELECT * FROM llm_presets WHERE workspace_id = ? ORDER BY is_built_in DESC, name ASC`
       )
       .all(workspaceId) as PresetRow[]
     return rows.map(mapRow)
@@ -58,9 +57,9 @@ export class PresetRepository extends BaseRepository<PresetRow, LLMPreset> {
 
   /** Get a single preset by ID. */
   getById(presetId: string): LLMPreset | null {
-    const row = this.db()
-      .prepare('SELECT * FROM llm_presets WHERE id = ?')
-      .get(presetId) as PresetRow | undefined
+    const row = this.db().prepare('SELECT * FROM llm_presets WHERE id = ?').get(presetId) as
+      | PresetRow
+      | undefined
     return row ? mapRow(row) : null
   }
 
@@ -80,34 +79,29 @@ export class PresetRepository extends BaseRepository<PresetRow, LLMPreset> {
     return mapRow(row)
   }
 
-  /** Update a preset's name and/or action config. Built-in presets cannot be renamed. */
+  /** Update a custom preset's name and/or action config. */
   update(
     presetId: string,
     changes: { name?: string; actionConfig?: Partial<Record<ModelAction, ActionModelConfig>> }
   ): LLMPreset | null {
     const existing = this.getById(presetId)
-    if (!existing) return null
+    if (!existing || existing.isBuiltIn) return null
 
-    const sets: string[] = ["updated_at = datetime('now')"]
-    const params: unknown[] = []
+    const name = changes.name ?? existing.name
+    const actionConfig = changes.actionConfig ?? existing.actionConfig
 
-    if (changes.name !== undefined && !existing.isBuiltIn) {
-      sets.push('name = ?')
-      params.push(changes.name)
-    }
-    if (changes.actionConfig !== undefined) {
-      sets.push('action_config_json = ?')
-      params.push(JSON.stringify(changes.actionConfig))
-    }
-
-    params.push(presetId)
     const row = this.db()
-      .prepare(`UPDATE llm_presets SET ${sets.join(', ')} WHERE id = ? RETURNING *`)
-      .get(...params) as PresetRow | undefined
+      .prepare(
+        `UPDATE llm_presets
+         SET name = ?, action_config_json = ?, updated_at = datetime('now')
+         WHERE id = ? AND is_built_in = 0
+         RETURNING *`
+      )
+      .get(name, JSON.stringify(actionConfig), presetId) as PresetRow | undefined
     return row ? mapRow(row) : null
   }
 
-  /** Delete a custom preset. Built-in presets cannot be deleted. */
+  /** Delete a custom preset (built-in presets cannot be deleted). */
   delete(presetId: string): boolean {
     const result = this.db()
       .prepare('DELETE FROM llm_presets WHERE id = ? AND is_built_in = 0')
@@ -115,30 +109,17 @@ export class PresetRepository extends BaseRepository<PresetRow, LLMPreset> {
     return result.changes > 0
   }
 
-  /** Get a built-in preset by name for a workspace. */
-  getBuiltIn(workspaceId: string, name: 'Full Claude' | 'Full Local'): LLMPreset | null {
-    const row = this.db()
-      .prepare(
-        'SELECT * FROM llm_presets WHERE workspace_id = ? AND name = ? AND is_built_in = 1'
-      )
-      .get(workspaceId, name) as PresetRow | undefined
-    return row ? mapRow(row) : null
-  }
-
-  /** Ensure built-in presets exist for a workspace (called on workspace creation). */
+  /**
+   * Ensure built-in presets exist for a workspace.
+   * Called on workspace creation and migration.
+   */
   ensureBuiltIns(workspaceId: string): void {
-    const existing = this.db()
-      .prepare('SELECT name FROM llm_presets WHERE workspace_id = ? AND is_built_in = 1')
-      .all(workspaceId) as { name: string }[]
-    const existingNames = new Set(existing.map((r) => r.name))
-
-    const insert = this.db().prepare(
-      `INSERT INTO llm_presets (workspace_id, name, is_built_in, action_config_json)
-       VALUES (?, ?, 1, '{}')`
-    )
-
-    if (!existingNames.has('Full Claude')) insert.run(workspaceId, 'Full Claude')
-    if (!existingNames.has('Full Local')) insert.run(workspaceId, 'Full Local')
+    const insert = this.db().prepare(`
+      INSERT OR IGNORE INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json)
+      VALUES (?, ?, ?, 1, ?)
+    `)
+    insert.run(`${workspaceId}_full-claude`, workspaceId, 'Full Claude', '{}')
+    insert.run(`${workspaceId}_full-local`, workspaceId, 'Full Local', '{}')
   }
 }
 

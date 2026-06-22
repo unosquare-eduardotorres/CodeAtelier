@@ -39,7 +39,7 @@ import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult } from './executor-types'
 import { CLIExecutor } from './cli-executor'
 import type { CLIExecuteOptions, CLIExecuteResult } from './cli-executor'
-import { resolveContextTier } from './context-management'
+import { resolveContextTier, TIER_LIMITS } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { auditContextBudget, estimateToolCount } from './context-budget-auditor'
 import { authProvider } from './auth-provider'
@@ -66,6 +66,7 @@ import type { OpenCodeExecuteResult } from './opencode-executor'
 import { openCodeConfigWriter } from './opencode-config-writer'
 import { openCodeAgentWriter } from './opencode-agent-writer'
 import { CliMcpConfigWriter } from './cli-mcp-config-writer'
+import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
@@ -99,6 +100,8 @@ interface ExecuteStreamOptions {
   localContextWindow?: number
   /** F3: Pre-resolved context tier — avoids re-resolving per tool_use chunk. */
   contextTier?: ContextWindowTier
+  /** LLM preset ID for per-action model resolution */
+  presetId?: string | null
 }
 
 /**
@@ -201,6 +204,16 @@ export class AgentSessionService extends AgentBaseService {
   /** Stashed executeStream options for replay on max_turns auto-continue. */
   lastStreamOpts: ExecuteStreamOptions | null = null
 
+  /**
+   * SES-01: Per-conversation send lock — serializes concurrent send() calls
+   * for the same conversation to prevent shared mutable state corruption
+   * (accumulatedText, currentConversationId, sdkAbortController, etc.).
+   */
+  private readonly sendLocks = new Map<string, Promise<void>>()
+
+  /** SES-02: Guard flag to prevent concurrent ensureIpcBridge() calls from creating duplicate bridges. */
+  private ipcBridgeStarting = false
+
   private controlToolState: ControlToolState = {
     plan: false,
     askUser: false,
@@ -267,6 +280,11 @@ export class AgentSessionService extends AgentBaseService {
 
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
+    // TURN-COUNT-01: Reset turn count so the next session starts at turn 1,
+    // ensuring adapters apply first-turn setup (specialist roster, MCP guidance, etc.)
+    this.turnCounts.delete(conversationId)
+    // SESSION-PENDING-01: Clear stale resume target to prevent cross-session resume races
+    this.pendingResumeAt.delete(conversationId)
   }
 
   /**
@@ -310,6 +328,8 @@ export class AgentSessionService extends AgentBaseService {
    * Routes through the IPC bridge to the control-actions MCP server.
    */
   respondToAskUser(requestId: string, response: string): void {
+    // ASK-OVERWRITE-01: Clear the askUser flag so subsequent ask_user calls aren't blocked
+    this.controlToolState.askUser = false
     if (this.ipcBridge) {
       this.ipcBridge.sendAskUserResponse(requestId, response)
     } else {
@@ -425,13 +445,33 @@ export class AgentSessionService extends AgentBaseService {
     if (!this.workspacePath) {
       throw new Error(`${this.adapter.role} not started — call start() first`)
     }
+
+    // SES-01: Serialize sends per-conversation to prevent concurrent state corruption.
+    // If a send is already in-flight for this conversation, chain after it.
+    const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
+    const thisLock = prevLock.then(
+      () => this._doSend(message, conversationId, images),
+      () => this._doSend(message, conversationId, images) // Still proceed after prior error
+    )
+    this.sendLocks.set(
+      conversationId,
+      thisLock.catch(() => {})
+    ) // Swallow for chain continuity
+    return thisLock
+  }
+
+  private async _doSend(
+    message: string,
+    conversationId: string,
+    images?: ImageAttachment[]
+  ): Promise<void> {
     this.resetForNewMessage(conversationId)
 
     const sessionId = this.resolveSession(conversationId)
 
     // Adapter may adjust internal turn counters on resume
     this.adapter.refreshFeatureFlags({
-      workspacePath: this.workspacePath,
+      workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
       conversationId
     })
@@ -441,6 +481,20 @@ export class AgentSessionService extends AgentBaseService {
     // Track turn count locally so we can supply it to the adapter.
     const turnCount = this.incrementTurnCount(conversationId, sessionId !== undefined)
 
+    // Resolve per-conversation LLM provider and preset BEFORE building prompts/MCP config
+    // so adapters can use preset-aware model resolution for prompt verbosity gating.
+    let conversationProvider: LLMProvider = this.llmProvider
+    let conversationPresetId: string | null = null
+    try {
+      const conv = conversationRepository.findById(conversationId)
+      if (conv?.llmProvider) {
+        conversationProvider = conv.llmProvider as LLMProvider
+      }
+      conversationPresetId = conv?.presetId ?? null
+    } catch {
+      /* non-fatal — keep session default */
+    }
+
     const { systemPrompt, effectiveMessage } = this.adapter.buildPrompts({
       message,
       conversationId,
@@ -448,9 +502,10 @@ export class AgentSessionService extends AgentBaseService {
       turnCount,
       sessionId,
       mode: this.currentMode,
-      workspacePath: this.workspacePath,
+      workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
-      costPreference: this.costPreference
+      costPreference: this.costPreference,
+      presetId: conversationPresetId
     })
 
     // Resolve context tier for local LLMs — gates tool selection in MCP config.
@@ -487,23 +542,12 @@ export class AgentSessionService extends AgentBaseService {
 
     const mcpResult = this.adapter.buildMcpConfig({
       mode: this.currentMode,
-      workspacePath: this.workspacePath,
+      workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
       conversationId: this.currentConversationId,
       controlCallbacks,
       contextTier
     })
-
-    // Resolve per-conversation LLM provider (falls back to session default)
-    let conversationProvider: LLMProvider = this.llmProvider
-    try {
-      const conv = conversationRepository.findById(conversationId)
-      if (conv?.llmProvider) {
-        conversationProvider = conv.llmProvider as LLMProvider
-      }
-    } catch {
-      /* non-fatal — keep session default */
-    }
 
     // Start IPC bridge for CLI/OpenCode backends — the control-actions MCP server
     // sends plan/askUser/memory events through a Unix domain socket.
@@ -541,8 +585,13 @@ export class AgentSessionService extends AgentBaseService {
       mcpResult,
       llmProvider: conversationProvider,
       localContextWindow,
-      contextTier
+      contextTier,
+      presetId: conversationPresetId
     })
+
+    // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
+    // If executeStream() threw, this line is skipped and the pending state is preserved for retry.
+    this.adapter.onSendSuccess?.(conversationId)
   }
 
   /** Cancels the current in-flight query (SDK, CLI, or OpenCode). */
@@ -601,6 +650,8 @@ export class AgentSessionService extends AgentBaseService {
     if (this.workspaceId) {
       await vectorSearchService.dispose(this.workspaceId)
     }
+    // ELICIT-NOCLEANUP-01: Cancel any pending elicitations so their promises don't hang forever
+    elicitationService.resolveAll()
     this.adapter.onSessionStop()
     this.completeDbSession('terminated')
     this.currentStatus = 'idle'
@@ -615,6 +666,20 @@ export class AgentSessionService extends AgentBaseService {
     if (mode === this.currentMode) return
     if (!this.workspacePath) return
 
+    // MODE-SWITCH-NOLOCK-01: Serialize after the current send (if any) to prevent
+    // mid-stream permission changes and MCP cache invalidation.
+    const conversationId = this.currentConversationId
+    if (!conversationId) return
+    const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
+    const thisLock = prevLock.then(
+      () => this._doSwitchMode(mode),
+      () => this._doSwitchMode(mode)
+    )
+    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    return thisLock
+  }
+
+  private async _doSwitchMode(mode: ConversationMode): Promise<void> {
     const previousMode = this.currentMode
     this.log.info(
       `[PIPELINE:mode-switch] ${previousMode} → ${mode} conversationId=${this.currentConversationId}`
@@ -683,9 +748,25 @@ export class AgentSessionService extends AgentBaseService {
       return
     }
 
+    // COMPACT-NOLOCK-01: Serialize compact after the current send (if any).
+    // Without this, compact() can modify adapter state, send CLI commands,
+    // and mutate counters while executeStream() is actively streaming.
+    const conversationId = this.currentConversationId
+    const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
+    const thisLock = prevLock.then(
+      () => this._doCompact(),
+      () => this._doCompact()
+    )
+    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    return thisLock
+  }
+
+  private async _doCompact(): Promise<void> {
     // OpenCode backend: use session command API for compaction
     if (this.executorBackend === 'opencode') {
-      const openCodeSessionId = openCodeExecutor.getSessionId(this.currentConversationId)
+      const openCodeSessionId = this.currentConversationId
+        ? openCodeExecutor.getSessionId(this.currentConversationId)
+        : undefined
       if (!openCodeSessionId) {
         this.log.warn('[compaction] OpenCode — no session found for this conversation')
         return
@@ -723,15 +804,21 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     // SDK backend: use session resume for compaction
-    const sessionId = this.sessionMap.get(this.currentConversationId)
+    const sessionId = this.currentConversationId
+      ? this.sessionMap.get(this.currentConversationId)
+      : undefined
     if (!sessionId) throw new Error('No session to compact')
 
     this.log.info(`[compaction] compact #${this.compactCount + 1}`)
     this.compactCount++
     this.compactSuggested = false
     this.turnsSinceCompactSuggestion = 0
-    // Adapters wire /compact into their own prompt assembler — signal via invalidate.
-    this.adapter.onConversationSwitch(this.currentConversationId)
+    // SDK-COMPACT-01: Queue the compaction instruction so the next send() prepends it.
+    // Previously only invalidated the snapshot (no-op for compaction).
+    if (this.currentConversationId) {
+      this.adapter.setPendingCompaction?.(this.currentConversationId, '/compact')
+      this.adapter.onConversationSwitch(this.currentConversationId)
+    }
   }
 
   async resumeAt(messageId: string): Promise<void> {
@@ -807,9 +894,18 @@ export class AgentSessionService extends AgentBaseService {
     this.currentConversationId = conversationId
     this.updateDbSessionConversation(conversationId)
     this.accumulatedText = ''
+    // SES-03: Only reset circuit breaker and tool accumulator when switching TO
+    // this conversation. The send lock (SES-01) prevents concurrent sends within
+    // the same conversation, but a conversation switch mid-stream could wipe the
+    // breaker counter for an active stream on the old conversation. Since the send
+    // lock serializes per-conversation, this reset is now safe — the old stream
+    // has already finished or will finish on its own abort path.
     this.circuitBreaker.reset()
     this.toolActivityAccumulator.reset()
     this.maxTurnsContinuations = 0
+    // SES-04: Don't null-out lastStreamOpts here — executeStream sets it at the
+    // start of each stream, and the recovery manager reads it on error. The send
+    // lock ensures no concurrent access within the same conversation.
     this.lastStreamOpts = null
     this.controlToolState = { plan: false, askUser: false, memory: false }
     this.emit('statusUpdate', this.getStatus())
@@ -890,6 +986,15 @@ export class AgentSessionService extends AgentBaseService {
 
     const origAsk = cb.onAskUser
     cb.onAskUser = (questions, action, requestId) => {
+      // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
+      // to prevent the first request's promise from deadlocking forever.
+      if (this.controlToolState.askUser && requestId) {
+        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.log.info(
+          `[wrapControlCallbacks] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
+        )
+        return
+      }
       this.controlToolState.askUser = true
       this.controlToolState.askUserIntent = { type: 'askUser', questions, action, requestId }
       // Include requestId so the renderer can route the response back (mirrors
@@ -972,7 +1077,8 @@ export class AgentSessionService extends AgentBaseService {
       mcpResult,
       llmProvider,
       localContextWindow,
-      contextTier: passedContextTier
+      contextTier: passedContextTier,
+      presetId: streamPresetId
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -1037,7 +1143,8 @@ export class AgentSessionService extends AgentBaseService {
               abortController,
               mcpResult,
               localContextWindow,
-              goal: adapterGoal ?? undefined
+              goal: adapterGoal ?? undefined,
+              presetId: streamPresetId
             })
           }
           break
@@ -1141,6 +1248,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
+    presetId?: string | null
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
     const cliOptions = this.buildCLIExecuteOptions(params)
     return this.cliExecutor.execute(cliOptions)
@@ -1208,7 +1316,16 @@ export class AgentSessionService extends AgentBaseService {
       cwd: this.workspacePath!,
       abortController,
       conversationId: this.currentConversationId ?? undefined,
-      maxTurns: isBuildMode ? 50 : 30,
+      // MAXTURNS-HARDCODED-01: Use tier-appropriate maxTurns for local LLMs.
+      // A small-tier model (32K context) with maxTurns=50 will exhaust its
+      // context window long before hitting the turn limit, causing overflow
+      // errors instead of a graceful turn limit stop.
+      maxTurns: (() => {
+        const ctxWindow = this.resolveLocalContextWindow()
+        const tier = resolveContextTier(ctxWindow)
+        const limits = TIER_LIMITS[tier]
+        return isBuildMode ? limits.maxTurnsBuild : limits.maxTurnsPlan
+      })(),
       primingContext
     })) {
       // Forward chunks, converting OpenCode meta to executor meta format
@@ -1410,6 +1527,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
+    presetId?: string | null
   }): CLIExecuteOptions {
     return this.executorFactory.buildCLIExecuteOptions(params)
   }
@@ -1422,6 +1540,11 @@ export class AgentSessionService extends AgentBaseService {
   private async ensureIpcBridge(_conversationId: string): Promise<void> {
     if (this.ipcBridge?.isListening()) return
 
+    // SES-02: Re-entrance guard — prevent concurrent calls from creating duplicate bridges.
+    // Two concurrent send() calls can both pass isListening() before bridge.start() resolves.
+    if (this.ipcBridgeStarting) return
+    this.ipcBridgeStarting = true
+
     // N10: Clean up stale listeners if the bridge is being restarted
     if (this.ipcBridge) {
       this.ipcBridge.removeAllListeners()
@@ -1429,9 +1552,14 @@ export class AgentSessionService extends AgentBaseService {
       this.executorFactory.invalidateMcpConfigCache()
     }
 
-    const bridge = new IpcBridge()
-    await bridge.start()
-    this.ipcBridge = bridge
+    let bridge: IpcBridge
+    try {
+      bridge = new IpcBridge()
+      await bridge.start()
+      this.ipcBridge = bridge
+    } finally {
+      this.ipcBridgeStarting = false
+    }
 
     // Wire bridge events to session events (same handling as wrapControlCallbacks).
     // Listeners read from this.currentConversationId (live) rather than a captured
@@ -1455,6 +1583,16 @@ export class AgentSessionService extends AgentBaseService {
         this.respondToAskUser(requestId, rejection)
         this.log.info(
           `[ipc-bridge] askUser intercepted (plan already emitted this turn) for ${this.currentConversationId} requestId=${requestId}`
+        )
+        return
+      }
+
+      // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
+      // to prevent the first request's promise from deadlocking forever.
+      if (this.controlToolState.askUser && requestId) {
+        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.log.info(
+          `[ipc-bridge] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
         )
         return
       }

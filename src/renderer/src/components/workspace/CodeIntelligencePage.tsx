@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Brain } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
-import type { EmbeddingModelStatus, CodeGraphIndexingState } from '../../../../shared/types'
+import type { EmbeddingModelStatus, CodeGraphIndexingState, PlatformInfo } from '../../../../shared/types'
 import EmbeddingModelSetupModal from './EmbeddingModelSetupModal'
 import {
   CodeGraphCard,
   SemanticSearchCard,
   EmbeddingModelCard,
-  SearchPlayground
+  SearchPlayground,
+  LibraryDocsCard
 } from './code-intelligence'
 
 export default function CodeIntelligencePage(): React.JSX.Element {
@@ -19,6 +20,9 @@ export default function CodeIntelligencePage(): React.JSX.Element {
   // Embedding model status
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingModelStatus | null>(null)
   const [showEmbeddingSetup, setShowEmbeddingSetup] = useState(false)
+
+  // Platform info (for Apple Silicon gating)
+  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
 
   // Code Graph state
   const [codeGraphState, setCodeGraphState] = useState<CodeGraphIndexingState | null>(null)
@@ -82,6 +86,9 @@ export default function CodeIntelligencePage(): React.JSX.Element {
       .catch((err) =>
         console.warn('[CodeIntelligence] Non-fatal: embedding status check failed:', err)
       )
+
+    // Load platform info (for Apple Silicon gating)
+    window.api.getPlatformInfo().then(setPlatformInfo).catch(() => {})
   }, [activeWorkspace])
 
   // ── Subscribe to code graph progress events ──
@@ -136,7 +143,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
         try {
           const status = await window.api.embeddingCheckStatus()
           setEmbeddingStatus(status)
-          if (!status.cached) {
+          if (!status.ready && !status.omlxEmbeddingModelLoaded) {
             setShowEmbeddingSetup(true)
           }
         } catch {
@@ -162,7 +169,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
   if (!activeWorkspace) return <div />
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8 space-y-6">
+    <div data-testid="code-intelligence-page" className="max-w-3xl mx-auto px-6 py-8 space-y-6">
       {/* Page header */}
       <div className="mb-2">
         <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">
@@ -189,6 +196,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
         embeddingStatus={embeddingStatus}
         persistedIndexStatus={persistedIndexStatus}
         isStartingIndex={isStartingIndex}
+        isAppleSilicon={platformInfo?.isAppleSilicon ?? null}
         onToggle={handleSemanticSearchToggle}
         onSettingToggle={handleToggleSetting}
         onStartIndex={handleStartIndex}
@@ -197,8 +205,11 @@ export default function CodeIntelligencePage(): React.JSX.Element {
 
       <EmbeddingModelCard
         embeddingStatus={embeddingStatus}
+        isAppleSilicon={platformInfo?.isAppleSilicon ?? null}
         onShowSetup={() => setShowEmbeddingSetup(true)}
       />
+
+      <LibraryDocsCard workspaceId={activeWorkspace.id} />
 
       <SearchPlayground
         workspaceId={activeWorkspace.id}
@@ -208,6 +219,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
       {/* Embedding Model Setup Modal */}
       {showEmbeddingSetup && (
         <EmbeddingModelSetupModal
+          isAppleSilicon={platformInfo?.isAppleSilicon ?? true}
           onClose={() => {
             setShowEmbeddingSetup(false)
             // Refresh embedding status after closing modal

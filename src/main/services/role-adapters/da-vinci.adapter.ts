@@ -20,7 +20,11 @@ import { DA_VINCI_AGENT_ID } from '../../../shared/constants'
 import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
 import { memoryService } from '../memory.service'
 import { modelConfigService } from '../model-config.service'
-import { specialistRepository, workspaceRepository } from '../../db/repositories'
+import {
+  conversationRepository,
+  specialistRepository,
+  workspaceRepository
+} from '../../db/repositories'
 import { BaseRoleAdapter } from './base.adapter'
 
 export class DaVinciRoleAdapter extends BaseRoleAdapter {
@@ -39,6 +43,9 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
    * on session end and on workspace change.
    */
   private lastAnnouncedSpecialistId: string | null = null
+
+  /** Cached handoff context — undefined = not yet checked, null = no handoff */
+  private handoffContextCache: string | null | undefined = undefined
 
   async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
     this.promptAssembler.resetSession()
@@ -111,11 +118,25 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
     // Pattern 1: Centralized model resolution
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
     const modelAction = `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction, ctx.presetId)
     // isLocalProvider is still needed by the assembler for local-prompt branching
     const isLocalProvider = modelConfigService.isLocalProvider(ctx.workspacePath)
 
-    const systemPrompt = this.promptAssembler.buildSystemPromptForTurn({
+    // Inject handoff context from provider switch (cached after first read)
+    let handoffPrefix = ''
+    if (this.handoffContextCache === undefined && ctx.conversationId) {
+      try {
+        const conv = conversationRepository.findById(ctx.conversationId)
+        this.handoffContextCache = conv?.handoffContext ?? null
+      } catch {
+        this.handoffContextCache = null
+      }
+    }
+    if (this.handoffContextCache) {
+      handoffPrefix = `## Prior Session Context (Handoff)\n\n${this.handoffContextCache}\n\n---\n\n`
+    }
+
+    const rawSystemPrompt = this.promptAssembler.buildSystemPromptForTurn({
       message: ctx.message,
       hasImages: ctx.hasImages,
       turnCount: ctx.turnCount,
@@ -130,6 +151,7 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
       isLocalProvider,
       model: resolvedModel
     })
+    const systemPrompt = handoffPrefix ? handoffPrefix + rawSystemPrompt : rawSystemPrompt
 
     const effectiveMessage = this.promptAssembler.buildEffectiveMessage({
       message: ctx.message,
@@ -206,5 +228,10 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
 
   clearConversation(conversationId: string): void {
     this.promptAssembler.clearConversation(conversationId)
+  }
+
+  // COMPACT-LOST-01: Confirm that pending injections were sent successfully.
+  onSendSuccess(conversationId: string): void {
+    this.promptAssembler.confirmPendingConsumed(conversationId)
   }
 }

@@ -45,6 +45,9 @@ export interface ChatState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
+  /** SEND-RACE-01: Immediate mutex — prevents rapid double-clicks from bypassing the isStreaming check
+   *  (which relies on React re-render and suffers from stale closure capture). */
+  isSending: boolean
   /** Conversations that are currently streaming (backend still processing) — enables per-conversation streaming indicators in sidebar */
   streamingConversationIds: Set<string>
   activeRequestId: string | null
@@ -91,7 +94,8 @@ export interface ChatState {
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null
+    communicationTone?: CommunicationTone | null,
+    presetId?: string | null
   ) => Promise<void>
   switchPersona: (personaSpecialistId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
@@ -105,8 +109,7 @@ export interface ChatState {
     role?: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string,
-    requestId?: string,
-    conversationId?: string
+    requestId?: string
   ) => void
   /** Reset safety timer without processing content — used by keepalive signals from backend. */
   handleKeepalive: () => void
@@ -216,6 +219,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
+  isSending: false,
   streamingConversationIds: previousChatState?.streamingConversationIds ?? new Set<string>(),
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
@@ -281,7 +285,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null
+    communicationTone?: CommunicationTone | null,
+    presetId?: string | null
   ) => {
     const conversation = await window.api.createConversation({
       workspaceId,
@@ -290,7 +295,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       personaSpecialistId,
       llmProvider,
       mcpOverrides,
-      communicationTone
+      communicationTone,
+      presetId
     })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
@@ -378,6 +384,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectConversation: async (id: string) => {
     const conversation = get().conversations.find((c) => c.id === id)
     if (!conversation) return
+    // MSG-RELOAD-01: Bump generation so any in-flight DB reload from a previous
+    // conversation is discarded instead of overwriting this conversation's messages.
+    internals.bumpGeneration()
 
     const messages = await window.api.getMessages({ conversationId: id })
 
@@ -500,7 +509,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
-        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds),
+        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
       }))
     } else if (activeConversation) {
       // No partial content — still show a local indicator
@@ -514,18 +527,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
       )
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
-        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds),
+        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
       }))
     } else {
-      set(buildStreamingResetState(null, get().streamingConversationIds))
+      set({
+        ...buildStreamingResetState(null, get().streamingConversationIds),
+        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        pendingQuestions: null,
+        pendingQuestionAction: null,
+        pendingQuestionRequestId: null
+      })
     }
 
     internals.resetAccumulator()
   },
 
   sendMessage: async (text: string, attachments?: string[]) => {
-    const { activeConversation, updateMode } = get()
-    if (!activeConversation) return
+    const { activeConversation, updateMode, isStreaming: alreadyStreaming, isSending } = get()
+    // SEND-RACE-01: Guard against rapid double-clicks. isSending is set synchronously
+    // before the async IPC call, so it can't be bypassed by stale React closures.
+    if (!activeConversation || alreadyStreaming || isSending) return
+    set({
+      isSending: true,
+      // SEND-ASKUSER-01: Clear stale pending questions so the card doesn't persist alongside new stream
+      pendingQuestions: null,
+      pendingQuestionAction: null,
+      pendingQuestionRequestId: null
+    })
+    // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
+    internals.bumpGeneration()
 
     // Auto-detect plan intent in build mode → switch to plan
     if (activeConversation.mode === 'build' && detectPlanIntent(text)) {
@@ -576,6 +610,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else {
         set(buildStreamingResetState(null, get().streamingConversationIds))
       }
+    } finally {
+      set({ isSending: false })
     }
   },
 
@@ -584,10 +620,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     role?: 'da-vinci' | 'specialist',
     taskId?: string,
     specialist?: string,
-    requestId?: string,
-    conversationId?: string
+    requestId?: string
   ) => {
-    appendStreamChunkAction(get, set, chunk, role, taskId, specialist, requestId, conversationId)
+    appendStreamChunkAction(get, set, chunk, role, taskId, specialist, requestId)
   },
 
   handleKeepalive: () => {
@@ -673,9 +708,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Remove conversation from state (it's been deleted in DB)
     const newConversations = conversations.filter((c) => c.id !== activeConversation.id)
-    // STORE-07: clean streamingConversationIds on complete
-    const newStreamingIds = new Set(get().streamingConversationIds)
-    newStreamingIds.delete(activeConversation.id)
     set({
       conversations: newConversations,
       activeConversation: null,
@@ -683,8 +715,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: '',
       streamingSegments: [],
       isStreaming: false,
-      toolActivities: [],
-      streamingConversationIds: newStreamingIds
+      toolActivities: []
     })
 
     return result
@@ -699,14 +730,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     const { activeConversation, conversations } = get()
     const newConversations = conversations.filter((c) => c.id !== id)
-    // STORE-02: clean orphaned ID from streamingConversationIds
-    const newStreamingIds = new Set(get().streamingConversationIds)
-    newStreamingIds.delete(id)
     set({
       conversations: newConversations,
       activeConversation: activeConversation?.id === id ? null : activeConversation,
       messages: activeConversation?.id === id ? [] : get().messages,
-      streamingConversationIds: newStreamingIds
+      // CONV-CLOSE-STREAMING-01: Clear streaming state to prevent stale isStreaming
+      // lock and ghost streaming bubbles when a conversation is closed mid-stream.
+      ...(activeConversation?.id === id
+        ? {
+            isStreaming: false,
+            streamingContent: '',
+            streamingSegments: [],
+            activeRequestId: null,
+            toolActivities: [],
+            // CONV-CLOSE-ASKUSER-01: Clear pending questions when closing a conversation
+            pendingQuestions: null,
+            pendingQuestionAction: null,
+            pendingQuestionRequestId: null
+          }
+        : {})
     })
   },
 
@@ -795,7 +837,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!activeConversation) return
 
     const localMessage: Message = {
-      id: `local-${crypto.randomUUID().slice(0, 8)}`,
+      id: `local-${Date.now()}`,
       conversationId: activeConversation.id,
       role: opts?.role ?? 'da-vinci',
       ...(opts?.agentId ? { agentId: opts.agentId } : {}),

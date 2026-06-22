@@ -82,7 +82,7 @@ export default function HealthOverview({
   const selectAllAcrossTracks = useAuditStore((s) => s.selectAllAcrossTracks)
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div data-testid="health-overview" className="flex-1 overflow-y-auto">
       <div className="max-w-4xl mx-auto px-6 py-6 space-y-8">
         {/* ── Overall score hero ── */}
         <div className="flex flex-col items-center text-center gap-3">

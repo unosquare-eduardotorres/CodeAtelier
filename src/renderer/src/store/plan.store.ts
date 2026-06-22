@@ -9,7 +9,7 @@
 
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import type { PlanRecord, PlanStatus, PlanSource } from '../../../shared/types'
+import type { PlanRecord, PlanStatus } from '../../../shared/types'
 
 // ── Store interface ─────────────────────────────────────────────────────
 
@@ -49,15 +49,12 @@ function matchesStatusFilter(plan: PlanRecord, filter: PlanStatusFilter): boolea
 function matchesSearch(plan: PlanRecord, query: string): boolean {
   if (!query) return true
   const q = query.toLowerCase()
-  return (
-    plan.title.toLowerCase().includes(q) ||
-    plan.summary.toLowerCase().includes(q)
-  )
+  return plan.title.toLowerCase().includes(q) || plan.summary.toLowerCase().includes(q)
 }
 
 // ── Store ───────────────────────────────────────────────────────────────
 
-export const usePlanStore = create<PlanState>((set, get) => ({
+export const usePlanStore = create<PlanState>((set, _get) => ({
   plans: [],
   isLoading: false,
   statusFilter: 'all',
@@ -130,9 +127,7 @@ export const usePlanStore = create<PlanState>((set, get) => ({
 
 export function useFilteredPlans(): PlanRecord[] {
   const { plans, statusFilter, searchQuery } = usePlanStore()
-  return plans.filter(
-    (p) => matchesStatusFilter(p, statusFilter) && matchesSearch(p, searchQuery)
-  )
+  return plans.filter((p) => matchesStatusFilter(p, statusFilter) && matchesSearch(p, searchQuery))
 }
 
 // ── Selector: status counts ──────────────────────────────────────────────

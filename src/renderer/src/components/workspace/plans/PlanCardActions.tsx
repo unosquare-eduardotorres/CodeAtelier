@@ -120,7 +120,8 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary: 'text-primary-text bg-primary-muted border border-primary/20 hover:bg-primary/20',
   cyan: 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20',
   indigo: 'text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500/20',
-  ghost: 'text-text-muted hover:text-text-primary hover:bg-surface-overlay border border-transparent'
+  ghost:
+    'text-text-muted hover:text-text-primary hover:bg-surface-overlay border border-transparent'
 }
 
 // ── Component ──

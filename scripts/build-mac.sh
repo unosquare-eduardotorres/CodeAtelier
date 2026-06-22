@@ -69,11 +69,11 @@ echo "▸ Step 2b: Rebuild native modules against Electron headers"
 # better-sqlite3 is the only production native module that uses node-gyp.
 # Prebuilt NAPI modules (if any survived prune) don't need rebuilding.
 npx --yes @electron/rebuild \
-  --version 41.7.0 \
+  --version 42.4.1 \
   --module-dir "$ROOT" \
   --types prod \
   --force
-echo "  Native modules rebuilt for Electron 41.7.0"
+echo "  Native modules rebuilt for Electron 42.4.1"
 
 echo ""
 echo "▸ Step 2c: Strip runtime-unnecessary files from node_modules"
@@ -119,7 +119,7 @@ echo "▸ Step 3: Package with electron-builder"
 # npmRebuild: false — we rebuilt native modules in Step 2b.
 # afterPack: copies node_modules + restores package.json in the app bundle.
 set +e
-NODE_OPTIONS="--max-old-space-size=8192" npx electron-builder --mac "$@"
+NODE_OPTIONS="--max-old-space-size=16384" npx electron-builder --mac "$@"
 BUILD_EXIT=$?
 set -e
 

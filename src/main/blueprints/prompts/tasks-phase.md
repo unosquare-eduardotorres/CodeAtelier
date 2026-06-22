@@ -74,54 +74,7 @@ get the [P] marker — they can execute concurrently.
 ## Output Format
 
 Emit one fenced JSON block tagged `blueprint-tasks`:
-
-```blueprint-tasks
-{
-  "totalTasks": <number>,
-  "waves": [
-    {
-      "wave": 1,
-      "name": "Setup & Infrastructure",
-      "tasks": [
-        {
-          "taskId": "T001",
-          "description": "Create project structure per plan",
-          "files": ["src/models/user.ts"],
-          "userStory": null,
-          "isParallel": false,
-          "dependsOn": [],
-          "includesTests": false
-        }
-      ]
-    },
-    {
-      "wave": 2,
-      "name": "Foundation",
-      "tasks": [
-        {
-          "taskId": "T004",
-          "description": "Implement user model with validation",
-          "files": ["src/models/user.ts", "src/models/user.test.ts"],
-          "userStory": "US1",
-          "isParallel": true,
-          "dependsOn": ["T001"],
-          "includesTests": true
-        }
-      ]
-    }
-  ],
-  "userStoryPhases": [
-    {
-      "story": "US1",
-      "title": "User Registration",
-      "priority": "P1",
-      "taskIds": ["T004", "T005", "T006"]
-    }
-  ],
-  "parallelOpportunities": <number>,
-  "mvpScope": "Wave 1-3 (Setup + Foundation + US1)"
-}
-```
+{totalTasks, waves: [{wave, name, tasks: [{taskId, description, files, userStory, isParallel, dependsOn, includesTests}]}], userStoryPhases: [{story, title, priority, taskIds}], parallelOpportunities, mvpScope}
 
 ## Validation Checks
 

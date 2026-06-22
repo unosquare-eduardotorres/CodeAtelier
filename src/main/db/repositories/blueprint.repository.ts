@@ -270,12 +270,36 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
   // ── Stale detection ──
 
   markStaleAsFailed(): number {
-    return this.db()
+    const db = this.db()
+    const changes = db
       .prepare(
         `UPDATE blueprints SET status = 'failed', updated_at = datetime('now')
          WHERE status IN ('specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying')`
       )
       .run().changes
+
+    // BP-STALE-RECONCILE-01: Cascade cleanup to phases and tasks stuck in
+    // active/running states. Without this, the UI shows permanently stuck
+    // tasks and phases after an app crash during a BUILD phase.
+    if (changes > 0) {
+      db.prepare(
+        `UPDATE blueprint_phases SET status = 'failed', completed_at = datetime('now')
+         WHERE status = 'active'
+           AND blueprint_id IN (
+             SELECT id FROM blueprints WHERE status = 'failed'
+           )`
+      ).run()
+
+      db.prepare(
+        `UPDATE blueprint_tasks SET status = 'failed', completed_at = datetime('now')
+         WHERE status = 'running'
+           AND blueprint_id IN (
+             SELECT id FROM blueprints WHERE status = 'failed'
+           )`
+      ).run()
+    }
+
+    return changes
   }
 }
 
@@ -357,7 +381,11 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
 
   updateStatus(id: string, status: BlueprintPhaseStatus): BlueprintPhase | undefined {
     const timestampCol =
-      status === 'active' ? 'started_at' : status === 'complete' || status === 'failed' ? 'completed_at' : null
+      status === 'active'
+        ? 'started_at'
+        : status === 'complete' || status === 'failed'
+          ? 'completed_at'
+          : null
 
     let sql = `UPDATE blueprint_phases SET status = ?`
     if (timestampCol) sql += `, ${timestampCol} = datetime('now')`
@@ -369,18 +397,14 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
 
   setConversation(id: string, conversationId: string): BlueprintPhase | undefined {
     const row = this.db()
-      .prepare(
-        `UPDATE blueprint_phases SET conversation_id = ? WHERE id = ? RETURNING *`
-      )
+      .prepare(`UPDATE blueprint_phases SET conversation_id = ? WHERE id = ? RETURNING *`)
       .get(conversationId, id) as BlueprintPhaseRow | undefined
     return row ? mapPhaseRow(row) : undefined
   }
 
   saveArtifacts(id: string, artifacts: BlueprintArtifact[]): BlueprintPhase | undefined {
     const row = this.db()
-      .prepare(
-        `UPDATE blueprint_phases SET artifacts_json = ? WHERE id = ? RETURNING *`
-      )
+      .prepare(`UPDATE blueprint_phases SET artifacts_json = ? WHERE id = ? RETURNING *`)
       .get(JSON.stringify(artifacts), id) as BlueprintPhaseRow | undefined
     return row ? mapPhaseRow(row) : undefined
   }
@@ -394,9 +418,7 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
 
   saveContextSnapshot(id: string, snapshot: string): BlueprintPhase | undefined {
     const row = this.db()
-      .prepare(
-        `UPDATE blueprint_phases SET context_snapshot = ? WHERE id = ? RETURNING *`
-      )
+      .prepare(`UPDATE blueprint_phases SET context_snapshot = ? WHERE id = ? RETURNING *`)
       .get(snapshot, id) as BlueprintPhaseRow | undefined
     return row ? mapPhaseRow(row) : undefined
   }
@@ -503,7 +525,11 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
 
   updateStatus(id: string, status: BlueprintTaskStatus): BlueprintTask | undefined {
     const timestampCol =
-      status === 'running' ? 'started_at' : status === 'complete' || status === 'failed' ? 'completed_at' : null
+      status === 'running'
+        ? 'started_at'
+        : status === 'complete' || status === 'failed'
+          ? 'completed_at'
+          : null
 
     let sql = `UPDATE blueprint_tasks SET status = ?`
     if (timestampCol) sql += `, ${timestampCol} = datetime('now')`

@@ -5,6 +5,7 @@ import {
   ClaudeConfigSection,
   LocalLLMConfigSection
 } from './model-config'
+import { PresetManager } from './PresetManager'
 
 export default function ModelConfigTab(): React.JSX.Element {
   const config = useModelConfig()
@@ -18,7 +19,7 @@ export default function ModelConfigTab(): React.JSX.Element {
   }
 
   return (
-    <div className="w-full px-6 py-8">
+    <div data-testid="model-config-tab" className="w-full px-6 py-8">
       {/* Header — full width */}
       <div className="mb-6">
         <h2 className="text-base font-semibold text-text-primary">Model Configuration</h2>
@@ -98,6 +99,9 @@ export default function ModelConfigTab(): React.JSX.Element {
           setLocalModel={config.setLocalModel}
         />
       )}
+
+      {/* ── LLM Presets ── */}
+      <PresetManager />
     </div>
   )
 }

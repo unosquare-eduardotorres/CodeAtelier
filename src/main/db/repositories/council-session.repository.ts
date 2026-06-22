@@ -127,28 +127,29 @@ export class CouncilSessionRepository extends BaseRepository<
 
   /** Append a completed advisor review (incremental persistence) */
   appendAdvisorReview(id: string, review: CouncilReview): void {
-    // Read current reviews, append, and write back
-    const row = this.db()
-      .prepare(`SELECT advisor_reviews_json, completed_advisors FROM council_sessions WHERE id = ?`)
-      .get(id) as Pick<CouncilSessionRow, 'advisor_reviews_json' | 'completed_advisors'> | undefined
-
-    if (!row) return
-
-    const reviews = safeParseJSON<CouncilReview[]>(row.advisor_reviews_json, [])
-    reviews.push(review)
-
-    const completedAdvisors = safeParseJSON<string[]>(row.completed_advisors, [])
-    if (!completedAdvisors.includes(review.advisorRole)) {
-      completedAdvisors.push(review.advisorRole)
-    }
-
+    // ATOM-01: Use SQLite json_insert for atomic append — avoids
+    // read-modify-write race when parallel advisors complete simultaneously.
+    const reviewJson = JSON.stringify(review)
     this.db()
       .prepare(
         `UPDATE council_sessions
-       SET advisor_reviews_json = ?, completed_advisors = ?
+       SET advisor_reviews_json = json_insert(
+             COALESCE(advisor_reviews_json, '[]'),
+             '$[#]',
+             json(?)
+           ),
+           completed_advisors = CASE
+             WHEN instr(COALESCE(completed_advisors, '[]'), '"' || ? || '"') > 0
+             THEN completed_advisors
+             ELSE json_insert(
+               COALESCE(completed_advisors, '[]'),
+               '$[#]',
+               ?
+             )
+           END
        WHERE id = ?`
       )
-      .run(JSON.stringify(reviews), JSON.stringify(completedAdvisors), id)
+      .run(reviewJson, review.advisorRole, review.advisorRole, id)
   }
 
   /** Save all peer reviews at once */

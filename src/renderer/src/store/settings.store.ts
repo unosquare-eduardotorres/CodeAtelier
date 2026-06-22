@@ -295,6 +295,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   cleanAndReactivate: async (workspacePath: string) => {
+    // STORE-06: Guard against re-entrant calls — if activateWorkspace is
+    // already running (isActivating=true), skip to avoid duplicate flows.
+    const { isActivating } = useSettingsStore.getState()
+    if (isActivating) return
+
     // Step 1: Clean existing deployment
     await window.api.cleanActivation({ workspacePath })
 

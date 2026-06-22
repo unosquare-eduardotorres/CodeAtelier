@@ -5,6 +5,7 @@ import {
   OMLX_DEFAULT_PORT
 } from '../../shared/constants'
 import type {
+  ActionModelConfig,
   ExecutorBackend,
   LLMProvider,
   LocalLLMBackend,
@@ -14,6 +15,8 @@ import type {
   ModelOverrides
 } from '../../shared/types'
 import { workspaceRepository } from '../db/repositories'
+import { presetService } from './preset.service'
+import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 
 /**
  * Multi-provider configuration — extends workspace settings for Phase 4C.
@@ -51,7 +54,17 @@ class ModelConfigService {
    * @param workspacePath - The workspace repo path (or undefined for default)
    * @param action - The model action to resolve
    */
-  getModel(workspacePath: string | undefined, action: ModelAction): string {
+  getModel(
+    workspacePath: string | undefined,
+    action: ModelAction,
+    presetId?: string | null
+  ): string {
+    // Preset-first resolution: if a preset is active, use its config
+    if (presetId) {
+      const actionConfig = this.resolveActionConfig(action, presetId)
+      if (actionConfig) return actionConfig.modelId
+    }
+
     if (!workspacePath) return DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
 
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
@@ -77,8 +90,18 @@ class ModelConfigService {
 
   // ── Provider awareness ──
 
-  /** Get the LLM provider for a workspace */
-  getProvider(workspacePath: string | undefined): LLMProvider {
+  /** Get the LLM provider for a workspace (or per-action via preset) */
+  getProvider(
+    workspacePath: string | undefined,
+    action?: ModelAction,
+    presetId?: string | null
+  ): LLMProvider {
+    // Preset per-action provider resolution
+    if (presetId && action) {
+      const actionConfig = this.resolveActionConfig(action, presetId)
+      if (actionConfig) return actionConfig.provider
+    }
+
     if (!workspacePath) return 'claude'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
     return (settings?.llmProvider as LLMProvider) ?? 'claude'
@@ -106,13 +129,23 @@ class ModelConfigService {
         (settings?.ollamaPort as number) ?? // backward compat
         defaultPort,
       strategy: (settings?.localLlmStrategy as LocalLLMStrategy) ?? 'default',
-      localApiKey: (settings?.localApiKey as string) || undefined
+      // SEC-04: Decrypt localApiKey (handles both legacy plaintext and encrypted)
+      localApiKey: decryptSettingsKey(
+        settings?.localApiKey as string | undefined,
+        !!settings?.localApiKeyEncrypted
+      )
     }
   }
 
   /** Build the local LLM base URL from config (works for both Ollama and oMLX) */
   getLocalBaseUrl(config: LocalLLMConfig): string {
-    return `http://${config.localHost}:${config.localPort}`
+    // SVC-07: Validate host/port before constructing URL
+    const host = config.localHost || 'localhost'
+    const port = Number(config.localPort)
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      return `http://${host}:${OLLAMA_DEFAULT_PORT}`
+    }
+    return `http://${host}:${port}`
   }
 
   /**
@@ -144,7 +177,10 @@ class ModelConfigService {
     if (!workspacePath) return 'cli'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
     if (settings?.llmProvider === 'local-llm') return 'opencode'
-    return (settings?.executorBackend as ExecutorBackend) ?? 'cli'
+    // SVC-08: Validate against the union type instead of blind cast
+    const raw = settings?.executorBackend as string | undefined
+    if (raw === 'cli' || raw === 'opencode') return raw
+    return 'cli'
   }
 
   /**
@@ -171,14 +207,48 @@ class ModelConfigService {
       openCodeProvider: (settings?.openCodeProvider as string) ?? 'anthropic',
       openCodeModel: (settings?.openCodeModel as string) ?? 'claude-sonnet-4-6',
       openCodeBaseUrl: settings?.openCodeBaseUrl as string | undefined,
-      openCodeApiKey: settings?.openCodeApiKey as string | undefined
+      // SEC-04: Decrypt openCodeApiKey (handles both legacy plaintext and encrypted)
+      openCodeApiKey: decryptSettingsKey(
+        settings?.openCodeApiKey as string | undefined,
+        !!settings?.openCodeApiKeyEncrypted
+      )
     }
+  }
+
+  /**
+   * Resolve the executor backend for a specific action via preset.
+   * Falls back to workspace-level getExecutorBackend when no preset is active.
+   */
+  getExecutorBackendForAction(
+    workspacePath: string | undefined,
+    action: ModelAction,
+    presetId?: string | null
+  ): ExecutorBackend {
+    if (presetId) {
+      const actionConfig = this.resolveActionConfig(action, presetId)
+      if (actionConfig?.provider === 'local-llm') return 'opencode'
+    }
+    return this.getExecutorBackend(workspacePath)
+  }
+
+  /**
+   * Resolve the ActionModelConfig for a given action from a preset.
+   * Returns undefined if the preset doesn't override this action.
+   */
+  resolveActionConfig(action: ModelAction, presetId: string): ActionModelConfig | undefined {
+    const preset = presetService.getPreset(presetId)
+    if (!preset) return undefined
+    return preset.actionConfig[action]
   }
 
   /** Fallback: 'da-vinci:plan' → 'da-vinci' */
   private fallbackAction(action: ModelAction): string {
-    const base = action.split(':')[0] as ModelAction
-    return DEFAULT_MODEL_CONFIG[base] ?? DEFAULT_MODEL_CONFIG['da-vinci']
+    // SVC-06: Validate that the base portion is a known ModelAction key
+    const base = action.split(':')[0]
+    if (base && base in DEFAULT_MODEL_CONFIG) {
+      return DEFAULT_MODEL_CONFIG[base as ModelAction]
+    }
+    return DEFAULT_MODEL_CONFIG['da-vinci']
   }
 }
 

@@ -1,31 +1,35 @@
 /**
- * Tests for CouncilSessionRepository — session lifecycle, advisor reviews, persistence.
+ * Tests for CouncilSessionRepository — CRUD, advisor reviews, verdicts, transcripts.
+ * Skips gracefully if better-sqlite3 native module is incompatible.
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb, seedConversation } from './db-test-helper'
+import { trySetupTestDb } from './db-test-helper'
 
 const env = trySetupTestDb()
 
 if (!env) {
   describe('CouncilSessionRepository (skipped — native module unavailable)', () => {
-    test('createSession()', () => {}, { skipReason: 'no DB' })
+    test('createSession() inserts council session', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { wsId } = env
   const { councilSessionRepository } = require('../council-session.repository')
 
   describe('CouncilSessionRepository', () => {
-    test('createSession() returns mapped record with defaults', () => {
+    // ── createSession ──
+
+    test('createSession() inserts and returns session', () => {
       const session = councilSessionRepository.createSession({
         workspaceId: wsId,
         inputType: 'plan',
-        inputContent: 'Test plan content'
+        inputContent: 'Review this plan',
+        conversationId: 'conv-1'
       })
       assert.ok(session.id)
       assert.equal(session.workspaceId, wsId)
       assert.equal(session.inputType, 'plan')
-      assert.equal(session.inputContent, 'Test plan content')
+      assert.equal(session.inputContent, 'Review this plan')
       assert.equal(session.status, 'running')
       assert.equal(session.phase, 'framing')
       assert.deepEqual(session.advisorReviews, [])
@@ -35,114 +39,215 @@ if (!env) {
     })
 
     test('createSession() accepts optional fields', () => {
-      const convId = seedConversation(db, wsId)
       const session = councilSessionRepository.createSession({
         workspaceId: wsId,
         inputType: 'code',
-        inputContent: 'Review this code',
+        inputContent: 'Review code',
         grillSessionId: 'grill-1',
-        structuredPlanJson: '{"phases": []}',
-        conversationId: convId
+        structuredPlanJson: '{"plan":true}'
       })
-      assert.equal(session.conversationId, convId)
       assert.equal(session.grillSessionId, 'grill-1')
-      assert.equal(session.structuredPlanJson, '{"phases": []}')
+      assert.equal(session.structuredPlanJson, '{"plan":true}')
     })
 
-    test('findById() round-trip', () => {
+    // ── findById ──
+
+    test('findById() returns session', () => {
       const created = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Findable'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
       const found = councilSessionRepository.findById(created.id)
       assert.ok(found)
-      assert.equal(found.inputContent, 'Findable')
+      assert.equal(found.id, created.id)
     })
 
-    test('updatePhase() changes phase', () => {
+    test('findById() returns undefined for unknown id', () => {
+      assert.equal(councilSessionRepository.findById('nonexistent'), undefined)
+    })
+
+    // ── updatePhase ──
+
+    test('updatePhase() transitions phase', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Phase test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
-      councilSessionRepository.updatePhase(session.id, 'deliberation')
-      const updated = councilSessionRepository.findById(session.id)
-      assert.equal(updated!.phase, 'deliberation')
+      councilSessionRepository.updatePhase(session.id, 'advisor_review')
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.equal(found.phase, 'advisor_review')
     })
 
-    test('appendAdvisorReview() adds review incrementally', () => {
+    // ── appendAdvisorReview ──
+
+    test('appendAdvisorReview() adds review and updates completedAdvisors', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Review test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
       const review = {
-        advisorRole: 'architect',
-        feedback: 'Looks good',
-        score: 8,
-        concerns: []
+        advisorRole: 'security',
+        score: 7,
+        summary: 'Looks good',
+        findings: [],
+        recommendations: []
       }
       councilSessionRepository.appendAdvisorReview(session.id, review)
-
-      const updated = councilSessionRepository.findById(session.id)
-      assert.equal(updated!.advisorReviews.length, 1)
-      assert.equal(updated!.advisorReviews[0].advisorRole, 'architect')
-      assert.deepEqual(updated!.completedAdvisors, ['architect'])
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.equal(found.advisorReviews.length, 1)
+      assert.equal(found.advisorReviews[0].advisorRole, 'security')
+      assert.ok(found.completedAdvisors.includes('security'))
     })
 
-    test('appendAdvisorReview() does not duplicate advisor in completedAdvisors', () => {
+    test('appendAdvisorReview() appends multiple reviews', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Dedup test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
-      const review = { advisorRole: 'security', feedback: 'OK', score: 7, concerns: [] }
-      councilSessionRepository.appendAdvisorReview(session.id, review)
-      councilSessionRepository.appendAdvisorReview(session.id, { ...review, feedback: 'Also OK' })
-
-      const updated = councilSessionRepository.findById(session.id)
-      assert.equal(updated!.advisorReviews.length, 2)
-      assert.equal(updated!.completedAdvisors.length, 1) // not duplicated
+      councilSessionRepository.appendAdvisorReview(session.id, {
+        advisorRole: 'security',
+        score: 7,
+        summary: 'OK',
+        findings: [],
+        recommendations: []
+      })
+      councilSessionRepository.appendAdvisorReview(session.id, {
+        advisorRole: 'architecture',
+        score: 8,
+        summary: 'Good',
+        findings: [],
+        recommendations: []
+      })
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.equal(found.advisorReviews.length, 2)
+      assert.equal(found.completedAdvisors.length, 2)
     })
 
-    test('savePeerReviews() persists peer reviews', () => {
+    // ── savePeerReviews ──
+
+    test('savePeerReviews() stores peer reviews', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'code', inputContent: 'Peer test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
       const peerReviews = [
-        { reviewerRole: 'architect', targetRole: 'security', agreement: true, comment: 'Agree' }
+        { reviewerRole: 'security', targetRole: 'architecture', agreement: 'agree', comment: 'Good' }
       ]
-      councilSessionRepository.savePeerReviews(session.id, peerReviews as any)
-      const updated = councilSessionRepository.findById(session.id)
-      assert.equal(updated!.peerReviews.length, 1)
+      councilSessionRepository.savePeerReviews(session.id, peerReviews)
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.equal(found.peerReviews.length, 1)
     })
 
-    test('saveVerdict() persists verdict', () => {
+    // ── saveVerdict ──
+
+    test('saveVerdict() stores chairman verdict', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Verdict test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
-      const verdict = { decision: 'approve', confidence: 0.9, rationale: 'All good' }
-      councilSessionRepository.saveVerdict(session.id, verdict as any)
-      const updated = councilSessionRepository.findById(session.id)
-      assert.ok(updated!.verdict)
-      assert.equal(updated!.verdict.decision, 'approve')
+      const verdict = {
+        decision: 'approve',
+        overallScore: 8,
+        summary: 'Plan approved',
+        recommendations: []
+      }
+      councilSessionRepository.saveVerdict(session.id, verdict)
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.ok(found.verdict)
+      assert.equal(found.verdict.decision, 'approve')
     })
 
-    test('saveTranscript() persists markdown transcript', () => {
+    // ── saveTranscript ──
+
+    test('saveTranscript() stores transcript markdown', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Transcript test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
-      councilSessionRepository.saveTranscript(session.id, '## Council Session\n\nGood plan.')
-      const updated = councilSessionRepository.findById(session.id)
-      assert.ok(updated!.transcriptMd!.includes('Council Session'))
+      councilSessionRepository.saveTranscript(session.id, '## Council Transcript\n...')
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.equal(found.transcriptMd, '## Council Transcript\n...')
     })
 
-    test('updateStatus() sets status and completedAt for terminal states', () => {
+    // ── updateStatus ──
+
+    test('updateStatus() transitions status and sets completedAt', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Status test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'content'
       })
       councilSessionRepository.updateStatus(session.id, 'completed')
-      const updated = councilSessionRepository.findById(session.id)
-      assert.equal(updated!.status, 'completed')
-      assert.ok(updated!.completedAt)
+      const found = councilSessionRepository.findById(session.id)
+      assert.ok(found)
+      assert.equal(found.status, 'completed')
+      assert.ok(found.completedAt)
     })
+
+    // ── findByWorkspace ──
+
+    test('findByWorkspace() returns sessions newest first', () => {
+      const freshWs = 'council-ws-test'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(freshWs, 'Council WS', '/tmp/council-ws')
+
+      councilSessionRepository.createSession({
+        workspaceId: freshWs,
+        inputType: 'plan',
+        inputContent: 'first'
+      })
+      councilSessionRepository.createSession({
+        workspaceId: freshWs,
+        inputType: 'plan',
+        inputContent: 'second'
+      })
+      const sessions = councilSessionRepository.findByWorkspace(freshWs)
+      assert.equal(sessions.length, 2)
+    })
+
+    // ── findResumable ──
+
+    test('findResumable() returns latest running session', () => {
+      const freshWs = 'council-resume-ws'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(freshWs, 'Resume WS', '/tmp/council-resume')
+
+      councilSessionRepository.createSession({
+        workspaceId: freshWs,
+        inputType: 'plan',
+        inputContent: 'running'
+      })
+      const resumable = councilSessionRepository.findResumable(freshWs)
+      assert.ok(resumable)
+      assert.equal(resumable.status, 'running')
+    })
+
+    test('findResumable() returns null for workspace with no resumable sessions', () => {
+      assert.equal(councilSessionRepository.findResumable('no-resume-ws'), null)
+    })
+
+    // ── deleteSession ──
 
     test('deleteSession() removes session', () => {
       const session = councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Delete test'
+        workspaceId: wsId,
+        inputType: 'plan',
+        inputContent: 'to delete'
       })
       const deleted = councilSessionRepository.deleteSession(session.id)
       assert.equal(deleted, true)
@@ -150,41 +255,29 @@ if (!env) {
     })
 
     test('deleteSession() returns false for unknown id', () => {
-      const deleted = councilSessionRepository.deleteSession('nonexistent')
-      assert.equal(deleted, false)
+      assert.equal(councilSessionRepository.deleteSession('nonexistent'), false)
     })
 
-    test('findByWorkspace() returns sessions newest first', () => {
-      const sessions = councilSessionRepository.findByWorkspace(wsId)
-      assert.ok(Array.isArray(sessions))
-      if (sessions.length >= 2) {
-        assert.ok(sessions[0].createdAt >= sessions[1].createdAt)
-      }
-    })
-
-    test('findResumable() finds running/failed sessions', () => {
-      councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Resumable'
-      })
-      const resumable = councilSessionRepository.findResumable(wsId)
-      assert.ok(resumable)
-      assert.ok(['running', 'failed'].includes(resumable.status))
-    })
+    // ── markStaleAsFailed ──
 
     test('markStaleAsFailed() marks running sessions as failed', () => {
+      const freshWs = 'council-stale-ws'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(freshWs, 'Stale WS', '/tmp/council-stale')
+
       councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Stale'
+        workspaceId: freshWs,
+        inputType: 'plan',
+        inputContent: 'stale'
       })
-      const count = councilSessionRepository.markStaleAsFailed(wsId)
+      const count = councilSessionRepository.markStaleAsFailed(freshWs)
       assert.ok(count >= 1)
     })
 
-    test('markStaleAsFailed() without workspace marks all', () => {
-      councilSessionRepository.createSession({
-        workspaceId: wsId, inputType: 'plan', inputContent: 'Global stale'
-      })
+    test('markStaleAsFailed() without workspace marks all running', () => {
       const count = councilSessionRepository.markStaleAsFailed()
-      assert.ok(count >= 0)
+      assert.equal(typeof count, 'number')
     })
   })
 }

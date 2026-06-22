@@ -396,38 +396,35 @@ interface DescriptionProgressUpdate {
   descriptionsGenerated: number
 }
 
+type ProgressCallback = (update: {
+  processedFiles: number
+  totalFiles: number
+  processedChunks: number
+  totalChunks: number
+  skippedFiles: number
+  currentFile: string
+}) => void
+
+type BatchDescCallback = (
+  chunks: Array<{ chunk: RawChunk; embedText: string }>
+) => Promise<{ descriptions: Map<number, string>; cached: number; generated: number }>
+
+interface ValidFile {
+  filePath: string
+  fileTags: RawChunk[]
+  content: string
+  scopeContexts: Map<string, ScopeContext>
+}
+
 /**
- * Run the full preprocessing pipeline over a set of raw chunks.
- *
- * When AI descriptions are enabled, uses a 3-phase approach:
- *   Phase 1 — Fast scan: collect all chunks needing descriptions, build embed text
- *   Phase 2 — Batch AI descriptions: generate in batches of 8 with 3 concurrent CLI calls
- *   Phase 3 — Preprocess: apply descriptions + metadata (all sync, fast)
- *
- * Calls onProgress at each file boundary and onDescriptionProgress during Phase 2.
+ * Phase 0: Group tags by file, filter out skipped files, pre-compute scope contexts.
  */
-export async function runPreprocessingPipeline(
+function prepareValidFiles(
   tags: RawChunk[],
   fileContents: Map<string, string>,
-  projectName: string,
-  options: PreprocessingOptions,
-  onProgress: (update: {
-    processedFiles: number
-    totalFiles: number
-    processedChunks: number
-    totalChunks: number
-    skippedFiles: number
-    currentFile: string
-  }) => void,
-  getDescription?: (chunk: RawChunk, embedText: string) => Promise<string | undefined>,
-  getBatchDescriptions?: (
-    chunks: Array<{ chunk: RawChunk; embedText: string }>
-  ) => Promise<{ descriptions: Map<number, string>; cached: number; generated: number }>,
-  onDescriptionProgress?: (update: DescriptionProgressUpdate) => void
-): Promise<ProcessedChunk[]> {
-  const results: ProcessedChunk[] = []
-
-  // Group tags by file
+  skipPatterns: string[],
+  onProgress: ProgressCallback
+): { validFiles: ValidFile[]; skippedFiles: number; processedFiles: number } {
   const fileGroups = new Map<string, RawChunk[]>()
   for (const tag of tags) {
     const group = fileGroups.get(tag.filePath) ?? []
@@ -436,17 +433,9 @@ export async function runPreprocessingPipeline(
   }
 
   const totalFiles = fileGroups.size
+  const validFiles: ValidFile[] = []
   let processedFiles = 0
-  let processedChunks = 0
   let skippedFiles = 0
-
-  // Pre-compute scope contexts and filter out skipped files (used in all phases)
-  const validFiles: Array<{
-    filePath: string
-    fileTags: RawChunk[]
-    content: string
-    scopeContexts: Map<string, ScopeContext>
-  }> = []
 
   for (const [filePath, fileTags] of fileGroups) {
     const content = fileContents.get(filePath)
@@ -455,13 +444,13 @@ export async function runPreprocessingPipeline(
       processedFiles++
       continue
     }
-    if (shouldSkipFile(filePath, content, options.skipPatterns)) {
+    if (shouldSkipFile(filePath, content, skipPatterns)) {
       skippedFiles++
       processedFiles++
       onProgress({
         processedFiles,
         totalFiles,
-        processedChunks,
+        processedChunks: 0,
         totalChunks: tags.length,
         skippedFiles,
         currentFile: filePath
@@ -472,127 +461,139 @@ export async function runPreprocessingPipeline(
     validFiles.push({ filePath, fileTags, content, scopeContexts })
   }
 
-  // ── Phase 1+2: Batch AI descriptions (only when enabled + batch callback available) ──
-  const descriptionMap = new Map<string, string>() // chunkId → description
+  return { validFiles, skippedFiles, processedFiles }
+}
 
-  if (options.generateDescriptions && getBatchDescriptions) {
-    // Phase 1: Collect all chunks that need descriptions (fast)
-    const allChunksForDesc: Array<{
-      chunkId: string
-      chunk: RawChunk
-      embedText: string
-    }> = []
+/**
+ * Phase 1+2: Collect all chunks needing descriptions, then batch-generate them.
+ */
+async function runDescriptionPhase(
+  validFiles: ValidFile[],
+  getBatchDescriptions: BatchDescCallback,
+  options: PreprocessingOptions,
+  onDescriptionProgress?: (update: DescriptionProgressUpdate) => void
+): Promise<Map<string, string>> {
+  const descriptionMap = new Map<string, string>()
 
-    for (const { fileTags, content, scopeContexts } of validFiles) {
-      for (const rawChunk of fileTags) {
-        const scopeContext = findScopeContext(rawChunk, scopeContexts)
-        const imports = extractRelevantImports(content, rawChunk)
-        const tempEmbedText = buildEmbedText({
-          ...rawChunk,
-          imports,
-          className: scopeContext?.className ?? null
-        })
-        allChunksForDesc.push({
-          chunkId: rawChunk.id,
-          chunk: rawChunk,
-          embedText: tempEmbedText
-        })
-      }
+  // Phase 1: Collect all chunks that need descriptions (fast)
+  const allChunksForDesc: Array<{ chunkId: string; chunk: RawChunk; embedText: string }> = []
+
+  for (const { fileTags, content, scopeContexts } of validFiles) {
+    for (const rawChunk of fileTags) {
+      const scopeContext = findScopeContext(rawChunk, scopeContexts)
+      const imports = extractRelevantImports(content, rawChunk)
+      const tempEmbedText = buildEmbedText({
+        ...rawChunk,
+        imports,
+        className: scopeContext?.className ?? null
+      })
+      allChunksForDesc.push({ chunkId: rawChunk.id, chunk: rawChunk, embedText: tempEmbedText })
     }
+  }
 
-    const descriptionsTotal = allChunksForDesc.length
-    let descriptionsProcessed = 0
-    let totalCached = 0
-    let totalGenerated = 0
+  const descriptionsTotal = allChunksForDesc.length
+  let descriptionsProcessed = 0
+  let totalCached = 0
+  let totalGenerated = 0
 
-    memoryCheckpoint('DESC_PHASE_START', {
-      descriptionsTotal,
-      chunksCollected: allChunksForDesc.length
-    })
+  memoryCheckpoint('DESC_PHASE_START', { descriptionsTotal, chunksCollected: allChunksForDesc.length })
+  onDescriptionProgress?.({
+    descriptionsProcessed: 0,
+    descriptionsTotal,
+    descriptionsCached: 0,
+    descriptionsGenerated: 0
+  })
 
-    onDescriptionProgress?.({
-      descriptionsProcessed: 0,
-      descriptionsTotal,
-      descriptionsCached: 0,
-      descriptionsGenerated: 0
-    })
+  // Phase 2: Batch generate descriptions with limited concurrency
+  const batches = chunkArray(allChunksForDesc, DESCRIPTION_BATCH_SIZE)
+  const totalDescBatches = batches.length
 
-    // Phase 2: Batch generate descriptions with limited concurrency
-    const batches = chunkArray(allChunksForDesc, DESCRIPTION_BATCH_SIZE)
-    const totalDescBatches = batches.length
+  for (let i = 0; i < batches.length; i += DESCRIPTION_CONCURRENCY) {
+    if (options.cancelled) break
 
-    for (let i = 0; i < batches.length; i += DESCRIPTION_CONCURRENCY) {
-      if (options.cancelled) break
+    while (options.paused && !options.cancelled) {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    if (options.cancelled) break
 
-      // Wait while paused
-      while (options.paused && !options.cancelled) {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-      if (options.cancelled) break
+    const concurrentBatches = batches.slice(i, i + DESCRIPTION_CONCURRENCY)
+    const descBatchGroup = Math.floor(i / DESCRIPTION_CONCURRENCY) + 1
+    const totalDescGroups = Math.ceil(totalDescBatches / DESCRIPTION_CONCURRENCY)
 
-      const concurrentBatches = batches.slice(i, i + DESCRIPTION_CONCURRENCY)
-      const descBatchGroup = Math.floor(i / DESCRIPTION_CONCURRENCY) + 1
-      const totalDescGroups = Math.ceil(totalDescBatches / DESCRIPTION_CONCURRENCY)
-
-      // Log first, every 5th, and last batch group
-      const isLogGroup =
-        descBatchGroup === 1 || descBatchGroup % 5 === 0 || descBatchGroup === totalDescGroups
-      if (isLogGroup) {
-        memoryCheckpoint(`DESC_BATCH_GROUP_${descBatchGroup}/${totalDescGroups}`, {
-          batchesInGroup: concurrentBatches.length,
-          descriptionsProcessed
-        })
-      }
-
-      const batchPromises = concurrentBatches.map((batch) =>
-        getBatchDescriptions(batch.map((b) => ({ chunk: b.chunk, embedText: b.embedText })))
-      )
-
-      const batchResults = await Promise.all(batchPromises)
-
-      // Map results back to chunk IDs
-      for (let bIdx = 0; bIdx < concurrentBatches.length; bIdx++) {
-        const batch = concurrentBatches[bIdx]
-        const result = batchResults[bIdx]
-
-        for (const [itemIdx, desc] of result.descriptions) {
-          descriptionMap.set(batch[itemIdx].chunkId, desc)
-        }
-
-        descriptionsProcessed += batch.length
-        totalCached += result.cached
-        totalGenerated += result.generated
-      }
-
-      onDescriptionProgress?.({
-        descriptionsProcessed,
-        descriptionsTotal,
-        descriptionsCached: totalCached,
-        descriptionsGenerated: totalGenerated
+    const isLogGroup =
+      descBatchGroup === 1 || descBatchGroup % 5 === 0 || descBatchGroup === totalDescGroups
+    if (isLogGroup) {
+      memoryCheckpoint(`DESC_BATCH_GROUP_${descBatchGroup}/${totalDescGroups}`, {
+        batchesInGroup: concurrentBatches.length,
+        descriptionsProcessed
       })
     }
 
-    memoryCheckpoint('DESC_PHASE_DONE', {
-      generated: totalGenerated,
-      cached: totalCached,
-      total: descriptionsTotal,
-      descriptionMapSize: descriptionMap.size
-    })
-
-    log.info(
-      `[Preprocessing] AI descriptions: ${totalGenerated} generated, ${totalCached} cached, ${descriptionsTotal} total`
+    const batchPromises = concurrentBatches.map((batch) =>
+      getBatchDescriptions(batch.map((b) => ({ chunk: b.chunk, embedText: b.embedText })))
     )
+    const batchResults = await Promise.all(batchPromises)
+
+    for (let bIdx = 0; bIdx < concurrentBatches.length; bIdx++) {
+      const batch = concurrentBatches[bIdx]
+      const result = batchResults[bIdx]
+      for (const [itemIdx, desc] of result.descriptions) {
+        descriptionMap.set(batch[itemIdx].chunkId, desc)
+      }
+      descriptionsProcessed += batch.length
+      totalCached += result.cached
+      totalGenerated += result.generated
+    }
+
+    onDescriptionProgress?.({
+      descriptionsProcessed,
+      descriptionsTotal,
+      descriptionsCached: totalCached,
+      descriptionsGenerated: totalGenerated
+    })
   }
 
-  // ── Phase 3: Preprocess all chunks (fast — descriptions already resolved) ──
+  memoryCheckpoint('DESC_PHASE_DONE', {
+    generated: totalGenerated,
+    cached: totalCached,
+    total: descriptionsTotal,
+    descriptionMapSize: descriptionMap.size
+  })
+
+  log.info(
+    `[Preprocessing] AI descriptions: ${totalGenerated} generated, ${totalCached} cached, ${descriptionsTotal} total`
+  )
+
+  return descriptionMap
+}
+
+/**
+ * Phase 3: Preprocess all chunks — apply descriptions + metadata.
+ */
+async function processChunks(
+  validFiles: ValidFile[],
+  descriptionMap: Map<string, string>,
+  projectName: string,
+  options: PreprocessingOptions,
+  totalChunks: number,
+  counters: { processedFiles: number; skippedFiles: number },
+  onProgress: ProgressCallback,
+  getDescription?: (chunk: RawChunk, embedText: string) => Promise<string | undefined>,
+  getBatchDescriptions?: BatchDescCallback
+): Promise<ProcessedChunk[]> {
+  const results: ProcessedChunk[] = []
+  const totalFiles = validFiles.length + counters.processedFiles
+  let { processedFiles } = counters
+  let processedChunks = 0
+
   memoryCheckpoint('CHUNK_PREPROCESS_START', { validFiles: validFiles.length })
+
   for (const { filePath, fileTags, content, scopeContexts } of validFiles) {
     if (options.cancelled) {
       log.info('[Preprocessing] Cancelled by user')
       break
     }
 
-    // Wait while paused
     while (options.paused && !options.cancelled) {
       await new Promise((resolve) => setTimeout(resolve, 500))
     }
@@ -630,7 +631,6 @@ export async function runPreprocessingPipeline(
       if (processed) {
         results.push(...processed)
       }
-
       processedChunks++
     }
 
@@ -639,8 +639,8 @@ export async function runPreprocessingPipeline(
       processedFiles,
       totalFiles,
       processedChunks,
-      totalChunks: tags.length,
-      skippedFiles,
+      totalChunks,
+      skippedFiles: counters.skippedFiles,
       currentFile: filePath
     })
   }
@@ -648,12 +648,64 @@ export async function runPreprocessingPipeline(
   memoryCheckpoint('CHUNK_PREPROCESS_DONE', {
     resultChunks: results.length,
     processedFiles,
-    skippedFiles
+    skippedFiles: counters.skippedFiles
   })
 
   log.info(
-    `[Preprocessing] Complete: ${results.length} chunks from ${processedFiles} files (${skippedFiles} skipped)`
+    `[Preprocessing] Complete: ${results.length} chunks from ${processedFiles} files (${counters.skippedFiles} skipped)`
   )
 
   return results
+}
+
+/**
+ * Run the full preprocessing pipeline over a set of raw chunks.
+ *
+ * When AI descriptions are enabled, uses a 3-phase approach:
+ *   Phase 1 — Fast scan: collect all chunks needing descriptions, build embed text
+ *   Phase 2 — Batch AI descriptions: generate in batches of 8 with 3 concurrent CLI calls
+ *   Phase 3 — Preprocess: apply descriptions + metadata (all sync, fast)
+ *
+ * Calls onProgress at each file boundary and onDescriptionProgress during Phase 2.
+ */
+export async function runPreprocessingPipeline(
+  tags: RawChunk[],
+  fileContents: Map<string, string>,
+  projectName: string,
+  options: PreprocessingOptions,
+  onProgress: ProgressCallback,
+  getDescription?: (chunk: RawChunk, embedText: string) => Promise<string | undefined>,
+  getBatchDescriptions?: BatchDescCallback,
+  onDescriptionProgress?: (update: DescriptionProgressUpdate) => void
+): Promise<ProcessedChunk[]> {
+  const { validFiles, skippedFiles, processedFiles } = prepareValidFiles(
+    tags,
+    fileContents,
+    options.skipPatterns,
+    onProgress
+  )
+
+  // Phase 1+2: Batch AI descriptions (only when enabled + batch callback available)
+  let descriptionMap = new Map<string, string>()
+  if (options.generateDescriptions && getBatchDescriptions) {
+    descriptionMap = await runDescriptionPhase(
+      validFiles,
+      getBatchDescriptions,
+      options,
+      onDescriptionProgress
+    )
+  }
+
+  // Phase 3: Preprocess all chunks
+  return processChunks(
+    validFiles,
+    descriptionMap,
+    projectName,
+    options,
+    tags.length,
+    { processedFiles, skippedFiles },
+    onProgress,
+    getDescription,
+    getBatchDescriptions
+  )
 }

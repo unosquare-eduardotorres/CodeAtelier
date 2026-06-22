@@ -119,6 +119,7 @@ export default function HealthAuditorCard({
 
   return (
     <div
+      data-testid="health-auditor-card"
       className={`rounded-xl border ${cardBorderClass} bg-surface-raised transition-all flex flex-col`}
     >
       {/* Card header — checkbox top-left, score top-right */}

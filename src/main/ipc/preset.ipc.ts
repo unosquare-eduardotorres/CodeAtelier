@@ -9,7 +9,8 @@ import { ipcMain } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { presetService } from '../services/preset.service'
-import { conversationRepository } from '../db/repositories'
+import { contextHandoffService } from '../services/context-handoff.service'
+import { conversationRepository, messageRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import type { ActionModelConfig, ModelAction } from '../../shared/types'
 
@@ -17,22 +18,16 @@ const presetLog = log.scope('preset-ipc')
 
 export function registerPresetIpc(): void {
   // ── preset:get-all — List all presets for a workspace ──
-  ipcMain.handle(
-    IPC_CHANNELS.PRESET_GET_ALL,
-    (event, args: { workspaceId: string }) => {
-      validateSender(event)
-      return presetService.getAllPresets(args.workspaceId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PRESET_GET_ALL, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    return presetService.getAllPresets(args.workspaceId)
+  })
 
   // ── preset:get-by-id — Fetch a single preset ──
-  ipcMain.handle(
-    IPC_CHANNELS.PRESET_GET_BY_ID,
-    (event, args: { presetId: string }) => {
-      validateSender(event)
-      return presetService.getPreset(args.presetId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PRESET_GET_BY_ID, (event, args: { presetId: string }) => {
+    validateSender(event)
+    return presetService.getPreset(args.presetId)
+  })
 
   // ── preset:create — Create a custom preset ──
   ipcMain.handle(
@@ -54,7 +49,9 @@ export function registerPresetIpc(): void {
       }
 
       const preset = presetService.createPreset(args.workspaceId, args.name, args.actionConfig)
-      presetLog.info(`[preset:create] ${preset.id} "${preset.name}" for workspace ${args.workspaceId}`)
+      presetLog.info(
+        `[preset:create] ${preset.id} "${preset.name}" for workspace ${args.workspaceId}`
+      )
       return preset
     }
   )
@@ -89,16 +86,13 @@ export function registerPresetIpc(): void {
   )
 
   // ── preset:delete — Delete a custom preset ──
-  ipcMain.handle(
-    IPC_CHANNELS.PRESET_DELETE,
-    (event, args: { presetId: string }) => {
-      validateSender(event)
-      const deleted = presetService.deletePreset(args.presetId)
-      if (!deleted) return { error: 'Cannot delete built-in presets' }
-      presetLog.info(`[preset:delete] ${args.presetId}`)
-      return { deleted: true }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PRESET_DELETE, (event, args: { presetId: string }) => {
+    validateSender(event)
+    const deleted = presetService.deletePreset(args.presetId)
+    if (!deleted) return { error: 'Cannot delete built-in presets' }
+    presetLog.info(`[preset:delete] ${args.presetId}`)
+    return { deleted: true }
+  })
 
   // ── preset:set-default — Set workspace default preset ──
   ipcMain.handle(
@@ -128,6 +122,19 @@ export function registerPresetIpc(): void {
       const currentChatProvider = presetService.resolveProvider(currentPresetId, 'da-vinci:plan')
       const newChatProvider = presetService.resolveProvider(args.presetId, 'da-vinci:plan')
       const requiresHandoff = currentChatProvider !== newChatProvider
+
+      // Generate handoff context when provider is changing
+      if (requiresHandoff) {
+        try {
+          const messages = messageRepository.findByConversation(args.conversationId)
+          const handoffDoc = contextHandoffService.generateFallbackHandoff(
+            messages.map((m) => ({ role: m.role, content: m.contentMd }))
+          )
+          conversationRepository.updateHandoffContext(args.conversationId, handoffDoc)
+        } catch {
+          /* non-fatal — switch still succeeds without handoff */
+        }
+      }
 
       // Update the preset on the conversation
       conversationRepository.updatePreset(args.conversationId, args.presetId)

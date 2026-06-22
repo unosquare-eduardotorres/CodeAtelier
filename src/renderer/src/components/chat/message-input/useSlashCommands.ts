@@ -19,7 +19,8 @@ import {
   ClipboardCheck,
   Undo2,
   History,
-  ScrollText
+  ScrollText,
+  SearchCheck
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTodoStore } from '@renderer/store/todo.store'
@@ -144,6 +145,12 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
     iconColor: 'text-purple-400'
   },
   {
+    command: '/audit',
+    description: 'Audit the current implementation for bugs, dead code, and missed tests',
+    icon: SearchCheck,
+    iconColor: 'text-emerald-400'
+  },
+  {
     command: '/help',
     description: 'Show available commands',
     icon: HelpCircle,
@@ -165,7 +172,161 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/rewind': 'Rewind to a previous checkpoint — reverts code AND removes messages after that point',
   '/recap': 'Get a summary of what was done in this conversation',
   '/council': 'Run the LLM Council — 5 independent AI advisors review and cross-examine your plan',
+  '/audit': 'Post-implementation audit — checks wiring, bugs, tests, complexity, dead code, and runs a premortem',
   '/help': 'Show available commands'
+}
+
+// ── Audit prompts ──
+
+/**
+ * Full audit prompt — verbose with detailed instructions for each check.
+ * Used for local LLMs that need explicit step-by-step guidance.
+ */
+const AUDIT_PROMPT = `You are performing a **post-implementation audit** of the code we built in this conversation. Systematically verify quality before this work is considered done.
+
+## Step 0 — Scope
+Before running any checks:
+1. List all files you created, modified, or deleted in this conversation
+2. Run \`git diff --name-only\` to cross-check against uncommitted changes
+3. Use the UNION as your audit scope — but if git diff shows files NOT discussed in this conversation, note them as "out-of-scope modifications" and do NOT audit them
+4. Print the final file list as a header so the user can verify
+
+---
+
+Perform these 6 checks IN ORDER on the scoped files.
+
+### Check 1 — Wiring & Integration
+Verify everything is properly connected — no dangling exports, missing imports, or unregistered components.
+- Run **wiring_check** with all changed file paths + key new symbol names in a single call — verifies exports have importers and new symbols are referenced
+- Check: new IPC handlers registered? New routes mounted? New components rendered? New test files imported in the test runner?
+
+### Check 2 — Bug & Anti-Pattern Detection
+Combine tool-based scanning with reasoning:
+
+**Automated scans** (run these first):
+- Run **eslint_check** on changed files — report any errors or warnings
+- Grep for \`as any\`, \`// TODO\`, \`// HACK\`, \`// FIXME\`, empty catch blocks (\`catch {}\` or \`catch (e) {}\` with no body)
+
+**Then reason about:**
+- **Edge cases:** empty arrays, null/undefined, zero-length strings, boundary values
+- **Error handling:** uncaught exceptions, swallowed errors, missing error messages
+- **Race conditions:** async interleaving, shared mutable state
+- **Type safety:** \`as\` casts, \`any\` types, unchecked type narrowing
+- **Off-by-one:** array indexing, pagination, loop boundaries
+- **State consistency:** stale closures, partial updates, missing cleanup
+
+### Check 3 — Test Coverage
+Use tools + reasoning to evaluate test adequacy:
+- Run **test_coverage_map** — identify which changed files lack corresponding test files
+- Check if new test files are registered in the test runner (e.g. run-tests.ts imports)
+- Are critical paths tested (happy path + main error paths)?
+- Are edge cases covered (empty inputs, nulls, boundary values)?
+- Are assertions meaningful (not just "it doesn't throw")?
+- List what IS tested, what IS NOT, and what SHOULD be added (with specific test case suggestions)
+
+### Check 4 — Cyclomatic Complexity
+- Run **analyze_complexity** scoped to each changed file with threshold 5
+- Flag any function with complexity > 10 as high
+- Note functions at 7–10 as "approaching threshold"
+- For high-complexity functions, suggest specific extraction or simplification strategies
+
+### Check 5 — Dead Code & Tech Debt
+- Run **find_dead_code** scoped to changed files — identify unreferenced functions, types, constants
+- Run **todo_scanner** — check for TODO/FIXME/HACK markers introduced by this implementation
+- Check for commented-out code blocks
+- Check for unused imports added by the implementation
+
+### Check 6 — Premortem: 1 Year From Now 🔮
+Position yourself 1 year in the future. This implementation has caused production incidents. For each failure scenario, state the failure AND a concrete prevention step:
+- **Scaling:** What breaks at 10x/100x volume? → Prevention?
+- **Maintenance:** What will confuse the next developer? → What doc/comment would prevent it?
+- **Silent corruption:** Where could bad data accumulate? → What validation or monitoring catches it?
+- **Security:** What attack vectors exist? → What guardrail closes them?
+- **Assumptions:** What implicit assumptions could become false? → How to make them explicit?
+
+---
+
+## Tool Guidance
+- If a tool returns an error, do NOT retry — note the error and move on
+- If a tool returns zero results, that's a valid finding (report as ✅)
+- Prefer **audit_scan** over individual eslint_check + analyze_complexity + find_dead_code calls
+- Scale maxResults by scope: 1–3 files → maxResults: 10, 4–10 files → maxResults: 20, 10+ files → maxResults: 30
+- Do NOT call find_dead_code, analyze_complexity, or eslint_check individually if you already called audit_scan — it covers all three
+- When calling find_dead_code, find_callers, find_callees, or find_references, pass format: 'markdown' for compact table output
+- When calling graph_map, pass tokenLimit: 4000 — audit needs less repo context than full exploration
+- Keep narration minimal between tool calls — state only the check number and what you're looking for, not full reasoning
+
+## Output Format
+
+Use EXACTLY this structure:
+
+## 🔍 Implementation Audit
+
+**Scope:** [list of files being audited]
+
+### 1. Wiring & Integration [✅|⚠️|❌]
+[findings]
+
+### 2. Bug & Anti-Pattern Detection [✅|⚠️|❌]
+[findings with file paths and line numbers, severity: Critical/Major/Minor for each]
+
+### 3. Test Coverage [✅|⚠️|❌]
+[what's tested, what's missing, specific test cases to add]
+
+### 4. Cyclomatic Complexity [✅|⚠️|❌]
+[table of functions with scores, refactoring suggestions for any above threshold]
+
+### 5. Dead Code & Tech Debt [✅|⚠️|❌]
+[unreferenced symbols with file paths, TODO/FIXME markers found]
+
+### 6. Premortem — 1 Year From Now 🔮
+[failure scenario → prevention for each category]
+
+### Summary
+| Severity | Count | Key Items |
+|----------|-------|-----------|
+| 🔴 Critical | N | [items] |
+| 🟡 Major | N | [items] |
+| 🔵 Minor | N | [items] |
+
+**Top 3 action items (by severity):**
+1. ...
+2. ...
+3. ...`
+
+/**
+ * Lean audit prompt — compressed for Claude models that handle terse instructions well.
+ * ~1,000 tokens vs ~1,800 in the full variant. Saves ~800 tokens per audit.
+ */
+const AUDIT_PROMPT_LEAN = `You are performing a **post-implementation audit** of the code we built in this conversation.
+
+## Scope
+List files from conversation + \`git diff --name-only\`. Print scope. Exclude out-of-scope files.
+
+## Checks (in order)
+1. **Wiring** — Run wiring_check with all changed file paths + key new symbol names in a single call. Verify exports have importers, new symbols are called, IPC/routes/tests registered.
+2. **Bugs** — Run audit_scan on changed files (combines eslint_check + analyze_complexity + find_dead_code). Grep for \`as any\`, TODO, HACK, empty catches. Reason about edge cases, error handling, races, type safety, off-by-one, stale state.
+3. **Tests** — Run test_coverage_map. Check test runner registration. Evaluate happy path + error path + edge case coverage.
+4. **Complexity** — Check audit_scan results for functions above threshold. Flag >10 as high, 7–10 as approaching.
+5. **Dead Code** — Check audit_scan results + run todo_scanner. Check commented-out code, unused imports.
+6. **Premortem 🔮** — For each: scaling, maintenance, silent corruption, security, assumptions → state failure + prevention.
+
+## Tool Guidance
+- If a tool returns an error, do NOT retry — note the error and move on
+- If a tool returns zero results, that's a valid finding (report as ✅)
+- Prefer **audit_scan** over individual eslint_check + analyze_complexity + find_dead_code calls
+- Scale maxResults by scope: 1–3 files → maxResults: 10, 4–10 files → maxResults: 20, 10+ files → maxResults: 30
+- Do NOT call find_dead_code, analyze_complexity, or eslint_check individually if you already called audit_scan — it covers all three
+- When calling find_dead_code, find_callers, find_callees, or find_references, pass format: 'markdown' for compact table output
+- When calling graph_map, pass tokenLimit: 4000 — audit needs less repo context than full exploration
+- Keep narration minimal between tool calls — state only the check number and what you're looking for, not full reasoning
+
+## Output
+Use: \`## 🔍 Implementation Audit\` header, **Scope** list, then checks 1–6 with [✅|⚠️|❌] markers. End with severity table (🔴Critical/🟡Major/🔵Minor counts) and top 3 action items.`
+
+/** Select audit prompt based on provider — lean for Claude, full for local LLMs */
+function getAuditPrompt(provider: LLMProvider): string {
+  return provider === 'claude' ? AUDIT_PROMPT_LEAN : AUDIT_PROMPT
 }
 
 // ── Hook ──
@@ -328,6 +489,11 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               `**Council failed:** ${err instanceof Error ? err.message : String(err)}`
             )
           }
+        },
+
+        '/audit': async () => {
+          opts.onClearAttachments()
+          await opts.sendMessage(getAuditPrompt(opts.currentProvider))
         },
 
         '/help': () => {

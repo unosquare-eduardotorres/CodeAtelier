@@ -291,10 +291,9 @@ export const IPC_CHANNELS = {
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
-  // Embedding provider (llamafile sidecar — replaces Ollama/WASM for semantic search)
+  // Embedding provider (oMLX — user must have oMLX running with an embedding model)
   EMBEDDING_CHECK_STATUS: 'embedding:checkStatus',
   EMBEDDING_INITIALIZE: 'embedding:initialize',
-  EMBEDDING_MODEL_PROGRESS: 'embedding:modelProgress',
   EMBEDDING_MODEL_READY: 'embedding:modelReady',
   EMBEDDING_MODEL_ERROR: 'embedding:modelError',
 
@@ -361,6 +360,9 @@ export const IPC_CHANNELS = {
 
   // SDK Diagnostics (0.2.138+) — @alpha
   SDK_RESOLVE_SETTINGS: 'sdk:resolveSettings',
+
+  // Stream Diagnostics — aggregated streaming health metrics
+  STREAM_METRICS_GET: 'stream:metricsGet',
 
   // SDK Elicitation (enriched — via elicitation.service)
   SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
@@ -552,7 +554,16 @@ export const IPC_CHANNELS = {
 
   // Constitution
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
-  BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution'
+  BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution',
+
+  // LLM Presets
+  PRESET_GET_ALL: 'preset:get-all',
+  PRESET_GET_BY_ID: 'preset:get-by-id',
+  PRESET_CREATE: 'preset:create',
+  PRESET_UPDATE: 'preset:update',
+  PRESET_DELETE: 'preset:delete',
+  PRESET_SET_DEFAULT: 'preset:set-default',
+  PRESET_SWITCH: 'preset:switch-conversation'
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -659,18 +670,120 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'blueprint:verify': 'claude-opus-4-8'
 } as const
 
+// ── Preset System ──
+
+import type { ActionGroup, ActionModelConfig, LocalLLMBackend } from './types'
+
+/**
+ * Logical groupings of ModelActions for the preset editor UI.
+ * Each group can be configured independently; the Chat group enforces
+ * provider parity (all actions must use the same provider).
+ */
+export const ACTION_GROUPS: ActionGroup[] = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    icon: '💬',
+    description: 'Plan & Build mode conversations',
+    providerConstrained: true,
+    actions: [
+      'da-vinci',
+      'da-vinci:plan',
+      'da-vinci:build',
+      'project-specialist',
+      'project-specialist:plan',
+      'project-specialist:build'
+    ]
+  },
+  {
+    id: 'blueprint',
+    label: 'Blueprint',
+    icon: '📐',
+    description: 'Specification, planning, and code generation phases',
+    actions: [
+      'blueprint:specify',
+      'blueprint:clarify',
+      'blueprint:plan',
+      'blueprint:tasks',
+      'blueprint:review',
+      'blueprint:build',
+      'blueprint:verify'
+    ]
+  },
+  {
+    id: 'health',
+    label: 'Health & Audit',
+    icon: '🩺',
+    description: 'Grill sessions and audit tracks',
+    actions: ['audit', 'grill', 'grill:plan']
+  },
+  {
+    id: 'council',
+    label: 'Council',
+    icon: '🧑‍⚖️',
+    description: 'Multi-advisor code review council',
+    actions: ['council-member', 'council-chairman']
+  },
+  {
+    id: 'specialist',
+    label: 'Specialist Routing',
+    icon: '🎯',
+    description: 'Complexity-based model routing for specialists',
+    advanced: true,
+    actions: ['specialist:simple', 'specialist:moderate', 'specialist:complex']
+  },
+  {
+    id: 'background',
+    label: 'Background Tasks',
+    icon: '⚙️',
+    description: 'Memory feeds, activation, and lightweight tasks',
+    advanced: true,
+    actions: ['memoryFeed', 'activation', 'haiku', 'mpa:decompose']
+  }
+] as const
+
+/**
+ * Built-in "Full Claude" preset config — empty object means every action
+ * falls through to DEFAULT_MODEL_CONFIG (all Claude models).
+ */
+export const BUILTIN_FULL_CLAUDE_CONFIG: Partial<
+  Record<import('./types').ModelAction, ActionModelConfig>
+> = {}
+
+/**
+ * Build a "Full Local" preset config — every action routes to the given
+ * local model + backend.
+ */
+export function buildFullLocalConfig(
+  modelId: string,
+  backend: LocalLLMBackend = 'ollama'
+): Partial<Record<import('./types').ModelAction, ActionModelConfig>> {
+  const config: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
+  for (const [action] of Object.entries(DEFAULT_MODEL_CONFIG)) {
+    config[action as import('./types').ModelAction] = {
+      provider: 'local-llm',
+      modelId,
+      localBackend: backend
+    }
+  }
+  return config
+}
+
 // ── Prompt Verbosity ─────────────────────────────────────────────────
 
 /**
  * Resolve prompt verbosity based on model capability.
- * Opus 4.8+ follows compressed instructions reliably — use lean prompts.
- * Sonnet/Haiku/older models need full explicit guardrailing.
+ * Opus 4.8+ and Sonnet 4.6+ follow compressed instructions reliably — use lean prompts.
+ * Haiku and older models need full explicit guardrailing.
  */
 export function resolvePromptVerbosity(model: string): import('./types').PromptVerbosity {
   // Opus 4.8+ can follow compressed instructions reliably
   if (model === 'claude-opus-4-8') return 'lean'
   // Future-proof: any Opus newer than 4.8 also gets lean
   if (model.startsWith('claude-opus-') && model > 'claude-opus-4-8') return 'lean'
+  // Sonnet 4.6+ follows lean instructions effectively — saves ~800-1200 tokens/turn
+  if (model === 'claude-sonnet-4-6') return 'lean'
+  if (model.startsWith('claude-sonnet-') && model > 'claude-sonnet-4-6') return 'lean'
   return 'full'
 }
 
@@ -1559,10 +1672,7 @@ export const MCP_TOOLS = {
       'module_boundary_health',
       'Code Graph · module_boundary_health'
     ),
-    BLAST_RADIUS: mcpTool('code-graph', 'blast_radius', 'Code Graph · blast_radius'),
-    CO_CHANGE: mcpTool('code-graph', 'co_change', 'Code Graph · co_change'),
-    HOTSPOT_SCORE: mcpTool('code-graph', 'hotspot_score', 'Code Graph · hotspot_score'),
-    CODE_CLONES: mcpTool('code-graph', 'code_clones', 'Code Graph · code_clones')
+    WIRING_CHECK: mcpTool('code-graph', 'wiring_check', 'Code Graph · wiring_check')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
     SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),
@@ -1594,7 +1704,30 @@ export const MCP_TOOLS = {
       'dependency_health',
       'Analysis · dependency_health'
     ),
-    TEST_COVERAGE_MAP: mcpTool('code-analysis', 'test_coverage_map', 'Analysis · test_coverage_map')
+    TEST_COVERAGE_MAP: mcpTool(
+      'code-analysis',
+      'test_coverage_map',
+      'Analysis · test_coverage_map'
+    ),
+    RESOLVE_LIBRARY_ID: mcpTool(
+      'code-analysis',
+      'resolve_library_id',
+      'Analysis · resolve_library_id'
+    ),
+    QUERY_LIBRARY_DOCS: mcpTool(
+      'code-analysis',
+      'query_library_docs',
+      'Analysis · query_library_docs'
+    ),
+    ESLINT_CHECK: mcpTool('code-analysis', 'eslint_check', 'Analysis · eslint_check'),
+    ESLINT_FIX: mcpTool('code-analysis', 'eslint_fix', 'Analysis · eslint_fix'),
+    ESLINT_RULES: mcpTool('code-analysis', 'eslint_rules', 'Analysis · eslint_rules'),
+    ANALYZE_COMPLEXITY: mcpTool(
+      'code-analysis',
+      'analyze_complexity',
+      'Analysis · analyze_complexity'
+    ),
+    AUDIT_SCAN: mcpTool('code-analysis', 'audit_scan', 'Analysis · audit_scan')
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
@@ -1634,10 +1767,10 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'code-graph',
     displayName: 'Code Graph',
-    description: 'AST-based navigation — callers, references, dead code, coupling, blast radius, co-change, hotspots, clones',
+    description: 'AST-based navigation — callers, references, dead code, coupling',
     icon: 'Network',
     tokenImpact: 'high',
-    toolCount: 17,
+    toolCount: 13,
     featureFlagKey: 'repomapEnabled',
     defaultEnabled: true
   },
@@ -1684,10 +1817,10 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'code-analysis',
     displayName: 'Code Analysis',
-    description: 'TODO scanning, dependency health, test coverage',
+    description: 'TODO scanning, dependency health, test coverage, library documentation, and ESLint',
     icon: 'BarChart3',
     tokenImpact: 'low',
-    toolCount: 3,
+    toolCount: 8,
     featureFlagKey: null,
     defaultEnabled: true
   }
@@ -2074,54 +2207,33 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
   }
 ] as const
 
-// ── Llamafile Embedding Sidecar ──────────────────────────────────────────────
+// ── oMLX Embedding Configuration ────────────────────────────────────────────
 //
-// Code-search embeddings run through a downloaded llamafile server (native,
-// multi-threaded, GPU-capable) instead of in-process WASM. Both the engine
-// binary and the GGUF model are downloaded on first use (not bundled) and
-// pinned by SHA-256.
-//
-// Pins verified 2026-06-01 against the GitHub release + Hugging Face APIs.
-// To upgrade: bump the version/file, then update `sha256` + `sizeBytes` from
-//   - GitHub:  https://api.github.com/repos/mozilla-ai/llamafile/releases/latest (asset.digest)
-//   - HF:      https://huggingface.co/api/models/<repo>?blobs=true (siblings[].lfs.sha256)
-export const LLAMAFILE_EMBEDDING = {
-  /** Downloaded llamafile engine binary (Actually-Portable-Executable). */
-  engine: {
-    version: '0.10.2',
-    /** `-thin` build: ~44MB, no prebuilt GPU dylibs (CPU/Metal is plenty for embeddings). */
-    asset: 'llamafile-0.10.2-thin',
-    url: 'https://github.com/mozilla-ai/llamafile/releases/download/0.10.2/llamafile-0.10.2-thin',
-    sha256: '53c638390ba9b49b034615a7e9e3bfa00995f576e7730506d7f7e434ab8684e9',
-    sizeBytes: 44118372
-  },
-  /** Downloaded GGUF embedding model (nomic-embed-text-v1.5, 768-dim). */
-  model: {
-    file: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
-    url: 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf',
-    sha256: 'd4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac',
-    sizeBytes: 84106624,
-    /**
-     * Provenance string stored in indexing_state.embedding_model. Changing this
-     * triggers the existing model-change re-index in vector-search.service.ts.
-     */
-    modelName: 'nomic-embed-text-v1.5'
-  },
-  /** llamafile server launch + request defaults. */
+// Code-search embeddings run through the user's oMLX server (Apple Silicon
+// native, GPU-accelerated). The user must have oMLX installed and running with
+// a compatible embedding model loaded. No artefacts are auto-downloaded.
+export const OMLX_EMBEDDING = {
   server: {
-    host: '127.0.0.1',
-    /** mean pooling + L2 normalize matches the prior WASM pipeline's output shape. */
-    pooling: 'mean',
-    embdNormalize: '2',
-    /** Max seconds to wait for the spawned server to report healthy. */
-    healthTimeoutSec: 60,
-    /**
-     * Defensive per-input character cap. nomic-embed-text-v1.5's context is
-     * 2048 tokens and llama.cpp `/v1/embeddings` ERRORS (not truncates) on
-     * over-length input. ~8000 chars ≈ ~2000 tokens, restoring the prior
-     * "never hard-fail on a big chunk" behavior. A char cap is sufficient here
-     * — no tokenizer needed.
-     */
-    maxInputChars: 8000
-  }
+    /** Defensive per-input character cap. BGE-M3 context is 8192 tokens;
+     *  ~8000 chars ≈ ~2000 tokens keeps the "never hard-fail" behavior. */
+    maxInputChars: 8000,
+    /** Max seconds to wait for an embedding response */
+    requestTimeoutMs: 30_000
+  },
+  /** Recommended embedding model for code semantic search */
+  recommendedModel: {
+    id: 'mlx-community/bge-m3-mlx-8bit',
+    label: 'BGE-M3 (8-bit MLX)',
+    /** Provenance string stored in indexing_state.embedding_model.
+     *  Changing this triggers re-index via existing model-change invalidation. */
+    modelName: 'bge-m3',
+    dimensions: 1024,
+    contextTokens: 8192,
+    estimatedSizeMB: 700
+  },
+  /** Alternative models users can install in oMLX */
+  alternativeModels: [
+    { id: 'mlx-community/bge-m3-mlx-4bit', label: 'BGE-M3 (4-bit, smaller)', modelName: 'bge-m3-4bit', dimensions: 1024, estimatedSizeMB: 350 },
+    { id: 'mlx-community/answerdotai-ModernBERT-base-4bit', label: 'ModernBERT Base (4-bit)', modelName: 'modernbert-base', dimensions: 768, estimatedSizeMB: 150 }
+  ]
 } as const

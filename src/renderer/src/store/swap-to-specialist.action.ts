@@ -26,9 +26,7 @@ type GetState = () => SwapActionState
 // SetState mirrors zustand's `set` for the full ChatState — this action only
 // touches the SwapActionState slice, but the callback receives the full store
 // state, so the param/return must be typed against ChatState.
-type SetState = (
-  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
-) => void
+type SetState = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
 
 /**
  * Execute the swap-to-specialist flow after the user accepts the proposal.
@@ -86,20 +84,38 @@ export function executeSwapToSpecialist(get: GetState, set: SetState): void {
       // The swap was triggered by a user request that DaVinci deferred
       // to the specialist. Re-sending ensures the specialist picks up
       // immediately instead of sitting idle waiting for new input.
+
       const { messages: currentMessages } = get()
       const lastUserMessage = [...currentMessages].reverse().find((m) => m.role === 'user')
       if (lastUserMessage?.contentMd?.trim()) {
         // Parse attachments from the original message (if any)
         let attachments: string[] | undefined
         try {
-          const parsed = JSON.parse(lastUserMessage.attachmentsJson || '[]') as string[]
-          if (parsed.length > 0) attachments = parsed
+          // FE-05: Type-guard parse result — don't blindly cast to string[]
+          const parsed: unknown = JSON.parse(lastUserMessage.attachmentsJson || '[]')
+          if (
+            Array.isArray(parsed) &&
+            parsed.length > 0 &&
+            parsed.every((item): item is string => typeof item === 'string')
+          ) {
+            attachments = parsed
+          }
         } catch {
           /* no attachments */
         }
 
         // Brief delay to let the greeting render and scroll settle
         await new Promise((resolve) => setTimeout(resolve, 300))
+
+        // SWAP-AUTORESEND-01: Re-check streaming state AFTER the delay, not before.
+        // The original check at T=0 is stale by T=300ms — streaming could have
+        // started or stopped in that window.
+        const postDelayState = get() as unknown as { isStreaming?: boolean; isSending?: boolean }
+        if (postDelayState.isStreaming || postDelayState.isSending) {
+          rendererLog.warn('swap-to-specialist: streaming active after delay — skipping auto-resend')
+          return
+        }
+
         await get().sendMessage(lastUserMessage.contentMd, attachments)
       }
     })

@@ -14,7 +14,7 @@ interface GoalArtifactViewerProps {
 
 export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps): JSX.Element {
   return (
-    <div className="space-y-4">
+    <div data-testid="goal-artifact-viewer" className="space-y-4">
       {/* Summary */}
       <div
         className={`rounded-lg border p-3 ${

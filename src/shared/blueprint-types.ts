@@ -33,7 +33,7 @@ export type BlueprintPhaseStatus = 'pending' | 'active' | 'complete' | 'skipped'
 
 export type BlueprintPriority = 'P1' | 'P2' | 'P3'
 
-export type BlueprintTaskStatus = 'pending' | 'running' | 'complete' | 'failed'
+export type BlueprintTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
 
 // ── Core Entities ──
 

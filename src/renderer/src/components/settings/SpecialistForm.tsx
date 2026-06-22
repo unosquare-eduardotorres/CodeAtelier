@@ -48,6 +48,7 @@ export default function SpecialistForm({
         .replace(/\s+/g, '-')
         .replace(/-+/g, '-')
         .trim()
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- derive slug from display name
       setAgentId(slug)
     }
   }, [displayName, isEditing])
@@ -124,7 +125,7 @@ export default function SpecialistForm({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-surface-overlay border border-border-subtle rounded shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
+      <div data-testid="specialist-form" className="relative bg-surface-overlay border border-border-subtle rounded shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
           <h2 className="text-base font-semibold text-text-primary">

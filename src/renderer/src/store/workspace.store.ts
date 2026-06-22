@@ -51,9 +51,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set({ workspaces, isLoading: false })
 
       // Auto-open last used workspace if none is active
+      // STORE-03: Wrap in try-catch to prevent silent error swallowing
       const { activeWorkspace } = get()
       if (!activeWorkspace && workspaces.length > 0) {
-        get().openWorkspace(workspaces[0].id)
+        try {
+          await get().openWorkspace(workspaces[0].id)
+        } catch (err) {
+          rendererLog.error('Failed to auto-open workspace:', err)
+        }
       }
     } catch (error) {
       rendererLog.error('Failed to load workspaces:', error)
@@ -62,8 +67,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   createWorkspace: async (name: string, repoPath: string) => {
-    const workspace = await window.api.createWorkspace({ name, repoPath })
-    set((state) => ({ workspaces: [workspace, ...state.workspaces] }))
+    // STORE-05: Let errors propagate to caller but ensure state consistency
+    try {
+      const workspace = await window.api.createWorkspace({ name, repoPath })
+      set((state) => ({ workspaces: [workspace, ...state.workspaces] }))
+    } catch (error) {
+      rendererLog.error('Failed to create workspace:', error)
+      throw error
+    }
   },
 
   openWorkspace: async (id: string) => {
@@ -107,14 +118,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!snapshot || snapshot.agentStatus !== 'running') {
       set({ agentStatus: 'starting' })
     }
+    // STORE-01: Track workspace ID at call time to ignore stale completions
+    // from rapid workspace switching (A→B→A)
+    const openedId = workspace.id
     window.api
       .startAgent({ workspacePath: workspace.repoPath, workspaceId: workspace.id })
       .catch((error) => {
+        if (get().activeWorkspace?.id !== openedId) return // Stale — ignore
         rendererLog.error('Failed to start agent runtime:', error)
         set({ agentStatus: 'error' })
       })
 
     // Load repo info + GitHub status in parallel (fire-and-forget)
+    // STORE-04: Guard against cross-workspace pollution from slow responses
     get().loadRepoInfo(id)
     get().loadGitHubStatus(id)
   },
@@ -160,8 +176,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   loadRepoInfo: async (workspaceId: string) => {
     try {
       const repoInfo = await window.api.getRepoInfo({ workspaceId })
+      // STORE-04: Guard against cross-workspace pollution from slow responses
+      if (get().activeWorkspace?.id !== workspaceId) return
       set({ repoInfo })
     } catch {
+      if (get().activeWorkspace?.id !== workspaceId) return
       set({ repoInfo: null })
     }
   },
@@ -169,8 +188,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   loadGitHubStatus: async (workspaceId: string) => {
     try {
       const githubStatus = await window.api.getGitHubStatus({ workspaceId })
+      // STORE-04: Guard against cross-workspace pollution from slow responses
+      if (get().activeWorkspace?.id !== workspaceId) return
       set({ githubStatus })
     } catch {
+      if (get().activeWorkspace?.id !== workspaceId) return
       set({ githubStatus: null })
     }
   }

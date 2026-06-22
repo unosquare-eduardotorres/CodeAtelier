@@ -10,7 +10,6 @@
 import type { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { PendingPermission } from '../../shared/types'
-import { safeWindowSend } from '../ipc/safe-send'
 
 export interface TaggedEvent {
   workspaceId: string
@@ -24,9 +23,22 @@ export class SessionEventRouter {
     this.mainWindow = mainWindow
   }
 
+  // ROUTER-NOGUARD-01: Guard all IPC sends against destroyed window.
+  // Matches the pattern used by ChatStreamService.safeWindowSend()
+  // and chunk-router.ts safeSend().
+  private safeSend(channel: string, ...args: unknown[]): void {
+    try {
+      if (!this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send(channel, ...args)
+      }
+    } catch {
+      // Non-fatal: window may have been destroyed between check and send
+    }
+  }
+
   /** Send a tagged event to the renderer on any IPC channel. */
   send(channel: string, payload: TaggedEvent): void {
-    safeWindowSend(this.mainWindow, channel, payload)
+    this.safeSend(channel, payload)
   }
 
   /**
@@ -34,7 +46,7 @@ export class SessionEventRouter {
    * Enforces workspaceId is always present in the payload.
    */
   sendWorkspaceEvent(channel: string, workspaceId: string, payload: Record<string, unknown>): void {
-    safeWindowSend(this.mainWindow, channel, { workspaceId, ...payload })
+    this.safeSend(channel, { workspaceId, ...payload })
   }
 
   /** Send a permission/blocking event from a background workspace. */

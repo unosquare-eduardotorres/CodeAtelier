@@ -264,7 +264,10 @@ describe('normalizeOpenCodeEvent — handleTextPart edge cases', () => {
   test('thinking→text boundary WITHOUT hasPriorText does NOT emit turn_boundary', () => {
     const state = freshState({ lastPartType: 'thinking', hasPriorText: false })
     const out = normalizeOpenCodeEvent(
-      { type: 'message.part.updated', properties: { part: { type: 'text', content: 'first text' } } },
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'text', content: 'first text' } }
+      },
       SID,
       freshUsage(),
       state
@@ -357,7 +360,10 @@ describe('normalizeOpenCodeEvent — handleThinkingPart edge cases', () => {
 
   test('reasoning type maps to thinking', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'message.part.updated', properties: { part: { type: 'reasoning', content: 'pondering' } } },
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'reasoning', content: 'pondering' } }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -448,7 +454,12 @@ describe('normalizeOpenCodeEvent — handleSessionCompacted', () => {
       {
         type: 'session.compacted',
         properties: {
-          usage: { inputTokens: 30000, contextWindowSize: 200000, cacheReadInputTokens: 5000, cacheCreationInputTokens: 1000 }
+          usage: {
+            inputTokens: 30000,
+            contextWindowSize: 200000,
+            cacheReadInputTokens: 5000,
+            cacheCreationInputTokens: 1000
+          }
         }
       },
       SID,

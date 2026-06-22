@@ -293,7 +293,16 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
    * Returns undefined for local LLM providers (local models don't use
    * prompt verbosity — they get condensed prompts unconditionally).
    */
-  protected resolveModel(workspacePath: string, action: ModelAction): string | undefined {
+  protected resolveModel(
+    workspacePath: string,
+    action: ModelAction,
+    presetId?: string | null
+  ): string | undefined {
+    if (presetId) {
+      const provider = modelConfigService.getProvider(workspacePath, action, presetId)
+      if (provider === 'local-llm') return undefined
+      return modelConfigService.getModel(workspacePath, action, presetId)
+    }
     const isLocal = modelConfigService.isLocalProvider(workspacePath)
     return isLocal ? undefined : modelConfigService.getModel(workspacePath, action)
   }

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
 import { memoryCheckpoint } from './indexing-diagnostics'
-import { llamafileEmbeddingProvider } from './llamafile-embedding.service'
+import { omlxEmbeddingProvider } from './omlx-embedding.service'
 import { descriptionCache } from './description-cache.service'
 import { generateHeuristicDescription } from './heuristic-description.service'
 import {
@@ -17,22 +17,26 @@ import {
   type EmbeddingEntry
 } from '../db/repositories/chunk-embedding.repository'
 import { getDatabase } from '../db/index'
-import { LLAMAFILE_EMBEDDING } from '../../shared/constants'
 import type { IndexingState, SemanticSearchResult } from '../../shared/types'
 
 /**
  * Embedding model name — stored in indexing_state for provenance. Changing this
  * value invalidates persisted embeddings (see loadPersistedIndex) and triggers
  * a full re-index, which transparently handles the vector-dimension change.
+ *
+ * Returns null when the provider isn't initialized yet — callers
+ * that need provenance MUST ensure the provider is ready first.
  */
-const EMBEDDING_MODEL_NAME = LLAMAFILE_EMBEDDING.model.modelName
+function getEmbeddingModelName(): string | null {
+  return omlxEmbeddingProvider.activeModelName || null
+}
 
 /**
  * Max batch size for embedding calls.
  *
- * Texts are POSTed to the llamafile server's /v1/embeddings endpoint in
- * batches of 32. The adaptive retry in embed() halves the batch on error as a
- * safety net for oversized requests.
+ * Texts are POSTed to the oMLX server's /v1/embeddings endpoint in batches
+ * of 32. The adaptive retry in embed() halves the batch on error as a safety
+ * net for oversized requests.
  */
 const EMBEDDING_BATCH_SIZE = 32
 
@@ -233,9 +237,13 @@ class VectorSearchService extends EventEmitter {
       .prepare('SELECT embedding_model FROM indexing_state WHERE workspace_id = ?')
       .get(workspaceId) as { embedding_model?: string } | undefined
 
-    if (modelRow?.embedding_model && modelRow.embedding_model !== EMBEDDING_MODEL_NAME) {
+    const currentModelName = getEmbeddingModelName()
+    // Skip model-change check if embedding provider hasn't initialized yet —
+    // we can't know the actual model name until the user's oMLX server is queried.
+    // The check will happen later in initializeEmbeddingModel() → reindexFiles().
+    if (currentModelName && modelRow?.embedding_model && modelRow.embedding_model !== currentModelName) {
       log.info(
-        `[VectorSearch] Model changed (${modelRow.embedding_model} → ${EMBEDDING_MODEL_NAME}), ` +
+        `[VectorSearch] Model changed (${modelRow.embedding_model} → ${currentModelName}), ` +
           `invalidating persisted index for ${workspaceId}`
       )
       chunkEmbeddingRepository.deleteByWorkspace(workspaceId)
@@ -667,7 +675,7 @@ class VectorSearchService extends EventEmitter {
 
     const fileMtimes = this.buildFileMtimeMap(workspacePath, fileContents)
     try {
-      this.saveToDb(workspaceId, processedChunks, fileMtimes, EMBEDDING_MODEL_NAME)
+      this.saveToDb(workspaceId, processedChunks, fileMtimes, getEmbeddingModelName() ?? 'unknown')
     } catch (persistError) {
       log.warn('[VectorSearch] Failed to persist index to SQLite:', persistError)
     }
@@ -750,8 +758,8 @@ class VectorSearchService extends EventEmitter {
     if (processedChunks.length === 0) return
 
     // Ensure embedding model is loaded before first use
-    if (!llamafileEmbeddingProvider.isReady) {
-      await llamafileEmbeddingProvider.initialize()
+    if (!omlxEmbeddingProvider.isReady) {
+      await omlxEmbeddingProvider.initialize()
     }
 
     // Embed and upsert in batches
@@ -760,7 +768,7 @@ class VectorSearchService extends EventEmitter {
       const texts = batch.map((c) => c.embedText)
 
       try {
-        const embeddings = await llamafileEmbeddingProvider.embed(texts)
+        const embeddings = await omlxEmbeddingProvider.embed(texts)
         const ids = batch.map((c) => c.id)
         collection.upsert(ids, embeddings, batch)
       } catch (error) {
@@ -781,7 +789,7 @@ class VectorSearchService extends EventEmitter {
         fileMtimes.set(relPath, 0)
       }
     }
-    this.saveToDb(workspaceId, processedChunks, fileMtimes, EMBEDDING_MODEL_NAME)
+    this.saveToDb(workspaceId, processedChunks, fileMtimes, getEmbeddingModelName() ?? 'unknown')
 
     log.info(`[VectorSearch] Incremental: upserted ${processedChunks.length} chunks`)
   }
@@ -804,10 +812,10 @@ class VectorSearchService extends EventEmitter {
 
     try {
       // Ensure embedding model is loaded before first use
-      if (!llamafileEmbeddingProvider.isReady) {
-        await llamafileEmbeddingProvider.initialize()
+      if (!omlxEmbeddingProvider.isReady) {
+        await omlxEmbeddingProvider.initialize()
       }
-      const [queryEmbedding] = await llamafileEmbeddingProvider.embed([query])
+      const [queryEmbedding] = await omlxEmbeddingProvider.embed([query])
       return collection.query(queryEmbedding, options?.nResults ?? 5, options?.where)
     } catch (error) {
       log.error(`[VectorSearch] Search failed for workspace ${workspaceId}:`, error)
@@ -832,10 +840,10 @@ class VectorSearchService extends EventEmitter {
 
     try {
       // Ensure embedding model is loaded before first use
-      if (!llamafileEmbeddingProvider.isReady) {
-        await llamafileEmbeddingProvider.initialize()
+      if (!omlxEmbeddingProvider.isReady) {
+        await omlxEmbeddingProvider.initialize()
       }
-      const [codeEmbedding] = await llamafileEmbeddingProvider.embed([code])
+      const [codeEmbedding] = await omlxEmbeddingProvider.embed([code])
       const where = opts?.language ? { language: opts.language } : undefined
       return collection.query(codeEmbedding, opts?.nResults ?? 10, where)
     } catch (error) {
@@ -1087,21 +1095,21 @@ class VectorSearchService extends EventEmitter {
   }
 
   /**
-   * Initialize the embedding model via the llamafile sidecar (the only backend).
-   * Returns the embed function to use for batch embedding. Rejects if the
-   * sidecar can't be downloaded or started — there is no WASM fallback.
+   * Initialize the embedding model via the oMLX server (the only backend).
+   * Returns the embed function to use for batch embedding. Rejects if oMLX
+   * is not running or no embedding model is loaded.
    */
   private async initializeEmbeddingModel(): Promise<(texts: string[]) => Promise<number[][]>> {
-    if (!llamafileEmbeddingProvider.isReady) {
-      memoryCheckpoint('EMBEDDING_LLAMAFILE_INIT_START')
-      log.info('[VectorSearch] Initializing llamafile embedding server...')
-      await llamafileEmbeddingProvider.initialize()
-      memoryCheckpoint('EMBEDDING_LLAMAFILE_INIT_DONE')
+    if (!omlxEmbeddingProvider.isReady) {
+      memoryCheckpoint('EMBEDDING_OMLX_INIT_START')
+      log.info('[VectorSearch] Initializing oMLX embedding provider...')
+      await omlxEmbeddingProvider.initialize()
+      memoryCheckpoint('EMBEDDING_OMLX_INIT_DONE')
     } else {
-      memoryCheckpoint('EMBEDDING_LLAMAFILE_ALREADY_READY')
+      memoryCheckpoint('EMBEDDING_OMLX_ALREADY_READY')
     }
 
-    return (texts: string[]) => llamafileEmbeddingProvider.embed(texts)
+    return (texts: string[]) => omlxEmbeddingProvider.embed(texts)
   }
 
   /**
@@ -1201,7 +1209,7 @@ class VectorSearchService extends EventEmitter {
               processedChunks,
               embeddedUpTo,
               fileMtimes,
-              EMBEDDING_MODEL_NAME
+              getEmbeddingModelName() ?? 'unknown'
             )
             memoryCheckpoint('CHECKPOINT_SAVED', {
               embeddedUpTo,
@@ -1227,7 +1235,7 @@ class VectorSearchService extends EventEmitter {
               processedChunks,
               embeddedUpTo,
               fileMtimes,
-              EMBEDDING_MODEL_NAME
+              getEmbeddingModelName() ?? 'unknown'
             )
             log.info(`[VectorSearch] Error checkpoint saved at offset ${embeddedUpTo}`)
           }

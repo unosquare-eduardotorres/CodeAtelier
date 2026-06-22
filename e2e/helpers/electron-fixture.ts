@@ -1,23 +1,26 @@
 /**
- * Shared Playwright fixture for Electron E2E tests.
+ * Shared Playwright + Electron CDP Fixture
  *
- * Extracts the ~50-line CDP boilerplate duplicated across all existing tests
- * into a reusable fixture that:
- *   1. Spawns Electron with remote debugging via electron-bootstrap.js
- *   2. Discovers the page-level WebSocket target from /json/list
- *   3. Connects Playwright via chromium.connect()
+ * Extracts the ~50 lines of CDP boilerplate that every E2E test repeats:
+ *   1. Spawns Electron with -r bootstrap.js (sets --remote-debugging-port)
+ *   2. Waits for CDP /json/list to expose a page target
+ *   3. Connects Playwright via chromium.connect(wsUrl)
  *   4. Exposes a ready `electronPage` to every test
- *   5. Auto-cleans (browser.close + process kill) on teardown
+ *   5. Auto-teardown: browser.close() + process.kill()
+ *
+ * Compatible with Electron 41+ (no --remote-debugging-port CLI flag).
  *
  * Usage:
- *   import { test, expect } from '../helpers/electron-fixture'
+ *   import { test, expect } from './helpers/electron-fixture'
  *   test('my test', async ({ electronPage }) => { ... })
  */
-import { test as base, chromium } from '@playwright/test'
-import type { Page } from '@playwright/test'
+import { test as base, chromium, expect } from '@playwright/test'
+import type { Page, Browser } from '@playwright/test'
 import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { resolve } from 'path'
+
+// ── Constants ────────────────────────────────────────────────────────
 
 const ELECTRON_BIN = resolve(
   __dirname,
@@ -25,26 +28,19 @@ const ELECTRON_BIN = resolve(
 )
 const MAIN_ENTRY = resolve(__dirname, '../../out/main/index.js')
 const BOOTSTRAP = resolve(__dirname, 'electron-bootstrap.js')
+const BASE_CDP_PORT = 19222
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────
 
-/** Poll CDP /json/version until it responds or timeout fires. */
-async function waitForCDP(port: number, timeoutMs = 25_000): Promise<void> {
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const resp = await fetch(`http://127.0.0.1:${port}/json/version`)
-      if (resp.ok) return
-    } catch {
-      // Not ready yet
-    }
-    await new Promise((r) => setTimeout(r, 500))
-  }
-  throw new Error(`CDP not available on port ${port} after ${timeoutMs}ms`)
+interface ElectronFixtures {
+  electronPage: Page
+  cdpPort: number
 }
 
-/** Discover the page-level WebSocket URL from CDP /json/list. */
-async function findPageTarget(port: number, timeoutMs = 15_000): Promise<string> {
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/** Wait for CDP /json/list to return a page-level target. */
+async function waitForPageWsUrl(port: number, timeoutMs = 25_000): Promise<string> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {
@@ -59,79 +55,89 @@ async function findPageTarget(port: number, timeoutMs = 15_000): Promise<string>
         return pageTarget.webSocketDebuggerUrl
       }
     } catch {
-      // Retry
+      // CDP not ready yet — keep polling
     }
     await new Promise((r) => setTimeout(r, 500))
   }
-  throw new Error(`No page target found in CDP on port ${port} after ${timeoutMs}ms`)
+  throw new Error(`No CDP page target on port ${port} after ${timeoutMs}ms`)
 }
 
-/** Gracefully kill a child process, with SIGKILL fallback. */
-async function killProcess(proc: ChildProcess): Promise<void> {
-  proc.kill('SIGTERM')
-  await new Promise((r) => setTimeout(r, 2_000))
-  if (!proc.killed) proc.kill('SIGKILL')
-}
-
-// ── Fixture ────────────────────────────────────────────────────────────────
-
-type ElectronFixtures = {
-  /** A ready-to-use Playwright Page connected to the Electron renderer. */
-  electronPage: Page
-  /** The CDP port used for this test worker. */
-  cdpPort: number
-}
+// ── Fixture ──────────────────────────────────────────────────────────
 
 export const test = base.extend<ElectronFixtures>({
-  cdpPort: [19222, { option: true }],
+  // Per-worker CDP port to avoid conflicts when running in parallel
+  cdpPort: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use, workerInfo) => {
+      await use(BASE_CDP_PORT + workerInfo.workerIndex)
+    },
+    { scope: 'worker' }
+  ],
 
-  electronPage: async ({ cdpPort }, use) => {
-    // Strip ELECTRON_RUN_AS_NODE so Electron launches in full GUI mode
-    const env = { ...process.env }
-    delete env.ELECTRON_RUN_AS_NODE
-    env.E2E_CDP_PORT = String(cdpPort)
-    env.NODE_ENV = 'test'
+  electronPage: [
+    async ({ cdpPort }, use) => {
+      let electronProcess: ChildProcess | null = null
+      let browser: Browser | null = null
 
-    const proc = spawn(ELECTRON_BIN, ['-r', BOOTSTRAP, MAIN_ENTRY], {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+      try {
+        // Strip ELECTRON_RUN_AS_NODE so Electron runs in full GUI mode
+        const env: Record<string, string> = {}
+        for (const [k, v] of Object.entries(process.env)) {
+          if (k !== 'ELECTRON_RUN_AS_NODE' && v !== undefined) {
+            env[k] = v
+          }
+        }
+        env.NODE_ENV = 'test'
+        env.E2E_CDP_PORT = String(cdpPort)
 
-    // Log stderr for debugging (skip DevTools noise)
-    proc.stderr?.on('data', (d: Buffer) => {
-      const msg = d.toString().trim()
-      if (msg && !msg.includes('DevTools')) {
-        console.log(`  [electron:err] ${msg}`)
+        // Spawn Electron with the bootstrap preload that sets the CDP port
+        electronProcess = spawn(ELECTRON_BIN, ['-r', BOOTSTRAP, MAIN_ENTRY], {
+          env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        })
+
+        // Forward stderr for debugging (suppress noisy DevTools lines)
+        electronProcess.stderr?.on('data', (d: Buffer) => {
+          const msg = d.toString().trim()
+          if (msg && !msg.includes('DevTools listening')) {
+            console.log(`  [electron:err] ${msg.substring(0, 300)}`)
+          }
+        })
+
+        // Wait for a page target to appear on the CDP port
+        const pageWsUrl = await waitForPageWsUrl(cdpPort)
+
+        // Connect Playwright to the page WebSocket
+        // NOTE: use chromium.connect (not connectOverCDP) — the latter hangs
+        // with Electron's non-standard CDP implementation.
+        browser = await chromium.connect(pageWsUrl, { timeout: 30_000 })
+        const contexts = browser.contexts()
+        const context = contexts[0] || (await browser.newContext())
+        const pages = context.pages()
+        const page = pages[0] || (await context.newPage())
+
+        // Wait for DOM + initial renders to settle
+        await page.waitForLoadState('domcontentloaded')
+        await page.waitForTimeout(3_000)
+
+        // Provide the ready page to the test
+        await use(page)
+      } finally {
+        // ── Teardown ─────────────────────────────────────────────
+        if (browser) {
+          await browser.close().catch(() => {})
+        }
+        if (electronProcess && !electronProcess.killed) {
+          electronProcess.kill('SIGTERM')
+          await new Promise((r) => setTimeout(r, 2_000))
+          if (!electronProcess.killed) {
+            electronProcess.kill('SIGKILL')
+          }
+        }
       }
-    })
-
-    let browser: ReturnType<typeof chromium.connect> extends Promise<infer B> ? B : never
-    let page: Page
-
-    try {
-      await waitForCDP(cdpPort)
-      const pageWsUrl = await findPageTarget(cdpPort)
-      browser = await chromium.connect(pageWsUrl, { timeout: 30_000 })
-
-      const contexts = browser.contexts()
-      const ctx = contexts[0]
-      if (!ctx) throw new Error('No browser context found after CDP connect')
-
-      page = ctx.pages()[0] ?? (await ctx.newPage())
-      await page.waitForLoadState('domcontentloaded')
-      // Let initial renders and animations settle
-      await page.waitForTimeout(3_000)
-    } catch (err) {
-      await killProcess(proc)
-      throw err
-    }
-
-    await use(page)
-
-    // Teardown
-    await browser.close().catch(() => {})
-    await killProcess(proc)
-  }
+    },
+    { scope: 'worker', timeout: 60_000 }
+  ]
 })
 
-export { expect } from '@playwright/test'
+export { expect }

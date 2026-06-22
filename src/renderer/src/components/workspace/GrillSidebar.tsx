@@ -37,7 +37,10 @@ export default function GrillSidebar({
   const track = selectedTrack ? GRILL_TRACKS[selectedTrack] : null
 
   return (
-    <div className="w-72 flex-shrink-0 border-l border-border-subtle bg-surface-base overflow-y-auto">
+    <div
+      data-testid="grill-sidebar"
+      className="w-72 flex-shrink-0 border-l border-border-subtle bg-surface-base overflow-y-auto"
+    >
       <div className="p-4 space-y-5">
         {/* Grill Analyst portrait */}
         <div className="flex justify-center">
@@ -49,7 +52,7 @@ export default function GrillSidebar({
         </div>
 
         {/* Score gauge */}
-        <div className="flex flex-col items-center gap-2">
+        <div data-testid="grill-score-summary" className="flex flex-col items-center gap-2">
           {currentScore !== null ? (
             <ScoreGauge score={currentScore} size={100} label={currentScoreLabel ?? undefined} />
           ) : (

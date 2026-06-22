@@ -38,7 +38,7 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
       aria-modal="true"
       aria-labelledby="update-modal-title"
     >
-      <div className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[440px] max-h-[80vh] flex flex-col">
+      <div data-testid="update-available-modal" className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[440px] max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 bg-surface-overlay border-b border-border-default">
           <div className="flex items-center gap-2.5">

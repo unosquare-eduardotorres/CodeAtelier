@@ -84,9 +84,7 @@ if (!env) {
         costCents: 70
       })
       const global = usageLogRepository.getGlobalSummary()
-      const claudeMd = global.byFeature.find(
-        (f: { feature: string }) => f.feature === 'claude_md'
-      )
+      const claudeMd = global.byFeature.find((f: { feature: string }) => f.feature === 'claude_md')
       assert.ok(claudeMd, 'workspace-less rows appear in the global summary')
       assert.ok(global.totalTokens >= 540 + 1500)
     })

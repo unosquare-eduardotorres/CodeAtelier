@@ -13,8 +13,9 @@
  * Dismissal is session-only and tracked in the parent (ChatPanel).
  */
 import { useEffect, useMemo } from 'react'
-import { Sparkles, Loader2, CheckCircle2, AlertTriangle, X } from 'lucide-react'
+import { Sparkles, Loader2, CheckCircle2, AlertTriangle, X, type LucideIcon } from 'lucide-react'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
+import type { ProjectSpecialist, BuildProgressEvent } from '@renderer/store/project-specialist.store'
 
 interface Props {
   open: boolean
@@ -24,6 +25,77 @@ interface Props {
 }
 
 type ViewState = 'idle' | 'building' | 'ready' | 'failed'
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// View-state driven rendering config
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+interface ViewContext {
+  workspaceName: string
+  techCount: number
+  techPlural: string
+  progressMessage?: string
+}
+
+const VIEW_CONFIG: Record<
+  ViewState,
+  {
+    Icon: LucideIcon
+    iconClass: string
+    title: string
+    subtitle: (ctx: ViewContext) => string
+    dismissLabel: string
+    actionLabel: string
+  }
+> = {
+  idle: {
+    Icon: Sparkles,
+    iconClass: 'text-primary-text',
+    title: 'Generate Project Specialist',
+    subtitle: (c) => `Tailored for ${c.workspaceName}`,
+    dismissLabel: 'Maybe later',
+    actionLabel: 'Generate Now'
+  },
+  building: {
+    Icon: Sparkles,
+    iconClass: 'text-primary-text',
+    title: 'Generating Specialist…',
+    subtitle: (c) => c.progressMessage ?? 'Building specialist for this project…',
+    dismissLabel: 'Maybe later',
+    actionLabel: 'Building…'
+  },
+  ready: {
+    Icon: CheckCircle2,
+    iconClass: 'text-emerald-500',
+    title: 'Specialist Ready',
+    subtitle: (c) => `Ready — ${c.techCount} tech${c.techPlural} detected`,
+    dismissLabel: '',
+    actionLabel: ''
+  },
+  failed: {
+    Icon: AlertTriangle,
+    iconClass: 'text-rose-500',
+    title: 'Build Failed',
+    subtitle: () => "We couldn’t finish building your specialist",
+    dismissLabel: 'Dismiss',
+    actionLabel: 'Retry'
+  }
+}
+
+function resolveViewState(
+  specialist: ProjectSpecialist | undefined,
+  progress: BuildProgressEvent | null
+): ViewState {
+  // Live progress event takes priority — the cached row is only
+  // refreshed after the IPC resolves, which can be 30-60s after click.
+  if (progress?.phase === 'failed') return 'failed'
+  if (progress?.phase === 'ready') return 'ready'
+  if (progress?.phase === 'started' || progress?.phase === 'building') return 'building'
+  if (specialist?.buildStatus === 'building') return 'building'
+  if (specialist?.buildStatus === 'ready') return 'ready'
+  if (specialist?.buildStatus === 'failed') return 'failed'
+  return 'idle' // pending / no specialist row yet
+}
 
 export default function GenerateSpecialistModal({
   open,
@@ -39,17 +111,7 @@ export default function GenerateSpecialistModal({
   const error = useProjectSpecialistStore((s) => s.error)
   const clearError = useProjectSpecialistStore((s) => s.clearError)
 
-  const view: ViewState = useMemo(() => {
-    // Live progress event takes priority — the cached row is only
-    // refreshed after the IPC resolves, which can be 30-60s after click.
-    if (progress?.phase === 'failed') return 'failed'
-    if (progress?.phase === 'ready') return 'ready'
-    if (progress?.phase === 'started' || progress?.phase === 'building') return 'building'
-    if (specialist?.buildStatus === 'building') return 'building'
-    if (specialist?.buildStatus === 'ready') return 'ready'
-    if (specialist?.buildStatus === 'failed') return 'failed'
-    return 'idle' // pending / no specialist row yet
-  }, [specialist, progress])
+  const view: ViewState = useMemo(() => resolveViewState(specialist ?? undefined, progress), [specialist, progress])
 
   // Auto-close 1.5s after success
   useEffect(() => {
@@ -72,11 +134,13 @@ export default function GenerateSpecialistModal({
 
   const isBuilding = view === 'building'
   const isReady = view === 'ready'
-  const isFailed = view === 'failed'
   const closeDisabled = isBuilding
 
   const techCount = specialist?.detectedTechs?.length ?? 0
   const techPlural = techCount === 1 ? '' : 's'
+  const cfg = VIEW_CONFIG[view]
+  const viewCtx: ViewContext = { workspaceName, techCount, techPlural, progressMessage: progress?.message }
+  const HeaderIcon = cfg.Icon
 
   return (
     <div
@@ -84,6 +148,7 @@ export default function GenerateSpecialistModal({
       role="presentation"
     >
       <div
+        data-testid="generate-specialist-modal"
         className="relative w-full max-w-md mx-4 bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300 motion-reduce:animate-none"
         role="dialog"
         aria-modal="true"
@@ -103,32 +168,10 @@ export default function GenerateSpecialistModal({
         {/* Header */}
         <div className="px-8 pt-8 pb-2 text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/15 mb-4">
-            {isReady ? (
-              <CheckCircle2 size={32} className="text-emerald-500" />
-            ) : isFailed ? (
-              <AlertTriangle size={32} className="text-rose-500" />
-            ) : (
-              <Sparkles size={32} className="text-primary-text" />
-            )}
+            <HeaderIcon size={32} className={cfg.iconClass} />
           </div>
-          <h1 className="text-xl font-bold text-text-primary">
-            {isReady
-              ? 'Specialist Ready'
-              : isFailed
-                ? 'Build Failed'
-                : isBuilding
-                  ? 'Generating Specialist…'
-                  : 'Generate Project Specialist'}
-          </h1>
-          <p className="text-sm text-text-secondary mt-1.5">
-            {isReady
-              ? `Ready — ${techCount} tech${techPlural} detected`
-              : isFailed
-                ? 'We couldn’t finish building your specialist'
-                : isBuilding
-                  ? (progress?.message ?? 'Building specialist for this project…')
-                  : `Tailored for ${workspaceName}`}
-          </p>
+          <h1 className="text-xl font-bold text-text-primary">{cfg.title}</h1>
+          <p className="text-sm text-text-secondary mt-1.5">{cfg.subtitle(viewCtx)}</p>
         </div>
 
         {/* Body */}
@@ -196,10 +239,11 @@ export default function GenerateSpecialistModal({
               disabled={isBuilding}
               className="flex-1 h-12 rounded-xl text-sm font-semibold bg-surface-overlay text-text-body hover:bg-surface-overlay/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised"
             >
-              {isFailed ? 'Dismiss' : 'Maybe later'}
+              {cfg.dismissLabel}
             </button>
             <button
               type="button"
+              data-testid="generate-specialist-btn"
               onClick={handleGenerate}
               disabled={isBuilding}
               className="flex-1 h-12 rounded-xl text-sm font-semibold bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised"
@@ -207,12 +251,10 @@ export default function GenerateSpecialistModal({
               {isBuilding ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Building…
+                  {cfg.actionLabel}
                 </>
-              ) : isFailed ? (
-                'Retry'
               ) : (
-                'Generate Now'
+                cfg.actionLabel
               )}
             </button>
           </div>

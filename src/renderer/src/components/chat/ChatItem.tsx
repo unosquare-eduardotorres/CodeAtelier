@@ -19,6 +19,27 @@ interface ChatItemProps {
   isDragOver?: boolean
 }
 
+// ── Data-driven provider styles ──
+
+const PROVIDER_STYLES = {
+  'local-llm': {
+    iconBgActive: 'bg-teal/20 text-teal-text',
+    iconBgDefault: 'bg-teal-muted text-teal-text',
+    pillClass: 'bg-teal-muted text-teal-text',
+    pillTitle: 'Local LLM',
+    pillLabel: 'Local',
+    Icon: Monitor
+  },
+  claude: {
+    iconBgActive: 'bg-info/15 text-info',
+    iconBgDefault: 'bg-info-muted text-info',
+    pillClass: 'bg-info-muted text-info',
+    pillTitle: 'Claude',
+    pillLabel: 'Claude',
+    Icon: Cloud
+  }
+} as const
+
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr)
   const now = new Date()
@@ -32,6 +53,72 @@ function formatRelativeTime(dateStr: string): string {
   if (diffHours < 24) return `${diffHours}h ago`
   if (diffDays < 7) return `${diffDays}d ago`
   return date.toLocaleDateString()
+}
+
+// ── Stream completion flash hook ──
+
+function useStreamCompletionFlash(isStreaming: boolean): {
+  showComplete: boolean
+  animationClass: string
+} {
+  const [showComplete, setShowComplete] = useState(false)
+  const wasStreamingRef = useRef(false)
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    if (wasStreamingRef.current && !isStreaming) {
+      setShowComplete(true)
+      timer = setTimeout(() => setShowComplete(false), 800)
+    }
+    wasStreamingRef.current = isStreaming
+    return (): void => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [isStreaming])
+
+  const animationClass = isStreaming
+    ? 'chat-icon-processing'
+    : showComplete
+      ? 'chat-icon-complete'
+      : ''
+
+  return { showComplete, animationClass }
+}
+
+// ── Action buttons sub-component ──
+
+function ChatItemActions({
+  onEdit,
+  onDelete,
+  title
+}: {
+  onEdit: (e?: React.MouseEvent) => void
+  onDelete: () => void
+  title: string
+}): React.JSX.Element {
+  return (
+    <div className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
+      <button
+        className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-surface-float text-text-muted hover:text-text-primary transition-colors"
+        onClick={onEdit}
+        aria-label={`Rename conversation: ${title}`}
+        title="Rename conversation"
+      >
+        <Pencil size={12} />
+      </button>
+      <button
+        className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors"
+        onClick={(e) => {
+          e.stopPropagation()
+          onDelete()
+        }}
+        aria-label={`Delete conversation: ${title}`}
+        title="Delete conversation"
+      >
+        <Trash2 size={12} />
+      </button>
+    </div>
+  )
 }
 
 export default function ChatItem({
@@ -51,22 +138,10 @@ export default function ChatItem({
 }: ChatItemProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(conversation.title)
-  const [showComplete, setShowComplete] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const wasStreamingRef = useRef(false)
+  const { animationClass } = useStreamCompletionFlash(isStreaming)
 
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    if (wasStreamingRef.current && !isStreaming) {
-      // Streaming just ended — trigger completion flash
-      setShowComplete(true)
-      timer = setTimeout(() => setShowComplete(false), 800)
-    }
-    wasStreamingRef.current = isStreaming
-    return (): void => {
-      if (timer) clearTimeout(timer)
-    }
-  }, [isStreaming])
+  const prov = PROVIDER_STYLES[conversation.llmProvider] ?? PROVIDER_STYLES.claude
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -106,6 +181,7 @@ export default function ChatItem({
 
   return (
     <div
+      data-testid="chat-item"
       className={`group flex items-center gap-3 px-3 py-3 cursor-pointer rounded-lg transition-colors press-scale ${
         isActive
           ? 'bg-primary-muted border-l-2 border-l-primary border border-primary/20'
@@ -135,22 +211,17 @@ export default function ChatItem({
 
       <div
         className={`flex items-center justify-center w-8 h-8 rounded-lg transition-shadow ${
-          conversation.llmProvider === 'local-llm'
-            ? isActive
-              ? 'bg-teal/20 text-teal-text'
-              : 'bg-teal-muted text-teal-text'
-            : isActive
-              ? 'bg-info/15 text-info'
-              : 'bg-info-muted text-info'
-        } ${isStreaming ? 'chat-icon-processing' : showComplete ? 'chat-icon-complete' : ''}`}
+          isActive ? prov.iconBgActive : prov.iconBgDefault
+        } ${animationClass}`}
       >
-        {conversation.llmProvider === 'local-llm' ? <Monitor size={14} /> : <Cloud size={14} />}
+        <prov.Icon size={14} />
       </div>
 
       <div className="flex-1 min-w-0">
         {isEditing ? (
           <input
             ref={inputRef}
+            data-testid="chat-item-rename-input"
             type="text"
             value={editTitle}
             onChange={(e) => setEditTitle(e.target.value)}
@@ -174,14 +245,10 @@ export default function ChatItem({
           <span>{formatRelativeTime(conversation.createdAt)}</span>
           {/* Provider pill */}
           <span
-            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-              conversation.llmProvider === 'local-llm'
-                ? 'bg-teal-muted text-teal-text'
-                : 'bg-info-muted text-info'
-            }`}
-            title={conversation.llmProvider === 'local-llm' ? 'Local LLM' : 'Claude'}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${prov.pillClass}`}
+            title={prov.pillTitle}
           >
-            {conversation.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
+            {prov.pillLabel}
           </span>
           {contextUsage && contextUsage.percentage > 0 && (
             <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />
@@ -190,27 +257,11 @@ export default function ChatItem({
       </div>
 
       {!isEditing && (
-        <div className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
-          <button
-            className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-surface-float text-text-muted hover:text-text-primary transition-colors"
-            onClick={handleStartEdit}
-            aria-label={`Rename conversation: ${conversation.title}`}
-            title="Rename conversation"
-          >
-            <Pencil size={12} />
-          </button>
-          <button
-            className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-danger-muted text-text-muted hover:text-danger transition-colors"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete(conversation.id)
-            }}
-            aria-label={`Delete conversation: ${conversation.title}`}
-            title="Delete conversation"
-          >
-            <Trash2 size={12} />
-          </button>
-        </div>
+        <ChatItemActions
+          onEdit={handleStartEdit}
+          onDelete={() => onDelete(conversation.id)}
+          title={conversation.title}
+        />
       )}
     </div>
   )

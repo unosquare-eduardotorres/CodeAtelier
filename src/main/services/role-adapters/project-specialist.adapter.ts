@@ -145,7 +145,8 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
     const resolvedModel = this.resolveModel(
       ctx.workspacePath,
-      `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
+      `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction,
+      ctx.presetId
     )
 
     // Pattern 7: SystemPromptCache for snapshot reuse

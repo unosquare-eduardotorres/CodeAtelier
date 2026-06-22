@@ -334,21 +334,24 @@ export class DaVinciPromptAssembler {
     effectiveMessage = `${buildModeContextPrefix(opts.mode, opts.model)}\n\n${effectiveMessage}`
 
     // Strategy A: Prepend any pending context injection.
+    // COMPACT-LOST-01: Read but don't delete — deletion is deferred to
+    // confirmPendingConsumed() after executeStream() succeeds.
     const pendingContext = this.pendingContextInjection.get(opts.conversationId)
     if (pendingContext) {
       effectiveMessage = `[Context from prior specialist execution — use this to answer follow-up questions without re-delegating]\n\n${pendingContext}\n\n---\n\n${effectiveMessage}`
-      this.pendingContextInjection.delete(opts.conversationId)
       this.log.info(
-        `[PIPELINE:lazy-inject] Prepended ${pendingContext.length} chars of specialist context`
+        `[PIPELINE:lazy-inject] Prepended ${pendingContext.length} chars of specialist context (pending confirmation)`
       )
     }
 
     // Strategy B: Prepend any pending compaction.
+    // COMPACT-LOST-01: Read but don't delete — see confirmPendingConsumed().
     const pendingCompact = this.pendingCompaction.get(opts.conversationId)
     if (pendingCompact) {
       effectiveMessage = `${pendingCompact}\n\n---\n\n${effectiveMessage}`
-      this.pendingCompaction.delete(opts.conversationId)
-      this.log.info('[PIPELINE:lazy-compact] Prepended compaction instruction')
+      this.log.info(
+        '[PIPELINE:lazy-compact] Prepended compaction instruction (pending confirmation)'
+      )
     }
 
     // Mode switch context — prefix the user's message so the agent
@@ -455,6 +458,22 @@ export class DaVinciPromptAssembler {
   /** Store pending compaction instruction (Strategy B) */
   setPendingCompaction(conversationId: string, compactionPrompt: string): void {
     this.pendingCompaction.set(conversationId, compactionPrompt)
+  }
+
+  /**
+   * COMPACT-LOST-01: Confirm that pending context/compaction injections for a
+   * conversation have been successfully sent. Call AFTER executeStream() succeeds.
+   * If executeStream() throws, the pending state is preserved for the next attempt.
+   */
+  confirmPendingConsumed(conversationId: string): void {
+    if (this.pendingContextInjection.has(conversationId)) {
+      this.pendingContextInjection.delete(conversationId)
+      this.log.info('[PIPELINE:lazy-inject] Context injection confirmed consumed')
+    }
+    if (this.pendingCompaction.has(conversationId)) {
+      this.pendingCompaction.delete(conversationId)
+      this.log.info('[PIPELINE:lazy-compact] Compaction instruction confirmed consumed')
+    }
   }
 
   /** Invalidate system prompt snapshot (on mode switch or settings change) */

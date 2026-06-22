@@ -8,7 +8,11 @@
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
 import { test, describe, summaryAsync } from './test-harness'
-import { parseNdjsonStream, writeNdjsonMessage, buildUserMessage } from '../cli-executor/ndjson-parser'
+import {
+  parseNdjsonStream,
+  writeNdjsonMessage,
+  buildUserMessage
+} from '../cli-executor/ndjson-parser'
 
 /** Create a Readable from an array of string chunks. */
 function streamFrom(chunks: string[]): Readable {
@@ -101,7 +105,10 @@ describe('writeNdjsonMessage', () => {
   test('serializes message + newline to the stream', () => {
     let written = ''
     const mockStream = {
-      write: (data: string) => { written = data; return true }
+      write: (data: string) => {
+        written = data
+        return true
+      }
     } as unknown as NodeJS.WritableStream
     const ok = writeNdjsonMessage(mockStream, { type: 'user', text: 'hi' })
     assert.equal(ok, true)
@@ -119,7 +126,9 @@ describe('writeNdjsonMessage', () => {
 
   test('returns false when stream.write throws', () => {
     const mockStream = {
-      write: () => { throw new Error('broken pipe') }
+      write: () => {
+        throw new Error('broken pipe')
+      }
     } as unknown as NodeJS.WritableStream
     const ok = writeNdjsonMessage(mockStream, { type: 'test' })
     assert.equal(ok, false)

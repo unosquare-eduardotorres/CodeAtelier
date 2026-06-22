@@ -59,17 +59,19 @@ export default function MessageInputDialogs({
   onSpecialistWarningConfirm
 }: MessageInputDialogsProps): React.JSX.Element {
   return (
-    <>
-      <ConfirmDialog
-        isOpen={showStopConfirm}
-        title="Stop Generation"
-        message="Are you sure you want to stop the current response? The AI will stop generating immediately."
-        confirmLabel="Stop"
-        cancelLabel="Continue"
-        variant="danger"
-        onConfirm={onStopConfirm}
-        onCancel={onStopCancel}
-      />
+    <div data-testid="message-input-dialogs">
+      <div data-testid="stop-confirm-dialog">
+        <ConfirmDialog
+          isOpen={showStopConfirm}
+          title="Stop Generation"
+          message="Are you sure you want to stop the current response? The AI will stop generating immediately."
+          confirmLabel="Stop"
+          cancelLabel="Continue"
+          variant="danger"
+          onConfirm={onStopConfirm}
+          onCancel={onStopCancel}
+        />
+      </div>
 
       <CompleteDialog
         isOpen={showCompleteDialog}
@@ -101,6 +103,6 @@ export default function MessageInputDialogs({
         onCancel={onSpecialistWarningCancel}
         onConfirm={onSpecialistWarningConfirm}
       />
-    </>
+    </div>
   )
 }

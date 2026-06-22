@@ -61,6 +61,8 @@ interface MpaPipelineState {
 
 export class MpaOrchestrationService extends EventEmitter {
   private pipelines = new Map<string, MpaPipelineState>()
+  /** Guards against concurrent orchestrate/resumeRun for the same workspace. */
+  private readonly startLocks = new Set<string>()
 
   /** Backward compat: current run ID for the most recently started pipeline. */
   get currentRunId(): string | null {
@@ -115,11 +117,15 @@ export class MpaOrchestrationService extends EventEmitter {
   // ── Public API ──
 
   async orchestrate(params: MpaOrchestrateParams): Promise<void> {
+    if (this.startLocks.has(params.workspaceId)) {
+      throw new Error(`MPA start lock held for workspace ${params.workspaceId}`)
+    }
     const pipeline = this.getOrCreatePipeline(params.workspaceId)
 
     if (pipeline.running) {
       throw new Error(`MPA pipeline already running for workspace ${params.workspaceId}`)
     }
+    this.startLocks.add(params.workspaceId)
 
     pipeline.running = true
     pipeline.abortController = new AbortController()
@@ -224,7 +230,8 @@ export class MpaOrchestrationService extends EventEmitter {
       pipeline.currentRunId = null
       pipeline.abortController = null
       pipeline.currentPhaseSession = null
-      pipeline.pendingGateResolve = null
+      // Don't null pendingGateResolve here — cancel() or respondToGate() handle it
+      this.startLocks.delete(params.workspaceId)
       this.pipelines.delete(params.workspaceId)
     }
   }
@@ -820,10 +827,14 @@ export class MpaOrchestrationService extends EventEmitter {
     if (run.status === 'cancelled') throw new Error('Run was cancelled')
 
     // 2. Get workspace pipeline and check for conflicts
+    if (this.startLocks.has(run.workspaceId)) {
+      throw new Error(`MPA start lock held for workspace ${run.workspaceId}`)
+    }
     const pipeline = this.getOrCreatePipeline(run.workspaceId)
     if (pipeline.running) {
       throw new Error(`Pipeline already running for workspace ${run.workspaceId}`)
     }
+    this.startLocks.add(run.workspaceId)
 
     // 3. Find completed phases and the plan artifact
     const phases = mpaRunRepository.findPhasesByRun(runId)
@@ -922,7 +933,8 @@ export class MpaOrchestrationService extends EventEmitter {
       pipeline.currentRunId = null
       pipeline.abortController = null
       pipeline.currentPhaseSession = null
-      pipeline.pendingGateResolve = null
+      // Don't null pendingGateResolve here — cancel() or respondToGate() handle it
+      this.startLocks.delete(run.workspaceId)
       this.pipelines.delete(run.workspaceId)
     }
   }

@@ -69,7 +69,10 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
       aria-modal="true"
       aria-labelledby="checkpoint-approval-title"
     >
-      <div data-testid="checkpoint-approval-modal" className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[520px] max-h-[80vh] flex flex-col">
+      <div
+        data-testid="checkpoint-approval-modal"
+        className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[520px] max-h-[80vh] flex flex-col"
+      >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 bg-surface-overlay border-b border-border-default">
           <ShieldCheck size={20} className="text-primary flex-shrink-0" />

@@ -58,7 +58,7 @@ export class ConversationLifecycle {
     }
 
     this.abortController = new AbortController()
-    this._requestId = `req-${crypto.randomUUID()}`
+    this._requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     this._conversationId = conversationId
 
     log.info(
@@ -81,7 +81,6 @@ export class ConversationLifecycle {
    * Call when the full pipeline (generalist + specialists) completes successfully.
    */
   complete(): void {
-    if (this.isDisposing) return
     log.info(
       `[ConversationLifecycle] Complete: conversation=${this._conversationId} requestId=${this._requestId}`
     )
@@ -96,7 +95,6 @@ export class ConversationLifecycle {
    * Call on user stop, errors, or when a new message supersedes the current one.
    */
   abort(reason?: string): void {
-    if (this.isDisposing) return
     log.warn(
       `[ConversationLifecycle] Abort: reason=${reason ?? 'unknown'} conversation=${this._conversationId} requestId=${this._requestId}`
     )
@@ -111,10 +109,12 @@ export class ConversationLifecycle {
   }
 
   private runDisposers(): void {
-    if (this.isDisposing) return
+    if (this.isDisposing) return // Prevent re-entrance from disposers calling abort()/complete()
     this.isDisposing = true
-    const snapshot = [...this.disposers]
-    this.disposers = []
+
+    const snapshot = this.disposers // Snapshot the array
+    this.disposers = []              // Clear BEFORE iteration
+
     for (const fn of snapshot) {
       try {
         fn()
@@ -122,10 +122,11 @@ export class ConversationLifecycle {
         log.warn('[ConversationLifecycle] Disposer error:', e)
       }
     }
+
+    this.isDisposing = false
     if (snapshot.length > 0) {
       log.info(`[ConversationLifecycle] Ran ${snapshot.length} disposer(s)`)
     }
-    this.isDisposing = false
   }
 }
 

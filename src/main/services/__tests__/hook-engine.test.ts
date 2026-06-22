@@ -9,7 +9,7 @@
  * NOTE: the harness runs async tests inside a describe() concurrently, and this
  * suite mutates the singleton's private state + a shared temp workspace. To keep
  * it deterministic, every scenario is consolidated into a single sequential
- * async test (mirrors llamafile-embedding.test.ts).
+ * async test (mirrors omlx-embedding.test.ts).
  */
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -40,7 +40,9 @@ describe('HookEngine', () => {
       assert.deepEqual(hookEngine.getLoadedHooks(), [], 'no hooks file → empty')
 
       // ── loadHooks: valid file + getLoadedHooks copy semantics ──
-      ws = makeWorkspace([{ event: 'gate_passed', name: 'notify', command: 'echo hi', blocking: true }])
+      ws = makeWorkspace([
+        { event: 'gate_passed', name: 'notify', command: 'echo hi', blocking: true }
+      ])
       workspaces.push(ws)
       await hookEngine.loadHooks(ws)
       const loaded = hookEngine.getLoadedHooks()
@@ -93,7 +95,9 @@ describe('HookEngine', () => {
       assert.ok(interp[0].stdout.includes('hello-hook'), 'interpolated ${greeting}')
 
       // ── executeHooks: blocking failure → exitCode 1 + stderr ──
-      ws = makeWorkspace([{ event: 'gate_failed', name: 'boom', command: 'exit 3', blocking: true }])
+      ws = makeWorkspace([
+        { event: 'gate_failed', name: 'boom', command: 'exit 3', blocking: true }
+      ])
       workspaces.push(ws)
       await hookEngine.loadHooks(ws)
       const failed = await hookEngine.executeHooks('gate_failed')
@@ -109,7 +113,9 @@ describe('HookEngine', () => {
       assert.equal(bg[0].durationMs, 0)
 
       // ── executeHooks: lifecycle events (started + response) ──
-      ws = makeWorkspace([{ event: 'gate_passed', name: 'lc', command: 'echo done', blocking: true }])
+      ws = makeWorkspace([
+        { event: 'gate_passed', name: 'lc', command: 'echo done', blocking: true }
+      ])
       workspaces.push(ws)
       await hookEngine.loadHooks(ws)
       const phases: string[] = []

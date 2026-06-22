@@ -34,7 +34,6 @@ const bpLog = log.scope('blueprint-review')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintReviewService extends EventEmitter {
-
   async startReviewPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -68,14 +67,19 @@ export class BlueprintReviewService extends EventEmitter {
 
     // 4. Emit phaseStart
     this.emit('phaseStart', {
-      blueprintId, workspaceId, phase: 'review'
+      blueprintId,
+      workspaceId,
+      phase: 'review'
     } satisfies BlueprintPhaseStartPayload)
 
     // 5. Wire streaming — named handlers for cleanup
     const onChunk = (chunk: StreamChunk): void => {
       if (chunk.type === 'text' && chunk.content) {
         this.emit('phaseProgress', {
-          blueprintId, workspaceId, phase: 'review', text: chunk.content
+          blueprintId,
+          workspaceId,
+          phase: 'review',
+          text: chunk.content
         } satisfies BlueprintPhaseProgressPayload)
       }
     }
@@ -97,9 +101,14 @@ export class BlueprintReviewService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        if (abortSignal?.aborted) {
+          onAbort()
+        }
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -112,7 +121,7 @@ export class BlueprintReviewService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       // 8. Save phase artifact
       if (reviewPhase) {
@@ -125,28 +134,38 @@ export class BlueprintReviewService extends EventEmitter {
         blueprintPhaseRepository.updateStatus(reviewPhase.id, 'complete')
       }
 
-      bpLog.info(`[startReviewPhase] Blueprint ${blueprintId} — review complete, recommendation: ${completion?.recommendation ?? 'unknown'}`)
+      bpLog.info(
+        `[startReviewPhase] Blueprint ${blueprintId} — review complete, recommendation: ${completion?.recommendation ?? 'unknown'}`
+      )
 
       // 9. Emit phaseComplete
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'review', status: 'complete', completion
+        blueprintId,
+        workspaceId,
+        phase: 'review',
+        status: 'complete',
+        completion
       } satisfies BlueprintPhaseCompletePayload)
 
       if (reviewPhase) {
         this.emit('phaseArtifact', {
-          blueprintId, workspaceId, phase: 'review',
+          blueprintId,
+          workspaceId,
+          phase: 'review',
           artifact: { type: 'review', contentMd: text }
         } satisfies BlueprintPhaseArtifactPayload)
       }
 
       // 10. Emit approval gate — human must approve before BUILD
-      const planSummary = this.buildApprovalSummary(completion)
+      const planSummary = this.buildApprovalSummary(completion ?? null)
       this.emit('approvalNeeded', {
-        blueprintId, workspaceId, phase: 'review', planSummary
+        blueprintId,
+        workspaceId,
+        phase: 'review',
+        planSummary
       } satisfies BlueprintApprovalNeededPayload)
 
       // NOTE: Does NOT advance to BUILD. That happens in BLUEPRINT_APPROVAL_RESPOND handler.
-
     } catch (err) {
       bpLog.error(`[startReviewPhase] REVIEW phase failed:`, err)
 
@@ -168,7 +187,10 @@ export class BlueprintReviewService extends EventEmitter {
       }
 
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'review', status: 'failed'
+        blueprintId,
+        workspaceId,
+        phase: 'review',
+        status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       session.removeListener('chunk', onChunk)
@@ -186,7 +208,9 @@ export class BlueprintReviewService extends EventEmitter {
   private buildApprovalSummary(completion: Record<string, unknown> | null): string {
     if (!completion) return 'Review completed — no structured findings available.'
 
-    const findings = completion.findings as { critical?: number; high?: number; medium?: number; low?: number } | undefined
+    const findings = completion.findings as
+      | { critical?: number; high?: number; medium?: number; low?: number }
+      | undefined
     const recommendation = (completion.recommendation as string) ?? 'unknown'
     const coverage = completion.coveragePercent as number | undefined
 

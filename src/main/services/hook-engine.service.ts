@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'node:child_process'
+import { spawnSync, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -98,31 +98,45 @@ class HookEngine extends EventEmitter {
       const hookId = `${hook.name}-${Date.now()}`
 
       // Emit lifecycle: started
-      this.emit('hookLifecycle', {
-        hookId,
-        hookName: hook.name,
-        hookEvent: event,
-        phase: 'started' as const,
-        output: undefined
-      })
+      // HOOK-EMIT-UNGUARDED-01: Wrap emit in try-catch so listener errors
+      // don't abort hook execution before it even starts.
+      try {
+        this.emit('hookLifecycle', {
+          hookId,
+          hookName: hook.name,
+          hookEvent: event,
+          phase: 'started' as const,
+          output: undefined
+        })
+      } catch (emitErr) {
+        hookLog.warn(`Hook "${hook.name}" lifecycle emit (started) failed:`, emitErr)
+      }
 
-      // Interpolate ${VAR} in command
+      // SVC-16: Escape context values to prevent shell metacharacter injection.
+      // Context values (workspaceId, mode, etc.) may contain shell-special chars.
       let cmd = hook.command
       for (const [key, val] of Object.entries(context)) {
-        cmd = cmd.replaceAll(`\${${key}}`, val)
+        // Escape single quotes in value, then wrap in single quotes for POSIX shell safety
+        const escaped = "'" + val.replace(/'/g, "'\\''") + "'"
+        cmd = cmd.replaceAll(`\${${key}}`, escaped)
       }
 
       const start = Date.now()
       if (hook.blocking) {
         // Synchronous — blocks until complete
         try {
-          const stdout = execSync(cmd, {
+          const spawnResult = spawnSync('sh', ['-c', cmd], {
             cwd: this.workspacePath ?? undefined,
             encoding: 'utf-8',
             timeout: hook.timeout ?? 30000
           })
+          if (spawnResult.error) throw spawnResult.error
+          if (spawnResult.status !== 0) {
+            throw new Error(spawnResult.stderr || `Hook exited with code ${spawnResult.status}`)
+          }
+          const stdout = spawnResult.stdout ?? ''
           hookLog.info(`Hook "${hook.name}" completed (${Date.now() - start}ms)`)
-          const result: HookResult = {
+          const hookResult: HookResult = {
             hook: hook.name,
             event,
             exitCode: 0,
@@ -130,17 +144,21 @@ class HookEngine extends EventEmitter {
             stderr: '',
             durationMs: Date.now() - start
           }
-          results.push(result)
+          results.push(hookResult)
 
           // Emit lifecycle: response
-          this.emit('hookLifecycle', {
-            hookId,
-            hookName: hook.name,
-            hookEvent: event,
-            phase: 'response' as const,
-            output: stdout.slice(0, 500),
-            outcome: 'success'
-          })
+          try {
+            this.emit('hookLifecycle', {
+              hookId,
+              hookName: hook.name,
+              hookEvent: event,
+              phase: 'response' as const,
+              output: stdout.slice(0, 500),
+              outcome: 'success'
+            })
+          } catch (emitErr) {
+            hookLog.warn(`Hook "${hook.name}" lifecycle emit (response) failed:`, emitErr)
+          }
         } catch (err: unknown) {
           const stderr = err instanceof Error ? err.message : String(err)
           hookLog.warn(`Hook "${hook.name}" failed: ${stderr.slice(0, 200)}`)
@@ -154,14 +172,18 @@ class HookEngine extends EventEmitter {
           })
 
           // Emit lifecycle: response (failure)
-          this.emit('hookLifecycle', {
-            hookId,
-            hookName: hook.name,
-            hookEvent: event,
-            phase: 'response' as const,
-            output: stderr.slice(0, 500),
-            outcome: 'failure'
-          })
+          try {
+            this.emit('hookLifecycle', {
+              hookId,
+              hookName: hook.name,
+              hookEvent: event,
+              phase: 'response' as const,
+              output: stderr.slice(0, 500),
+              outcome: 'failure'
+            })
+          } catch (emitErr) {
+            hookLog.warn(`Hook "${hook.name}" lifecycle emit (failure) failed:`, emitErr)
+          }
         }
       } else {
         // Fire-and-forget
@@ -186,14 +208,18 @@ class HookEngine extends EventEmitter {
         })
 
         // Emit lifecycle: response (fire-and-forget — no stdout)
-        this.emit('hookLifecycle', {
-          hookId,
-          hookName: hook.name,
-          hookEvent: event,
-          phase: 'response' as const,
-          output: undefined,
-          outcome: 'fired'
-        })
+        try {
+          this.emit('hookLifecycle', {
+            hookId,
+            hookName: hook.name,
+            hookEvent: event,
+            phase: 'response' as const,
+            output: undefined,
+            outcome: 'fired'
+          })
+        } catch (emitErr) {
+          hookLog.warn(`Hook "${hook.name}" lifecycle emit (fired) failed:`, emitErr)
+        }
       }
     }
     return results

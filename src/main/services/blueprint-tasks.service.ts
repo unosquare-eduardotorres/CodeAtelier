@@ -30,7 +30,6 @@ const bpLog = log.scope('blueprint-tasks')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintTasksService extends EventEmitter {
-
   async startTasksPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -64,14 +63,19 @@ export class BlueprintTasksService extends EventEmitter {
 
     // 4. Emit phaseStart
     this.emit('phaseStart', {
-      blueprintId, workspaceId, phase: 'tasks'
+      blueprintId,
+      workspaceId,
+      phase: 'tasks'
     } satisfies BlueprintPhaseStartPayload)
 
     // 5. Wire streaming
     session.on('chunk', (chunk: StreamChunk) => {
       if (chunk.type === 'text' && chunk.content) {
         this.emit('phaseProgress', {
-          blueprintId, workspaceId, phase: 'tasks', text: chunk.content
+          blueprintId,
+          workspaceId,
+          phase: 'tasks',
+          text: chunk.content
         } satisfies BlueprintPhaseProgressPayload)
       }
     })
@@ -92,9 +96,14 @@ export class BlueprintTasksService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        if (abortSignal?.aborted) {
+          onAbort()
+        }
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -107,7 +116,7 @@ export class BlueprintTasksService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
       const tasksJson = parseBlueprintTasks(text)
 
       // 8. Save phase artifact
@@ -139,12 +148,18 @@ export class BlueprintTasksService extends EventEmitter {
 
       // 11. Emit events
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'tasks', status: 'complete', completion
+        blueprintId,
+        workspaceId,
+        phase: 'tasks',
+        status: 'complete',
+        completion
       } satisfies BlueprintPhaseCompletePayload)
 
       if (tasksPhase) {
         this.emit('phaseArtifact', {
-          blueprintId, workspaceId, phase: 'tasks',
+          blueprintId,
+          workspaceId,
+          phase: 'tasks',
           artifact: { type: 'tasks', contentMd: text }
         } satisfies BlueprintPhaseArtifactPayload)
       }
@@ -169,7 +184,10 @@ export class BlueprintTasksService extends EventEmitter {
       }
 
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'tasks', status: 'failed'
+        blueprintId,
+        workspaceId,
+        phase: 'tasks',
+        status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       await session.stop()
@@ -185,17 +203,19 @@ export class BlueprintTasksService extends EventEmitter {
    */
   private persistTasksFromJson(blueprintId: string, tasksJson: Record<string, unknown>): void {
     try {
-      const waves = tasksJson.waves as Array<{
-        wave: number
-        tasks: Array<{
-          taskId: string
-          description: string
-          files?: string[]
-          userStory?: string | null
-          isParallel?: boolean
-          dependsOn?: string[]
-        }>
-      }> | undefined
+      const waves = tasksJson.waves as
+        | Array<{
+            wave: number
+            tasks: Array<{
+              taskId: string
+              description: string
+              files?: string[]
+              userStory?: string | null
+              isParallel?: boolean
+              dependsOn?: string[]
+            }>
+          }>
+        | undefined
 
       if (!waves?.length) {
         bpLog.warn(`[persistTasksFromJson] No waves found in tasks JSON`)
@@ -215,7 +235,9 @@ export class BlueprintTasksService extends EventEmitter {
       )
 
       const persisted = blueprintService.populateTasks(blueprintId, flatTasks)
-      bpLog.info(`[persistTasksFromJson] Persisted ${persisted.length} tasks across ${waves.length} waves`)
+      bpLog.info(
+        `[persistTasksFromJson] Persisted ${persisted.length} tasks across ${waves.length} waves`
+      )
     } catch (err) {
       bpLog.error(`[persistTasksFromJson] Failed to persist tasks:`, err)
     }

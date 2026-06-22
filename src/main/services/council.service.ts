@@ -80,6 +80,8 @@ interface CouncilSessionEntry {
 
 export class CouncilService extends EventEmitter {
   private sessions = new Map<string, CouncilSessionEntry>()
+  /** Guards against concurrent evaluate/resumeSession for the same workspace. */
+  private readonly startLocks = new Set<string>()
 
   /** Check if ANY council is running. */
   get isRunning(): boolean {
@@ -121,10 +123,15 @@ export class CouncilService extends EventEmitter {
   }): Promise<void> {
     councilLog.info(`[council] evaluate called — workspace=${params.workspaceId}`)
 
+    if (this.startLocks.has(params.workspaceId)) {
+      councilLog.warn(`[council] Start lock held for workspace ${params.workspaceId} — ignoring`)
+      return
+    }
     if (this.sessions.get(params.workspaceId)?.running) {
       councilLog.warn(`[council] Already running for workspace ${params.workspaceId} — ignoring`)
       return
     }
+    this.startLocks.add(params.workspaceId)
 
     const framedInput: CouncilFramedInput = {
       planContent: params.planContent,
@@ -205,7 +212,13 @@ export class CouncilService extends EventEmitter {
         })
         entry.dbSessionId = dbSession.id
       } catch (err) {
-        councilLog.warn('[council] Failed to create DB session (non-fatal):', err)
+        // COUNCIL-02: Fail fast — without a DB session, all subsequent writes
+        // silently skip, causing invisible data loss
+        councilLog.error('[council] Failed to create DB session — aborting evaluate:', err)
+        entry.running = false
+        this.startLocks.delete(params.workspaceId)
+        this.sessions.delete(params.workspaceId)
+        throw new Error(`Council DB session creation failed: ${(err as Error).message}`)
       }
     }
   }
@@ -259,6 +272,7 @@ export class CouncilService extends EventEmitter {
       if (entry.dbSessionId) councilSessionRepository.updateStatus(entry.dbSessionId, 'failed')
     } finally {
       entry.running = false
+      this.startLocks.delete(params.workspaceId)
       // Defensive cleanup — stop any sessions still held by advisors
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {
@@ -608,9 +622,13 @@ Respond ONLY with a JSON block:
     if (!dbSession) throw new Error(`Council session not found: ${params.sessionId}`)
     if (dbSession.status === 'completed') throw new Error('Session already complete')
 
+    if (this.startLocks.has(params.workspaceId)) {
+      throw new Error(`Council start lock held for workspace ${params.workspaceId}`)
+    }
     if (this.sessions.get(params.workspaceId)?.running) {
       throw new Error(`Council already running for workspace ${params.workspaceId}`)
     }
+    this.startLocks.add(params.workspaceId)
 
     // Reconstruct framed input from persisted data
     const structuredPlan = dbSession.structuredPlanJson
@@ -701,6 +719,7 @@ Respond ONLY with a JSON block:
       councilSessionRepository.updateStatus(params.sessionId, 'failed')
     } finally {
       entry.running = false
+      this.startLocks.delete(params.workspaceId)
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {
           try {

@@ -2,12 +2,11 @@
 /**
  * Code Graph MCP Server — externalized for CLI interactive mode.
  *
- * Exposes 17 tools for codebase navigation via the persisted SQLite code graph:
+ * Exposes 13 tools for codebase navigation via the persisted SQLite code graph:
  *   graph_map, search_identifiers, find_dead_code, file_outline,
  *   find_callers, find_callees, find_references, file_dependencies,
  *   file_dependents, symbol_hotspots, coupling_analysis,
- *   circular_dependencies, module_boundary_health, blast_radius,
- *   co_change, hotspot_score, code_clones
+ *   circular_dependencies, module_boundary_health
  *
  * Environment variables:
  *   WORKSPACE_ID   — Workspace UUID for DB queries
@@ -24,7 +23,6 @@
  * Uses @modelcontextprotocol/sdk (the standard MCP SDK, NOT the Agent SDK).
  */
 
-import path from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -38,26 +36,6 @@ const CONTEXT_TIER = process.env.CONTEXT_TIER as 'small' | 'medium' | 'large' | 
 if (!WORKSPACE_ID) {
   console.error('[code-graph-server] ERROR: WORKSPACE_ID is required')
   process.exit(1)
-}
-
-/**
- * SEC-02: Validate that a file path is relative and within the workspace.
- * Prevents path traversal attacks via adversarial LLM tool calls.
- * Returns the normalized relative path, or throws on traversal attempts.
- */
-function validateWorkspacePath(filePath: string): string {
-  // Reject absolute paths outright
-  if (path.isAbsolute(filePath)) {
-    throw new Error(`Absolute paths are not allowed: ${filePath}`)
-  }
-  // Resolve relative to workspace and check it stays within
-  const resolved = path.resolve(WORKSPACE_PATH, filePath)
-  const normalizedWorkspace = path.resolve(WORKSPACE_PATH)
-  if (!resolved.startsWith(normalizedWorkspace + path.sep) && resolved !== normalizedWorkspace) {
-    throw new Error(`Path traversal detected: ${filePath} resolves outside workspace`)
-  }
-  // Return the original relative path for downstream use
-  return filePath
 }
 
 /**
@@ -97,11 +75,11 @@ async function registerTools(): Promise<void> {
   // ── graph_map ──
   server.tool(
     'graph_map',
-    'Generate a ranked repository map of code definitions via PageRank.',
+    'Ranked repository map via PageRank.',
     {
       projectRoot: z.string().describe('Absolute path to the repository root'),
       focusFiles: z.array(z.string()).optional(),
-      tokenLimit: z.number().optional().default(8192),
+      tokenLimit: z.number().int().min(1000).max(100000).optional().default(8192),
       excludeUnranked: z.boolean().optional().default(false),
       priorityFiles: z.array(z.string()).optional(),
       priorityIdentifiers: z.array(z.string()).optional()
@@ -119,7 +97,7 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: truncateToolOutput(JSON.stringify(result, null, 2), 20_000)
+            text: truncateToolOutput(JSON.stringify(result), 20_000)
           }
         ]
       }
@@ -129,10 +107,10 @@ async function registerTools(): Promise<void> {
   // ── search_identifiers ──
   server.tool(
     'search_identifiers',
-    'Search for code identifiers across the repository via Tree-sitter AST analysis.',
+    'Search code identifiers by name (substring match).',
     {
       query: z.string().describe('Identifier name (case-insensitive substring match)'),
-      maxResults: z.number().optional().default(50),
+      maxResults: z.number().int().min(1).max(500).optional().default(50),
       includeDefinitions: z.boolean().optional().default(true),
       includeReferences: z.boolean().optional().default(true)
     },
@@ -149,7 +127,7 @@ async function registerTools(): Promise<void> {
       )
       return {
         content: [
-          { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ results }, null, 2)) }
+          { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ results })) }
         ]
       }
     }
@@ -161,18 +139,32 @@ async function registerTools(): Promise<void> {
     'Find potentially unused code definitions with no cross-file references.',
     {
       path: z.string().optional().describe('Filter to files under this directory'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50),
+      format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
       const results = await codeGraphService.findDeadCode(WORKSPACE_ID, WORKSPACE_PATH, {
         path: args.path,
         maxResults: args.maxResults
       })
+      if (args.format === 'markdown') {
+        const lines = [`### Dead Code (${results.length} unreferenced symbols)\n`]
+        if (results.length === 0) {
+          lines.push('✅ No unreferenced symbols found.')
+        } else {
+          lines.push('| Symbol | File | Line |')
+          lines.push('|--------|------|------|')
+          for (const r of results) {
+            lines.push(`| ${r.name} | ${r.file} | ${r.line} |`)
+          }
+        }
+        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+      }
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify({ results, count: results.length }, null, 2)
+            text: truncateToolOutput(JSON.stringify({ results, count: results.length }), 10_000)
           }
         ]
       }
@@ -187,7 +179,6 @@ async function registerTools(): Promise<void> {
       filePath: z.string().describe('Relative file path within the workspace')
     },
     async (args) => {
-      validateWorkspacePath(args.filePath)
       const tags = codeGraphTagRepository
         .findByFile(WORKSPACE_ID, args.filePath)
         .filter((t) => t.kind === 'def')
@@ -195,14 +186,13 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              {
+            text: truncateToolOutput(
+              JSON.stringify({
                 file: args.filePath,
                 definitions: tags.map((t) => ({ name: t.name, line: t.line })),
                 count: tags.length
-              },
-              null,
-              2
+              }),
+              10_000
             )
           }
         ]
@@ -213,31 +203,51 @@ async function registerTools(): Promise<void> {
   // ── find_callers ──
   server.tool(
     'find_callers',
-    'Find all call-sites and references to a symbol — who calls/imports/references it.',
+    'Find callers of a symbol.',
     {
       symbolName: z.string().describe('Symbol name to find callers of'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50),
+      deduplicate: z.boolean().optional().default(true).describe('Remove duplicate results (default: true)'),
+      format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
-      const edges = codeGraphEdgeRepository
+      let callers = codeGraphEdgeRepository
         .findCallersOf(WORKSPACE_ID, args.symbolName)
         .slice(0, args.maxResults)
+      if (args.deduplicate) {
+        const seen = new Set<string>()
+        callers = callers.filter((e) => {
+          const key = `${e.sourceFile}::${e.sourceSymbol}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      }
+      const mapped = callers.map((e) => ({
+        sourceFile: e.sourceFile,
+        sourceSymbol: e.sourceSymbol,
+        edgeType: e.edgeType
+      }))
+      if (args.format === 'markdown') {
+        const lines = [`### Callers of \`${args.symbolName}\` (${mapped.length})\n`]
+        if (mapped.length === 0) {
+          lines.push('No callers found.')
+        } else {
+          lines.push('| Source File | Source Symbol | Edge Type |')
+          lines.push('|-------------|---------------|-----------|')
+          for (const c of mapped) {
+            lines.push(`| ${c.sourceFile} | ${c.sourceSymbol} | ${c.edgeType} |`)
+          }
+        }
+        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+      }
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              {
-                symbol: args.symbolName,
-                callers: edges.map((e) => ({
-                  sourceFile: e.sourceFile,
-                  sourceSymbol: e.sourceSymbol,
-                  edgeType: e.edgeType
-                })),
-                count: edges.length
-              },
-              null,
-              2
+            text: truncateToolOutput(
+              JSON.stringify({ symbol: args.symbolName, callers: mapped, count: mapped.length }),
+              10_000
             )
           }
         ]
@@ -248,31 +258,41 @@ async function registerTools(): Promise<void> {
   // ── find_callees ──
   server.tool(
     'find_callees',
-    'Find what a symbol depends on — what does it call, import, or reference.',
+    'Find callees of a symbol.',
     {
       symbolName: z.string().describe('Symbol name to find callees of'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50),
+      format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
-      const edges = codeGraphEdgeRepository
+      const callees = codeGraphEdgeRepository
         .findCalleesOf(WORKSPACE_ID, args.symbolName)
         .slice(0, args.maxResults)
+      const mapped = callees.map((e) => ({
+        targetFile: e.targetFile,
+        targetSymbol: e.targetSymbol,
+        edgeType: e.edgeType
+      }))
+      if (args.format === 'markdown') {
+        const lines = [`### Callees of \`${args.symbolName}\` (${mapped.length})\n`]
+        if (mapped.length === 0) {
+          lines.push('No callees found.')
+        } else {
+          lines.push('| Target File | Target Symbol | Edge Type |')
+          lines.push('|-------------|---------------|-----------|')
+          for (const c of mapped) {
+            lines.push(`| ${c.targetFile} | ${c.targetSymbol} | ${c.edgeType} |`)
+          }
+        }
+        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+      }
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              {
-                symbol: args.symbolName,
-                callees: edges.map((e) => ({
-                  targetFile: e.targetFile,
-                  targetSymbol: e.targetSymbol,
-                  edgeType: e.edgeType
-                })),
-                count: edges.length
-              },
-              null,
-              2
+            text: truncateToolOutput(
+              JSON.stringify({ symbol: args.symbolName, callees: mapped, count: mapped.length }),
+              10_000
             )
           }
         ]
@@ -283,29 +303,49 @@ async function registerTools(): Promise<void> {
   // ── find_references ──
   server.tool(
     'find_references',
-    'Find all cross-file reference sites for a symbol (excluding definitions).',
+    'Find cross-file references to a symbol.',
     {
       symbolName: z.string().describe('Symbol name to find references for'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50),
+      deduplicate: z.boolean().optional().default(true).describe('Remove duplicate results (default: true)'),
+      format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
-      const refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, args.symbolName, {
+      let refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, args.symbolName, {
         maxResults: args.maxResults,
         includeDefinitions: false,
         includeReferences: true
       })
+      if (args.deduplicate) {
+        const seen = new Set<string>()
+        refs = refs.filter((r) => {
+          const key = `${r.relFname}::${r.line}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      }
+      const mapped = refs.map((r) => ({ file: r.relFname, line: r.line, name: r.name }))
+      if (args.format === 'markdown') {
+        const lines = [`### References to \`${args.symbolName}\` (${mapped.length})\n`]
+        if (mapped.length === 0) {
+          lines.push('No references found.')
+        } else {
+          lines.push('| File | Line | Name |')
+          lines.push('|------|------|------|')
+          for (const r of mapped) {
+            lines.push(`| ${r.file} | ${r.line} | ${r.name} |`)
+          }
+        }
+        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+      }
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              {
-                symbol: args.symbolName,
-                references: refs.map((r) => ({ file: r.relFname, line: r.line, name: r.name })),
-                count: refs.length
-              },
-              null,
-              2
+            text: truncateToolOutput(
+              JSON.stringify({ symbol: args.symbolName, references: mapped, count: mapped.length }),
+              10_000
             )
           }
         ]
@@ -316,12 +356,11 @@ async function registerTools(): Promise<void> {
   // ── file_dependencies ──
   server.tool(
     'file_dependencies',
-    'Find files that a given file depends on (imports, calls, references).',
+    'Find files a file depends on.',
     {
       filePath: z.string().describe('Relative file path to analyze')
     },
     async (args) => {
-      validateWorkspacePath(args.filePath)
       const deps = codeGraphEdgeRepository.findDependenciesOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
       for (const d of deps) {
@@ -331,10 +370,9 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              { file: args.filePath, dependencies: grouped, totalCount: deps.length },
-              null,
-              2
+            text: truncateToolOutput(
+              JSON.stringify({ file: args.filePath, dependencies: grouped, totalCount: deps.length }),
+              10_000
             )
           }
         ]
@@ -347,23 +385,28 @@ async function registerTools(): Promise<void> {
     'file_dependents',
     'Find files that depend on a given file (blast radius).',
     {
-      filePath: z.string().describe('Relative file path to find dependents of')
+      filePath: z.string().describe('Relative file path to find dependents of'),
+      deduplicate: z.boolean().optional().default(true).describe('Remove duplicate file entries per edge type (default: true)')
     },
     async (args) => {
-      validateWorkspacePath(args.filePath)
       const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
       for (const d of deps) {
         ;(grouped[d.edgeType] ??= []).push(d.sourceFile)
       }
+      if (args.deduplicate) {
+        for (const type of Object.keys(grouped)) {
+          grouped[type] = [...new Set(grouped[type])]
+        }
+      }
+      const totalCount = Object.values(grouped).reduce((s, arr) => s + arr.length, 0)
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(
-              { file: args.filePath, dependents: grouped, totalCount: deps.length },
-              null,
-              2
+            text: truncateToolOutput(
+              JSON.stringify({ file: args.filePath, dependents: grouped, totalCount }),
+              10_000
             )
           }
         ]
@@ -374,9 +417,9 @@ async function registerTools(): Promise<void> {
   // ── symbol_hotspots ──
   server.tool(
     'symbol_hotspots',
-    'Find the most-referenced symbols in the codebase (load-bearing abstractions).',
+    'Find most-referenced symbols.',
     {
-      maxResults: z.number().optional().default(30),
+      maxResults: z.number().int().min(1).max(500).optional().default(30),
       path: z.string().optional().describe('Filter to symbols in files under this directory')
     },
     async (args) => {
@@ -388,7 +431,7 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: truncateToolOutput(JSON.stringify({ hotspots, count: hotspots.length }, null, 2))
+            text: truncateToolOutput(JSON.stringify({ hotspots, count: hotspots.length }))
           }
         ]
       }
@@ -400,9 +443,9 @@ async function registerTools(): Promise<void> {
     'coupling_analysis',
     'Find tightly coupled file pairs ranked by cross-references.',
     {
-      minCoupling: z.number().optional().default(2),
+      minCoupling: z.number().int().min(1).max(100).optional().default(2),
       path: z.string().optional().describe('Filter to files under this directory'),
-      maxResults: z.number().optional().default(50)
+      maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
       const coupled = codeGraphEdgeRepository.findCoupledFiles(WORKSPACE_ID, {
@@ -415,7 +458,7 @@ async function registerTools(): Promise<void> {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ couples: coupled, count: coupled.length }, null, 2)
+              JSON.stringify({ couples: coupled, count: coupled.length })
             )
           }
         ]
@@ -434,7 +477,7 @@ async function registerTools(): Promise<void> {
       const cycles = codeGraphService.findCircularDependencies(WORKSPACE_ID, { path: args.path })
       return {
         content: [
-          { type: 'text' as const, text: JSON.stringify({ cycles, count: cycles.length }, null, 2) }
+          { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ cycles, count: cycles.length }), 10_000) }
         ]
       }
     }
@@ -443,9 +486,16 @@ async function registerTools(): Promise<void> {
   // ── module_boundary_health ──
   server.tool(
     'module_boundary_health',
-    'Quantify separation of concerns by measuring intra-module vs cross-module edges.',
+    'Measure module boundary health (intra vs cross-module edges).',
     {
-      depth: z.number().optional().default(2).describe('Directory depth for module boundaries')
+      depth: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .optional()
+        .default(2)
+        .describe('Directory depth for module boundaries')
     },
     async (args) => {
       const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(WORKSPACE_ID, args.depth)
@@ -453,133 +503,80 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify({ modules: metrics, count: metrics.length }, null, 2)
+            text: truncateToolOutput(JSON.stringify({ modules: metrics, count: metrics.length }), 10_000)
           }
         ]
       }
     }
   )
 
-  // ── blast_radius ──
+  // ── wiring_check ──
   server.tool(
-    'blast_radius',
-    'Calculate the full transitive blast radius of changing a file — all files that could be affected, with depth. Unlike file_dependents (direct only), this follows the reverse import graph to the full transitive closure.',
+    'wiring_check',
+    'Check wiring for multiple files: verifies exports have importers and new symbols are referenced. Use instead of calling file_dependents + find_references separately per file.',
     {
-      filePath: z.string().describe('Relative file path to analyze'),
-      maxDepth: z.number().optional().default(5).describe('Maximum traversal depth (1-10)'),
+      filePaths: z.array(z.string()).min(1).max(20).describe('Files to check wiring for'),
+      symbolNames: z.array(z.string()).optional().describe('Key symbols to verify references for')
     },
     async (args) => {
-      validateWorkspacePath(args.filePath)
-      const depth = Math.min(Math.max(args.maxDepth, 1), 10)
-      const dependents = codeGraphEdgeRepository.findTransitiveDependents(
-        WORKSPACE_ID, args.filePath, depth
-      )
-      const byDepth: Record<number, string[]> = {}
-      for (const d of dependents) {
-        ;(byDepth[d.depth] ??= []).push(d.file)
+      const fileResults: Array<{ file: string; dependentCount: number; status: string }> = []
+      for (const filePath of args.filePaths) {
+        const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, filePath)
+        // Deduplicate by source file
+        const uniqueFiles = new Set(deps.map((d) => d.sourceFile))
+        fileResults.push({
+          file: filePath,
+          dependentCount: uniqueFiles.size,
+          status: uniqueFiles.size > 0 ? '✅ Wired' : '❌ No importers'
+        })
       }
-      return {
-        content: [{
-          type: 'text' as const,
-          text: truncateToolOutput(JSON.stringify({
-            file: args.filePath,
-            totalAffected: dependents.length,
-            maxDepthReached: dependents.length > 0 ? Math.max(...dependents.map(d => d.depth)) : 0,
-            byDepth,
-            dependents
-          }, null, 2))
-        }]
-      }
-    }
-  )
 
-  // ── co_change ──
-  server.tool(
-    'co_change',
-    'Find files that frequently change together in git history — reveals logical coupling invisible to the import graph.',
-    {
-      maxCommits: z.number().optional().default(200).describe('Number of recent commits to analyze (max 500)'),
-      minCoChanges: z.number().optional().default(3).describe('Minimum co-change count to report'),
-      path: z.string().optional().describe('Filter to files under this directory'),
-      filePath: z.string().optional().describe('Find co-change partners for a specific file'),
-      maxResults: z.number().optional().default(30)
-    },
-    async (args) => {
-      if (args.filePath) validateWorkspacePath(args.filePath)
-      if (args.path) validateWorkspacePath(args.path)
-      const pairs = codeGraphService.findCoChangePairs(WORKSPACE_PATH, {
-        maxCommits: args.maxCommits,
-        minCoChanges: args.minCoChanges,
-        path: args.path,
-        filePath: args.filePath,
-        maxResults: args.maxResults
-      })
-      return {
-        content: [{
-          type: 'text' as const,
-          text: truncateToolOutput(JSON.stringify({
-            pairs,
-            count: pairs.length,
-            commitsAnalyzed: pairs[0]?.commitsAnalyzed ?? args.maxCommits
-          }, null, 2))
-        }]
-      }
-    }
-  )
-
-  // ── hotspot_score ──
-  server.tool(
-    'hotspot_score',
-    'Rank files by risk: coupling (reference count) × git churn. Surfaces the most dangerous files to touch during refactoring.',
-    {
-      maxResults: z.number().optional().default(20),
-      path: z.string().optional().describe('Filter to files under this directory')
-    },
-    async (args) => {
-      const hotspots = codeGraphService.findHotspots(
-        WORKSPACE_ID, WORKSPACE_PATH, {
-          maxResults: args.maxResults,
-          path: args.path
+      const symbolResults: Array<{ symbol: string; refCount: number; status: string }> = []
+      if (args.symbolNames) {
+        for (const sym of args.symbolNames) {
+          const refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, sym, {
+            maxResults: 50,
+            includeDefinitions: false,
+            includeReferences: true
+          })
+          // Deduplicate by file+line
+          const seen = new Set<string>()
+          const uniqueRefs = refs.filter((r) => {
+            const key = `${r.relFname}::${r.line}`
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+          symbolResults.push({
+            symbol: sym,
+            refCount: uniqueRefs.length,
+            status: uniqueRefs.length > 0 ? '✅ Used' : '❌ Unreferenced'
+          })
         }
-      )
-      return {
-        content: [{
-          type: 'text' as const,
-          text: truncateToolOutput(JSON.stringify({
-            hotspots,
-            count: hotspots.length
-          }, null, 2))
-        }]
       }
-    }
-  )
 
-  // ── code_clones ──
-  server.tool(
-    'code_clones',
-    'Detect structurally duplicated code blocks via normalized hashing — finds copy-paste logic across files. Requires semantic search indexing to be active.',
-    {
-      minBodyLines: z.number().optional().default(5).describe('Minimum function body lines to consider'),
-      path: z.string().optional().describe('Filter to files under this directory'),
-      maxResults: z.number().optional().default(20).describe('Max clone groups to return')
-    },
-    async (args) => {
-      const clones = codeGraphService.findCodeClones(
-        WORKSPACE_ID, WORKSPACE_PATH, {
-          minBodyLines: args.minBodyLines,
-          path: args.path,
-          maxResults: args.maxResults
+      // Build markdown report
+      const lines: string[] = [
+        `### Wiring Check (${fileResults.length} files${symbolResults.length > 0 ? `, ${symbolResults.length} symbols` : ''})\n`
+      ]
+
+      lines.push('| File | Dependents | Status |')
+      lines.push('|------|-----------|--------|')
+      for (const f of fileResults) {
+        lines.push(`| ${f.file} | ${f.dependentCount} | ${f.status} |`)
+      }
+
+      if (symbolResults.length > 0) {
+        lines.push('')
+        lines.push('| Symbol | References | Status |')
+        lines.push('|--------|-----------|--------|')
+        for (const s of symbolResults) {
+          lines.push(`| ${s.symbol} | ${s.refCount} | ${s.status} |`)
         }
-      )
+      }
+
       return {
-        content: [{
-          type: 'text' as const,
-          text: truncateToolOutput(JSON.stringify({
-            cloneGroups: clones,
-            totalGroups: clones.length,
-            totalDuplicates: clones.reduce((sum, g) => sum + g.clones.length, 0)
-          }, null, 2))
-        }]
+        content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }]
       }
     }
   )

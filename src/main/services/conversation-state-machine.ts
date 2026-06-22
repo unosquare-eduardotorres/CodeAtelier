@@ -2,8 +2,11 @@ import { EventEmitter } from 'node:events'
 import type { BrowserWindow } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { safeWindowSend } from '../ipc/safe-send'
 
+// SM-DEAD-CODE-01: The state machine only uses 'idle' and 'chat-agent-streaming'.
+// All error/stop paths use conversationLifecycle.abort() → forceReset() which bypasses
+// the transition table entirely. The 'error' and 'stopped' states are retained in the
+// type for backward compatibility but are unreachable in production.
 export type ConversationState = 'idle' | 'chat-agent-streaming' | 'error' | 'stopped'
 
 export type ConversationTransition =
@@ -25,11 +28,16 @@ const VALID_TRANSITIONS: Record<
   'chat-agent-streaming': {
     chatAgentComplete: 'idle',
     messageFinalised: 'idle',
+    // SM-DEAD-CODE-01: streamError and userStop transitions exist for completeness
+    // but are unreachable — all abort paths use conversationLifecycle.abort() →
+    // forceReset(), bypassing the transition table. If the state machine is
+    // ever used directly (without lifecycle), these provide a valid path.
     streamError: 'error',
     userStop: 'stopped'
   },
   error: {
-    errorHandled: 'idle'
+    errorHandled: 'idle',
+    userStop: 'stopped'
   },
   stopped: {
     cleanupComplete: 'idle'
@@ -98,8 +106,12 @@ export class ConversationStateMachine extends EventEmitter {
     this.emit('stateChange', statePayload)
 
     // Forward state transitions to renderer for state mirror
-    if (this.mainWindow) {
-      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      try {
+        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+      } catch {
+        // Window destroyed between check and send — harmless
+      }
     }
     return true
   }
@@ -126,8 +138,12 @@ export class ConversationStateMachine extends EventEmitter {
     this.emit('stateChange', statePayload)
 
     // Forward force reset to renderer
-    if (this.mainWindow) {
-      safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      try {
+        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+      } catch {
+        // Window destroyed between check and send — harmless
+      }
     }
   }
 }

@@ -25,8 +25,7 @@ export function auditPlanToStructuredPlan(plan: AuditPlan): StructuredPlan {
   const phases: PlanPhase[] = plan.items.map((item, i) => ({
     id: i + 1,
     title: item.title,
-    description:
-      item.description + (item.recommendation ? `\n\n💡 ${item.recommendation}` : ''),
+    description: item.description + (item.recommendation ? `\n\n💡 ${item.recommendation}` : ''),
     complexity: severityToComplexity[item.severity ?? 'medium'] ?? 5,
     risk: severityToRisk[item.severity ?? 'medium'] ?? 'medium',
     fileCount: item.files.length,

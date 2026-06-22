@@ -38,6 +38,8 @@ export interface AdapterPromptContext {
   workspacePath: string
   workspaceId: string | null
   costPreference: CostPreference
+  /** LLM preset ID for per-action model resolution */
+  presetId?: string | null
 }
 
 export interface AdapterPromptResult {
@@ -74,6 +76,8 @@ export interface AdapterSessionLifecycleCtx {
   workspacePath: string
   workspaceId: string | null
   conversationId: string | null
+  /** LLM preset ID — null at session start, available on refreshFeatureFlags */
+  presetId?: string | null
 }
 
 // ── Events emitted by AgentSessionService ────────────────────────────
@@ -150,6 +154,20 @@ export interface AgentRoleAdapter {
    * 'response' intent unconditionally.
    */
   emitDetectedIntents(ctx: AdapterIntentContext): void
+
+  /**
+   * SDK-COMPACT-01: Queue a compaction instruction for the next send().
+   * The DaVinci adapter prepends this to the effective message; other adapters
+   * may no-op. Called from the SDK backend compact path.
+   */
+  setPendingCompaction?(conversationId: string, prompt: string): void
+
+  /**
+   * COMPACT-LOST-01: Called after executeStream() succeeds.
+   * Adapters with pending per-conversation state (compaction, context injection)
+   * should confirm consumption here. Default: no-op.
+   */
+  onSendSuccess?(conversationId: string): void
 
   /** Reset adapter state when the session stops. */
   onSessionStop(): void

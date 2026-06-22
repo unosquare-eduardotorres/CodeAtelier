@@ -1,199 +1,150 @@
 /**
- * PresetSwitcher — Compact pill/dropdown for switching the active preset
- * on a conversation mid-flight. Shown in the chat panel floating pill bar.
+ * PresetSwitcher — floating pill for switching the LLM preset on an active conversation.
  *
- * When switching to a different provider, shows a confirmation warning
- * about context handoff before applying.
+ * Shows in the ChatPanel toolbar. When switching from Claude → Local (or vice versa),
+ * shows a confirmation dialog explaining the handoff implications.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { Settings2, ChevronDown, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Layers, ChevronDown, Check, AlertTriangle } from 'lucide-react'
 import { usePresetStore } from '@renderer/store/preset.store'
-import { useWorkspaceStore, useToastStore } from '@renderer/store'
 import type { Conversation, LLMPreset } from '../../../../shared/types'
 
 interface PresetSwitcherProps {
-  conversation: Conversation
+  conversation: Conversation | null
   disabled?: boolean
 }
 
-export default function PresetSwitcher({
+export function PresetSwitcher({
   conversation,
   disabled
-}: PresetSwitcherProps): React.JSX.Element {
-  const { activeWorkspace } = useWorkspaceStore()
+}: PresetSwitcherProps): React.JSX.Element | null {
   const { presets, fetchPresets } = usePresetStore()
-  const addToast = useToastStore((s) => s.addToast)
-
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState<LLMPreset | null>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLDivElement>(null)
 
-  // Fetch presets if not loaded
+  // Fetch presets when workspace changes
   useEffect(() => {
-    if (activeWorkspace && presets.length === 0) {
-      fetchPresets(activeWorkspace.id)
+    if (conversation?.workspaceId) {
+      fetchPresets(conversation.workspaceId)
     }
-  }, [activeWorkspace?.id, presets.length, fetchPresets])
+  }, [conversation?.workspaceId, fetchPresets])
 
-  // Close dropdown on outside click
+  // Close on click outside
   useEffect(() => {
     if (!open) return
-    const handleClick = (e: MouseEvent): void => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false)
-        setConfirming(null)
       }
     }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
+  if (!conversation || presets.length === 0) return null
+
   const currentPreset = presets.find((p) => p.id === conversation.presetId)
-  const presetLabel = currentPreset?.name ?? 'Default'
+  const label = currentPreset?.name ?? 'Default'
 
-  const handleSelect = useCallback(
-    async (preset: LLMPreset) => {
-      if (preset.id === conversation.presetId) {
-        setOpen(false)
-        return
-      }
+  const handleSelect = async (preset: LLMPreset): Promise<void> => {
+    if (preset.id === conversation.presetId) {
+      setOpen(false)
+      return
+    }
 
-      try {
-        const result = (await window.api.switchConversationPreset({
-          conversationId: conversation.id,
-          presetId: preset.id
-        })) as { success?: boolean; requiresHandoff?: boolean; error?: string }
+    // Check if provider is changing — show confirmation
+    const result = (await window.api.switchConversationPreset({
+      conversationId: conversation.id,
+      presetId: preset.id
+    })) as { success: boolean; requiresHandoff: boolean } | { error: string }
 
-        if (result.error) {
-          addToast({ message: result.error, type: 'error' })
-          return
-        }
+    if ('error' in result) return
 
-        if (result.requiresHandoff) {
-          addToast({
-            message: `Switched to "${preset.name}" — provider changed, context handoff applied`,
-            type: 'info'
-          })
-        } else {
-          addToast({
-            message: `Switched to "${preset.name}"`,
-            type: 'success'
-          })
-        }
-
-        setOpen(false)
-        setConfirming(null)
-      } catch (error) {
-        addToast({ message: 'Failed to switch preset', type: 'error' })
-      }
-    },
-    [conversation.id, conversation.presetId, addToast]
-  )
-
-  const handlePresetClick = useCallback(
-    (preset: LLMPreset) => {
-      if (preset.id === conversation.presetId) {
-        setOpen(false)
-        return
-      }
-
-      // Check if this would change the chat provider (requiring handoff)
-      const currentProvider = currentPreset
-        ? Object.values(currentPreset.actionConfig).find(
-            (c) => c?.provider
-          )?.provider ?? 'claude'
-        : 'claude'
-      const newProvider =
-        Object.values(preset.actionConfig).find((c) => c?.provider)?.provider ??
-        'claude'
-
-      if (currentProvider !== newProvider) {
-        setConfirming(preset)
-      } else {
-        handleSelect(preset)
-      }
-    },
-    [conversation.presetId, currentPreset, handleSelect]
-  )
-
-  if (presets.length === 0) return <></>
+    if (result.requiresHandoff) {
+      setConfirming(preset)
+    }
+    setOpen(false)
+  }
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      {/* Pill button */}
-      <button
-        onClick={() => setOpen(!open)}
-        disabled={disabled}
-        className="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border border-border-secondary bg-bg-secondary/80 text-text-secondary backdrop-blur-sm shadow-lg transition-all hover:border-border-primary hover:text-text-primary disabled:opacity-50"
-      >
-        <Settings2 className="w-3 h-3" />
-        <span className="max-w-[100px] truncate">{presetLabel}</span>
-        <ChevronDown className="w-3 h-3" />
-      </button>
+    <>
+      <div ref={ref} className="relative">
+        <button
+          onClick={() => setOpen(!open)}
+          disabled={disabled}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium
+                     bg-surface-secondary/80 backdrop-blur border border-border-subtle
+                     rounded-full hover:bg-surface-overlay transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Layers size={12} />
+          {label}
+          <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
 
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 rounded-lg border border-border-secondary bg-bg-primary shadow-2xl z-50 overflow-hidden">
-          <div className="px-3 py-2 border-b border-border-secondary">
-            <span className="text-[11px] font-medium text-text-tertiary">Switch Preset</span>
-          </div>
-
-          {/* Confirmation warning */}
-          {confirming && (
-            <div className="px-3 py-2 bg-yellow-500/10 border-b border-yellow-500/20">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-[11px] text-yellow-300 font-medium">Provider Change</p>
-                  <p className="text-[10px] text-yellow-400/80 mt-0.5">
-                    Switching to "{confirming.name}" will change the chat provider.
-                    Context will be summarized and handed off.
-                  </p>
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      onClick={() => setConfirming(null)}
-                      className="px-2 py-0.5 rounded text-[10px] text-text-secondary hover:text-text-primary border border-border-secondary"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => handleSelect(confirming)}
-                      className="px-2 py-0.5 rounded text-[10px] text-yellow-300 hover:text-yellow-200 bg-yellow-500/20 border border-yellow-500/30"
-                    >
-                      Switch & Handoff
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Preset list */}
-          <div className="max-h-48 overflow-y-auto py-1">
+        {open && (
+          <div
+            className="absolute bottom-full mb-1 left-0 w-48 bg-surface-primary border border-border-subtle
+                          rounded-lg shadow-lg overflow-hidden z-50"
+          >
             {presets.map((preset) => {
               const isActive = preset.id === conversation.presetId
               return (
                 <button
                   key={preset.id}
-                  onClick={() => handlePresetClick(preset)}
-                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
-                    isActive
-                      ? 'bg-accent-primary/10 text-accent-primary'
-                      : 'text-text-secondary hover:bg-bg-secondary hover:text-text-primary'
-                  }`}
+                  onClick={() => handleSelect(preset)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left
+                    hover:bg-surface-overlay transition-colors ${
+                      isActive ? 'text-primary font-medium' : 'text-text-secondary'
+                    }`}
                 >
-                  <Settings2 className="w-3 h-3 flex-shrink-0" />
-                  <span className="truncate">{preset.name}</span>
-                  {isActive && (
-                    <span className="ml-auto text-[10px] text-accent-primary">✓</span>
+                  {isActive && <Check size={12} />}
+                  <span className={isActive ? '' : 'ml-5'}>{preset.name}</span>
+                  {preset.isBuiltIn && (
+                    <span className="text-[9px] text-text-muted ml-auto">built-in</span>
                   )}
                 </button>
               )
             })}
           </div>
+        )}
+      </div>
+
+      {/* Handoff confirmation dialog */}
+      {confirming && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setConfirming(null)} />
+          <div
+            className="relative bg-surface-primary border border-border-subtle rounded-xl
+                          shadow-xl p-5 w-[400px]"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={20} className="text-warning shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-semibold text-text-primary mb-1">
+                  Provider Change Detected
+                </h4>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  Switching to &ldquo;{confirming.name}&rdquo; will change the chat provider. A
+                  handoff context summary will be generated so the new provider can continue the
+                  conversation.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setConfirming(null)}
+                className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-surface-secondary
+                           rounded-lg hover:bg-surface-overlay transition-colors"
+              >
+                OK
+              </button>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   )
 }

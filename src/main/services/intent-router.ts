@@ -3,7 +3,6 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import type { AgentIntent } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
 import { chatAgentLogger } from '../logger'
-import { safeWindowSend } from '../ipc/safe-send'
 
 const log = chatAgentLogger
 
@@ -46,12 +45,18 @@ export class IntentRouter {
         log.info(
           `[IntentRouter:askUser] conversationId=${conversationId} questions=${intent.questions.length} action=${intent.action ?? 'none'}`
         )
-        safeWindowSend(this.mainWindow, IPC_CHANNELS.CHAT_ASK_QUESTION, {
-          conversationId,
-          questions: intent.questions,
-          action: intent.action,
-          requestId: intent.requestId
-        })
+        if (!this.mainWindow.isDestroyed()) {
+          try {
+            this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_ASK_QUESTION, {
+              conversationId,
+              questions: intent.questions,
+              action: intent.action,
+              requestId: intent.requestId
+            })
+          } catch {
+            // Window destroyed between check and send — harmless
+          }
+        }
         break
 
       case 'grillQuestion':

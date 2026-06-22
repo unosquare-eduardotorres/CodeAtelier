@@ -19,24 +19,30 @@ const GOAL_TYPE_MAP: Record<GrillStructuredPlan['goalType'], PlanType> = {
 }
 
 /**
- * Convert a GrillStructuredPlan into a chat StructuredPlan. Intentionally
- * minimal — `constraints` and the verbose `requirementDocument` are left out;
- * the decisions + phases carry the substance the card renders. Severities are
- * faithful ("medium"), never fabricated as "high".
+ * Convert a GrillStructuredPlan into a chat StructuredPlan.
+ * PLAN-GEN-05: Now includes `constraints` in the output so downstream agents
+ * (Council, MPA) retain architectural constraints from the grill session.
+ * The verbose `requirementDocument` is still omitted.
  */
 export function grillPlanToStructuredPlan(grill: GrillStructuredPlan): StructuredPlan {
-  const phases = grill.items.map((item, i) => ({
-    id: i + 1,
-    title: item.title,
-    complexity: Math.min(10, Math.max(1, item.files.length + item.dependsOn.length)),
-    fileCount: item.files.length,
-    risk: (item.dependsOn.length > 2 ? 'high' : item.files.length > 5 ? 'medium' : 'low') as
-      | 'low'
-      | 'medium'
-      | 'high',
-    description: item.description,
-    files: item.files.map((f) => ({ file: f, change: `[${item.scope}] ${item.title}` }))
-  }))
+  // GRILL-MAP-01: Guard all item.files and item.dependsOn accesses against
+  // undefined (malformed LLM output where fields may be missing)
+  const phases = grill.items.map((item, i) => {
+    const files = item.files ?? []
+    const deps = item.dependsOn ?? []
+    return {
+      id: i + 1,
+      title: item.title,
+      complexity: Math.min(10, Math.max(1, files.length + deps.length)),
+      fileCount: files.length,
+      risk: (deps.length > 2 ? 'high' : files.length > 5 ? 'medium' : 'low') as
+        | 'low'
+        | 'medium'
+        | 'high',
+      description: item.description,
+      files: files.map((f) => ({ file: f, change: `[${item.scope}] ${item.title}` }))
+    }
+  })
 
   const decisions = grill.decisions.flatMap((t) =>
     t.items.map((d) => ({ what: `${d.question} → ${d.answer}`, why: d.rationale }))
@@ -48,7 +54,10 @@ export function grillPlanToStructuredPlan(grill: GrillStructuredPlan): Structure
     summary: grill.summary,
     decisions: decisions.length ? decisions : undefined,
     phases: phases.length ? phases : undefined,
-    files: [...new Set(grill.items.flatMap((i) => i.files))],
+    // GRILL-MAP-01: Guard against undefined files in items (malformed LLM output)
+    files: [...new Set(grill.items.flatMap((i) => i.files ?? []))],
+    // PLAN-GEN-05: Include constraints so downstream agents retain them
+    constraints: grill.constraints?.length ? grill.constraints : undefined,
     risks: grill.risks.length
       ? grill.risks.map((r) => ({ risk: r, severity: 'medium' as const }))
       : undefined,

@@ -83,8 +83,8 @@ import './compaction-thresholds.test'
 import './local-compaction.test'
 import './auto-compact-options.test'
 
-// ─── Run 18: Llamafile embedding sidecar manager ───
-import './llamafile-embedding.test'
+// ─── Run 18: oMLX embedding provider ───
+import './omlx-embedding.test'
 
 // ─── Run 19: Previously-orphaned test files (registered for coverage) ───
 import './context-management.test'
@@ -175,13 +175,89 @@ import './blueprint-verify-conditions.test'
 import './audit-plan-mapper.test'
 import './plan-registry.test'
 
-// ─── Run 32: Code Graph enhancements — blast_radius, co_change, hotspot_score, code_clones ───
-import './code-graph-enhancements.test'
+// ─── Run 32: Library Documentation Service (three-tier lookup) ───
+import './library-doc-service.test'
 
-// ─── Run 33: Phase 10 Coverage Push — 57% → 60% ───
-import './repo-service-utils.test'
-import './base-adapter.test'
-import './specialist-builder-logic.test'
+// ─── Run 33: ESLint MCP tools (output parsing, summary formatting, error handling) ───
+import './eslint-mcp-tools.test'
+import './analyze-complexity.test'
+
+// ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
+import './evaluation-mcp-config.test'
+import './mpa-base-adapter.test'
+import './grill-adapter.test'
+import './greenfield-grill-adapter.test'
+import './blueprint-service-logic.test'
+import './cli-mcp-config-writer-logic.test'
+
+// ─── Run 35: Adapter subclass family + pure functions + config builders ───
+import './mpa-planner-adapter.test'
+import './mpa-verifier-adapter.test'
+import './mpa-builder-adapter.test'
+import './blueprint-base-adapter.test'
+import './blueprint-build-adapter.test'
+import './blueprint-verify-adapter.test'
+import './preset-service-logic.test'
+import './repo-service-pure.test'
+import './opencode-config-writer-logic.test'
+import './description-cache-pure.test'
+import './workspace-mcp-config-logic.test'
+
+// ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───
+import './blueprint-remaining-adapters.test'
+import './council-member-adapter.test'
+import './council-chairman-adapter.test'
+import './audit-adapter.test'
+import './skill-tiers-parser.test'
+import './parse-plan-payload.test'
+import './specialist-builder-pure.test'
+import './blueprint-prompt-loader-pure.test'
+import './repository-maprow-logic.test'
+import './base-adapter-strategies.test'
+import './heuristic-description-logic.test'
+import './event-logger-service.test'
+import '../../ipc/__tests__/ipc-registration.test'
+import '../../mcp-servers/__tests__/mcp-server-registration.test'
+
+// ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
+import '../../ipc/__tests__/ipc-remaining-registration.test'
+import './cli-executor-args.test'
+import './opencode-executor-pure.test'
+import './agent-session-deep.test'
+import './chat-stream-methods.test'
+import './mpa-orchestration-helpers.test'
+import './council-service-helpers.test'
+import './grill-agent-helpers.test'
+import './audit-agent-helpers.test'
+import './grill-persistence-logic.test'
+import './council-persistence-logic.test'
+import './shared-types-coverage.test'
+import './blueprint-spec-helpers.test'
+import './memory-service-logic.test'
+import './plan-registry-helpers.test'
+import './zero-coverage-services.test'
+
+// ─── Phase 15: Coverage Mega-Push — pure function tests ───
+import './default-prompts-constants.test'
+import './preprocessing-pure.test'
+import './vector-search-pure.test'
+
+// ─── Phase 16: Coverage Mega-Push II — types, services, IPC, MCP ───
+import './type-coverage.test'
+import './mpa-orchestration-deep.test'
+import './service-mid-coverage-deep.test'
+import '../../ipc/__tests__/ipc-zero-coverage.test'
+import '../../ipc/__tests__/ipc-blueprint-handlers.test'
+import '../../ipc/__tests__/ipc-audit-handlers.test'
+import '../../ipc/__tests__/ipc-crud-deep.test'
+import '../../mcp-servers/__tests__/mcp-server-tools-deep.test'
+
+// ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
+import '../../ipc/__tests__/ipc-handler-bodies.test'
+import './service-instance-deep.test'
+import './blueprint-pipeline-instance.test'
+import './adapter-branch-push.test'
+import './migration-metadata.test'
 
 // Await every async test queued by the harness before printing the aggregate
 // summary and exiting. Individual test files guard their own summary() calls

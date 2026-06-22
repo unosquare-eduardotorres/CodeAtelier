@@ -77,7 +77,7 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     const track = GRILL_TRACKS[this.trackId]
 
     // Pattern 1: Centralized model resolution
-    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill')
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill', ctx.presetId)
 
     this.systemPrompt = this.buildSystemPrompt(track, resolvedModel)
 

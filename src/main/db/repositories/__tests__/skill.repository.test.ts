@@ -1,5 +1,6 @@
 /**
- * Tests for SkillRepository — CRUD, active/inactive toggle, summaries, tiers, enrichment.
+ * Tests for SkillRepository — CRUD, active toggle, summaries, tiers, enrichment.
+ * Skips gracefully if better-sqlite3 native module is incompatible.
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
@@ -9,191 +10,248 @@ const env = trySetupTestDb()
 
 if (!env) {
   describe('SkillRepository (skipped — native module unavailable)', () => {
-    test('create()', () => {}, { skipReason: 'no DB' })
+    test('create() inserts skill', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { wsId } = env
   const { skillRepository } = require('../skill.repository')
 
   describe('SkillRepository', () => {
-    test('create() returns mapped model with defaults', () => {
-      const skill = skillRepository.create({
-        name: 'Test Skill',
-        filename: 'test-skill.md',
-        filePath: '/skills/test-skill.md'
+    // ── create ──
+
+    test('create() inserts and returns skill with all fields', () => {
+      const sk = skillRepository.create({
+        name: 'React Hooks',
+        description: 'Patterns for React hooks',
+        filename: 'react-hooks.md',
+        filePath: '/skills/react-hooks.md',
+        isActive: true,
+        lastUpdatedDate: '2025-01-01',
+        tier1Json: '{"key":"val"}',
+        tier2Instructions: 'Use hooks wisely'
       })
-      assert.ok(skill.id)
-      assert.equal(skill.name, 'Test Skill')
-      assert.equal(skill.description, '')
-      assert.equal(skill.filename, 'test-skill.md')
-      assert.equal(skill.filePath, '/skills/test-skill.md')
-      assert.equal(skill.isActive, true) // default is true (isActive !== false)
+      assert.ok(sk.id)
+      assert.equal(sk.name, 'React Hooks')
+      assert.equal(sk.description, 'Patterns for React hooks')
+      assert.equal(sk.filename, 'react-hooks.md')
+      assert.equal(sk.filePath, '/skills/react-hooks.md')
+      assert.equal(sk.isActive, true)
+      assert.equal(sk.lastUpdatedDate, '2025-01-01')
+      assert.equal(sk.tier1Json, '{"key":"val"}')
+      assert.equal(sk.tier2Instructions, 'Use hooks wisely')
     })
 
-    test('create() respects isActive=false', () => {
-      const skill = skillRepository.create({
-        name: 'Inactive Skill',
-        filename: 'inactive.md',
-        filePath: '/skills/inactive.md',
-        isActive: false
+    test('create() applies defaults for optional fields', () => {
+      const sk = skillRepository.create({
+        name: 'Defaults',
+        filename: 'defaults.md',
+        filePath: '/skills/defaults.md'
       })
-      assert.equal(skill.isActive, false)
+      assert.equal(sk.description, '')
+      assert.equal(sk.isActive, true) // isActive defaults to true (isActive !== false)
+      assert.equal(sk.lastUpdatedDate, null)
+      assert.equal(sk.tier1Json, null)
+      assert.equal(sk.tier2Instructions, null)
     })
 
-    test('create() accepts tier data', () => {
-      const skill = skillRepository.create({
-        name: 'Tiered Skill',
-        filename: 'tiered.md',
-        filePath: '/skills/tiered.md',
-        tier1Json: '{"overview": "brief"}',
-        tier2Instructions: 'Detailed instructions'
-      })
-      assert.equal(skill.tier1Json, '{"overview": "brief"}')
-      assert.equal(skill.tier2Instructions, 'Detailed instructions')
+    // ── findAll ──
+
+    test('findAll() returns skills sorted by name ASC', () => {
+      // Clean: delete all then create known set
+      skillRepository.deleteAll()
+      skillRepository.create({ name: 'Zulu', filename: 'z.md', filePath: '/z.md' })
+      skillRepository.create({ name: 'Alpha', filename: 'a.md', filePath: '/a.md' })
+      const all = skillRepository.findAll()
+      assert.ok(all.length >= 2)
+      assert.equal(all[0].name, 'Alpha')
     })
 
-    test('findById() round-trip', () => {
-      const created = skillRepository.create({
-        name: 'Findable', filename: 'find.md', filePath: '/skills/find.md'
-      })
-      const found = skillRepository.findById(created.id)
+    // ── findById ──
+
+    test('findById() returns skill', () => {
+      const sk = skillRepository.create({ name: 'Find Me', filename: 'find.md', filePath: '/f.md' })
+      const found = skillRepository.findById(sk.id)
       assert.ok(found)
-      assert.equal(found.name, 'Findable')
+      assert.equal(found.name, 'Find Me')
     })
 
-    test('findById() returns undefined for unknown', () => {
+    test('findById() returns undefined for unknown id', () => {
       const found = skillRepository.findById('nonexistent')
       assert.equal(found, undefined)
     })
 
-    test('findByFilename() looks up by filename', () => {
+    // ── findByFilename ──
+
+    test('findByFilename() returns skill by filename', () => {
       skillRepository.create({
-        name: 'By Filename', filename: 'unique-file.md', filePath: '/skills/unique-file.md'
+        name: 'File Lookup',
+        filename: 'unique-file.md',
+        filePath: '/skills/unique-file.md'
       })
       const found = skillRepository.findByFilename('unique-file.md')
       assert.ok(found)
-      assert.equal(found.name, 'By Filename')
+      assert.equal(found.name, 'File Lookup')
     })
 
-    test('findAll() returns all skills', () => {
-      const all = skillRepository.findAll()
-      assert.ok(all.length > 0)
+    test('findByFilename() returns undefined for unknown filename', () => {
+      const found = skillRepository.findByFilename('no-such-file.md')
+      assert.equal(found, undefined)
     })
 
-    test('findActive() filters to active skills', () => {
+    // ── findActive ──
+
+    test('findActive() returns only active skills', () => {
+      skillRepository.deleteAll()
+      skillRepository.create({ name: 'Active', filename: 'act.md', filePath: '/act.md', isActive: true })
+      skillRepository.create({ name: 'Inactive', filename: 'inact.md', filePath: '/inact.md', isActive: false })
       const active = skillRepository.findActive()
-      assert.ok(active.every((s: any) => s.isActive === true))
+      assert.equal(active.length, 1)
+      assert.equal(active[0].name, 'Active')
     })
+
+    // ── update ──
 
     test('update() modifies name and description', () => {
-      const skill = skillRepository.create({
-        name: 'Old Name', filename: 'upd.md', filePath: '/skills/upd.md'
-      })
-      const updated = skillRepository.update(skill.id, {
-        name: 'New Name', description: 'New desc'
+      const sk = skillRepository.create({ name: 'Old Name', filename: 'upd.md', filePath: '/u.md' })
+      const updated = skillRepository.update(sk.id, {
+        name: 'New Name',
+        description: 'New desc'
       })
       assert.equal(updated.name, 'New Name')
       assert.equal(updated.description, 'New desc')
     })
 
-    test('update() with empty data returns existing', () => {
-      const skill = skillRepository.create({
-        name: 'No Change', filename: 'noop.md', filePath: '/skills/noop.md'
-      })
-      const result = skillRepository.update(skill.id, {})
-      assert.equal(result.name, 'No Change')
+    test('update() with empty input returns existing skill', () => {
+      const sk = skillRepository.create({ name: 'NoOp', filename: 'noop.md', filePath: '/n.md' })
+      const result = skillRepository.update(sk.id, {})
+      assert.equal(result.name, 'NoOp')
     })
 
-    test('update() throws for nonexistent id', () => {
-      assert.throws(() => skillRepository.update('nonexistent', { name: 'X' }), /not found/i)
+    test('update() throws for unknown id', () => {
+      assert.throws(() => skillRepository.update('nonexistent', { name: 'X' }), {
+        message: /not found/i
+      })
     })
 
-    test('setActive() toggles active state', () => {
-      const skill = skillRepository.create({
-        name: 'Toggle', filename: 'toggle.md', filePath: '/skills/toggle.md'
+    // ── delete ──
+
+    test('delete() removes skill', () => {
+      const sk = skillRepository.create({ name: 'ToDelete', filename: 'del.md', filePath: '/d.md' })
+      skillRepository.delete(sk.id)
+      const found = skillRepository.findById(sk.id)
+      assert.equal(found, undefined)
+    })
+
+    // ── setActive ──
+
+    test('setActive() toggles active flag', () => {
+      const sk = skillRepository.create({
+        name: 'Toggle',
+        filename: 'tog.md',
+        filePath: '/tog.md',
+        isActive: true
       })
-      const deactivated = skillRepository.setActive(skill.id, false)
+      const deactivated = skillRepository.setActive(sk.id, false)
       assert.equal(deactivated.isActive, false)
-
-      const activated = skillRepository.setActive(skill.id, true)
-      assert.equal(activated.isActive, true)
+      const reactivated = skillRepository.setActive(sk.id, true)
+      assert.equal(reactivated.isActive, true)
     })
 
-    test('setActive() throws for nonexistent id', () => {
-      assert.throws(() => skillRepository.setActive('nonexistent', true), /not found/i)
-    })
-
-    test('updateSummaries() stores all summary tiers', () => {
-      const skill = skillRepository.create({
-        name: 'Summary Skill', filename: 'sum.md', filePath: '/skills/sum.md'
+    test('setActive() throws for unknown id', () => {
+      assert.throws(() => skillRepository.setActive('nonexistent', true), {
+        message: /not found/i
       })
-      skillRepository.updateSummaries(skill.id, {
-        full: 'Full summary text',
-        standard: 'Standard summary',
-        minimal: 'Minimal',
+    })
+
+    // ── updateSummaries ──
+
+    test('updateSummaries() stores summary fields', () => {
+      const sk = skillRepository.create({
+        name: 'Summary',
+        filename: 'sum.md',
+        filePath: '/sum.md'
+      })
+      skillRepository.updateSummaries(sk.id, {
+        full: 'Full text',
+        standard: 'Standard text',
+        minimal: 'Minimal text',
         hash: 'abc123'
       })
-      const found = skillRepository.findById(skill.id)
-      assert.equal(found!.summaryFull, 'Full summary text')
-      assert.equal(found!.summaryStandard, 'Standard summary')
-      assert.equal(found!.summaryMinimal, 'Minimal')
-      assert.equal(found!.summaryHash, 'abc123')
+      const found = skillRepository.findById(sk.id)
+      assert.ok(found)
+      assert.equal(found.summaryFull, 'Full text')
+      assert.equal(found.summaryStandard, 'Standard text')
+      assert.equal(found.summaryMinimal, 'Minimal text')
+      assert.equal(found.summaryHash, 'abc123')
     })
 
-    test('getSummary() returns correct tier', () => {
-      const skill = skillRepository.create({
-        name: 'Get Summary', filename: 'getsum.md', filePath: '/skills/getsum.md'
+    // ── updateTiers ──
+
+    test('updateTiers() stores tier1/tier2 data', () => {
+      const sk = skillRepository.create({
+        name: 'Tiers',
+        filename: 'tier.md',
+        filePath: '/tier.md'
       })
-      skillRepository.updateSummaries(skill.id, {
-        full: 'FULL', standard: 'STD', minimal: 'MIN', hash: 'h'
+      skillRepository.updateTiers(sk.id, '{"tier":"1"}', 'tier2 instructions')
+      const found = skillRepository.findById(sk.id)
+      assert.ok(found)
+      assert.equal(found.tier1Json, '{"tier":"1"}')
+      assert.equal(found.tier2Instructions, 'tier2 instructions')
+    })
+
+    // ── updateEnrichment ──
+
+    test('updateEnrichment() stores enrichment JSON', () => {
+      const sk = skillRepository.create({
+        name: 'Enrich',
+        filename: 'enrich.md',
+        filePath: '/enrich.md'
       })
-      assert.equal(skillRepository.getSummary(skill.id, 'full'), 'FULL')
-      assert.equal(skillRepository.getSummary(skill.id, 'standard'), 'STD')
-      assert.equal(skillRepository.getSummary(skill.id, 'minimal'), 'MIN')
+      skillRepository.updateEnrichment(sk.id, '{"enriched":true}')
+      const found = skillRepository.findById(sk.id)
+      assert.ok(found)
+      assert.equal(found.enrichmentJson, '{"enriched":true}')
+    })
+
+    // ── getSummary ──
+
+    test('getSummary() returns correct tier summary', () => {
+      const sk = skillRepository.create({
+        name: 'GetSum',
+        filename: 'getsum.md',
+        filePath: '/getsum.md'
+      })
+      skillRepository.updateSummaries(sk.id, {
+        full: 'FULL',
+        standard: 'STANDARD',
+        minimal: 'MINIMAL',
+        hash: 'h'
+      })
+      assert.equal(skillRepository.getSummary(sk.id, 'full'), 'FULL')
+      assert.equal(skillRepository.getSummary(sk.id, 'standard'), 'STANDARD')
+      assert.equal(skillRepository.getSummary(sk.id, 'minimal'), 'MINIMAL')
+    })
+
+    test('getSummary() returns null for skill without summaries', () => {
+      const sk = skillRepository.create({
+        name: 'NoSum',
+        filename: 'nosum.md',
+        filePath: '/nosum.md'
+      })
+      assert.equal(skillRepository.getSummary(sk.id, 'full'), null)
     })
 
     test('getSummary() returns null for unknown skill', () => {
       assert.equal(skillRepository.getSummary('nonexistent', 'full'), null)
     })
 
-    test('updateTiers() stores tier1/tier2 data', () => {
-      const skill = skillRepository.create({
-        name: 'Tier Skill', filename: 'tier.md', filePath: '/skills/tier.md'
-      })
-      skillRepository.updateTiers(skill.id, '{"tier1": true}', 'tier2 instructions')
-      const found = skillRepository.findById(skill.id)
-      assert.equal(found!.tier1Json, '{"tier1": true}')
-      assert.equal(found!.tier2Instructions, 'tier2 instructions')
-    })
+    // ── deleteAll ──
 
-    test('updateEnrichment() stores enrichment JSON', () => {
-      const skill = skillRepository.create({
-        name: 'Enriched', filename: 'enriched.md', filePath: '/skills/enriched.md'
-      })
-      skillRepository.updateEnrichment(skill.id, '{"enriched": true}')
-      const found = skillRepository.findById(skill.id)
-      assert.equal(found!.enrichmentJson, '{"enriched": true}')
-    })
-
-    test('delete() removes skill', () => {
-      const skill = skillRepository.create({
-        name: 'Delete Me', filename: 'del.md', filePath: '/skills/del.md'
-      })
-      skillRepository.delete(skill.id)
-      assert.equal(skillRepository.findById(skill.id), undefined)
-    })
-
-    // ── Phase 6C: Untested methods ──
-
-    test('deleteAll() removes all skills and specialist_skills rows', () => {
-      // Ensure there's at least one skill
-      skillRepository.create({
-        name: 'Bulk Delete Skill', filename: 'bulk.md', filePath: '/skills/bulk.md'
-      })
-      assert.ok(skillRepository.findAll().length > 0)
-
+    test('deleteAll() removes all skills and associations', () => {
+      skillRepository.create({ name: 'DA', filename: 'da.md', filePath: '/da.md' })
       skillRepository.deleteAll()
-      assert.deepEqual(skillRepository.findAll(), [])
+      const all = skillRepository.findAll()
+      assert.equal(all.length, 0)
     })
   })
 }

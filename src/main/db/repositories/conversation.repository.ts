@@ -1,4 +1,5 @@
 import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type {
   CommunicationTone,
   Conversation,
@@ -25,17 +26,17 @@ interface ConversationRow {
   mcp_overrides_json: string | null
   communication_tone: string | null
   effort: string | null
+  preset_id: string | null
+  handoff_context: string | null
 }
 
 function parseMcpOverrides(json: string | null): Record<string, boolean> | undefined {
   if (!json || json === '{}') return undefined
-  try {
-    const parsed = JSON.parse(json) as Record<string, boolean>
-    // Only return if there are any truthy entries
-    return Object.values(parsed).some(Boolean) ? parsed : undefined
-  } catch {
-    return undefined
-  }
+  // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
+  const parsed = safeParseJSON<Record<string, boolean> | null>(json, null)
+  if (!parsed) return undefined
+  // Only return if there are any truthy entries
+  return Object.values(parsed).some(Boolean) ? parsed : undefined
 }
 
 function mapRow(row: ConversationRow): Conversation {
@@ -56,7 +57,9 @@ function mapRow(row: ConversationRow): Conversation {
     llmProvider: (row.llm_provider as LLMProvider) ?? 'claude',
     mcpOverrides: parseMcpOverrides(row.mcp_overrides_json),
     communicationTone: (row.communication_tone as CommunicationTone) ?? null,
-    effort: (row.effort as ThinkingEffort) ?? 'high'
+    effort: (row.effort as ThinkingEffort) ?? 'high',
+    presetId: row.preset_id ?? null,
+    handoffContext: row.handoff_context ?? null
   }
 }
 
@@ -73,12 +76,13 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null
+    communicationTone?: CommunicationTone | null,
+    presetId?: string | null
   ): Conversation {
     const row = this.db()
       .prepare(
-        `INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider, mcp_overrides_json, communication_tone)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider, mcp_overrides_json, communication_tone, preset_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -88,7 +92,8 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
         personaSpecialistId ?? null,
         llmProvider ?? 'claude',
         mcpOverrides ? JSON.stringify(mcpOverrides) : '{}',
-        communicationTone ?? null
+        communicationTone ?? null,
+        presetId ?? null
       ) as ConversationRow
     return mapRow(row)
   }
@@ -206,6 +211,21 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
       | { summary: string | null }
       | undefined
     return row?.summary ?? undefined
+  }
+
+  /** Update the preset assigned to a conversation */
+  updatePreset(conversationId: string, presetId: string | null): Conversation | undefined {
+    const row = this.db()
+      .prepare(`UPDATE conversations SET preset_id = ? WHERE id = ? RETURNING *`)
+      .get(presetId, conversationId) as ConversationRow | undefined
+    return row ? mapRow(row) : undefined
+  }
+
+  /** Update handoff context injected when switching providers mid-chat */
+  updateHandoffContext(conversationId: string, handoffContext: string | null): void {
+    this.db()
+      .prepare('UPDATE conversations SET handoff_context = ? WHERE id = ?')
+      .run(handoffContext, conversationId)
   }
 
   reorderConversations(orderedIds: string[]): void {

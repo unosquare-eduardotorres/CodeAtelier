@@ -19,6 +19,7 @@ export function useBranchIndicator(
 
   useEffect(() => {
     if (!activeWorkspace) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset when no workspace
       setCurrentBranch(null)
       setIsGitRepo(false)
       return

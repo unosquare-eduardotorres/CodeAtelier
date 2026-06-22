@@ -153,7 +153,7 @@ export default function WizardSummaryStep({
 
       {/* Decisions Summary Card */}
       {trackScores.length > 0 && (
-        <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
+        <div data-testid="wizard-summary-decisions" className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-text-primary">Decisions Summary</h3>
             {overallScore !== null && (

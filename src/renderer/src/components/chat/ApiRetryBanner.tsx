@@ -19,7 +19,7 @@ export default function ApiRetryBanner({
         : 'Transient API error'
 
   return (
-    <div className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-amber-300 px-4 py-3 animate-in fade-in slide-in-from-top-2 duration-300">
+    <div data-testid="api-retry-banner" className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-amber-300 px-4 py-3 animate-in fade-in slide-in-from-top-2 duration-300">
       <RefreshCw size={16} className="animate-spin" />
       <div className="flex flex-col gap-0.5">
         <span className="text-sm font-medium">{statusLabel}</span>

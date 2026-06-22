@@ -44,7 +44,10 @@ describe('extractResultSummary — guards', () => {
   })
 
   test('tool_use_error — permission denied classification', () => {
-    const out = extractResultSummary('Bash', '<tool_use_error>EACCES: permission denied</tool_use_error>')
+    const out = extractResultSummary(
+      'Bash',
+      '<tool_use_error>EACCES: permission denied</tool_use_error>'
+    )
     assert.equal(out?.result, 'Permission denied')
   })
 

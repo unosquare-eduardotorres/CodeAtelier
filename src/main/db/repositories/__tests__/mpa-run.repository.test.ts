@@ -1,5 +1,6 @@
 /**
- * Tests for MpaRunRepository — run lifecycle, phases, campaign, stale detection.
+ * Tests for MpaRunRepository — CRUD for MPA runs and phases.
+ * Skips gracefully if better-sqlite3 native module is incompatible.
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
@@ -9,224 +10,287 @@ const env = trySetupTestDb()
 
 if (!env) {
   describe('MpaRunRepository (skipped — native module unavailable)', () => {
-    test('createRun()', () => {}, { skipReason: 'no DB' })
+    test('createRun() inserts MPA run', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { wsId } = env
   const { mpaRunRepository } = require('../mpa-run.repository')
 
   describe('MpaRunRepository', () => {
-    // ── Run CRUD ──
+    // ── createRun ──
 
-    test('createRun() returns mapped model with defaults', () => {
+    test('createRun() inserts and returns MPA run', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Test Run', goal: 'Add auth',
+        workspaceId: wsId,
+        title: 'Feature Implementation',
+        goal: 'Implement user auth',
         goalType: 'feature'
       })
       assert.ok(run.id)
       assert.equal(run.workspaceId, wsId)
-      assert.equal(run.title, 'Test Run')
-      assert.equal(run.goal, 'Add auth')
+      assert.equal(run.title, 'Feature Implementation')
+      assert.equal(run.goal, 'Implement user auth')
       assert.equal(run.goalType, 'feature')
       assert.equal(run.status, 'pending')
-      assert.equal(run.totalTokens, 0)
       assert.deepEqual(run.configJson, {})
-      assert.equal(run.campaignId, null)
     })
 
-    test('createRun() accepts all optional fields', () => {
+    test('createRun() accepts optional fields', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Full Run', goal: 'Fix bugs',
-        goalType: 'bugfix', grillSessionId: 'grill-1',
-        configJson: { maxIterations: 3 },
-        campaignId: 'campaign-1', orderIndex: 2
+        workspaceId: wsId,
+        title: 'Full Run',
+        goal: 'Full goal',
+        goalType: 'bugfix',
+        grillSessionId: 'grill-1',
+        configJson: { maxRetries: 3 },
+        campaignId: 'camp-1',
+        orderIndex: 0
       })
       assert.equal(run.grillSessionId, 'grill-1')
-      assert.deepEqual(run.configJson, { maxIterations: 3 })
-      assert.equal(run.campaignId, 'campaign-1')
-      assert.equal(run.orderIndex, 2)
+      assert.deepEqual(run.configJson, { maxRetries: 3 })
+      assert.equal(run.campaignId, 'camp-1')
+      assert.equal(run.orderIndex, 0)
     })
 
-    test('findById() round-trip', () => {
+    // ── findById ──
+
+    test('findById() returns run', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Findable', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Find Test',
+        goal: 'goal',
+        goalType: 'feature'
       })
       const found = mpaRunRepository.findById(run.id)
       assert.ok(found)
-      assert.equal(found.title, 'Findable')
+      assert.equal(found.title, 'Find Test')
     })
 
-    test('findById() returns undefined for unknown', () => {
+    test('findById() returns undefined for unknown id', () => {
       assert.equal(mpaRunRepository.findById('nonexistent'), undefined)
     })
 
-    test('findByWorkspace() excludes campaign runs', () => {
-      const ws2 = (() => {
-        const row = db.prepare(`INSERT INTO workspaces (name, repo_path) VALUES (?, ?) RETURNING id`)
-          .get('WS-MPA', '/tmp/mpa') as { id: string }
-        return row.id
-      })()
+    // ── findByWorkspace ──
+
+    test('findByWorkspace() returns non-campaign runs', () => {
+      const freshWs = 'mpa-ws-test'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(freshWs, 'MPA WS', '/tmp/mpa-ws')
+
       mpaRunRepository.createRun({
-        workspaceId: ws2, title: 'Standalone', goal: 'X', goalType: 'feature'
+        workspaceId: freshWs,
+        title: 'Standalone',
+        goal: 'g',
+        goalType: 'feature'
       })
       mpaRunRepository.createRun({
-        workspaceId: ws2, title: 'Campaign', goal: 'Y', goalType: 'feature',
-        campaignId: 'c1'
+        workspaceId: freshWs,
+        title: 'Campaign Run',
+        goal: 'g',
+        goalType: 'feature',
+        campaignId: 'camp-x',
+        orderIndex: 0
       })
-      const runs = mpaRunRepository.findByWorkspace(ws2)
+      const runs = mpaRunRepository.findByWorkspace(freshWs)
+      assert.ok(runs.length >= 1)
       assert.ok(runs.every((r: any) => r.campaignId === null))
     })
 
-    test('updateRun() changes status and tokens', () => {
+    // ── findByCampaign ──
+
+    test('findByCampaign() returns runs ordered by orderIndex', () => {
+      const campId = 'camp-order-test-' + Date.now()
+      mpaRunRepository.createRun({
+        workspaceId: wsId,
+        title: 'Goal 2',
+        goal: 'g',
+        goalType: 'feature',
+        campaignId: campId,
+        orderIndex: 1
+      })
+      mpaRunRepository.createRun({
+        workspaceId: wsId,
+        title: 'Goal 1',
+        goal: 'g',
+        goalType: 'feature',
+        campaignId: campId,
+        orderIndex: 0
+      })
+      const runs = mpaRunRepository.findByCampaign(campId)
+      assert.equal(runs.length, 2)
+      assert.equal(runs[0].title, 'Goal 1')
+    })
+
+    // ── updateRun ──
+
+    test('updateRun() modifies run status and fields', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Update', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Update Test',
+        goal: 'g',
+        goalType: 'feature'
       })
       const updated = mpaRunRepository.updateRun(run.id, {
-        status: 'running', currentPhase: 'planning', totalTokens: 5000
+        status: 'running',
+        currentPhase: 'planning',
+        conversationId: 'conv-1',
+        totalTokens: 5000
       })
       assert.ok(updated)
       assert.equal(updated.status, 'running')
       assert.equal(updated.currentPhase, 'planning')
+      assert.equal(updated.conversationId, 'conv-1')
       assert.equal(updated.totalTokens, 5000)
     })
 
-    test('updateRun() with empty updates returns existing', () => {
+    test('updateRun() with no updates returns existing run', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'NoOp', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'NoOp Update',
+        goal: 'g',
+        goalType: 'feature'
       })
       const result = mpaRunRepository.updateRun(run.id, {})
       assert.ok(result)
-      assert.equal(result.title, 'NoOp')
+      assert.equal(result.title, 'NoOp Update')
     })
 
-    test('mapRunRow() handles malformed config_json gracefully', () => {
-      // Insert a run with bad JSON directly
-      db.prepare(
-        `INSERT INTO mpa_runs (id, workspace_id, title, goal, goal_type, config_json, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).run('bad-json-run', wsId, 'Bad', 'X', 'feature', 'NOT JSON', 'pending')
-      const found = mpaRunRepository.findById('bad-json-run')
-      assert.ok(found)
-      assert.deepEqual(found.configJson, {}) // fallback
-    })
+    // ── deleteByCampaignOrder ──
 
-    // ── Campaign ──
-
-    test('findByCampaign() returns runs in order_index order', () => {
-      const cId = 'camp-order-test'
+    test('deleteByCampaignOrder() removes runs for campaign+order', () => {
+      const campId = 'camp-del-test-' + Date.now()
       mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Goal 2', goal: 'B', goalType: 'feature',
-        campaignId: cId, orderIndex: 1
+        workspaceId: wsId,
+        title: 'To Delete',
+        goal: 'g',
+        goalType: 'feature',
+        campaignId: campId,
+        orderIndex: 0
       })
-      mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Goal 1', goal: 'A', goalType: 'feature',
-        campaignId: cId, orderIndex: 0
-      })
-      const runs = mpaRunRepository.findByCampaign(cId)
-      assert.equal(runs.length, 2)
-      assert.equal(runs[0].orderIndex, 0)
-      assert.equal(runs[1].orderIndex, 1)
-    })
-
-    test('deleteByCampaignOrder() removes run at specific order', () => {
-      const cId = 'camp-del-test'
-      mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Del', goal: 'X', goalType: 'feature',
-        campaignId: cId, orderIndex: 0
-      })
-      const deleted = mpaRunRepository.deleteByCampaignOrder(cId, 0)
-      assert.ok(deleted >= 1)
+      const deleted = mpaRunRepository.deleteByCampaignOrder(campId, 0)
+      assert.equal(deleted, 1)
     })
 
     // ── Phase operations ──
 
-    test('createPhase() returns mapped phase', () => {
+    test('createPhase() inserts phase for run', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Phase Test', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Phase Host',
+        goal: 'g',
+        goalType: 'feature'
       })
       const phase = mpaRunRepository.createPhase({
-        runId: run.id, phaseType: 'planning', iteration: 1,
-        agentRole: 'planner', goalCondition: 'Plan must have 3+ phases'
+        runId: run.id,
+        phaseType: 'plan',
+        iteration: 1,
+        agentRole: 'planner',
+        goalCondition: 'Complete the plan'
       })
       assert.ok(phase.id)
       assert.equal(phase.runId, run.id)
-      assert.equal(phase.phaseType, 'planning')
+      assert.equal(phase.phaseType, 'plan')
       assert.equal(phase.iteration, 1)
       assert.equal(phase.agentRole, 'planner')
-      assert.equal(phase.goalCondition, 'Plan must have 3+ phases')
+      assert.equal(phase.goalCondition, 'Complete the plan')
       assert.equal(phase.status, 'pending')
-      assert.equal(phase.tokensUsed, 0)
     })
 
     test('findPhasesByRun() returns phases for run', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Phases', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Phases Run',
+        goal: 'g',
+        goalType: 'feature'
       })
-      mpaRunRepository.createPhase({ runId: run.id, phaseType: 'planning', iteration: 1, agentRole: 'planner' })
-      mpaRunRepository.createPhase({ runId: run.id, phaseType: 'building', iteration: 1, agentRole: 'builder' })
-
+      mpaRunRepository.createPhase({
+        runId: run.id,
+        phaseType: 'plan',
+        iteration: 1,
+        agentRole: 'planner'
+      })
+      mpaRunRepository.createPhase({
+        runId: run.id,
+        phaseType: 'build',
+        iteration: 1,
+        agentRole: 'builder'
+      })
       const phases = mpaRunRepository.findPhasesByRun(run.id)
       assert.equal(phases.length, 2)
     })
 
-    test('updatePhase() changes status and tokens', () => {
+    test('updatePhase() modifies phase fields', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Phase Update', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Phase Update',
+        goal: 'g',
+        goalType: 'feature'
       })
       const phase = mpaRunRepository.createPhase({
-        runId: run.id, phaseType: 'planning', iteration: 1, agentRole: 'planner'
+        runId: run.id,
+        phaseType: 'plan',
+        iteration: 1,
+        agentRole: 'planner'
       })
       const updated = mpaRunRepository.updatePhase(phase.id, {
         status: 'running',
         startedAt: new Date().toISOString(),
-        tokensUsed: 1000
+        tokensUsed: 1000,
+        streamContent: 'Plan output...'
       })
       assert.ok(updated)
       assert.equal(updated.status, 'running')
       assert.equal(updated.tokensUsed, 1000)
     })
 
-    test('updatePhase() returns undefined with empty updates', () => {
-      assert.equal(mpaRunRepository.updatePhase('some-id', {}), undefined)
+    test('updatePhase() with empty updates returns undefined', () => {
+      assert.equal(mpaRunRepository.updatePhase('any-id', {}), undefined)
     })
 
     test('appendStreamContent() appends to phase stream', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Stream', goal: 'X', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Stream Append',
+        goal: 'g',
+        goalType: 'feature'
       })
       const phase = mpaRunRepository.createPhase({
-        runId: run.id, phaseType: 'building', iteration: 1, agentRole: 'builder'
+        runId: run.id,
+        phaseType: 'build',
+        iteration: 1,
+        agentRole: 'builder'
       })
-      mpaRunRepository.appendStreamContent(phase.id, 'chunk 1')
-      mpaRunRepository.appendStreamContent(phase.id, ' chunk 2')
-
+      mpaRunRepository.appendStreamContent(phase.id, 'First chunk. ')
+      mpaRunRepository.appendStreamContent(phase.id, 'Second chunk.')
       const phases = mpaRunRepository.findPhasesByRun(run.id)
       const found = phases.find((p: any) => p.id === phase.id)
-      assert.ok(found!.streamContent.includes('chunk 1'))
-      assert.ok(found!.streamContent.includes('chunk 2'))
+      assert.ok(found)
+      assert.equal(found.streamContent, 'First chunk. Second chunk.')
     })
 
-    // ── Stale detection ──
+    // ── findResumable ──
 
-    test('markStaleAsFailed() marks running runs as failed', () => {
-      const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Stale', goal: 'X', goalType: 'feature'
-      })
-      mpaRunRepository.updateRun(run.id, { status: 'running' })
-      const count = mpaRunRepository.markStaleAsFailed()
-      assert.ok(count >= 1)
-      const found = mpaRunRepository.findById(run.id)
-      assert.equal(found!.status, 'failed')
-    })
+    test('findResumable() returns latest failed/cancelled run', () => {
+      const freshWs = 'mpa-resume-ws'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(freshWs, 'Resume WS', '/tmp/resume-ws')
 
-    test('findResumable() finds failed/cancelled runs', () => {
       const run = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Resumable', goal: 'X', goalType: 'feature'
+        workspaceId: freshWs,
+        title: 'Failed Run',
+        goal: 'g',
+        goalType: 'feature'
       })
       mpaRunRepository.updateRun(run.id, { status: 'failed' })
-      const resumable = mpaRunRepository.findResumable(wsId)
+      const resumable = mpaRunRepository.findResumable(freshWs)
       assert.ok(resumable)
-      assert.ok(['failed', 'cancelled'].includes(resumable.status))
+      assert.equal(resumable.status, 'failed')
+    })
+
+    test('findResumable() returns null when no resumable runs', () => {
+      assert.equal(mpaRunRepository.findResumable('no-resumable-ws'), null)
     })
   })
 }

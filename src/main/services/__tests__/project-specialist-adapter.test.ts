@@ -157,6 +157,95 @@ describe('ProjectSpecialistRoleAdapter', () => {
     adapter.invalidateSnapshot()
   })
 
+  // ── Accessor methods (no DB, no snapshot) ──────────────────────
+
+  test('getWorkspaceId_returns_bound_workspaceId', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-bound-42' })
+    assert.equal(adapter.getWorkspaceId(), 'ws-bound-42')
+  })
+
+  test('getSpecialistId_returns_null_when_no_snapshot_loaded', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    assert.equal(adapter.getSpecialistId(), null)
+  })
+
+  test('getDisplayName_returns_null_when_no_snapshot', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    assert.equal(adapter.getDisplayName(), null)
+  })
+
+  test('getBuildStatus_returns_null_when_no_snapshot', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    assert.equal(adapter.getBuildStatus(), null)
+  })
+
+  test('resolveWorkspaceId_returns_workspaceId', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-resolve-test' })
+    // resolveWorkspaceId is protected — access via (adapter as any)
+    const resolved = (
+      adapter as unknown as { resolveWorkspaceId: () => string | null }
+    ).resolveWorkspaceId()
+    assert.equal(resolved, 'ws-resolve-test')
+  })
+
+  // ── onSessionStop deep verification ────────────────────────────
+
+  test('onSessionStop_resets_feature_flags_and_clears_state', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    // Call onSessionStop
+    adapter.onSessionStop()
+    // After stop: snapshot is null, specialist accessors return null
+    assert.equal(adapter.getSpecialistId(), null)
+    assert.equal(adapter.getDisplayName(), null)
+    assert.equal(adapter.getBuildStatus(), null)
+    // Verify the adapter is still usable after stop
+    assert.equal(adapter.role, 'project-specialist')
+    assert.equal(adapter.getWorkspaceId(), 'ws-1')
+  })
+
+  test('onSessionStop_unlocks_mcp_flags', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    // Access locked flags via (adapter as any)
+    const a = adapter as unknown as { lockedFlags: unknown; unlockMcpFlags: () => void }
+    adapter.onSessionStop()
+    // After stop, lockedFlags should be null (unlocked)
+    assert.equal(a.lockedFlags, null)
+  })
+
+  // ── onConversationSwitch ───────────────────────────────────────
+
+  test('onConversationSwitch_invalidates_prompt_cache', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    // Access promptCache via (adapter as any)
+    const a = adapter as unknown as { promptCache: { isValid: (k: unknown, t: number) => boolean } }
+    adapter.onConversationSwitch('new-conv')
+    // After switch, cache should be invalid
+    assert.equal(
+      a.promptCache.isValid(
+        { mode: 'plan', conversationId: 'new-conv', tone: 'default', model: null },
+        1
+      ),
+      false,
+      'Prompt cache should be invalid after conversation switch'
+    )
+  })
+
+  // ── invalidateSnapshot with prompt cache ───────────────────────
+
+  test('invalidateSnapshot_clears_prompt_cache', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    const a = adapter as unknown as { promptCache: { get: () => string | null } }
+    adapter.invalidateSnapshot()
+    assert.equal(a.promptCache.get(), null)
+  })
+
+  test('invalidateSnapshot_clears_tone_cache', () => {
+    const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
+    const a = adapter as unknown as { cachedTone: string | null }
+    adapter.invalidateSnapshot()
+    assert.equal(a.cachedTone, null)
+  })
+
   // ── DB-backed: CLAUDE.md layering + snapshot cache ──────────────
 
   const dbContext = trySetupTestDb()

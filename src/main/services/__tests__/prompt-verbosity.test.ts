@@ -14,8 +14,8 @@ describe('Prompt Verbosity', () => {
     assert.equal(resolvePromptVerbosity('claude-opus-4-8'), 'lean')
   })
 
-  test('sonnet resolves to full', () => {
-    assert.equal(resolvePromptVerbosity('claude-sonnet-4-6'), 'full')
+  test('sonnet 4.6 resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-sonnet-4-6'), 'lean')
   })
 
   test('haiku resolves to full', () => {
@@ -44,7 +44,7 @@ describe('Prompt Verbosity', () => {
 })
 
 describe('Lean Conditional Gating', () => {
-  test('lean mode skips memory protocol prompt', () => {
+  test('lean mode includes unified memory protocol prompt on turn 1', () => {
     const out = buildConditionalPrefix({
       message: 'remember this preference for future sessions',
       hasImages: false,
@@ -52,7 +52,8 @@ describe('Lean Conditional Gating', () => {
       turnCount: 1,
       model: 'claude-opus-4-8'
     })
-    assert.ok(!out.includes('Memory Protocol'), 'Lean mode should skip Memory Protocol prompt')
+    // W2: full and lean unified — both include the same type taxonomy prompt
+    assert.ok(out.includes('emit_memory types'), 'Lean mode should include emit_memory type taxonomy on turn 1')
   })
 
   test('full mode includes memory protocol prompt', () => {
@@ -61,9 +62,10 @@ describe('Lean Conditional Gating', () => {
       hasImages: false,
       mode: 'plan',
       turnCount: 1,
-      model: 'claude-sonnet-4-6'
+      model: 'claude-haiku-4-5-20251001'
     })
-    assert.ok(out.includes('Memory Protocol'), 'Full mode should include Memory Protocol prompt')
+    // W2: full and lean are now unified — check for content present in the unified prompt
+    assert.ok(out.includes('emit_memory types'), 'Full mode should include emit_memory type taxonomy')
   })
 
   test('lean mode uses compressed direct-answer boost on turn 3+', () => {
@@ -82,17 +84,18 @@ describe('Lean Conditional Gating', () => {
     )
   })
 
-  test('full mode uses verbose direct-answer boost on turn 3+', () => {
+  test('full mode uses compressed direct-answer boost on turn 3+', () => {
     const out = buildConditionalPrefix({
       message: 'what does this function do?',
       hasImages: false,
       mode: 'build',
       turnCount: 3,
-      model: 'claude-sonnet-4-6'
+      model: 'claude-haiku-4-5-20251001'
     })
+    // W2: full variant compressed — no more verbose "Answer-Complete Rule" subsection
     assert.ok(
-      out.includes('Answer-Complete Rule'),
-      'Full mode should contain verbose Answer-Complete section'
+      out.includes('STOP'),
+      'Full mode should contain STOP rule for direct answers'
     )
   })
 

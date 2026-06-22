@@ -69,6 +69,7 @@ export default function BudgetWarningBanner(): React.JSX.Element | null {
 
   return (
     <div
+      data-testid="budget-warning-banner"
       className={`flex items-center gap-3 px-4 py-2.5 border-b text-sm ${isExceeded ? 'bg-danger-muted border-danger/50' : 'bg-warning-muted border-warning/50'}`}
     >
       <AlertTriangle

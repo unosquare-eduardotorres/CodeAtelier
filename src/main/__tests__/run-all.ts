@@ -106,8 +106,8 @@ import '../services/__tests__/compaction-thresholds.test'
 import '../services/__tests__/local-compaction.test'
 import '../services/__tests__/auto-compact-options.test'
 
-// ─── Run 18: Llamafile embedding sidecar manager ───
-import '../services/__tests__/llamafile-embedding.test'
+// ─── Run 18: oMLX embedding provider ───
+import '../services/__tests__/omlx-embedding.test'
 
 // ─── Run 19: Previously-orphaned test files (registered for coverage) ───
 import '../services/__tests__/context-management.test'
@@ -198,62 +198,81 @@ import '../services/__tests__/blueprint-verify-conditions.test'
 import '../services/__tests__/audit-plan-mapper.test'
 import '../services/__tests__/plan-registry.test'
 
-// ─── Run 32: Code Graph enhancements — blast_radius, co_change, hotspot_score, code_clones ───
-import '../services/__tests__/code-graph-enhancements.test'
+// ─── Run 32: Library Documentation Service (three-tier lookup) ───
+import '../services/__tests__/library-doc-service.test'
 
-// ─── Previously unregistered test files (coverage gap fix) ───
-import '../services/__tests__/agent-session-handlers.test'
-import '../services/__tests__/auth-provider.test'
-import '../services/__tests__/autofix-pr.test'
-import '../services/__tests__/blueprint-prompt-loader.test'
-import '../services/__tests__/btw.test'
-import '../services/__tests__/budget-exceeded-error.test'
-// budget-preflight.test — excluded: pre-existing failures (stale API references)
-import '../services/__tests__/chat-stream-handlers.test'
-// claude-md-generator-formatters.test — excluded: 15 pre-existing failures
-import '../services/__tests__/cli-executor-args.test'
-import '../services/__tests__/cli-mcp-config-builders.test'
-// cost-tracker-budget.test — excluded: 2 pre-existing failures (DB dependency)
-// cost-tracker-pricing.test — excluded: pre-existing failures (stale model references)
-import '../services/__tests__/description-cache-handlers.test'
-import '../services/__tests__/description-cache-makekey.test'
+// ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
 import '../services/__tests__/evaluation-mcp-config.test'
-import '../services/__tests__/event-logger-formatters.test'
-import '../services/__tests__/event-logger-sequence.test'
-import '../services/__tests__/event-logger.service.test'
-import '../services/__tests__/file-service-utils.test'
-import '../services/__tests__/git-sandbox.test'
-import '../services/__tests__/github-service-checks.test'
-// grill-prompt-blocks.test — excluded: 1 pre-existing failure
-import '../services/__tests__/grill-prompt-builders.test'
-import '../services/__tests__/heuristic-description-batch.test'
-import '../services/__tests__/json-utils.test'
-// language-detector.test — excluded: pre-existing failures (import error)
-import '../services/__tests__/local-context-reconstructor.test'
-// local-plan-state-maprow.test — excluded: 9 pre-existing failures
-import '../services/__tests__/model-config-utils.test'
-import '../services/__tests__/opencode-agent-writer-builders.test'
-import '../services/__tests__/opencode-config-data-registry.test'
-import '../services/__tests__/opencode-config-writer-builders.test'
-import '../services/__tests__/opencode-executor-logic.test'
-import '../services/__tests__/preprocessing-pipeline.test'
-// preset-service.test — excluded: pre-existing failures (native module)
-import '../services/__tests__/prompt-builder-extractors.test'
-import '../services/__tests__/prompt-builder-local.test'
-import '../services/__tests__/scope-guard.test'
-import '../services/__tests__/skill-enrichment-builders.test'
-import '../services/__tests__/skill-tier-parser.test'
-import '../services/__tests__/specialist-builder-handlers.test'
-// subscription-version.test — excluded: pre-existing failures (import error)
-// tool-result-timeout.test — excluded: pre-existing failures (stale API)
-import '../services/__tests__/usage-tracker-helpers.test'
-// version-parser.test — excluded: 17 pre-existing failures
-import '../services/__tests__/workspace-mcp-config-builder.test'
+import '../services/__tests__/mpa-base-adapter.test'
+import '../services/__tests__/grill-adapter.test'
+import '../services/__tests__/greenfield-grill-adapter.test'
+import '../services/__tests__/blueprint-service-logic.test'
+import '../services/__tests__/cli-mcp-config-writer-logic.test'
 
-// ─── Run 33: Phase 10 Coverage Push — 57% → 60% ───
-import '../services/__tests__/repo-service-utils.test'
-import '../services/__tests__/base-adapter.test'
-import '../services/__tests__/specialist-builder-logic.test'
+// ─── Run 35: Adapter subclass family + pure functions + config builders ───
+import '../services/__tests__/mpa-planner-adapter.test'
+import '../services/__tests__/mpa-verifier-adapter.test'
+import '../services/__tests__/mpa-builder-adapter.test'
+import '../services/__tests__/blueprint-base-adapter.test'
+import '../services/__tests__/blueprint-build-adapter.test'
+import '../services/__tests__/blueprint-verify-adapter.test'
+import '../services/__tests__/preset-service-logic.test'
+import '../services/__tests__/repo-service-pure.test'
+import '../services/__tests__/opencode-config-writer-logic.test'
+import '../services/__tests__/description-cache-pure.test'
+import '../services/__tests__/workspace-mcp-config-logic.test'
+
+// ─── Run 33: ESLint MCP tools ───
+import '../services/__tests__/eslint-mcp-tools.test'
+
+// ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───
+import '../services/__tests__/blueprint-remaining-adapters.test'
+import '../services/__tests__/council-member-adapter.test'
+import '../services/__tests__/council-chairman-adapter.test'
+import '../services/__tests__/audit-adapter.test'
+import '../services/__tests__/skill-tiers-parser.test'
+import '../services/__tests__/parse-plan-payload.test'
+import '../services/__tests__/specialist-builder-pure.test'
+import '../services/__tests__/blueprint-prompt-loader-pure.test'
+import '../services/__tests__/repository-maprow-logic.test'
+import '../services/__tests__/base-adapter-strategies.test'
+import '../services/__tests__/heuristic-description-logic.test'
+import '../services/__tests__/event-logger-service.test'
+import '../ipc/__tests__/ipc-registration.test'
+import '../mcp-servers/__tests__/mcp-server-registration.test'
+
+// ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
+import '../ipc/__tests__/ipc-remaining-registration.test'
+import '../services/__tests__/cli-executor-args.test'
+import '../services/__tests__/opencode-executor-pure.test'
+import '../services/__tests__/agent-session-deep.test'
+import '../services/__tests__/chat-stream-methods.test'
+import '../services/__tests__/mpa-orchestration-helpers.test'
+import '../services/__tests__/council-service-helpers.test'
+import '../services/__tests__/grill-agent-helpers.test'
+import '../services/__tests__/audit-agent-helpers.test'
+import '../services/__tests__/grill-persistence-logic.test'
+import '../services/__tests__/council-persistence-logic.test'
+import '../services/__tests__/shared-types-coverage.test'
+import '../services/__tests__/blueprint-spec-helpers.test'
+import '../services/__tests__/memory-service-logic.test'
+import '../services/__tests__/plan-registry-helpers.test'
+import '../services/__tests__/zero-coverage-services.test'
+
+// ─── Phase 15: Coverage Mega-Push — pure function tests ───
+import '../services/__tests__/default-prompts-constants.test'
+import '../services/__tests__/preprocessing-pure.test'
+import '../services/__tests__/vector-search-pure.test'
+
+// ─── Phase 16: Coverage Mega-Push II — types, services, IPC, MCP ───
+import '../services/__tests__/type-coverage.test'
+import '../services/__tests__/mpa-orchestration-deep.test'
+import '../services/__tests__/service-mid-coverage-deep.test'
+import '../ipc/__tests__/ipc-zero-coverage.test'
+import '../ipc/__tests__/ipc-blueprint-handlers.test'
+import '../ipc/__tests__/ipc-audit-handlers.test'
+import '../ipc/__tests__/ipc-crud-deep.test'
+import '../mcp-servers/__tests__/mcp-server-tools-deep.test'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository tests (mirrors src/main/db/repositories/__tests__/run-tests.ts)
@@ -263,6 +282,35 @@ import '../db/repositories/__tests__/conversation.repository.test'
 import '../db/repositories/__tests__/workspace.repository.test'
 import '../db/repositories/__tests__/usage-log.repository.test'
 import '../db/repositories/__tests__/migration-v102.test'
+
+// ─── Phase 15: Coverage Mega-Push — repository tests ───
+import '../db/repositories/__tests__/specialist.repository.test'
+import '../db/repositories/__tests__/skill.repository.test'
+import '../db/repositories/__tests__/bug.repository.test'
+import '../db/repositories/__tests__/preset.repository.test'
+import '../db/repositories/__tests__/idea.repository.test'
+import '../db/repositories/__tests__/memory.repository.test'
+import '../db/repositories/__tests__/event.repository.test'
+import '../db/repositories/__tests__/blueprint.repository.test'
+import '../db/repositories/__tests__/audit.repository.test'
+import '../db/repositories/__tests__/mpa-run.repository.test'
+import '../db/repositories/__tests__/council-session.repository.test'
+import '../db/repositories/__tests__/plan.repository.test'
+import '../db/repositories/__tests__/remaining-repos.test'
+import '../db/repositories/__tests__/code-graph-repos.test'
+import '../db/repositories/__tests__/migration-suite.test'
+
+// ─── Phase 16: Track 1 + Track 6 ───
+import '../db/repositories/__tests__/migration-replay.test'
+import '../db/repositories/__tests__/repo-branch-coverage.test'
+
+// ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
+import '../ipc/__tests__/ipc-handler-bodies.test'
+import '../services/__tests__/service-instance-deep.test'
+import '../services/__tests__/blueprint-pipeline-instance.test'
+import '../services/__tests__/adapter-branch-push.test'
+import '../services/__tests__/migration-metadata.test'
+import '../db/repositories/__tests__/repo-deep-branch.test'
 
 // Single summary at the end — awaits all pending async tests, prints totals,
 // and exits with code 1 on any failure.

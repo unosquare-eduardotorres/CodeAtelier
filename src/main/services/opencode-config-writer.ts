@@ -29,6 +29,7 @@ import {
   FORMATTER_DEFS,
   buildLocalMcpServersFromRegistry
 } from './opencode-config-writer/opencode-config-data'
+import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 
 const configLog = log.scope('OpenCodeConfigWriter')
 
@@ -218,11 +219,13 @@ export class OpenCodeConfigWriter {
       Buffer.from(opts.workspacePath).toString('base64url').slice(0, 32)
     )
     if (!existsSync(tempDir)) {
-      mkdirSync(tempDir, { recursive: true })
+      // OC-02: Restrict permissions — config may contain plaintext API keys
+      mkdirSync(tempDir, { recursive: true, mode: 0o700 })
     }
     const configPath = join(tempDir, 'opencode.json')
 
-    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+    // OC-02: Owner-only read/write — prevents other users from reading API keys
+    writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })
     configLog.info(
       `[opencode-config] Wrote: ${configPath} (${Object.keys(config.mcp).length} MCP servers)`
     )
@@ -638,14 +641,25 @@ export class OpenCodeConfigWriter {
         )
       : join(__dirname, 'mcp-servers')
 
-    // DB-backed servers (code-graph, semantic-search) run as plain `node` and can't
-    // call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
-    return buildLocalMcpServersFromRegistry(
+    // DB-backed servers (code-graph, semantic-search, code-analysis) run as plain `node`
+    // and can't call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
+    const servers = buildLocalMcpServersFromRegistry(
       LOCAL_MCP_SERVER_DEFS,
       opts,
       serverBasePath,
       app.getPath('userData')
     )
+
+    // Inject CONTEXT7_API_KEY for library documentation fallback
+    const context7Key = appPreferenceRepository.get('context7_api_key')
+    if (context7Key && servers['code-analysis']) {
+      servers['code-analysis'].environment = {
+        ...servers['code-analysis'].environment,
+        CONTEXT7_API_KEY: context7Key
+      }
+    }
+
+    return servers
   }
 
   /** External MCP integrations (Maestro, etc.) registered via feature flags. */

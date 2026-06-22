@@ -21,6 +21,8 @@ const grillLog = log.scope('grill-agent')
 interface GrillSession {
   session: AgentSessionService
   running: boolean
+  /** GRILL-GREENFIELD-CANCEL-ALWAYS-01: Track workspaceId for targeted cancel of greenfield sessions. */
+  workspaceId?: string
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -107,9 +109,12 @@ export class GrillAgentService extends EventEmitter {
       const responseText = session.getStreamedContent()
       const evaluation = this.parseGrillEvaluation(responseText)
 
-      if (evaluation) {
+      // GRILL-CANCEL-RACE-01: Only emit evaluation if not cancelled during send()
+      if (evaluation && entry.running) {
         grillLog.info(`[grill:${params.trackId}] completed — score=${evaluation.score}`)
         this.emit('evaluation', { workspaceId: params.workspaceId, ...evaluation })
+      } else if (!entry.running) {
+        grillLog.info(`[grill:${params.trackId}] cancelled — skipping evaluation emit`)
       } else {
         grillLog.warn(`[grill:${params.trackId}] completed but no grill-evaluation block found`)
       }
@@ -121,9 +126,13 @@ export class GrillAgentService extends EventEmitter {
       } catch (e) {
         grillLog.debug('[grill] session.stop() cleanup failed (non-fatal):', e)
       }
+      // GRILL-EVAL-NOCOMPL-01: Always emit 'complete' so the persistence controller
+      // can clean up tracking state (flush timers, active session map). Pass cancelled
+      // flag so listeners can distinguish normal completion from cancellation.
+      const wasCancelled = !entry.running
       entry.running = false
       this.sessions.delete(params.workspaceId)
-      this.emit('complete', { workspaceId: params.workspaceId })
+      this.emit('complete', { workspaceId: params.workspaceId, cancelled: wasCancelled })
     }
   }
 
@@ -138,6 +147,8 @@ export class GrillAgentService extends EventEmitter {
     iterationHistory?: string
     previousScore?: number
     llmProvider?: import('../../shared/types').LLMProvider
+    /** GRILL-04: Synthetic workspaceId for event routing in multi-window mode. */
+    workspaceId?: string
   }): Promise<void> {
     grillLog.info(
       `[grill] evaluateGreenfield called — track=${params.trackId} project="${params.projectName}"`
@@ -158,17 +169,22 @@ export class GrillAgentService extends EventEmitter {
     })
 
     const session = new AgentSessionService(adapter)
-    this.greenfieldSession = { session, running: true }
+    // GRILL-04: Include workspaceId in all greenfield events for correct routing
+    const wsId = params.workspaceId
+
+    // GRILL-GREENFIELD-CANCEL-ALWAYS-01: Store workspaceId so cancel(wsId) can
+    // verify it matches before cancelling an unrelated greenfield evaluation.
+    const greenfieldEntry: GrillSession = { session, running: true, workspaceId: wsId }
+    this.greenfieldSession = greenfieldEntry
 
     // Wire streaming events for live output
     session.on('chunk', (chunk: StreamChunk) => {
-      this.emit('stream', { chunk })
+      this.emit('stream', { workspaceId: wsId, chunk })
     })
 
     // Wire status updates so the modal's live counters move during a greenfield grill.
-    // No workspaceId exists yet; the IPC status listener's guard passes when undefined.
     session.on('statusUpdate', (status: AgentStatus) => {
-      this.emit('status', { status })
+      this.emit('status', { workspaceId: wsId, status })
     })
 
     try {
@@ -187,9 +203,12 @@ export class GrillAgentService extends EventEmitter {
       const responseText = session.getStreamedContent()
       const evaluation = this.parseGrillEvaluation(responseText)
 
-      if (evaluation) {
+      // GRILL-CANCEL-RACE-01: Only emit evaluation if not cancelled during send()
+      if (evaluation && greenfieldEntry.running) {
         grillLog.info(`[grill:greenfield:${params.trackId}] completed — score=${evaluation.score}`)
-        this.emit('evaluation', evaluation)
+        this.emit('evaluation', { workspaceId: wsId, ...evaluation })
+      } else if (!greenfieldEntry.running) {
+        grillLog.info(`[grill:greenfield:${params.trackId}] cancelled — skipping evaluation emit`)
       } else {
         grillLog.warn(
           `[grill:greenfield:${params.trackId}] completed but no grill-evaluation block found`
@@ -203,8 +222,10 @@ export class GrillAgentService extends EventEmitter {
       } catch (e) {
         grillLog.debug('[grill:greenfield] session.stop() cleanup failed (non-fatal):', e)
       }
+      // GRILL-EVAL-NOCOMPL-01: Always emit 'complete' so persistence controller cleans up.
+      const wasCancelled = !greenfieldEntry.running
       this.greenfieldSession = null
-      this.emit('complete')
+      this.emit('complete', { workspaceId: wsId, cancelled: wasCancelled })
     }
   }
 
@@ -221,6 +242,17 @@ export class GrillAgentService extends EventEmitter {
           grillLog.debug('[grill] cancelCurrentQuery() failed (non-fatal):', e)
         }
         entry.running = false
+      }
+      // GRILL-GREENFIELD-CANCEL-ALWAYS-01: Only cancel greenfield if its workspaceId
+      // matches the cancel target. Previously, any workspace cancel would kill an
+      // unrelated greenfield evaluation.
+      if (this.greenfieldSession?.running && this.greenfieldSession.workspaceId === workspaceId) {
+        try {
+          this.greenfieldSession.session.cancelCurrentQuery()
+        } catch (e) {
+          grillLog.debug('[grill:greenfield] cancelCurrentQuery() failed (non-fatal):', e)
+        }
+        this.greenfieldSession.running = false
       }
     } else {
       // Cancel all (backward compat)
@@ -259,13 +291,16 @@ export class GrillAgentService extends EventEmitter {
 
     try {
       const parsed = JSON.parse(lastMatch[1]) as GrillEvaluation
-      // Validate required fields
+      // GRILL-SCORE-RANGE-01: Validate required fields AND score range (0–10, finite)
       if (
         typeof parsed.score !== 'number' ||
+        !Number.isFinite(parsed.score) ||
+        parsed.score < 0 ||
+        parsed.score > 10 ||
         !Array.isArray(parsed.questions) ||
         parsed.questions.length === 0
       ) {
-        grillLog.warn('[grill] Parsed grill-evaluation has invalid structure')
+        grillLog.warn('[grill] Parsed grill-evaluation has invalid structure or out-of-range score')
         return null
       }
       return parsed

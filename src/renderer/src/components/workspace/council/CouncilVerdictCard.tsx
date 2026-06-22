@@ -143,7 +143,7 @@ export default function CouncilVerdictCard({
   }
 
   return (
-    <div className="space-y-4">
+    <div data-testid="council-verdict-card" className="space-y-4">
       {/* Score + Recommendation hero */}
       <div className="flex items-start gap-6 p-4 rounded-lg bg-surface-float border border-border-subtle">
         <ScoreGauge score={verdict.overallScore} size={100} />

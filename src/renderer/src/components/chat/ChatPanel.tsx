@@ -21,13 +21,15 @@ import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
+import { PresetSwitcher } from './PresetSwitcher'
 import TodoTaskBar from './TodoTaskBar'
 import {
   StackDriftBanner,
   BuildProgressInline,
   GenerateSpecialistModal
 } from '@renderer/components/specialist'
-import type { ConversationMode } from '../../../../shared/types'
+import type { ConversationMode, ThinkingEffort } from '../../../../shared/types'
+import type { SessionRecoveryPhase } from './SessionRecoveryBanner'
 import { useChatPanelEffects } from './useChatPanelEffects'
 import { useRateLimitState } from './useRateLimitState'
 import { useApiRetryState } from './useApiRetryState'
@@ -44,6 +46,257 @@ interface ChatPanelProps {
   onNewChatDismiss?: () => void
   onNavigateToSettings?: () => void
 }
+
+// ── Mode configuration ───────────────────────────────────────────────────
+
+const MODE_CONFIG: Record<
+  ConversationMode,
+  { icon: typeof ClipboardList; label: string; classes: string }
+> = {
+  plan: {
+    icon: ClipboardList,
+    label: 'Plan Mode',
+    classes: 'bg-mode-plan-muted/80 text-mode-plan-text border-mode-plan-border'
+  },
+  build: {
+    icon: Hammer,
+    label: 'Build Mode',
+    classes: 'bg-mode-build-muted/80 text-mode-build-text border-mode-build-border'
+  },
+  danger: {
+    icon: Skull,
+    label: 'Danger Mode',
+    classes: 'bg-mode-danger-muted/80 text-mode-danger-text border-mode-danger-border'
+  }
+}
+
+const MODE_CYCLE: Record<ConversationMode, ConversationMode> = {
+  plan: 'build',
+  build: 'danger',
+  danger: 'plan'
+}
+
+// ── ModeCyclePill ────────────────────────────────────────────────────────
+
+function ModeCyclePill({
+  mode,
+  onCycle
+}: {
+  mode: ConversationMode
+  onCycle: () => void
+}): React.JSX.Element {
+  const { icon: Icon, label, classes } = MODE_CONFIG[mode]
+  return (
+    <button
+      onClick={onCycle}
+      className={`pointer-events-auto inline-flex items-center gap-2 px-5 py-1.5 rounded-full text-sm font-semibold border-2 shadow-lg backdrop-blur-sm transition-all cursor-pointer hover:scale-105 ${classes}`}
+      title="Click to cycle mode"
+    >
+      <Icon size={16} /> {label}
+    </button>
+  )
+}
+
+// ── ChatPanelBanners ────────────────────────────────────────────────────
+
+function ChatPanelBanners({
+  activeTab,
+  workspaceId,
+  rateLimitState,
+  apiRetry,
+  sessionRecovery,
+  budgetCapBanner,
+  continuePastBudgetCap,
+  dismissBudgetCap
+}: {
+  activeTab: ChatTab
+  workspaceId?: string
+  rateLimitState: { utilization?: number; status: 'allowed' | 'allowed_warning' | 'rejected' } | null
+  apiRetry: { attempt: number; maxRetries: number; errorStatus?: number | null } | null
+  sessionRecovery: { phase: SessionRecoveryPhase; message: string } | null
+  budgetCapBanner: { message: string; canContinue: boolean } | null
+  continuePastBudgetCap: () => void
+  dismissBudgetCap: () => void
+}): React.JSX.Element {
+  return (
+    <>
+      {activeTab === 'chat' && workspaceId && (
+        <div className="px-6 pt-2">
+          <StackDriftBanner workspaceId={workspaceId} />
+        </div>
+      )}
+      {rateLimitState && (
+        <div className="px-6 py-2 border-b border-border-subtle">
+          <RateLimitBadge
+            utilization={rateLimitState.utilization ?? 0}
+            status={rateLimitState.status}
+          />
+        </div>
+      )}
+      {apiRetry && (
+        <ApiRetryBanner
+          attempt={apiRetry.attempt}
+          maxRetries={apiRetry.maxRetries}
+          errorStatus={apiRetry.errorStatus ?? null}
+        />
+      )}
+      {activeTab === 'chat' && sessionRecovery && (
+        <SessionRecoveryBanner
+          phase={sessionRecovery.phase}
+          message={sessionRecovery.message}
+        />
+      )}
+      {activeTab === 'chat' && budgetCapBanner && (
+        <BudgetCapBanner
+          message={budgetCapBanner.message}
+          canContinue={budgetCapBanner.canContinue}
+          onContinue={continuePastBudgetCap}
+          onDismiss={dismissBudgetCap}
+        />
+      )}
+    </>
+  )
+}
+
+// ── FloatingPillBar ─────────────────────────────────────────────────────
+
+function FloatingPillBar({
+  conversation,
+  isStreaming,
+  effortLevel,
+  mcpIntegrations,
+  onCycleMode,
+  onSetEffort,
+  onMcpToggle
+}: {
+  conversation: NonNullable<React.ComponentProps<typeof PresetSwitcher>['conversation']>
+  isStreaming: boolean
+  effortLevel: ThinkingEffort
+  mcpIntegrations: React.ComponentProps<typeof McpPill>['integration'][]
+  onCycleMode: () => void
+  onSetEffort: (effort: ThinkingEffort) => void
+  onMcpToggle: (id: string) => void
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center justify-center gap-2 py-2 pointer-events-none">
+      <ModeCyclePill mode={conversation.mode} onCycle={onCycleMode} />
+
+      <EffortPill effort={effortLevel} onChange={onSetEffort} disabled={isStreaming} />
+
+      <PresetSwitcher conversation={conversation} disabled={isStreaming} />
+
+      {mcpIntegrations.map((integration) => (
+        <McpPill
+          key={integration.id}
+          integration={integration}
+          active={!!conversation.mcpOverrides?.[integration.id]}
+          onToggle={() => onMcpToggle(integration.id)}
+          disabled={isStreaming}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ── useChatPanelLocalEffects ────────────────────────────────────────────
+
+function useChatPanelLocalEffects({
+  conversationId,
+  isStreaming,
+  showSearch,
+  searchInputRef,
+  loadFiles,
+  loadContextUsage,
+  setActiveTab,
+  setShowSearch
+}: {
+  conversationId: string | undefined
+  isStreaming: boolean
+  showSearch: boolean
+  searchInputRef: React.RefObject<HTMLInputElement | null>
+  loadFiles: (id: string) => Promise<void>
+  loadContextUsage: (id: string) => Promise<void>
+  setActiveTab: (tab: ChatTab) => void
+  setShowSearch: React.Dispatch<React.SetStateAction<boolean>>
+}): void {
+  useEffect(() => {
+    if (conversationId) void loadFiles(conversationId)
+  }, [conversationId, loadFiles])
+
+  useEffect(() => {
+    if (showSearch) searchInputRef.current?.focus()
+  }, [showSearch, searchInputRef])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveTab('chat')
+  }, [conversationId, setActiveTab])
+
+  useEffect(() => {
+    if (conversationId) void loadContextUsage(conversationId)
+    if (!isStreaming && conversationId) {
+      const timer = setTimeout(() => void loadContextUsage(conversationId), 2000)
+      return (): void => { clearTimeout(timer) }
+    }
+    return undefined
+  }, [conversationId, isStreaming, loadContextUsage])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault()
+        setShowSearch((prev) => !prev)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [setShowSearch])
+}
+
+// ── EmptyConversationState ──────────────────────────────────────────────
+
+function EmptyConversationState({
+  showNewChat,
+  generateModal,
+  onCreateChat,
+  onCreateIdea
+}: {
+  showNewChat?: boolean
+  generateModal: React.ReactNode
+  onCreateChat: (data: {
+    title: string
+    description?: string
+    mode: ConversationMode
+    communicationTone?: import('../../../../shared/types').CommunicationTone | null
+    attachments?: string[]
+    useIsolatedBranch?: boolean
+    llmProvider?: string
+    mcpOverrides?: Record<string, boolean>
+    presetId?: string | null
+  }) => Promise<void>
+  onCreateIdea?: (data: { title: string; description?: string }) => void
+}): React.JSX.Element {
+  if (showNewChat) {
+    return (
+      <>
+        {generateModal}
+        <NewChatPage onCreateChat={onCreateChat} onCreateIdea={onCreateIdea} />
+      </>
+    )
+  }
+  return (
+    <>
+      {generateModal}
+      <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
+        <p className="text-sm text-text-secondary">
+          Select a conversation from the sidebar or start a new one.
+        </p>
+      </div>
+    </>
+  )
+}
+
+// ── ChatPanel ───────────────────────────────────────────────────────────
 
 export default function ChatPanel({
   onCreateIdea,
@@ -79,57 +332,19 @@ export default function ChatPanel({
 
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
-
-  // Load code changes when conversation changes
   const loadFiles = useCodeChangesStore((s) => s.loadFiles)
-  useEffect(() => {
-    if (activeConversation?.id) {
-      void loadFiles(activeConversation.id)
-    }
-  }, [activeConversation?.id, loadFiles])
 
-  // Focus search input when opened
-  useEffect(() => {
-    if (showSearch) {
-      searchInputRef.current?.focus()
-    }
-  }, [showSearch])
-
-  // Reset tab when conversation changes
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on conversation switch
-    setActiveTab('chat')
-  }, [activeConversation?.id])
-
-  // Load context usage when conversation changes or streaming ends.
-  // Delayed re-fetch after stream ends catches post-compaction state.
-  useEffect(() => {
-    if (activeConversation?.id) {
-      void loadContextUsage(activeConversation.id)
-    }
-    if (!isStreaming && activeConversation?.id) {
-      const convId = activeConversation.id
-      const timer = setTimeout(() => {
-        void loadContextUsage(convId)
-      }, 2000)
-      return (): void => {
-        clearTimeout(timer)
-      }
-    }
-    return undefined
-  }, [activeConversation?.id, isStreaming, loadContextUsage])
-
-  // ⌘F / Ctrl+F toggle for search
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
-        e.preventDefault()
-        setShowSearch((prev) => !prev)
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [])
+  // ── Side effects ──
+  useChatPanelLocalEffects({
+    conversationId: activeConversation?.id,
+    isStreaming,
+    showSearch,
+    searchInputRef,
+    loadFiles,
+    loadContextUsage,
+    setActiveTab,
+    setShowSearch
+  })
 
   const handleCreateChat = async (data: {
     title: string
@@ -140,6 +355,7 @@ export default function ChatPanel({
     useIsolatedBranch?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
+    presetId?: string | null
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -149,7 +365,8 @@ export default function ChatPanel({
       undefined,
       (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
       data.mcpOverrides,
-      data.communicationTone
+      data.communicationTone,
+      data.presetId
     )
     onNewChatDismiss?.()
     if (data.useIsolatedBranch) {
@@ -175,23 +392,13 @@ export default function ChatPanel({
 
   // Workspace selected but no active conversation
   if (!activeConversation) {
-    if (showNewChat) {
-      return (
-        <>
-          {generateModal}
-          <NewChatPage onCreateChat={handleCreateChat} onCreateIdea={onCreateIdea} />
-        </>
-      )
-    }
     return (
-      <>
-        {generateModal}
-        <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
-          <p className="text-sm text-text-secondary">
-            Select a conversation from the sidebar or start a new one.
-          </p>
-        </div>
-      </>
+      <EmptyConversationState
+        showNewChat={showNewChat}
+        generateModal={generateModal}
+        onCreateChat={handleCreateChat}
+        onCreateIdea={onCreateIdea}
+      />
     )
   }
 
@@ -226,31 +433,17 @@ export default function ChatPanel({
           )}
         </div>
 
-        {/* Stack drift banner */}
-        {activeTab === 'chat' && activeWorkspace?.id && (
-          <div className="px-6 pt-2">
-            <StackDriftBanner workspaceId={activeWorkspace.id} />
-          </div>
-        )}
-
-        {/* Rate limit warning banner */}
-        {rateLimitState && (
-          <div className="px-6 py-2 border-b border-border-subtle">
-            <RateLimitBadge
-              utilization={rateLimitState.utilization ?? 0}
-              status={rateLimitState.status}
-            />
-          </div>
-        )}
-
-        {/* API retry / overload banner */}
-        {apiRetry && (
-          <ApiRetryBanner
-            attempt={apiRetry.attempt}
-            maxRetries={apiRetry.maxRetries}
-            errorStatus={apiRetry.errorStatus}
-          />
-        )}
+        {/* Banners */}
+        <ChatPanelBanners
+          activeTab={activeTab}
+          workspaceId={activeWorkspace?.id}
+          rateLimitState={rateLimitState}
+          apiRetry={apiRetry}
+          sessionRecovery={sessionRecovery}
+          budgetCapBanner={budgetCapBanner}
+          continuePastBudgetCap={continuePastBudgetCap}
+          dismissBudgetCap={dismissBudgetCap}
+        />
 
         {/* Tab content */}
         {activeTab === 'chat' && (
@@ -288,22 +481,6 @@ export default function ChatPanel({
 
             <RepoWarningBanner onNavigateToSettings={onNavigateToSettings} />
 
-            {sessionRecovery && (
-              <SessionRecoveryBanner
-                phase={sessionRecovery.phase}
-                message={sessionRecovery.message}
-              />
-            )}
-
-            {budgetCapBanner && (
-              <BudgetCapBanner
-                message={budgetCapBanner.message}
-                canContinue={budgetCapBanner.canContinue}
-                onContinue={continuePastBudgetCap}
-                onDismiss={dismissBudgetCap}
-              />
-            )}
-
             {agentStatus === 'starting' ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
                 <div className="relative mb-6">
@@ -333,56 +510,15 @@ export default function ChatPanel({
 
             {/* Floating pill bar — mode pill + MCP pills overlaid above input */}
             {activeConversation && (
-              <div className="flex items-center justify-center gap-2 py-2 pointer-events-none">
-                <button
-                  onClick={() => {
-                    const cycle: Record<ConversationMode, ConversationMode> = {
-                      plan: 'build',
-                      build: 'danger',
-                      danger: 'plan'
-                    }
-                    updateMode(cycle[activeConversation.mode])
-                  }}
-                  className={`pointer-events-auto inline-flex items-center gap-2 px-5 py-1.5 rounded-full text-sm font-semibold border-2 shadow-lg backdrop-blur-sm transition-all cursor-pointer hover:scale-105 ${
-                    activeConversation.mode === 'plan'
-                      ? 'bg-mode-plan-muted/80 text-mode-plan-text border-mode-plan-border'
-                      : activeConversation.mode === 'build'
-                        ? 'bg-mode-build-muted/80 text-mode-build-text border-mode-build-border'
-                        : 'bg-mode-danger-muted/80 text-mode-danger-text border-mode-danger-border'
-                  }`}
-                  title="Click to cycle mode"
-                >
-                  {activeConversation.mode === 'plan' ? (
-                    <>
-                      <ClipboardList size={16} /> Plan Mode
-                    </>
-                  ) : activeConversation.mode === 'build' ? (
-                    <>
-                      <Hammer size={16} /> Build Mode
-                    </>
-                  ) : (
-                    <>
-                      <Skull size={16} /> Danger Mode
-                    </>
-                  )}
-                </button>
-
-                <EffortPill
-                  effort={effortLevels[activeConversation.id] ?? 'medium'}
-                  onChange={(effort) => setEffort(activeConversation.id, effort)}
-                  disabled={isStreaming}
-                />
-
-                {availableMcpIntegrations.map((integration) => (
-                  <McpPill
-                    key={integration.id}
-                    integration={integration}
-                    active={!!activeConversation.mcpOverrides?.[integration.id]}
-                    onToggle={() => handleMcpToggle(integration.id)}
-                    disabled={isStreaming}
-                  />
-                ))}
-              </div>
+              <FloatingPillBar
+                conversation={activeConversation}
+                isStreaming={isStreaming}
+                effortLevel={effortLevels[activeConversation.id] ?? ('medium' as const)}
+                mcpIntegrations={availableMcpIntegrations}
+                onCycleMode={() => updateMode(MODE_CYCLE[activeConversation.mode])}
+                onSetEffort={(effort) => setEffort(activeConversation.id, effort)}
+                onMcpToggle={handleMcpToggle}
+              />
             )}
 
             {activeConversation && <TodoTaskBar conversationId={activeConversation.id} />}

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { app } from 'electron'
 import { MCP_TOOLS, EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
@@ -90,6 +91,14 @@ function resolveStdioCommand(command: string, knownPaths?: readonly string[]): s
       if (found) return resolved
     }
   }
+  // SVC-04: In packaged apps, don't fall back to bare command — the minimal
+  // GUI PATH (/usr/bin:/bin:/usr/sbin:/sbin) could resolve a trojan binary.
+  if (app.isPackaged) {
+    chatAgentLogger.error(
+      `[mcp:resolve-command] Command "${command}" not found at any known path — refusing bare fallback in packaged mode`
+    )
+    throw new Error(`MCP command not found: ${command}`)
+  }
   chatAgentLogger.info(`[mcp:resolve-command] Falling back to bare command: ${command}`)
   return command
 }
@@ -118,11 +127,22 @@ const KNOWN_JAVA_PATHS = [
  */
 function resolveJavaHome(): string | undefined {
   // Already set — use it
-  if (process.env.JAVA_HOME) return process.env.JAVA_HOME
+  if (process.env.JAVA_HOME) {
+    // SVC-05: Validate that JAVA_HOME actually contains bin/java
+    const javaBin = join(process.env.JAVA_HOME, 'bin', 'java')
+    if (existsSync(javaBin)) {
+      return process.env.JAVA_HOME
+    }
+    chatAgentLogger.warn(
+      `[mcp:java-resolve] JAVA_HOME=${process.env.JAVA_HOME} has no bin/java — ignoring`
+    )
+  }
 
   // Probe known Homebrew paths
   for (const p of KNOWN_JAVA_PATHS) {
-    if (existsSync(p)) {
+    // SVC-05: Verify bin/java exists, not just the directory
+    const javaBin = join(p, 'bin', 'java')
+    if (existsSync(javaBin)) {
       chatAgentLogger.info(`[mcp:java-resolve] Found Java at ${p}`)
       return p
     }
@@ -255,14 +275,222 @@ function mountExternalMcps(
 }
 
 /**
+ * Merge additional tool names into a base allowlist.
+ * Returns undefined when the base is undefined (= "all tools allowed").
+ */
+function resolveToolAllowlist(
+  baseAllowed: string[] | undefined,
+  additionalTools: string[]
+): string[] | undefined {
+  if (baseAllowed === undefined) return undefined
+  return [...baseAllowed, ...additionalTools]
+}
+
+/**
+ * Build MCP config for local LLM providers.
+ * Tool gating by context window tier:
+ *   small (≤64K): 6 essential code-graph + 3 control-actions — saves ~50% schema overhead
+ *   medium (≤128K): full code-graph + semantic-search + control-actions
+ *   large (>128K): everything (same as Claude)
+ */
+function buildLocalProviderMcpConfig(opts: {
+  tier: ContextWindowTier
+  mode: ConversationMode
+  featureFlags: McpFeatureFlags
+  workspaceId: string | null
+  baseAllowed: string[] | undefined
+  disallowed: string[]
+}): McpConfigResult & { planBuiltinDisallowed?: string[] } {
+  const { tier, mode, featureFlags, workspaceId, baseAllowed, disallowed } = opts
+  const { repomapEnabled, semanticSearchEnabled } = featureFlags
+  const localActive = featureFlags.localMcpActive
+  const servers: Record<string, McpServerConfig> = {}
+
+  const codeGraphEnabled =
+    repomapEnabled && !!workspaceId && isLocalMcpEnabled('code-graph', localActive)
+
+  // Semantic search: skip for 'small' tier (saves ~3 tool schemas ≈ 1-2K tokens)
+  const semanticSearchEnabled_ =
+    tier !== 'small' &&
+    semanticSearchEnabled &&
+    !!workspaceId &&
+    isLocalMcpEnabled('semantic-search', localActive)
+
+  // Code analysis: skip for 'small' tier (saves ~3 tool schemas)
+  const codeAnalysisEnabled = tier !== 'small' && isLocalMcpEnabled('code-analysis', localActive)
+
+  // Build allowed tools list — tier-gated subset for code-graph
+  const conditionalTools = [
+    // Code graph: small tier → 6 essential tools; medium/large → full 13
+    ...(codeGraphEnabled
+      ? tier === 'small'
+        ? [...ESSENTIAL_CODE_GRAPH_TOOLS]
+        : MCP_TOOLS.CODE_GRAPH._ALL_NAMES
+      : []),
+    // Semantic search (tier-gated above)
+    ...(semanticSearchEnabled_ ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES : []),
+    // Code analysis (tier-gated above)
+    ...(codeAnalysisEnabled ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES : []),
+    // Control actions — always on
+    MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
+    MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
+    MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
+  ]
+  const localAllowed = resolveToolAllowlist(baseAllowed, conditionalTools)
+
+  // ── External MCP Servers (stdio) — also available for local LLMs ──
+  const externalActive = featureFlags.externalMcpActive ?? {}
+  mountExternalMcps(servers, localAllowed, mode, externalActive)
+
+  chatAgentLogger.info(
+    `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${localAllowed?.length ?? 'all'} disallowedCount=${disallowed.length} provider=local tier=${tier}`
+  )
+
+  // For small tier: explicitly disallow the tools we didn't allow — defense-in-depth
+  const smallTierDisallowed =
+    tier === 'small'
+      ? [
+          // Redundant code-graph tools not in ESSENTIAL_CODE_GRAPH_TOOLS
+          ...(codeGraphEnabled
+            ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES.filter(
+                (t) => !(ESSENTIAL_CODE_GRAPH_TOOLS as readonly string[]).includes(t)
+              )
+            : []),
+          // All semantic-search tools (server not mounted)
+          ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES,
+          // All code-analysis tools (server not mounted)
+          ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+        ]
+      : []
+
+  // Plan-mode built-in tool gating — restrict write tools in plan mode
+  // to reduce tool schema overhead (each tool schema costs ~400-500 tokens).
+  const tierLimits = TIER_LIMITS[tier]
+  let planBuiltinDisallowed: string[] | undefined
+  if (mode === 'plan' && tierLimits.planBuiltinAllowlist) {
+    const allBuiltins = [
+      'Read',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'TodoRead',
+      'TodoWrite',
+      'NotebookRead',
+      'NotebookEdit'
+    ]
+    planBuiltinDisallowed = allBuiltins.filter(
+      (t) => !tierLimits.planBuiltinAllowlist!.includes(t)
+    )
+    chatAgentLogger.info(
+      `[mcp:plan-builtin-gating] tier=${tier} allowed=[${tierLimits.planBuiltinAllowlist.join(',')}] ` +
+        `disallowed=[${planBuiltinDisallowed.join(',')}] — saves ~${planBuiltinDisallowed.length * 450} tokens`
+    )
+  }
+
+  const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
+  return {
+    ...(mcpServers ? { mcpServers } : {}),
+    allowedTools: localAllowed,
+    disallowedTools: [...disallowed, ...smallTierDisallowed, ...(planBuiltinDisallowed ?? [])],
+    planBuiltinDisallowed
+  }
+}
+
+/**
+ * Build MCP config for Claude providers.
+ * Full MCP suite with feature-flag gating.
+ */
+function buildClaudeProviderMcpConfig(opts: {
+  mode: ConversationMode
+  featureFlags: McpFeatureFlags
+  workspaceId: string | null
+  baseAllowed: string[] | undefined
+  disallowed: string[]
+}): McpConfigResult {
+  const { mode, featureFlags, workspaceId, baseAllowed, disallowed } = opts
+  const { repomapEnabled, semanticSearchEnabled, githubConfigured } = featureFlags
+  const localActive = featureFlags.localMcpActive
+
+  // ── Allowed Tools ──
+  // Build-mode has no allow-list (baseAllowed=undefined). Plan-mode appends
+  // conditional MCP tool names to the base allow-list.
+  const conditionalTools = [
+    // Code graph MCP tools (workspace flag AND per-chat toggle)
+    ...(repomapEnabled && workspaceId && isLocalMcpEnabled('code-graph', localActive)
+      ? [
+          MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name,
+          MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name,
+          MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name,
+          MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name,
+          MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name,
+          MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name,
+          MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name,
+          MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name,
+          MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name,
+          MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name,
+          MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name,
+          MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name,
+          MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name
+        ]
+      : []),
+    // Semantic search (workspace flag AND per-chat toggle)
+    ...(semanticSearchEnabled &&
+    workspaceId &&
+    isLocalMcpEnabled('semantic-search', localActive)
+      ? [
+          MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name,
+          MCP_TOOLS.SEMANTIC_SEARCH.SIMILAR_CODE.name,
+          MCP_TOOLS.SEMANTIC_SEARCH.CODEBASE_CONCEPTS.name
+        ]
+      : []),
+    // Git context (per-chat gated)
+    ...(isLocalMcpEnabled('git-context', localActive)
+      ? MCP_TOOLS.GIT_CONTEXT._ALL_NAMES
+      : []),
+    // Checkpoint context (per-chat gated)
+    ...(isLocalMcpEnabled('checkpoint-context', localActive)
+      ? MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES
+      : []),
+    // GitHub context (workspace flag AND per-chat toggle)
+    ...(githubConfigured && isLocalMcpEnabled('github-context', localActive)
+      ? MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES
+      : []),
+    // Code analysis (per-chat gated)
+    ...(isLocalMcpEnabled('code-analysis', localActive)
+      ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+      : []),
+    // Control actions — always on (plan + ask + memory)
+    MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
+    MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
+    MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
+  ]
+  const allowedTools = resolveToolAllowlist(baseAllowed, conditionalTools)
+
+  // ── External MCP Servers (stdio) ──
+  // Conditionally mounted based on per-message flags from the conversation MCP overrides.
+  const servers: Record<string, McpServerConfig> = {}
+  const externalActive = featureFlags.externalMcpActive ?? {}
+  mountExternalMcps(servers, allowedTools, mode, externalActive)
+
+  chatAgentLogger.info(
+    `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${allowedTools?.length ?? 'all'} disallowedCount=${disallowed.length} provider=claude`
+  )
+
+  const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
+
+  return {
+    ...(mcpServers ? { mcpServers } : {}),
+    allowedTools,
+    disallowedTools: disallowed
+  }
+}
+
+/**
  * Builds MCP tool allow/disallow lists and mounts external MCP servers.
- *
- * Local MCP servers (code-graph, semantic-search, control-actions, etc.) are
- * configured externally by McpConfigWriter (for CLI) or OpenCode's own config.
- * This function only handles:
- *   1. Feature-flag-gated tool allow/disallow lists
- *   2. External MCP stdio server mounting (Maestro, etc.)
- *   3. Context-window-tier gating for local LLMs
+ * Dispatches to provider-specific builders for local LLM vs Claude paths.
  */
 export function buildWorkspaceMcpConfig(opts: {
   mode: ConversationMode
@@ -281,190 +509,22 @@ export function buildWorkspaceMcpConfig(opts: {
 } {
   const { baseAllowed, disallowed } = buildModePermissions(opts.mode)
 
-  // ── Local LLM path ──
-  // Tool gating by context window tier:
-  //   small (≤64K): 6 essential code-graph + 3 control-actions — saves ~50% schema overhead
-  //   medium (≤128K): full code-graph + semantic-search + control-actions
-  //   large (>128K): everything (same as Claude)
   if (opts.isLocalProvider) {
-    const tier: ContextWindowTier = opts.contextTier ?? 'large' // backward-compat default
-    const { repomapEnabled, semanticSearchEnabled } = opts.featureFlags
-    const localActive = opts.featureFlags.localMcpActive
-    const servers: Record<string, McpServerConfig> = {}
-
-    const codeGraphEnabled =
-      repomapEnabled && !!opts.workspaceId && isLocalMcpEnabled('code-graph', localActive)
-
-    // Semantic search: skip for 'small' tier (saves ~3 tool schemas ≈ 1-2K tokens)
-    const semanticSearchEnabled_ =
-      tier !== 'small' &&
-      semanticSearchEnabled &&
-      !!opts.workspaceId &&
-      isLocalMcpEnabled('semantic-search', localActive)
-
-    // Code analysis: skip for 'small' tier (saves ~3 tool schemas)
-    const codeAnalysisEnabled = tier !== 'small' && isLocalMcpEnabled('code-analysis', localActive)
-
-    // Build allowed tools list — tier-gated subset for code-graph
-    const localAllowed =
-      baseAllowed === undefined
-        ? undefined
-        : [
-            ...baseAllowed,
-            // Code graph: small tier → 6 essential tools; medium/large → full 13
-            ...(codeGraphEnabled
-              ? tier === 'small'
-                ? [...ESSENTIAL_CODE_GRAPH_TOOLS]
-                : MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-              : []),
-            // Semantic search (tier-gated above)
-            ...(semanticSearchEnabled_ ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES : []),
-            // Code analysis (tier-gated above)
-            ...(codeAnalysisEnabled ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES : []),
-            // Control actions — always on
-            MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
-            MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
-            MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
-          ]
-
-    // ── External MCP Servers (stdio) — also available for local LLMs ──
-    const externalActive = opts.featureFlags.externalMcpActive ?? {}
-    mountExternalMcps(servers, localAllowed, opts.mode, externalActive)
-
-    chatAgentLogger.info(
-      `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${localAllowed?.length ?? 'all'} disallowedCount=${disallowed.length} provider=local tier=${tier}`
-    )
-
-    // For small tier: explicitly disallow the tools we didn't allow — defense-in-depth
-    const smallTierDisallowed =
-      tier === 'small'
-        ? [
-            // Redundant code-graph tools not in ESSENTIAL_CODE_GRAPH_TOOLS
-            ...(codeGraphEnabled
-              ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES.filter(
-                  (t) => !(ESSENTIAL_CODE_GRAPH_TOOLS as readonly string[]).includes(t)
-                )
-              : []),
-            // All semantic-search tools (server not mounted)
-            ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES,
-            // All code-analysis tools (server not mounted)
-            ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
-          ]
-        : []
-
-    // Plan-mode built-in tool gating — restrict write tools in plan mode
-    // to reduce tool schema overhead (each tool schema costs ~400-500 tokens).
-    const tierLimits = TIER_LIMITS[tier]
-    let planBuiltinDisallowed: string[] | undefined
-    if (opts.mode === 'plan' && tierLimits.planBuiltinAllowlist) {
-      const allBuiltins = [
-        'Read',
-        'Write',
-        'Edit',
-        'MultiEdit',
-        'Bash',
-        'Glob',
-        'Grep',
-        'TodoRead',
-        'TodoWrite',
-        'NotebookRead',
-        'NotebookEdit'
-      ]
-      planBuiltinDisallowed = allBuiltins.filter(
-        (t) => !tierLimits.planBuiltinAllowlist!.includes(t)
-      )
-      chatAgentLogger.info(
-        `[mcp:plan-builtin-gating] tier=${tier} allowed=[${tierLimits.planBuiltinAllowlist.join(',')}] ` +
-          `disallowed=[${planBuiltinDisallowed.join(',')}] — saves ~${planBuiltinDisallowed.length * 450} tokens`
-      )
-    }
-
-    const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
-    return {
-      ...(mcpServers ? { mcpServers } : {}),
-      allowedTools: localAllowed,
-      disallowedTools: [...disallowed, ...smallTierDisallowed, ...(planBuiltinDisallowed ?? [])],
-      planBuiltinDisallowed
-    }
+    return buildLocalProviderMcpConfig({
+      tier: opts.contextTier ?? 'large',
+      mode: opts.mode,
+      featureFlags: opts.featureFlags,
+      workspaceId: opts.workspaceId,
+      baseAllowed,
+      disallowed
+    })
   }
 
-  // ── Full MCP config for Claude ──
-  const { repomapEnabled, semanticSearchEnabled, githubConfigured } = opts.featureFlags
-  const localActive = opts.featureFlags.localMcpActive
-
-  // ── Allowed Tools ──
-  // Build-mode has no allow-list (baseAllowed=undefined). Plan-mode appends
-  // conditional MCP tool names to the base allow-list.
-  const allowedTools =
-    baseAllowed === undefined
-      ? undefined
-      : [
-          ...baseAllowed,
-          // Code graph MCP tools (workspace flag AND per-chat toggle)
-          ...(repomapEnabled && opts.workspaceId && isLocalMcpEnabled('code-graph', localActive)
-            ? [
-                MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name,
-                MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name,
-                MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name,
-                MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name,
-                MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name,
-                MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name,
-                MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name,
-                MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name,
-                MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name,
-                MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name,
-                MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name,
-                MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name,
-                MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name
-              ]
-            : []),
-          // Semantic search (workspace flag AND per-chat toggle)
-          ...(semanticSearchEnabled &&
-          opts.workspaceId &&
-          isLocalMcpEnabled('semantic-search', localActive)
-            ? [
-                MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name,
-                MCP_TOOLS.SEMANTIC_SEARCH.SIMILAR_CODE.name,
-                MCP_TOOLS.SEMANTIC_SEARCH.CODEBASE_CONCEPTS.name
-              ]
-            : []),
-          // Git context (per-chat gated)
-          ...(isLocalMcpEnabled('git-context', localActive)
-            ? MCP_TOOLS.GIT_CONTEXT._ALL_NAMES
-            : []),
-          // Checkpoint context (per-chat gated)
-          ...(isLocalMcpEnabled('checkpoint-context', localActive)
-            ? MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES
-            : []),
-          // GitHub context (workspace flag AND per-chat toggle)
-          ...(githubConfigured && isLocalMcpEnabled('github-context', localActive)
-            ? MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES
-            : []),
-          // Code analysis (per-chat gated)
-          ...(isLocalMcpEnabled('code-analysis', localActive)
-            ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
-            : []),
-          // Control actions — always on (plan + ask + memory)
-          MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
-          MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
-          MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
-        ]
-
-  // ── External MCP Servers (stdio) ──
-  // Conditionally mounted based on per-message flags from the conversation MCP overrides.
-  const servers: Record<string, McpServerConfig> = {}
-  const externalActive = opts.featureFlags.externalMcpActive ?? {}
-  mountExternalMcps(servers, allowedTools, opts.mode, externalActive)
-
-  chatAgentLogger.info(
-    `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${allowedTools?.length ?? 'all'} disallowedCount=${disallowed.length} provider=claude`
-  )
-
-  const mcpServers = Object.keys(servers).length > 0 ? servers : undefined
-
-  return {
-    ...(mcpServers ? { mcpServers } : {}),
-    allowedTools,
-    disallowedTools: disallowed
-  }
+  return buildClaudeProviderMcpConfig({
+    mode: opts.mode,
+    featureFlags: opts.featureFlags,
+    workspaceId: opts.workspaceId,
+    baseAllowed,
+    disallowed
+  })
 }

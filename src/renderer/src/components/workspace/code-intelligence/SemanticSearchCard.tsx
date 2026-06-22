@@ -12,6 +12,7 @@ interface SemanticSearchCardProps {
   embeddingStatus: EmbeddingModelStatus | null
   persistedIndexStatus: { loaded: boolean; symbolCount?: number; loading: boolean }
   isStartingIndex: boolean
+  isAppleSilicon: boolean | null // null = loading
   onToggle: (enabled: boolean) => Promise<void>
   onSettingToggle: (key: string, value: boolean) => Promise<void>
   onStartIndex: () => Promise<void>
@@ -25,6 +26,7 @@ export default function SemanticSearchCard({
   embeddingStatus,
   persistedIndexStatus,
   isStartingIndex,
+  isAppleSilicon,
   onToggle,
   onSettingToggle,
   onStartIndex,
@@ -37,7 +39,7 @@ export default function SemanticSearchCard({
     <SettingsCard className="space-y-3">
       <ToggleRow
         label="Semantic Search"
-        description="Natural language code search using local embeddings (no external tools required)."
+        description="Natural language code search using oMLX embeddings (requires oMLX running with an embedding model)."
         checked={enabled}
         onChange={onToggle}
       />
@@ -76,8 +78,8 @@ export default function SemanticSearchCard({
           <p>
             <strong className="text-text-body">How it works:</strong> Your code is split into
             semantic chunks (functions, classes, methods), embedded as vectors using a local AI
-            model (nomic-embed-text-v1.5), and stored for instant similarity search. No data leaves
-            your machine.
+            model running in oMLX (e.g. BGE-M3), and stored for instant similarity search. No data
+            leaves your machine.
           </p>
           <p>
             <strong className="text-text-body">Example:</strong> Searching{' '}
@@ -96,8 +98,7 @@ export default function SemanticSearchCard({
               <div className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <Database size={12} className="text-primary" />
                 <span>
-                  {persistedIndexStatus.symbolCount?.toLocaleString()} chunks ·
-                  nomic-embed-text-v1.5
+                  {persistedIndexStatus.symbolCount?.toLocaleString()} chunks · oMLX embedding
                 </span>
               </div>
             </div>
@@ -111,17 +112,21 @@ export default function SemanticSearchCard({
               {embeddingStatus?.ready ? (
                 <span className="flex items-center gap-1 text-xs text-success">
                   <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                  Ready
+                  Ready ({embeddingStatus.omlxEmbeddingModelId ?? 'oMLX'})
                 </span>
-              ) : embeddingStatus?.cached ? (
-                <span className="text-xs text-text-secondary">Cached (loads on first use)</span>
+              ) : embeddingStatus?.omlxRunning ? (
+                <span className="text-xs text-warning">oMLX running — no embedding model loaded</span>
+              ) : isAppleSilicon === false ? (
+                <span className="text-xs text-text-muted">
+                  Requires Apple Silicon Mac (oMLX is not available on Intel)
+                </span>
               ) : (
                 <button
                   onClick={onShowEmbeddingSetup}
                   className="text-xs text-primary hover:text-primary-hover flex items-center gap-1"
                 >
                   <Info size={10} />
-                  Not downloaded — click to set up
+                  oMLX not running — click to set up
                 </button>
               )}
             </div>
@@ -187,7 +192,11 @@ export default function SemanticSearchCard({
             ) : (
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <Database size={12} />
-                <span>No cached index — click below to start indexing</span>
+                <span>
+                  {isAppleSilicon === false
+                    ? 'Semantic search requires Apple Silicon'
+                    : 'No cached index — click below to start indexing'}
+                </span>
               </div>
             )}
           </div>
@@ -196,7 +205,7 @@ export default function SemanticSearchCard({
           <div className="pl-1">
             <button
               onClick={onStartIndex}
-              disabled={isStartingIndex}
+              disabled={isStartingIndex || isAppleSilicon === false}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-primary bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isStartingIndex ? (

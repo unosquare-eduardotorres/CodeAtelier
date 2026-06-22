@@ -28,7 +28,7 @@ export default function GitHubTokenSection({
   onDisconnect
 }: GitHubTokenSectionProps): React.JSX.Element {
   return (
-    <section>
+    <section data-testid="github-token-section">
       <div className="flex items-center gap-2 mb-3">
         <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium">
           GitHub Connection

@@ -220,13 +220,19 @@ export class AgentExecutorFactory {
     // referenced. Context window is resolved internally from the model config.
     /** Completion goal — Claude works autonomously until this condition is met */
     goal?: string
+    /** LLM preset ID for per-action model resolution */
+    presetId?: string | null
   }): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
     const { allowedTools, disallowedTools } = mcpResult
 
     const modelAction = `${this.s.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = modelConfigService.getModel(this.s.workspacePath!, modelAction)
+    const resolvedModel = modelConfigService.getModel(
+      this.s.workspacePath!,
+      modelAction,
+      params.presetId
+    )
 
     const supports1M = supportsContext1M(resolvedModel)
     const effectiveContextWindow = supports1M

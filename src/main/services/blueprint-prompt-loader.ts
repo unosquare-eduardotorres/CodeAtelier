@@ -13,7 +13,11 @@
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import log from 'electron-log'
-import type { BlueprintPhaseType, PhaseContext, BlueprintArtifact } from '../../shared/blueprint-types'
+import type {
+  BlueprintPhaseType,
+  PhaseContext,
+  BlueprintArtifact
+} from '../../shared/blueprint-types'
 
 const promptLog = log.scope('blueprint-prompt-loader')
 
@@ -24,9 +28,9 @@ function getBlueprintsDir(): string {
   // In dev: src/main/blueprints/
   // In prod: out/main/blueprints/ (copied by Vite)
   const candidates = [
-    join(__dirname, '..', 'blueprints'),      // out/main/blueprints (prod)
-    join(__dirname, 'blueprints'),             // alternate structure
-    join(__dirname, '..', '..', 'src', 'main', 'blueprints')  // dev fallback
+    join(__dirname, '..', 'blueprints'), // out/main/blueprints (prod)
+    join(__dirname, 'blueprints'), // alternate structure
+    join(__dirname, '..', '..', 'src', 'main', 'blueprints') // dev fallback
   ]
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate
@@ -96,10 +100,7 @@ function formatArtifacts(artifacts: BlueprintArtifact[]): string {
  * Reads the phase prompt file, injects context variables, and assembles
  * the full prompt including constitution, previous artifacts, and templates.
  */
-export function buildPhaseSystemPrompt(
-  phase: BlueprintPhaseType,
-  context: PhaseContext
-): string {
+export function buildPhaseSystemPrompt(phase: BlueprintPhaseType, context: PhaseContext): string {
   // 1. Load the phase prompt
   const promptFile = PHASE_PROMPT_FILES[phase]
   let prompt = readBlueprintFile(promptFile)
@@ -152,29 +153,31 @@ function replaceVariables(
   template: string,
   enhancement: string
 ): string {
-  return prompt
-    // Blueprint context JSON (injected as structured data)
-    .replace('{{BLUEPRINT_CONTEXT_JSON}}', JSON.stringify(context.blueprint, null, 2))
-    // Constitution content
-    .replace('{{CONSTITUTION_CONTENT}}', context.constitution || '(No constitution defined.)')
-    // Previous phase artifacts
-    .replace('{{PREVIOUS_PHASE_ARTIFACTS}}', formatArtifacts(context.previousArtifacts))
-    // File paths
-    .replace(/\{\{SPEC_FILE_PATH\}\}/g, context.specFilePath)
-    .replace(/\{\{BLUEPRINT_DIR\}\}/g, context.blueprintDir)
-    // Template injection
-    .replace('{{TEMPLATE_CONTENT}}', template || '(No template available.)')
-    // Agent enhancement injection
-    .replace('{{AGENT_ENHANCEMENT}}', enhancement)
-    // Grill decisions (if available)
-    .replace(
-      '{{GRILL_DECISIONS}}',
-      context.grillDecisions?.length
-        ? context.grillDecisions
-            .map((d) => `- **${d.header}**: ${d.selectedOption}\n  _Reason_: ${d.reason}`)
-            .join('\n')
-        : '(No grill decisions available.)'
-    )
+  return (
+    prompt
+      // Blueprint context JSON (injected as structured data)
+      .replace('{{BLUEPRINT_CONTEXT_JSON}}', JSON.stringify(context.blueprint, null, 2))
+      // Constitution content
+      .replace('{{CONSTITUTION_CONTENT}}', context.constitution || '(No constitution defined.)')
+      // Previous phase artifacts
+      .replace('{{PREVIOUS_PHASE_ARTIFACTS}}', formatArtifacts(context.previousArtifacts))
+      // File paths
+      .replace(/\{\{SPEC_FILE_PATH\}\}/g, context.specFilePath)
+      .replace(/\{\{BLUEPRINT_DIR\}\}/g, context.blueprintDir)
+      // Template injection
+      .replace('{{TEMPLATE_CONTENT}}', template || '(No template available.)')
+      // Agent enhancement injection
+      .replace('{{AGENT_ENHANCEMENT}}', enhancement)
+      // Grill decisions (if available)
+      .replace(
+        '{{GRILL_DECISIONS}}',
+        context.grillDecisions?.length
+          ? context.grillDecisions
+              .map((d) => `- **${d.header}**: ${d.selectedOption}\n  _Reason_: ${d.reason}`)
+              .join('\n')
+          : '(No grill decisions available.)'
+      )
+  )
 }
 
 // ── Fallback Prompts (used when .md files aren't found yet) ──

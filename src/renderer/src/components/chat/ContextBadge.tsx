@@ -23,6 +23,7 @@ export default function ContextBadge({
   if (compact) {
     return (
       <span
+        data-testid="context-badge"
         className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${style}`}
         title={`Context usage: ${percentage}%`}
       >
@@ -33,6 +34,7 @@ export default function ContextBadge({
 
   return (
     <span
+      data-testid="context-badge"
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${style}`}
       title={`Context window: ${percentage}% used${level === 'critical' ? ' — consider /compact' : ''}`}
     >

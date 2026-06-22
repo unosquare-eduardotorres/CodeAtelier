@@ -29,7 +29,7 @@ export default function ImagePreviewThumbnail({
 
   return (
     <>
-      <div className="relative group">
+      <div data-testid="attachment-thumbnail" className="relative group">
         {dataUri ? (
           <img
             src={dataUri}
@@ -41,6 +41,7 @@ export default function ImagePreviewThumbnail({
           <Skeleton className="w-20 h-20 rounded-lg" />
         )}
         <button
+          data-testid="attachment-remove-btn"
           onClick={(e) => {
             e.stopPropagation()
             onRemove()

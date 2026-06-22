@@ -63,8 +63,18 @@ export function createTimedCleanupMap(label: string): TimedCleanupMap {
       event: string,
       handler: (data: T) => void
     ): void {
-      emitter.on(event, handler as (...args: unknown[]) => void)
-      cleanups.push(() => emitter.off(event, handler as (...args: unknown[]) => void))
+      // LISTENER-CLEANUP-NOISOL-01: Wrap handlers in try-catch to prevent
+      // listener errors from propagating through EventEmitter.emit() and
+      // crashing the entire emit chain for all listeners on that event.
+      const wrappedHandler = (...args: unknown[]): void => {
+        try {
+          ;(handler as (...a: unknown[]) => void)(...args)
+        } catch (err) {
+          cleanupLog.error(`[${label}:listener] Handler for '${String(event)}' threw:`, err)
+        }
+      }
+      emitter.on(event, wrappedHandler)
+      cleanups.push(() => emitter.off(event, wrappedHandler))
     },
 
     scheduleAutoCleanup(workspaceId: string, cleanups: Array<() => void>, timeoutMs: number): void {

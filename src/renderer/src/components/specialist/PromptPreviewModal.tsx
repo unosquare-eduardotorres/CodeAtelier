@@ -25,6 +25,7 @@ export default function PromptPreviewModal({
 
   // Sync draft when modal opens or prompt changes externally
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync draft from prop when modal opens
     if (open) setDraft(prompt)
   }, [open, prompt])
 
@@ -50,7 +51,7 @@ export default function PromptPreviewModal({
       />
 
       {/* Modal content */}
-      <div className="relative w-full max-w-4xl max-h-[90vh] mx-4 flex flex-col bg-surface-raised border border-border-default rounded-2xl shadow-2xl animate-in fade-in zoom-in-95">
+      <div data-testid="prompt-preview-modal" className="relative w-full max-w-4xl max-h-[90vh] mx-4 flex flex-col bg-surface-raised border border-border-default rounded-2xl shadow-2xl animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
           <div>
@@ -95,6 +96,7 @@ export default function PromptPreviewModal({
               Cancel
             </button>
             <button
+              data-testid="prompt-preview-save"
               onClick={() => onSave(draft)}
               disabled={!isDirty || isSaving}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium

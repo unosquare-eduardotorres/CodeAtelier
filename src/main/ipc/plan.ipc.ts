@@ -10,6 +10,7 @@ import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { planRepository } from '../db/repositories/plan.repository'
 import { conversationRepository, messageRepository } from '../db/repositories'
+import { getDatabase } from '../db/index'
 import { validateSender } from './validate-sender'
 import type { PlanFilters, PlanStatus } from '../../shared/types'
 
@@ -26,13 +27,10 @@ export function registerPlanIpc(): void {
   )
 
   // ── plan:getById — Fetch a single plan ──
-  ipcMain.handle(
-    IPC_CHANNELS.PLAN_GET_BY_ID,
-    (event, args: { planId: string }) => {
-      validateSender(event)
-      return planRepository.getById(args.planId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PLAN_GET_BY_ID, (event, args: { planId: string }) => {
+    validateSender(event)
+    return planRepository.getById(args.planId)
+  })
 
   // ── plan:updateStatus — Update plan lifecycle status ──
   ipcMain.handle(
@@ -59,15 +57,12 @@ export function registerPlanIpc(): void {
   )
 
   // ── plan:delete — Delete a plan from the registry ──
-  ipcMain.handle(
-    IPC_CHANNELS.PLAN_DELETE,
-    (event, args: { planId: string }) => {
-      validateSender(event)
-      const deleted = planRepository.deletePlan(args.planId)
-      planLog.info(`[plan:delete] ${args.planId} deleted=${deleted}`)
-      return { deleted }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PLAN_DELETE, (event, args: { planId: string }) => {
+    validateSender(event)
+    const deleted = planRepository.deletePlan(args.planId)
+    planLog.info(`[plan:delete] ${args.planId} deleted=${deleted}`)
+    return { deleted }
+  })
 
   // ── plan:import — Create new conversation pre-loaded with plan content ──
   ipcMain.handle(
@@ -81,32 +76,25 @@ export function registerPlanIpc(): void {
       }
 
       // Build the message content from requirementDocument or structured plan
-      const planContent = plan.requirementDocument
-        || `# ${plan.title}\n\n${plan.summary}\n\n${JSON.stringify(plan.structuredPlan, null, 2)}`
+      const planContent =
+        plan.requirementDocument ||
+        `# ${plan.title}\n\n${plan.summary}\n\n${JSON.stringify(plan.structuredPlan, null, 2)}`
 
       const messageContent = `I have a plan I'd like to implement:\n\n${planContent}`
 
-      // Create conversation in plan mode
-      const conversation = conversationRepository.create(
-        args.workspaceId,
-        plan.title,
-        'plan'
-      )
+      // ATOM-03: Wrap all three writes in a transaction so partial failure
+      // doesn't leave an orphaned conversation or un-linked plan.
+      const db = getDatabase()
+      const result = db.transaction(() => {
+        const conversation = conversationRepository.create(args.workspaceId, plan.title, 'plan')
+        messageRepository.create(conversation.id, 'user', messageContent)
+        planRepository.markHandedOff(plan.id, conversation.id)
+        return { conversationId: conversation.id, planId: plan.id }
+      })()
 
-      // Create the first user message with plan content
-      messageRepository.create(conversation.id, 'user', messageContent)
+      planLog.info(`[plan:import] Plan ${result.planId} imported into conversation ${result.conversationId}`)
 
-      // Update plan status to handed_off with linked conversation
-      planRepository.markHandedOff(plan.id, conversation.id)
-
-      planLog.info(
-        `[plan:import] Plan ${plan.id} imported into conversation ${conversation.id}`
-      )
-
-      return {
-        conversationId: conversation.id,
-        planId: plan.id
-      }
+      return result
     }
   )
 }

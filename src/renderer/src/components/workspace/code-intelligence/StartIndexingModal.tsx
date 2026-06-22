@@ -84,7 +84,7 @@ export default function StartIndexingModal({
       />
 
       {/* Modal */}
-      <div className="relative bg-surface-panel border border-border-subtle rounded-xl shadow-2xl w-[480px] max-w-[90vw] overflow-hidden">
+      <div data-testid="start-indexing-modal" className="relative bg-surface-panel border border-border-subtle rounded-xl shadow-2xl w-[480px] max-w-[90vw] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">Start Indexing</h2>
@@ -156,6 +156,7 @@ export default function StartIndexingModal({
             Cancel
           </button>
           <button
+            data-testid="start-indexing-confirm"
             onClick={onConfirm}
             className="px-4 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors"
           >

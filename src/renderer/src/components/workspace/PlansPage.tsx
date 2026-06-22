@@ -72,7 +72,7 @@ export default function PlansPage({
   }
 
   return (
-    <div className="p-6">
+    <div data-testid="plans-page" className="p-6">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <ClipboardList size={16} className="text-mode-plan-text" />

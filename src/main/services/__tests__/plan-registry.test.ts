@@ -3,7 +3,7 @@
  * non-critical error handling. Uses spies on PlanRepository to avoid DB.
  */
 import assert from 'node:assert/strict'
-import { test, describe, beforeEach, summaryAsync, createSpy } from './test-harness'
+import { test, describe, summaryAsync } from './test-harness'
 import type {
   StructuredPlan,
   GrillStructuredPlan,
@@ -145,7 +145,9 @@ describe('PlanRegistryService', () => {
     assert.equal(typeof record.sourceId, 'string')
     assert.equal(typeof record.title, 'string')
     assert.equal(typeof record.status, 'string')
-    assert.ok(['saved', 'handed_off', 'in_progress', 'completed', 'archived'].includes(record.status))
+    assert.ok(
+      ['saved', 'handed_off', 'in_progress', 'completed', 'archived'].includes(record.status)
+    )
     assert.ok(['chat', 'grill', 'audit', 'council', 'mpa', 'blueprint'].includes(record.source))
   })
 

@@ -46,7 +46,7 @@ export default function MessageListFooter({
   } = useChatActions()
 
   return (
-    <>
+    <div data-testid="message-list-footer">
       {/* Auto mode switch pill */}
       <AutoModeSwitchPill />
 
@@ -158,6 +158,6 @@ export default function MessageListFooter({
           showHookIndicator
         />
       )}
-    </>
+    </div>
   )
 }

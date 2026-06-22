@@ -12,6 +12,7 @@ import log from 'electron-log'
 import type { GrillTrackId, GrillEvaluation, ToolActivity } from '../../shared/types'
 import type { GrillSession, GrillSessionStatus } from '../db/repositories/grill-session.repository'
 import { grillSessionRepository } from '../db/repositories'
+import { getDatabase } from '../db/index'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { getSessionEventRouter, type SessionEventRouter } from './session-event-router'
 import { TextDeltaBatcher } from '../ipc/text-delta-batcher'
@@ -39,24 +40,31 @@ export interface GrillStatusPayload {
   score: number | null
 }
 
+// GRILL-01 + GRILL-06: Per-workspace tracking state to prevent concurrent
+// evaluations from overwriting each other's session/idea/track IDs.
+interface WorkspaceTrackingState {
+  sessionId: string
+  ideaId: string
+  trackId: GrillTrackId
+  workspaceId: string
+  evaluationHandled: boolean
+  messageBuffer: PersistableMessage[]
+  flushTimer: NodeJS.Timeout | null
+}
+
 export class GrillPersistenceController {
-  private activeSessionId: string | null = null
-  private activeIdeaId: string | null = null
-  private activeTrackId: GrillTrackId | null = null
-  private messageBuffer: PersistableMessage[] = []
-  private flushTimer: NodeJS.Timeout | null = null
+  /** Per-workspace tracking state — keyed by workspaceId. */
+  private activeSessions = new Map<string, WorkspaceTrackingState>()
   /** Batches renderer-bound text at ~30fps so grill streams as smoothly as chat. */
   private textBatcher = new TextDeltaBatcher()
-  /**
-   * Tracks whether an evaluation result was handled during the current run.
-   * Reset when a run starts (startTracking / markEvaluating); set true in
-   * handleEvaluationResult. Used by handleComplete to detect the
-   * empty-evaluation dead-end and avoid leaving a session pinned at 'evaluating'.
-   */
-  private evaluationHandledThisRun = false
 
   /** Buffer flush interval in ms */
   private static readonly FLUSH_INTERVAL_MS = 2000
+
+  /** Get tracking state for a workspace (returns null if not tracking). */
+  private getTracking(workspaceId: string): WorkspaceTrackingState | null {
+    return this.activeSessions.get(workspaceId) ?? null
+  }
 
   // ── Public API ────────────────────────────────────────────────────────
 
@@ -75,10 +83,27 @@ export class GrillPersistenceController {
       grillSessionRepository.updateStatus(session.id, 'evaluating')
     }
 
-    this.activeSessionId = session.id
-    this.activeIdeaId = ideaId
-    this.activeTrackId = trackId
-    this.evaluationHandledThisRun = false
+    // GRILL-TIMER-RACE-01 + GRILL-BUFFER-ORPHAN-01: Clear old flush timer and
+    // flush buffered messages before overwriting tracking state to prevent
+    // dangling timers and orphaned message data.
+    const oldTracking = this.activeSessions.get(workspaceId)
+    if (oldTracking) {
+      if (oldTracking.flushTimer) {
+        clearTimeout(oldTracking.flushTimer)
+      }
+      this.flushToDb(workspaceId)
+    }
+
+    // GRILL-01: Store per-workspace tracking state
+    this.activeSessions.set(workspaceId, {
+      sessionId: session.id,
+      ideaId,
+      trackId,
+      workspaceId,
+      evaluationHandled: false,
+      messageBuffer: [],
+      flushTimer: null
+    })
 
     // Emit status change so the bottom status bar shows the active "Grilling…"
     // pill immediately. Mirrors the markEvaluating / clearTracking pattern.
@@ -118,44 +143,47 @@ export class GrillPersistenceController {
       router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_CHUNK, workspaceId, chunkData)
     }
 
-    // Buffer agent content for DB persistence
-    if (chunkData.type === 'text' && chunkData.content) {
-      // Accumulate text into buffer — will be flushed as agent message
-      const lastMsg = this.messageBuffer[this.messageBuffer.length - 1]
-      if (lastMsg && lastMsg.type === 'agent') {
-        lastMsg.content = (lastMsg.content ?? '') + chunkData.content
-      } else {
-        this.messageBuffer.push({ type: 'agent', content: chunkData.content, toolActivities: [] })
-      }
-    } else if (chunkData.type === 'tool_activity' && chunkData.toolActivity) {
-      // Append tool activity to the current agent message
-      const lastMsg = this.messageBuffer[this.messageBuffer.length - 1]
-      if (lastMsg && lastMsg.type === 'agent') {
-        if (!lastMsg.toolActivities) lastMsg.toolActivities = []
-        // Merge tool_use → tool_result by ID
-        const existingIdx = lastMsg.toolActivities.findIndex(
-          (ta: unknown) =>
-            (ta as Record<string, unknown>).id === chunkData.toolActivity!.id
-        )
-        if (existingIdx >= 0) {
-          lastMsg.toolActivities[existingIdx] = {
-            ...(lastMsg.toolActivities[existingIdx] as Record<string, unknown>),
-            ...chunkData.toolActivity
+    // Buffer agent content for DB persistence (per-workspace buffer)
+    const tracking = this.getTracking(workspaceId)
+    if (tracking) {
+      const buffer = tracking.messageBuffer
+      if (chunkData.type === 'text' && chunkData.content) {
+        // Accumulate text into buffer — will be flushed as agent message
+        const lastMsg = buffer[buffer.length - 1]
+        if (lastMsg && lastMsg.type === 'agent') {
+          lastMsg.content = (lastMsg.content ?? '') + chunkData.content
+        } else {
+          buffer.push({ type: 'agent', content: chunkData.content, toolActivities: [] })
+        }
+      } else if (chunkData.type === 'tool_activity' && chunkData.toolActivity) {
+        // Append tool activity to the current agent message
+        const lastMsg = buffer[buffer.length - 1]
+        if (lastMsg && lastMsg.type === 'agent') {
+          if (!lastMsg.toolActivities) lastMsg.toolActivities = []
+          // Merge tool_use → tool_result by ID
+          const existingIdx = lastMsg.toolActivities.findIndex(
+            (ta: unknown) => (ta as Record<string, unknown>).id === chunkData.toolActivity!.id
+          )
+          if (existingIdx >= 0) {
+            lastMsg.toolActivities[existingIdx] = {
+              ...(lastMsg.toolActivities[existingIdx] as Record<string, unknown>),
+              ...chunkData.toolActivity
+            }
+          } else {
+            lastMsg.toolActivities.push(chunkData.toolActivity)
           }
         } else {
-          lastMsg.toolActivities.push(chunkData.toolActivity)
+          buffer.push({
+            type: 'agent',
+            content: '',
+            toolActivities: [chunkData.toolActivity]
+          })
         }
-      } else {
-        this.messageBuffer.push({
-          type: 'agent',
-          content: '',
-          toolActivities: [chunkData.toolActivity]
-        })
       }
-    }
 
-    // Schedule flush if not already pending
-    this.scheduleFlush()
+      // Schedule flush if not already pending
+      this.scheduleFlush(workspaceId)
+    }
   }
 
   /** Handle evaluation result — persist score + questions, update status */
@@ -175,36 +203,51 @@ export class GrillPersistenceController {
       evaluation as unknown as Record<string, unknown>
     )
 
-    if (!this.activeSessionId) return
-
-    this.evaluationHandledThisRun = true
+    const tracking = this.getTracking(workspaceId)
+    if (!tracking) return
 
     // Flush any pending text/tool messages first
-    this.flushToDb()
+    this.flushToDb(workspaceId)
 
-    // Persist evaluation data
-    grillSessionRepository.updateScore(
-      this.activeSessionId,
-      evaluation.score,
-      evaluation.scoreLabel,
-      evaluation.feedback
-    )
+    // GRILL-TX-NOERRHANDLING-01: Wrap transaction in try-catch so a DB failure
+    // doesn't crash the event listener. If it fails, evaluationHandled stays false
+    // and handleComplete() recovery logic will kick in.
+    try {
+      const db = getDatabase()
+      db.transaction(() => {
+        grillSessionRepository.updateScore(
+          tracking.sessionId,
+          evaluation.score,
+          evaluation.scoreLabel,
+          evaluation.feedback
+        )
+        grillSessionRepository.updateQuestionStates(
+          tracking.sessionId,
+          null, // question states will be set by user answers
+          evaluation
+        )
+        grillSessionRepository.updateStatus(tracking.sessionId, 'awaiting_answers')
+      })()
 
-    // Save current iteration (questions + metadata)
-    grillSessionRepository.updateQuestionStates(
-      this.activeSessionId,
-      null, // question states will be set by user answers
-      evaluation
-    )
+      // GRILL-EVAL-01: Set flag AFTER transaction succeeds so recovery logic in
+      // handleComplete() can detect and handle DB failures.
+      tracking.evaluationHandled = true
+    } catch (err) {
+      ctrlLog.error('[grill-persistence] Evaluation transaction failed:', err)
+      // evaluationHandled stays false — handleComplete() will recover gracefully
+    }
 
-    // Transition status
-    grillSessionRepository.updateStatus(this.activeSessionId, 'awaiting_answers')
-
-    // Emit status change
-    this.emitStatusChange(workspaceId, router, 'awaiting_answers')
+    // GRILL-HANDLEEVAL-EMIT-UNGUARDED-01: Wrap in try-catch matching
+    // startTracking/clearTracking pattern. If router throws here,
+    // evaluationHandled is already set — recovery in handleComplete() is safe.
+    try {
+      this.emitStatusChange(workspaceId, router, 'awaiting_answers')
+    } catch {
+      /* router may not be initialized or window destroyed */
+    }
 
     ctrlLog.info(
-      `[grill-persistence] Evaluation complete — session=${this.activeSessionId} score=${evaluation.score}`
+      `[grill-persistence] Evaluation complete — session=${tracking.sessionId} score=${evaluation.score}`
     )
   }
 
@@ -216,27 +259,55 @@ export class GrillPersistenceController {
     // Forward to renderer via router
     router.sendWorkspaceEvent(IPC_CHANNELS.GRILL_STREAM_COMPLETE, workspaceId, {})
 
-    // Flush any remaining buffered messages
-    this.flushToDb()
+    const tracking = this.getTracking(workspaceId)
 
+    // GRILL-FLUSH-UNWAITED-01: Flush remaining buffer using a local reference
+    // instead of going through flushToDb() → getTracking(). If flushToDb()
+    // fails and schedules a retry via scheduleFlush(), the retry fires after
+    // tracking is deleted — permanently orphaning the buffer. By flushing
+    // directly here, we fail-fast on the final flush and avoid dangling retries.
+    if (tracking && tracking.messageBuffer.length > 0) {
+      if (tracking.flushTimer) {
+        clearTimeout(tracking.flushTimer)
+        tracking.flushTimer = null
+      }
+      try {
+        grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+        tracking.messageBuffer = []
+      } catch (err) {
+        ctrlLog.error('[grill-persistence] Final flush failed — messages lost:', err)
+      }
+    }
+
+    // GRILL-06: Guard uses per-workspace evaluationHandled flag
     // Guard against the empty-evaluation dead-end: if the stream ended without
     // a parseable evaluation block (handleEvaluationResult never fired), the
     // session is still pinned at 'evaluating' and nothing will ever move it.
     // Revert it to a recoverable state so the UI doesn't get stuck "Grilling…".
-    if (this.activeSessionId && !this.evaluationHandledThisRun) {
-      const session = grillSessionRepository.findById(this.activeSessionId)
+    if (tracking && !tracking.evaluationHandled) {
+      const session = grillSessionRepository.findById(tracking.sessionId)
       if (session && session.status === 'evaluating') {
         const recovered: GrillSessionStatus =
           session.currentScore !== null ? 'awaiting_answers' : 'failed'
-        grillSessionRepository.updateStatus(this.activeSessionId, recovered)
+        grillSessionRepository.updateStatus(tracking.sessionId, recovered)
         this.emitStatusChange(workspaceId, router, recovered)
         ctrlLog.warn(
-          `[grill-persistence] Stream ended with no evaluation — reverting session=${this.activeSessionId} evaluating→${recovered}`
+          `[grill-persistence] Stream ended with no evaluation — reverting session=${tracking.sessionId} evaluating→${recovered}`
         )
       }
     }
 
-    ctrlLog.info(`[grill-persistence] Stream complete — session=${this.activeSessionId}`)
+    // GRILL-TRACK-01: Clean up tracking state to prevent memory leaks and
+    // potential message corruption if a new evaluation starts in the same workspace.
+    if (tracking) {
+      if (tracking.flushTimer) {
+        clearTimeout(tracking.flushTimer)
+        tracking.flushTimer = null
+      }
+      this.activeSessions.delete(workspaceId)
+    }
+
+    ctrlLog.info(`[grill-persistence] Stream complete — session=${tracking?.sessionId ?? 'none'}`)
   }
 
   /** Save user's question answers to DB */
@@ -244,23 +315,51 @@ export class GrillPersistenceController {
     const session = grillSessionRepository.findById(sessionId)
     if (!session) return
 
-    grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
+    // GRILL-SAVEANSWERS-NOGUARD-01: Wrap in try-catch to prevent a DB error
+    // from propagating to the IPC handler as an unhandled exception.
+    try {
+      grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
+    } catch (err) {
+      ctrlLog.error(`[grill-persistence] saveAnswers failed for session=${sessionId}:`, err)
+    }
   }
 
   /** Mark session as evaluating (re-evaluation after answers) */
   markEvaluating(sessionId: string, workspaceId: string): void {
     grillSessionRepository.updateStatus(sessionId, 'evaluating')
-    this.activeSessionId = sessionId
-    this.evaluationHandledThisRun = false
 
     const session = grillSessionRepository.findById(sessionId)
-    if (session) {
-      this.activeIdeaId = session.ideaId
-      this.activeTrackId = session.trackId
+    if (session && session.trackId) {
+      // GRILL-TIMER-RACE-01 + GRILL-BUFFER-ORPHAN-01: Clear old timer and flush
+      // buffer before overwriting to prevent dangling timers and data loss.
+      const oldTracking = this.activeSessions.get(workspaceId)
+      if (oldTracking) {
+        if (oldTracking.flushTimer) {
+          clearTimeout(oldTracking.flushTimer)
+        }
+        this.flushToDb(workspaceId)
+      }
+
+      // GRILL-01: Update per-workspace tracking state
+      this.activeSessions.set(workspaceId, {
+        sessionId,
+        ideaId: session.ideaId,
+        trackId: session.trackId,
+        workspaceId,
+        evaluationHandled: false,
+        messageBuffer: [],
+        flushTimer: null
+      })
     }
 
-    const router = getSessionEventRouter()
-    this.emitStatusChange(workspaceId, router, 'evaluating')
+    // GRILL-MARKEVALUATING-EMIT-UNGUARDED-01: Wrap router calls in try-catch
+    // matching the pattern in startTracking/clearTracking.
+    try {
+      const router = getSessionEventRouter()
+      this.emitStatusChange(workspaceId, router, 'evaluating')
+    } catch {
+      /* router may not be initialized during re-evaluation */
+    }
   }
 
   /** Get the current grill status for a workspace (for status bar + icons) */
@@ -282,9 +381,12 @@ export class GrillPersistenceController {
     return grillSessionRepository.findByIdeaId(ideaId)
   }
 
-  /** Get the currently active session ID */
+  /** Get the currently active session ID (first active session, for backward compat) */
   get currentSessionId(): string | null {
-    return this.activeSessionId
+    for (const state of this.activeSessions.values()) {
+      return state.sessionId
+    }
+    return null
   }
 
   /**
@@ -302,59 +404,93 @@ export class GrillPersistenceController {
     } catch {
       /* router may not be initialized */
     }
-    if (this.activeIdeaId === ideaId) {
-      this.flushToDb()
-      this.activeSessionId = null
-      this.activeIdeaId = null
-      this.activeTrackId = null
+    const tracking = this.getTracking(workspaceId)
+    if (tracking && tracking.ideaId === ideaId) {
+      this.flushToDb(workspaceId)
+      this.activeSessions.delete(workspaceId)
     }
   }
 
-  /** Clear active tracking (on cancel) */
-  clearTracking(): void {
-    this.textBatcher.reset()
-    if (this.activeSessionId) {
-      grillSessionRepository.updateStatus(this.activeSessionId, 'cancelled')
-      try {
-        const router = getSessionEventRouter()
-        this.emitStatusChange('', router, 'cancelled')
-      } catch {
-        /* router may not be initialized during early cancellation */
+  /** Clear active tracking (on cancel). Optionally scoped to a workspace. */
+  clearTracking(workspaceId?: string): void {
+    // GRILL-02 + GRILL-03: Accept workspaceId so cancel targets the right workspace
+    // and status emission uses the correct workspaceId instead of empty string.
+    if (workspaceId) {
+      const tracking = this.getTracking(workspaceId)
+      if (tracking) {
+        // GRILL-TIMER-01: Clear flush timer before cleanup to prevent
+        // dangling setTimeout callbacks accessing deleted tracking state.
+        if (tracking.flushTimer) {
+          clearTimeout(tracking.flushTimer)
+          tracking.flushTimer = null
+        }
+        this.textBatcher.reset(workspaceId)
+        grillSessionRepository.updateStatus(tracking.sessionId, 'cancelled')
+        try {
+          const router = getSessionEventRouter()
+          this.emitStatusChange(workspaceId, router, 'cancelled')
+        } catch {
+          /* router may not be initialized during early cancellation */
+        }
+        this.flushToDb(workspaceId)
+        this.activeSessions.delete(workspaceId)
       }
+    } else {
+      // Cancel ALL active sessions (backward compat)
+      for (const [wsId, tracking] of this.activeSessions) {
+        // GRILL-TIMER-01: Clear flush timer before cleanup
+        if (tracking.flushTimer) {
+          clearTimeout(tracking.flushTimer)
+          tracking.flushTimer = null
+        }
+        this.textBatcher.reset(wsId)
+        grillSessionRepository.updateStatus(tracking.sessionId, 'cancelled')
+        try {
+          const router = getSessionEventRouter()
+          this.emitStatusChange(wsId, router, 'cancelled')
+        } catch {
+          /* router may not be initialized during early cancellation */
+        }
+        this.flushToDb(wsId)
+      }
+      this.activeSessions.clear()
     }
-    this.flushToDb()
-    this.activeSessionId = null
-    this.activeIdeaId = null
-    this.activeTrackId = null
   }
 
   // ── Private ───────────────────────────────────────────────────────────
 
-  /** Schedule a deferred flush to DB */
-  private scheduleFlush(): void {
-    if (this.flushTimer) return
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null
-      this.flushToDb()
+  /** Schedule a deferred flush to DB for a specific workspace */
+  private scheduleFlush(workspaceId: string): void {
+    const tracking = this.getTracking(workspaceId)
+    if (!tracking || tracking.flushTimer) return
+    tracking.flushTimer = setTimeout(() => {
+      tracking.flushTimer = null
+      this.flushToDb(workspaceId)
     }, GrillPersistenceController.FLUSH_INTERVAL_MS)
   }
 
-  /** Flush buffered messages to DB */
-  private flushToDb(): void {
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer)
-      this.flushTimer = null
+  /** Flush buffered messages to DB for a specific workspace */
+  private flushToDb(workspaceId: string): void {
+    const tracking = this.getTracking(workspaceId)
+    if (!tracking) return
+
+    if (tracking.flushTimer) {
+      clearTimeout(tracking.flushTimer)
+      tracking.flushTimer = null
     }
 
-    if (!this.activeSessionId || this.messageBuffer.length === 0) return
+    if (tracking.messageBuffer.length === 0) return
 
     try {
-      grillSessionRepository.appendMessages(this.activeSessionId, this.messageBuffer)
+      grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+      // GRILL-MSG-LOSS-01: Only clear buffer on successful write.
+      // Previously, buffer was always cleared — even on DB failure — causing
+      // permanent data loss. Now we retain and retry on next flush.
+      tracking.messageBuffer = []
     } catch (err) {
-      ctrlLog.error('[grill-persistence] Failed to flush messages:', err)
+      ctrlLog.error('[grill-persistence] Failed to flush messages — will retry:', err)
+      this.scheduleFlush(workspaceId)
     }
-
-    this.messageBuffer = []
   }
 
   /** Emit status change event to renderer */
@@ -363,16 +499,17 @@ export class GrillPersistenceController {
     router: SessionEventRouter,
     status: GrillSessionStatus
   ): void {
+    const tracking = this.getTracking(workspaceId)
     const payload: GrillStatusPayload = {
       status,
-      ideaId: this.activeIdeaId ?? '',
-      trackId: this.activeTrackId,
+      ideaId: tracking?.ideaId ?? '',
+      trackId: tracking?.trackId ?? null,
       score: null
     }
 
     // Fetch current score from DB for accuracy
-    if (this.activeSessionId) {
-      const session = grillSessionRepository.findById(this.activeSessionId)
+    if (tracking) {
+      const session = grillSessionRepository.findById(tracking.sessionId)
       if (session) {
         payload.score = session.currentScore
       }

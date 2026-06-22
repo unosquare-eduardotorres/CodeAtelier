@@ -1,32 +1,36 @@
-/**
- * Custom hook encapsulating all App-level IPC event listeners.
- * Extracted from App.tsx to reduce component cyclomatic complexity.
- */
 import { useEffect } from 'react'
 import {
   useChatStore,
   useChatActions,
-  useAgentStore,
   useWorkspaceStore,
+  useAgentStore,
   useUpdateStore,
-  useMemoryStore
+  useMemoryStore,
+  useProfileStore,
+  useAppPreferenceActions
 } from '@renderer/store'
+import type { ConversationPhase, ToolActivity } from '../../../shared/types'
+import { rendererLog } from '@renderer/utils/logger'
 import { useTodoStore } from '@renderer/store/todo.store'
 import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
 import { useHookLifecycleStore } from '@renderer/store/hook-lifecycle.store'
-import type { ContextUsageBreakdown, ConversationPhase, ToolActivity } from '../../../shared/types'
-import { rendererLog } from '@renderer/utils/logger'
 
-// ── Guard helpers ──
+// ─── Type Aliases ─────────────────────────────────────────
 
-function isBackgroundConversation(
-  activeConvId: string | undefined,
-  dataConvId: string | undefined
-): boolean {
-  return !!activeConvId && !!dataConvId && dataConvId !== activeConvId
+type ChatActions = ReturnType<typeof useChatActions>
+
+// ─── Pure Helpers ─────────────────────────────────────────
+
+/** Derive context quality bucket from quality-window percentage. */
+function getContextQualityLevel(qualityPct: number): 'green' | 'yellow' | 'red' | 'critical' {
+  if (qualityPct > 80) return 'critical'
+  if (qualityPct > 60) return 'red'
+  if (qualityPct > 40) return 'yellow'
+  return 'green'
 }
 
-function cleanupStreamingConversation(conversationId: string): void {
+/** Remove a conversation from the streaming tracking set (shared by complete + state-change). */
+function removeStreamingConversation(conversationId: string): void {
   useChatStore.setState((state) => {
     if (!state.streamingConversationIds.has(conversationId)) return state
     const newSet = new Set(state.streamingConversationIds)
@@ -35,162 +39,228 @@ function cleanupStreamingConversation(conversationId: string): void {
   })
 }
 
-// ── Chunk handler helpers ──
-
-function handleToolActivityChunk(
-  toolActivity: Record<string, unknown>,
-  addToolActivity: (a: ToolActivity) => void,
-  updateToolActivity: (a: Partial<ToolActivity> & { toolName: string }) => void
+/** Route a tool-activity chunk to the correct add/update action. */
+function processToolActivity(
+  ta: {
+    id: string
+    toolName: string
+    status: 'running' | 'completed' | 'error'
+    startedAt?: number
+    completedAt?: number
+    elapsedSeconds?: number
+  },
+  addToolActivity: ChatActions['addToolActivity'],
+  updateToolActivity: ChatActions['updateToolActivity']
 ): void {
-  const ta = toolActivity as unknown as ToolActivity & { elapsedSeconds?: number }
   if (ta.elapsedSeconds !== undefined && ta.status === 'running') {
     updateToolActivity({ id: ta.id, toolName: ta.toolName, elapsedSeconds: ta.elapsedSeconds })
   } else if (ta.status === 'running') {
-    addToolActivity({ ...ta, status: 'running', startedAt: ta.startedAt ?? Date.now() } as ToolActivity)
+    addToolActivity({
+      ...ta,
+      status: 'running',
+      startedAt: ta.startedAt ?? Date.now()
+    } as ToolActivity)
   } else {
-    updateToolActivity({ ...ta, completedAt: ta.completedAt ?? Date.now() } as ToolActivity & { id: string })
+    updateToolActivity({ ...ta, completedAt: ta.completedAt ?? Date.now() })
   }
 }
 
-function handleCompactNeeded(
-  compactNeeded: { level: string; inputTokens?: number; conversationId?: string; breakdown?: ContextUsageBreakdown; isLocalProvider?: boolean },
-  conversationId: string | undefined,
-  setCompactSuggestion: (s: { level: string; inputTokens: number; breakdown?: ContextUsageBreakdown; isLocalProvider?: boolean } | null) => void,
-  loadContextUsage: (convId: string) => Promise<void>
-): void {
-  if (compactNeeded.level === 'compacted') {
-    setCompactSuggestion(null)
-    if (conversationId) void loadContextUsage(conversationId)
-  } else if (compactNeeded.level === 'auto-compact-pending' || compactNeeded.level === 'warning') {
-    setCompactSuggestion(null)
-  } else {
-    setCompactSuggestion(compactNeeded as { level: string; inputTokens: number; breakdown?: ContextUsageBreakdown; isLocalProvider?: boolean })
-  }
-}
-
-function handleTodoUpdate(
-  todoUpdate: { action: string; text: string; index?: number },
-  conversationId: string
+/** Dispatch a todo CRUD action to the todo store. */
+function processTodoUpdate(
+  conversationId: string,
+  todoUpdate: { action: 'add' | 'complete' | 'remove' | 'update'; text: string; index?: number }
 ): void {
   const { addTodo, completeTodo, removeTodo, updateTodo } = useTodoStore.getState()
   switch (todoUpdate.action) {
-    case 'add': addTodo(conversationId, todoUpdate.text, todoUpdate.index); break
-    case 'complete': completeTodo(conversationId, todoUpdate.text, todoUpdate.index); break
-    case 'remove': removeTodo(conversationId, todoUpdate.text, todoUpdate.index); break
-    case 'update': updateTodo(conversationId, todoUpdate.text, todoUpdate.index); break
+    case 'add':
+      addTodo(conversationId, todoUpdate.text, todoUpdate.index)
+      break
+    case 'complete':
+      completeTodo(conversationId, todoUpdate.text, todoUpdate.index)
+      break
+    case 'remove':
+      removeTodo(conversationId, todoUpdate.text, todoUpdate.index)
+      break
+    case 'update':
+      updateTodo(conversationId, todoUpdate.text, todoUpdate.index)
+      break
   }
 }
 
-function handleContextUsageUpdate(
-  update: { inputTokens: number; contextWindowSize: number; percentage: number; cacheHitRate: number },
-  conversationId: string | undefined
+/** Push live context-usage metrics into the chat store. */
+function processContextUsageUpdate(
+  conversationId: string,
+  update: {
+    inputTokens: number
+    contextWindowSize: number
+    percentage: number
+    cacheHitRate?: number
+  }
 ): void {
-  if (!conversationId) return
-  const { inputTokens, contextWindowSize, percentage, cacheHitRate } = update
-  const effectiveQualityWindow = Math.min(Math.round(contextWindowSize * 0.5), 500_000)
-  const qualityPct = Math.round((inputTokens / effectiveQualityWindow) * 100)
-  const level = qualityPct > 80 ? 'critical' : qualityPct > 60 ? 'red' : qualityPct > 40 ? 'yellow' : 'green'
+  const effectiveQualityWindow = Math.min(Math.round(update.contextWindowSize * 0.5), 500_000)
+  const qualityPct = Math.round((update.inputTokens / effectiveQualityWindow) * 100)
+  const level = getContextQualityLevel(qualityPct)
+
   useChatStore.setState((state) => ({
     contextUsages: {
       ...state.contextUsages,
       [conversationId]: {
         ...state.contextUsages[conversationId],
-        conversationId, inputTokens, contextWindowSize, percentage, cacheHitRate,
-        level: level as 'green' | 'yellow' | 'red' | 'critical'
+        conversationId,
+        inputTokens: update.inputTokens,
+        contextWindowSize: update.contextWindowSize,
+        percentage: update.percentage,
+        cacheHitRate: update.cacheHitRate,
+        level
       }
     }
   }))
 }
 
-// ── Message chunk dispatcher ──
+// ─── Compound IPC Handlers ────────────────────────────────
 
-type ChunkActions = Pick<ReturnType<typeof useChatActions>,
-  'appendStreamChunk' | 'updateStreamingIdentity' | 'finalizeTurnBubble' |
-  'addToolActivity' | 'updateToolActivity' | 'setCompactSuggestion' |
-  'setBudgetCapBanner' | 'setThinkingLabel' | 'loadContextUsage'>
-
-function processMessageChunk<D extends { conversationId: string }>(
-  data: D,
-  actions: ChunkActions
+/** Process a single message chunk from the IPC stream. */
+function handleMessageChunk(
+  data: Parameters<Parameters<Window['api']['onMessageChunk']>[0]>[0],
+  actions: ChatActions
 ): void {
-  const d = data as unknown as Record<string, unknown>
-  const conversationId = data.conversationId
+  if (data.keepalive) {
+    actions.handleKeepalive()
+    return
+  }
 
-  if (d.turnBoundary && d.turnId) {
+  // CHUNK-LEAK-01: Always drop chunks when no active conversation (null guard
+  // was previously bypassed when activeConvId was null, leaking stale chunks).
+  const activeConvId = useChatStore.getState().activeConversation?.id
+  if (!activeConvId) return
+  if (data.conversationId !== activeConvId) return
+
+  if (data.turnBoundary && data.turnId) {
     actions.finalizeTurnBubble(
-      d.turnId as string,
-      d.role as 'da-vinci' | 'specialist',
-      d.specialist as string | undefined
+      data.turnId,
+      data.role as 'da-vinci' | 'specialist',
+      (data as Record<string, unknown>).specialist as string | undefined
     )
     return
   }
-  if (d.chunk) {
+
+  if (data.chunk) {
     actions.appendStreamChunk(
-      d.chunk as string,
-      d.role as 'da-vinci' | 'specialist',
-      d.taskId as string | undefined,
-      d.specialist as string | undefined,
-      d.requestId as string | undefined,
-      conversationId
+      data.chunk,
+      data.role as 'da-vinci' | 'specialist',
+      data.taskId,
+      data.specialist,
+      data.requestId
     )
   }
-  if (!d.chunk && d.role) {
+  if (!data.chunk && data.role) {
     actions.updateStreamingIdentity(
-      d.role as 'da-vinci' | 'specialist',
-      d.taskId as string | undefined,
-      d.specialist as string | undefined
+      data.role as 'da-vinci' | 'specialist',
+      data.taskId,
+      data.specialist
     )
   }
-  if (d.toolActivity) {
-    handleToolActivityChunk(
-      d.toolActivity as Record<string, unknown>,
-      actions.addToolActivity,
-      actions.updateToolActivity
-    )
+
+  if (data.toolActivity) {
+    processToolActivity(data.toolActivity, actions.addToolActivity, actions.updateToolActivity)
   }
-  if (d.compactNeeded) {
-    handleCompactNeeded(
-      d.compactNeeded as { level: string },
-      conversationId,
-      actions.setCompactSuggestion,
-      actions.loadContextUsage
-    )
+
+  if (data.compactNeeded) {
+    if (data.compactNeeded.level === 'compacted') {
+      actions.setCompactSuggestion(null)
+      if (data.conversationId) {
+        void actions.loadContextUsage(data.conversationId)
+      }
+    } else if (
+      data.compactNeeded.level === 'auto-compact-pending' ||
+      data.compactNeeded.level === 'warning'
+    ) {
+      actions.setCompactSuggestion(null)
+    } else {
+      actions.setCompactSuggestion(data.compactNeeded)
+    }
   }
-  if (d.budgetCapReached) {
-    const cap = d.budgetCapReached as { message: string; canContinue: boolean }
+
+  if (data.budgetCapReached) {
     actions.setBudgetCapBanner({
-      conversationId,
-      message: cap.message,
-      canContinue: cap.canContinue
+      conversationId: data.conversationId,
+      message: data.budgetCapReached.message,
+      canContinue: data.budgetCapReached.canContinue
     })
   }
-  if (d.todoUpdate) {
-    handleTodoUpdate(
-      d.todoUpdate as { action: string; text: string; index?: number },
-      conversationId
-    )
+
+  if (data.todoUpdate) {
+    processTodoUpdate(data.conversationId, data.todoUpdate)
   }
-  if (d.contextUsageUpdate) {
-    handleContextUsageUpdate(
-      d.contextUsageUpdate as { inputTokens: number; contextWindowSize: number; percentage: number; cacheHitRate: number },
-      conversationId
-    )
-  }
-  if (d.thinkingLabel) {
-    actions.setThinkingLabel(d.thinkingLabel as string)
+
+  if (data.contextUsageUpdate) {
+    const convId = data.conversationId
+    if (convId) {
+      processContextUsageUpdate(convId, data.contextUsageUpdate)
+    }
   }
 }
 
-// ── Main hook ──
+/** Handle stream completion — clean up tracking and finalize UI. */
+function handleMessageComplete(
+  data: Parameters<Parameters<Window['api']['onMessageComplete']>[0]>[0],
+  finalizeStream: ChatActions['finalizeStream']
+): void {
+  if (!data.taskId) {
+    removeStreamingConversation(data.conversationId)
+  }
 
+  const activeConvId = useChatStore.getState().activeConversation?.id
+  if (activeConvId && data.conversationId !== activeConvId) {
+    rendererLog.info(
+      `[finalizeStream] Tracked completion for background conversation ${data.conversationId}`
+    )
+    return
+  }
+  rendererLog.info(
+    `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
+  )
+  finalizeStream(data.messageId, data.taskId, data.requestId)
+}
+
+/** Mirror backend state-machine transitions to the renderer. */
+function handleStateChange(
+  data: Parameters<Parameters<Window['api']['onStateChange']>[0]>[0],
+  setConversationState: ChatActions['setConversationState']
+): void {
+  if (data.to === 'idle' && data.conversationId) {
+    removeStreamingConversation(data.conversationId)
+  }
+
+  const activeConvId = useChatStore.getState().activeConversation?.id
+  if (activeConvId && data.conversationId && data.conversationId !== activeConvId) {
+    rendererLog.info(
+      `[StateMachine:renderer] background transition ${data.from} → ${data.to} (conv=${data.conversationId}, active=${activeConvId})`
+    )
+    return
+  }
+  rendererLog.info(`[StateMachine:renderer] ${data.from} → ${data.to} (event=${data.event})`)
+  setConversationState({
+    phase: data.to as ConversationPhase | 'idle' | 'error' | 'stopped',
+    from: data.from,
+    event: data.event,
+    conversationId: data.conversationId
+  })
+}
+
+// ─── Hook ─────────────────────────────────────────────────
+
+/**
+ * Sets up all IPC event listeners for the App shell —
+ * message streaming, agent status, auto-update, memory feed,
+ * LSP diagnostics, hook lifecycle, and state machine mirror.
+ *
+ * Extracted from App to reduce component complexity.
+ */
 export function useAppIpcListeners(): void {
+  const loadWorkspaces = useWorkspaceStore((s) => s.loadWorkspaces)
   const setAgentReady = useWorkspaceStore((s) => s.setAgentReady)
-  const {
-    appendStreamChunk, handleKeepalive, updateStreamingIdentity,
-    finalizeStream, finalizeTurnBubble, addToolActivity, updateToolActivity,
-    setCompactSuggestion, setBudgetCapBanner, setPendingQuestions,
-    setConversationState, loadContextUsage, setThinkingLabel
-  } = useChatActions()
+  const chatActions = useChatActions()
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setAvailable = useUpdateStore((s) => s.setAvailable)
   const setNotAvailable = useUpdateStore((s) => s.setNotAvailable)
@@ -198,54 +268,60 @@ export function useAppIpcListeners(): void {
   const setProgress = useUpdateStore((s) => s.setProgress)
   const setError = useUpdateStore((s) => s.setError)
   const onMemoryFeedProgress = useMemoryStore((s) => s.onFeedProgress)
+  const loadProfile = useProfileStore((s) => s.loadProfile)
+  const { loadPreferences } = useAppPreferenceActions()
 
   useEffect(() => {
-    const chunkActions: ChunkActions = {
-      appendStreamChunk, updateStreamingIdentity, finalizeTurnBubble,
-      addToolActivity, updateToolActivity, setCompactSuggestion,
-      setBudgetCapBanner, setThinkingLabel, loadContextUsage
-    }
+    loadProfile()
+    loadWorkspaces()
+    loadPreferences()
 
-    const unsubChunk = window.api.onMessageChunk((data) => {
-      if (data.keepalive) { handleKeepalive(); return }
-      const activeConvId = useChatStore.getState().activeConversation?.id
-      if (isBackgroundConversation(activeConvId, data.conversationId)) return
-      processMessageChunk(data, chunkActions)
-    })
-
-    const unsubComplete = window.api.onMessageComplete((data) => {
-      if (!data.taskId) cleanupStreamingConversation(data.conversationId)
-      const activeConvId = useChatStore.getState().activeConversation?.id
-      if (isBackgroundConversation(activeConvId, data.conversationId)) {
-        rendererLog.info(`[finalizeStream] Tracked completion for background conversation ${data.conversationId}`)
-        return
-      }
-      rendererLog.info(`[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`)
-      finalizeStream(data.messageId, data.taskId, data.requestId)
-    })
-
+    const unsubChunk = window.api.onMessageChunk((data) =>
+      handleMessageChunk(data, chatActions)
+    )
+    const unsubComplete = window.api.onMessageComplete((data) =>
+      handleMessageComplete(data, chatActions.finalizeStream)
+    )
     const unsubAskQuestion = window.api.onAskQuestion((data) => {
-      setPendingQuestions(data.questions, data.action, data.requestId)
+      chatActions.setPendingQuestions(data.questions, data.action, data.requestId)
     })
     const unsubReady = window.api.onAgentReady(() => setAgentReady())
     const unsubAgent = window.api.onAgentStatusUpdate((data) => {
       updateStatus({
-        agentId: data.agentId, agentType: data.agentType,
-        status: data.status as 'idle' | 'thinking' | 'writing' | 'reviewing' | 'completed' | 'failed',
-        currentTask: data.currentTask, elapsedMs: data.elapsedMs,
-        tokenUsage: data.tokenUsage, inputTokens: data.inputTokens,
-        outputTokens: data.outputTokens, contextTokens: data.contextTokens,
-        model: data.model, complexityTier: data.complexityTier,
+        agentId: data.agentId,
+        agentType: data.agentType,
+        status: data.status as
+          | 'idle'
+          | 'thinking'
+          | 'writing'
+          | 'reviewing'
+          | 'completed'
+          | 'failed',
+        currentTask: data.currentTask,
+        elapsedMs: data.elapsedMs,
+        tokenUsage: data.tokenUsage,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
+        contextTokens: data.contextTokens,
+        model: data.model,
+        complexityTier: data.complexityTier,
         activeMcpTools: data.activeMcpTools
       })
     })
-
-    const unsubUpdateAvailable = window.api.onUpdateAvailable((info) => setAvailable(info.version, info.releaseNotes, info.releaseDate))
+    const unsubUpdateAvailable = window.api.onUpdateAvailable((info) =>
+      setAvailable(info.version, info.releaseNotes, info.releaseDate)
+    )
     const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable(() => setNotAvailable())
-    const unsubUpdateDownloaded = window.api.onUpdateDownloaded((info) => setDownloaded(info.version))
-    const unsubUpdateProgress = window.api.onUpdateProgress((progress) => setProgress(progress.percent))
+    const unsubUpdateDownloaded = window.api.onUpdateDownloaded((info) =>
+      setDownloaded(info.version)
+    )
+    const unsubUpdateProgress = window.api.onUpdateProgress((progress) =>
+      setProgress(progress.percent)
+    )
     const unsubUpdateError = window.api.onUpdateError((message) => setError(message))
-    const unsubMemoryFeed = window.api.onMemoryFeedProgress((progress) => onMemoryFeedProgress(progress))
+    const unsubMemoryFeed = window.api.onMemoryFeedProgress((progress) =>
+      onMemoryFeedProgress(progress)
+    )
     const unsubLspDiagnostics = window.api.onLspDiagnostics((data) => {
       if (data.conversationId && data.diagnostics) {
         useDiagnosticsStore.getState().setDiagnostics(data.conversationId, data.diagnostics)
@@ -254,35 +330,38 @@ export function useAppIpcListeners(): void {
     const unsubHookLifecycle = window.api.onHookLifecycle((data) => {
       useHookLifecycleStore.getState().onHookEvent(data)
     })
-
-    const unsubStateChange = window.api.onStateChange((data) => {
-      if (data.to === 'idle' && data.conversationId) {
-        cleanupStreamingConversation(data.conversationId)
-      }
-      const activeConvId = useChatStore.getState().activeConversation?.id
-      if (isBackgroundConversation(activeConvId, data.conversationId)) {
-        rendererLog.info(`[StateMachine:renderer] background transition ${data.from} → ${data.to} (conv=${data.conversationId}, active=${activeConvId})`)
-        return
-      }
-      rendererLog.info(`[StateMachine:renderer] ${data.from} → ${data.to} (event=${data.event})`)
-      setConversationState({
-        phase: data.to as ConversationPhase | 'idle' | 'error' | 'stopped',
-        from: data.from, event: data.event, conversationId: data.conversationId
-      })
-    })
+    const unsubStateChange = window.api.onStateChange((data) =>
+      handleStateChange(data, chatActions.setConversationState)
+    )
 
     return () => {
-      unsubChunk(); unsubComplete(); unsubAskQuestion(); unsubReady(); unsubAgent()
-      unsubUpdateAvailable(); unsubUpdateNotAvailable(); unsubUpdateDownloaded()
-      unsubUpdateProgress(); unsubUpdateError(); unsubMemoryFeed()
-      unsubLspDiagnostics(); unsubHookLifecycle(); unsubStateChange()
+      unsubChunk()
+      unsubComplete()
+      unsubAskQuestion()
+      unsubReady()
+      unsubAgent()
+      unsubUpdateAvailable()
+      unsubUpdateNotAvailable()
+      unsubUpdateDownloaded()
+      unsubUpdateProgress()
+      unsubUpdateError()
+      unsubMemoryFeed()
+      unsubLspDiagnostics()
+      unsubHookLifecycle()
+      unsubStateChange()
     }
   }, [
-    appendStreamChunk, handleKeepalive, updateStreamingIdentity,
-    finalizeStream, finalizeTurnBubble, addToolActivity, updateToolActivity,
-    updateStatus, setAgentReady, setCompactSuggestion, setBudgetCapBanner,
-    setPendingQuestions, setAvailable, setNotAvailable, setDownloaded,
-    setProgress, setError, onMemoryFeedProgress, setConversationState, loadContextUsage,
-    setThinkingLabel
+    loadProfile,
+    loadWorkspaces,
+    loadPreferences,
+    chatActions,
+    updateStatus,
+    setAgentReady,
+    setAvailable,
+    setNotAvailable,
+    setDownloaded,
+    setProgress,
+    setError,
+    onMemoryFeedProgress
   ])
 }

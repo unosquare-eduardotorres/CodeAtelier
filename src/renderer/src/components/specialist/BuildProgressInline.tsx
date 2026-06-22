@@ -23,9 +23,11 @@ export default function BuildProgressInline({
 
   useEffect(() => {
     if (!event) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- derive visibility from event prop
       setVisible(false)
       return
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisible(true)
     if (event.phase === 'ready') {
       const t = setTimeout(() => setVisible(false), 2_000)

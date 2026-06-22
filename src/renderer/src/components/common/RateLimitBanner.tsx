@@ -67,6 +67,7 @@ export default function RateLimitBanner(): React.JSX.Element | null {
 
   return (
     <div
+      data-testid="rate-limit-banner"
       className={`flex items-center gap-3 px-4 py-2 text-sm border-b ${
         isRejected
           ? 'bg-danger/10 border-danger/30 text-danger'

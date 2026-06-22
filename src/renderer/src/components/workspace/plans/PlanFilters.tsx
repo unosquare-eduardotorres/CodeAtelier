@@ -3,7 +3,11 @@
  */
 
 import { Search } from 'lucide-react'
-import { usePlanStore, usePlanStatusCounts, type PlanStatusFilter } from '@renderer/store/plan.store'
+import {
+  usePlanStore,
+  usePlanStatusCounts,
+  type PlanStatusFilter
+} from '@renderer/store/plan.store'
 
 const TABS: { id: PlanStatusFilter; label: string }[] = [
   { id: 'all', label: 'All' },

@@ -1,162 +1,85 @@
 /**
- * PresetManager — Workspace-level LLM preset management.
+ * PresetManager — workspace-level preset management panel.
  *
- * Displays saved presets as cards, allows creating/editing/deleting custom presets,
- * and setting the workspace default. Lives in the Models settings tab alongside
- * the existing ModelConfigTab.
+ * Shown in ModelConfigTab. Allows viewing, creating, editing, and deleting
+ * LLM configuration presets. Built-in presets cannot be edited or deleted.
  */
 
-import { useEffect, useState, useCallback } from 'react'
-import { Star, Plus, Pencil, Trash2, Cloud, Monitor, Settings2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Plus, Star, Trash2, Edit3 } from 'lucide-react'
 import { usePresetStore } from '@renderer/store/preset.store'
-import { useWorkspaceStore, useToastStore } from '@renderer/store'
-import type { LLMPreset } from '../../../../shared/types'
-import PresetEditor from './PresetEditor'
+import { useWorkspaceStore } from '@renderer/store/workspace.store'
+import { ACTION_GROUPS, DEFAULT_MODEL_CONFIG, AVAILABLE_MODELS } from '../../../../shared/constants'
+import type { ActionModelConfig, LLMPreset, ModelAction } from '../../../../shared/types'
 
-export default function PresetManager(): React.JSX.Element {
-  const { activeWorkspace } = useWorkspaceStore()
-  const addToast = useToastStore((s) => s.addToast)
-  const {
-    presets,
-    defaultPresetId,
-    loading,
-    editingPreset,
-    fetchPresets,
-    deletePreset,
-    setDefault,
-    setEditingPreset
-  } = usePresetStore()
+// ── Main Component ─────────────────────────────────────────────────
 
-  const [showEditor, setShowEditor] = useState(false)
+export function PresetManager(): React.JSX.Element {
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const { presets, defaultPresetId, loading, fetchPresets, deletePreset, setDefault } =
+    usePresetStore()
+  const [editingPreset, setEditingPreset] = useState<LLMPreset | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
 
-  // Fetch presets on workspace change
   useEffect(() => {
-    if (activeWorkspace) {
+    if (activeWorkspace?.id) {
       fetchPresets(activeWorkspace.id)
     }
   }, [activeWorkspace?.id, fetchPresets])
 
-  const handleSetDefault = useCallback(
-    async (presetId: string) => {
-      if (!activeWorkspace) return
-      await setDefault(activeWorkspace.id, presetId)
-      addToast({ message: 'Default preset updated', type: 'success' })
-    },
-    [activeWorkspace, setDefault, addToast]
-  )
-
-  const handleDelete = useCallback(
-    async (preset: LLMPreset) => {
-      if (preset.isBuiltIn) return
-      const deleted = await deletePreset(preset.id)
-      if (deleted) {
-        addToast({ message: `Preset "${preset.name}" deleted`, type: 'success' })
-      } else {
-        addToast({ message: 'Cannot delete built-in presets', type: 'error' })
-      }
-    },
-    [deletePreset, addToast]
-  )
-
-  const handleEdit = useCallback(
-    (preset: LLMPreset) => {
-      setEditingPreset(preset)
-      setShowEditor(true)
-    },
-    [setEditingPreset]
-  )
-
-  const handleCreateNew = useCallback(() => {
-    setEditingPreset(null)
-    setShowEditor(true)
-  }, [setEditingPreset])
-
-  const handleEditorClose = useCallback(() => {
-    setShowEditor(false)
-    setEditingPreset(null)
-    if (activeWorkspace) {
-      fetchPresets(activeWorkspace.id)
-    }
-  }, [setEditingPreset, activeWorkspace, fetchPresets])
-
-  if (!activeWorkspace) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <p className="text-sm text-text-secondary">Select a workspace to manage presets.</p>
-      </div>
-    )
-  }
-
-  const defaultPreset = presets.find((p) => p.id === defaultPresetId)
+  if (!activeWorkspace) return <></>
 
   return (
-    <div className="w-full" data-testid="preset-manager">
-      {/* ── Section Header ── */}
-      <div className="mb-4 mt-8 border-t border-border-secondary pt-6">
-        <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-          <Settings2 className="w-4 h-4 text-accent-primary" />
-          LLM Presets
-        </h3>
-        <p className="text-xs text-text-secondary mt-1">
-          Create named configurations that assign specific models to each action.
-          Select a preset when creating new chats.
-        </p>
-      </div>
-
-      {/* ── Active Default ── */}
-      {defaultPreset && (
-        <div className="mb-4 rounded-lg border border-accent-primary/30 bg-accent-primary/5 px-4 py-3">
-          <div className="flex items-center gap-2 text-xs text-accent-primary font-medium">
-            <Star className="w-3.5 h-3.5 fill-current" />
-            <span>Active Default: {defaultPreset.name}</span>
-          </div>
-          <p className="text-[11px] text-text-tertiary mt-0.5">
-            Used when creating new chats without a preset override.
+    <div data-testid="preset-manager" className="mt-8 border-t border-border-subtle pt-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">LLM Presets</h3>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Configure named model configurations for different workflows.
           </p>
         </div>
-      )}
+        <button
+          onClick={() => setIsCreating(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary/10 text-primary
+                     rounded-lg hover:bg-primary/20 transition-colors"
+        >
+          <Plus size={14} />
+          New Preset
+        </button>
+      </div>
 
-      {/* ── Preset Cards Grid ── */}
       {loading ? (
-        <div className="text-xs text-text-secondary py-8 text-center">Loading presets…</div>
+        <div className="text-xs text-text-muted py-4 text-center">Loading presets…</div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="space-y-2">
           {presets.map((preset) => (
             <PresetCard
               key={preset.id}
               preset={preset}
               isDefault={preset.id === defaultPresetId}
-              onSetDefault={() => handleSetDefault(preset.id)}
-              onEdit={() => handleEdit(preset)}
-              onDelete={() => handleDelete(preset)}
+              onSetDefault={() => setDefault(activeWorkspace.id, preset.id)}
+              onEdit={() => setEditingPreset(preset)}
+              onDelete={() => deletePreset(preset.id)}
             />
           ))}
-
-          {/* ── Create New Card ── */}
-          <button
-            onClick={handleCreateNew}
-            data-testid="preset-create-btn"
-            className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border-secondary p-4 text-text-tertiary hover:border-accent-primary hover:text-accent-primary transition-colors min-h-[120px]"
-          >
-            <Plus className="w-5 h-5" />
-            <span className="text-xs font-medium">Create Preset</span>
-          </button>
         </div>
       )}
 
-      {/* ── Preset Editor Modal ── */}
-      {showEditor && (
+      {(isCreating || editingPreset) && (
         <PresetEditor
           preset={editingPreset}
           workspaceId={activeWorkspace.id}
-          onClose={handleEditorClose}
+          onClose={() => {
+            setIsCreating(false)
+            setEditingPreset(null)
+          }}
         />
       )}
     </div>
   )
 }
 
-// ── Preset Card ──
+// ── Preset Card ────────────────────────────────────────────────────
 
 function PresetCard({
   preset,
@@ -171,92 +94,186 @@ function PresetCard({
   onEdit: () => void
   onDelete: () => void
 }): React.JSX.Element {
-  const actionCount = Object.keys(preset.actionConfig).length
-  const hasLocalActions = Object.values(preset.actionConfig).some(
-    (c) => c?.provider === 'local-llm'
-  )
-  const hasClaudeActions =
-    actionCount === 0 || Object.values(preset.actionConfig).some((c) => c?.provider === 'claude')
+  const configuredCount = Object.keys(preset.actionConfig).length
+  const totalCount = Object.keys(DEFAULT_MODEL_CONFIG).length
 
   return (
-    <div
-      data-testid={`preset-card-${preset.id}`}
-      className={`relative rounded-lg border p-4 transition-colors ${
-        isDefault
-          ? 'border-accent-primary/40 bg-accent-primary/5'
-          : 'border-border-secondary bg-bg-secondary hover:border-border-primary'
-      }`}
-    >
-      {/* Icon + Name */}
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {preset.isBuiltIn && preset.name === 'Full Claude' && (
-            <Cloud className="w-4 h-4 text-blue-400" />
-          )}
-          {preset.isBuiltIn && preset.name === 'Full Local' && (
-            <Monitor className="w-4 h-4 text-green-400" />
-          )}
-          {!preset.isBuiltIn && <Settings2 className="w-4 h-4 text-text-tertiary" />}
-          <span className="text-sm font-medium text-text-primary">{preset.name}</span>
-        </div>
-        {isDefault && <Star className="w-3.5 h-3.5 text-accent-primary fill-current" />}
-      </div>
-
-      {/* Provider badges */}
-      <div className="flex gap-1.5 mb-3">
-        {hasClaudeActions && (
-          <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-blue-500/10 text-blue-400">
-            <Cloud className="w-2.5 h-2.5" />
-            Claude
-          </span>
-        )}
-        {hasLocalActions && (
-          <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] bg-green-500/10 text-green-400">
-            <Monitor className="w-2.5 h-2.5" />
-            Local
-          </span>
-        )}
-      </div>
-
-      {/* Subtitle */}
-      <p className="text-[11px] text-text-tertiary mb-3">
-        {preset.isBuiltIn && preset.name === 'Full Claude' && 'All actions use Claude defaults'}
-        {preset.isBuiltIn && preset.name === 'Full Local' && 'All actions use local LLM'}
-        {!preset.isBuiltIn &&
-          (actionCount === 0
-            ? 'No custom overrides'
-            : `${actionCount} action${actionCount > 1 ? 's' : ''} configured`)}
-      </p>
-
-      {/* Actions */}
-      <div className="flex items-center gap-1.5">
-        {!isDefault && (
-          <button
-            onClick={onSetDefault}
-            data-testid={`preset-default-btn-${preset.id}`}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-secondary hover:text-accent-primary hover:bg-accent-primary/10 transition-colors"
-          >
-            <Star className="w-3 h-3" />
-            Set Default
-          </button>
-        )}
+    <div data-testid="preset-card" className="flex items-center justify-between p-3 rounded-lg border border-border-subtle bg-surface-secondary">
+      <div className="flex items-center gap-3">
         <button
-          onClick={onEdit}
-          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+          onClick={onSetDefault}
+          className={`p-1 rounded transition-colors ${
+            isDefault ? 'text-warning' : 'text-text-muted hover:text-warning/60'
+          }`}
+          title={isDefault ? 'Default preset' : 'Set as default'}
         >
-          <Pencil className="w-3 h-3" />
-          {preset.isBuiltIn ? 'View' : 'Edit'}
+          <Star size={16} fill={isDefault ? 'currentColor' : 'none'} />
         </button>
-        {!preset.isBuiltIn && (
+        <div>
+          <span className="text-sm font-medium text-text-primary">{preset.name}</span>
+          {preset.isBuiltIn && (
+            <span className="ml-2 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded">
+              Built-in
+            </span>
+          )}
+          <p className="text-xs text-text-muted mt-0.5">
+            {configuredCount === 0
+              ? 'All actions use defaults'
+              : `${configuredCount}/${totalCount} actions customized`}
+          </p>
+        </div>
+      </div>
+      {!preset.isBuiltIn && (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onEdit}
+            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+            title="Edit preset"
+          >
+            <Edit3 size={14} />
+          </button>
           <button
             onClick={onDelete}
-            data-testid={`preset-delete-btn-${preset.id}`}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-text-secondary hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            className="p-1.5 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors"
+            title="Delete preset"
           >
-            <Trash2 className="w-3 h-3" />
-            Delete
+            <Trash2 size={14} />
           </button>
-        )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Preset Editor (inline modal) ───────────────────────────────────
+
+function PresetEditor({
+  preset,
+  workspaceId,
+  onClose
+}: {
+  preset: LLMPreset | null
+  workspaceId: string
+  onClose: () => void
+}): React.JSX.Element {
+  const { createPreset, updatePreset: updatePresetStore } = usePresetStore()
+  const [name, setName] = useState(preset?.name ?? '')
+  const [actionConfig, setActionConfig] = useState<Partial<Record<ModelAction, ActionModelConfig>>>(
+    preset?.actionConfig ?? {}
+  )
+
+  const handleSave = async (): Promise<void> => {
+    if (!name.trim()) return
+
+    if (preset) {
+      await updatePresetStore(preset.id, { name: name.trim(), actionConfig })
+    } else {
+      await createPreset(workspaceId, name.trim(), actionConfig)
+    }
+    onClose()
+  }
+
+  const updateAction = (action: ModelAction, modelId: string): void => {
+    setActionConfig((prev) => ({
+      ...prev,
+      [action]: { provider: 'claude' as const, modelId }
+    }))
+  }
+
+  const clearAction = (action: ModelAction): void => {
+    setActionConfig((prev) => {
+      const next = { ...prev }
+      delete next[action]
+      return next
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="relative bg-surface-primary border border-border-subtle rounded-xl shadow-xl
+                      w-[600px] max-h-[80vh] overflow-y-auto p-6"
+      >
+        <h3 className="text-sm font-semibold text-text-primary mb-4">
+          {preset ? 'Edit Preset' : 'New Preset'}
+        </h3>
+
+        {/* Name */}
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-text-secondary mb-1">Name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full px-3 py-2 text-sm bg-surface-secondary border border-border-subtle
+                       rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+            placeholder="My Custom Preset"
+          />
+        </div>
+
+        {/* Action Groups */}
+        <div className="space-y-4">
+          {ACTION_GROUPS.map((group) => (
+            <div key={group.id} className="border border-border-subtle rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span>{group.icon}</span>
+                <span className="text-xs font-semibold text-text-primary">{group.label}</span>
+                <span className="text-[10px] text-text-muted">{group.description}</span>
+              </div>
+              <div className="space-y-1.5">
+                {group.actions.map((action) => {
+                  const current = actionConfig[action]
+                  return (
+                    <div key={action} className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-text-secondary font-mono">{action}</span>
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={current?.modelId ?? ''}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              updateAction(action, e.target.value)
+                            } else {
+                              clearAction(action)
+                            }
+                          }}
+                          className="text-xs bg-surface-secondary border border-border-subtle rounded px-2 py-1
+                                     text-text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
+                        >
+                          <option value="">Default ({DEFAULT_MODEL_CONFIG[action]})</option>
+                          {AVAILABLE_MODELS.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-xs font-medium text-text-secondary bg-surface-secondary
+                       rounded-lg hover:bg-surface-overlay transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!name.trim()}
+            className="px-4 py-2 text-xs font-medium text-white bg-primary rounded-lg
+                       hover:bg-primary-hover transition-colors disabled:opacity-50"
+          >
+            {preset ? 'Save Changes' : 'Create Preset'}
+          </button>
+        </div>
       </div>
     </div>
   )

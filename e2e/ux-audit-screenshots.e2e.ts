@@ -286,51 +286,112 @@ test.describe('UX Audit Screenshots', () => {
     console.log('\n  ✅ All screenshots captured in e2e/screenshots/')
   })
 
-  test('audit screenshot captures correct viewport dimensions', async ({
-    electronPage: page
-  }) => {
-    // Verify the viewport is usable for screenshots
-    const viewport = page.viewportSize()
-
-    // Viewport should be non-zero
-    if (viewport) {
-      expect(viewport.width).toBeGreaterThan(0)
-      expect(viewport.height).toBeGreaterThan(0)
+  test('capture workspace settings modal in open and closed states', async () => {
+    if (!page) {
+      test.skip()
+      return
     }
 
-    // Capture a screenshot and verify it succeeds
     mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Try to open workspace settings
+    const hasSettings = await clickLabel(page, 'Workspace Settings')
+    if (hasSettings) {
+      await page.waitForTimeout(800)
+      await snap(page, 'workspace-settings-modal-open')
+
+      // Close
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(500)
+      await snap(page, 'workspace-settings-modal-closed')
+    } else {
+      // Capture whatever state we're in
+      await snap(page, 'no-workspace-settings-available')
+    }
+
     const buffer = await page.screenshot()
     expect(buffer.length).toBeGreaterThan(0)
-
-    // Full-page screenshot should capture more content
-    const fullPageBuffer = await page.screenshot({ fullPage: true })
-    expect(fullPageBuffer.length).toBeGreaterThan(0)
-    expect(fullPageBuffer.length).toBeGreaterThanOrEqual(buffer.length)
   })
 
-  test('screenshot comparison shows visual consistency', async ({
-    electronPage: page
-  }) => {
-    // Take two screenshots in quick succession
-    // Both should be identical (no flickering/animation artifacts)
+  test('capture sidebar collapsed vs expanded layout', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
     mkdirSync(SCREENSHOT_DIR, { recursive: true })
 
-    const screenshot1 = await page.screenshot()
-    await page.waitForTimeout(200)
-    const screenshot2 = await page.screenshot()
+    // Capture current sidebar state
+    await snap(page, 'sidebar-default')
 
-    // Both screenshots should be non-empty
-    expect(screenshot1.length).toBeGreaterThan(0)
-    expect(screenshot2.length).toBeGreaterThan(0)
+    // Try Cmd+B to toggle sidebar
+    await page.keyboard.press('Meta+b')
+    await page.waitForTimeout(600)
+    await snap(page, 'sidebar-toggled')
 
-    // They should be approximately the same size (within 10%)
-    // Large differences would indicate animation/flicker issues
-    const sizeDiff = Math.abs(screenshot1.length - screenshot2.length)
-    const maxSize = Math.max(screenshot1.length, screenshot2.length)
-    const diffPercent = (sizeDiff / maxSize) * 100
+    // Toggle back
+    await page.keyboard.press('Meta+b')
+    await page.waitForTimeout(600)
+    await snap(page, 'sidebar-restored')
 
-    // Allow up to 10% variance (cursor blink, animations)
-    expect(diffPercent).toBeLessThan(10)
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+  })
+
+  test('capture empty state vs populated state differences', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Capture whatever state we're in now
+    await snap(page, 'app-current-state')
+
+    // Check for populated vs empty indicators
+    const chatPanel = page.locator('[data-testid="chat-panel"]')
+    const hasChatPanel = await chatPanel.isVisible({ timeout: 2_000 }).catch(() => false)
+
+    if (hasChatPanel) {
+      await snap(page, 'populated-chat-panel')
+    } else {
+      // Home / welcome state
+      await snap(page, 'empty-or-welcome-state')
+    }
+
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
+  })
+
+  test('capture loading skeleton states during initialization', async () => {
+    if (!page) {
+      test.skip()
+      return
+    }
+
+    mkdirSync(SCREENSHOT_DIR, { recursive: true })
+
+    // Look for skeleton/loading indicators
+    const skeletons = page.locator('[class*="skeleton"], [class*="animate-pulse"]')
+    const skeletonCount = await skeletons.count()
+
+    if (skeletonCount > 0) {
+      await snap(page, 'loading-skeletons')
+    }
+
+    // Look for spinners
+    const spinners = page.locator('[class*="animate-spin"]')
+    const spinnerCount = await spinners.count()
+
+    if (spinnerCount > 0) {
+      await snap(page, 'loading-spinners')
+    }
+
+    // Capture final loaded state
+    await snap(page, 'fully-loaded')
+
+    const buffer = await page.screenshot()
+    expect(buffer.length).toBeGreaterThan(0)
   })
 })

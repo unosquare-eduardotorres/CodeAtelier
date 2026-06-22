@@ -10,7 +10,14 @@ describe('buildModePermissions', () => {
   test('build mode has no allow-list and disallows sub-agent tools', () => {
     const p = buildModePermissions('build')
     assert.equal(p.baseAllowed, undefined)
-    for (const t of ['Agent', 'Task', 'local_agent', 'ToolSearch', 'ExitPlanMode', 'AskUserQuestion'])
+    for (const t of [
+      'Agent',
+      'Task',
+      'local_agent',
+      'ToolSearch',
+      'ExitPlanMode',
+      'AskUserQuestion'
+    ])
       assert.ok(p.disallowed.includes(t), `expected disallowed to include ${t}`)
     assert.ok(!p.disallowed.includes('Write'), 'build allows Write')
   })

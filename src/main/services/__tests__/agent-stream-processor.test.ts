@@ -60,7 +60,10 @@ describe('AgentStreamProcessor.checkCompaction', () => {
     const host = makeHost({ compactSuggested: true, turnsSinceCompactSuggestion: 2 })
     const proc = new AgentStreamProcessor(host)
     proc.checkCompaction(100) // warning starts at 0.8*500=400
-    assert.equal(host.emit.calls.some((c) => c[0] === 'compactNeeded'), false)
+    assert.equal(
+      host.emit.calls.some((c) => c[0] === 'compactNeeded'),
+      false
+    )
     assert.equal(host.compactSuggested, false)
     assert.equal(host.turnsSinceCompactSuggestion, 0)
   })
@@ -235,20 +238,20 @@ describe('AgentStreamProcessor.processContentChunk — text accumulation', () =>
     const host = makeHost()
     const proc = new AgentStreamProcessor(host)
     const streamState = { hasTextAfterLastTool: false } as { hasTextAfterLastTool: boolean }
-    proc.processContentChunk(
-      { type: 'text', content: 'some text' } as never,
-      { ...ctx, streamState: streamState as never }
-    )
+    proc.processContentChunk({ type: 'text', content: 'some text' } as never, {
+      ...ctx,
+      streamState: streamState as never
+    })
     assert.equal(streamState.hasTextAfterLastTool, true)
   })
 
   test('text chunk with empty content still returns next', () => {
     const host = makeHost()
     const proc = new AgentStreamProcessor(host)
-    const r = proc.processContentChunk(
-      { type: 'text', content: '' } as never,
-      { ...ctx, streamState: {} as never }
-    )
+    const r = proc.processContentChunk({ type: 'text', content: '' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
     assert.equal(r, 'next')
   })
 })
@@ -259,10 +262,10 @@ describe('AgentStreamProcessor.processContentChunk — status updates', () => {
   test('text chunk sets currentStatus to writing', () => {
     const host = makeHost({ currentStatus: 'idle' })
     const proc = new AgentStreamProcessor(host)
-    proc.processContentChunk(
-      { type: 'text', content: 'hi' } as never,
-      { ...ctx, streamState: {} as never }
-    )
+    proc.processContentChunk({ type: 'text', content: 'hi' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
     assert.equal(host.currentStatus, 'writing')
   })
 })

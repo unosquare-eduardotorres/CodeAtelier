@@ -128,7 +128,9 @@ export default function MermaidDiagram({
   // Render mermaid diagram — re-renders when definition or theme changes
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async render
     setLoading(true)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null)
 
     const diagramId = id ?? `mermaid-r-${++renderCounter}`
@@ -301,7 +303,7 @@ export default function MermaidDiagram({
     'px-1.5 py-1 rounded bg-surface-overlay/80 text-text-secondary hover:text-text-primary transition-colors'
 
   return (
-    <div className={`relative group ${className ?? ''}`}>
+    <div data-testid="mermaid-diagram" className={`relative group ${className ?? ''}`}>
       {/* Toolbar — zoom controls + copy */}
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
         <button onClick={handleZoomOut} className={toolbarBtnClass} title="Zoom out">
@@ -310,10 +312,10 @@ export default function MermaidDiagram({
         <span className="text-[10px] font-mono text-text-secondary min-w-[36px] text-center select-none">
           {Math.round(scale * 100)}%
         </span>
-        <button onClick={handleZoomIn} className={toolbarBtnClass} title="Zoom in">
+        <button data-testid="mermaid-zoom-in" onClick={handleZoomIn} className={toolbarBtnClass} title="Zoom in">
           <ZoomIn size={12} />
         </button>
-        <button onClick={fitToView} className={toolbarBtnClass} title="Fit to view">
+        <button data-testid="mermaid-fullscreen" onClick={fitToView} className={toolbarBtnClass} title="Fit to view">
           <Maximize2 size={12} />
         </button>
         <div className="w-px h-4 bg-border-subtle mx-0.5" />

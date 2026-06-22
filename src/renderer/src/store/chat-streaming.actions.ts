@@ -28,6 +28,7 @@ export interface ChatStreamingState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
+  isSending: boolean
   streamingConversationIds: Set<string>
   activeRequestId: string | null
   streamingPhase: ConversationPhase | null
@@ -47,9 +48,7 @@ type GetFn = () => ChatStreamingState
 // SetFn mirrors zustand's `set` for the full ChatState — the streaming actions
 // only touch the ChatStreamingState slice, but the callback receives the full
 // store state, so the param/return must be typed against ChatState.
-type SetFn = (
-  partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)
-) => void
+type SetFn = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
 
 // ── ChatStreamingInternals ──────────────────────────────────────────────────
 
@@ -63,6 +62,21 @@ export class ChatStreamingInternals {
   private accumulator: StreamSegmentAccumulator | null = null
   private storeGet: GetFn | null = null
   private storeSet: SetFn | null = null
+
+  /**
+   * MSG-RELOAD-01: Monotonically increasing generation counter.
+   * Bumped on every sendMessage() and selectConversation().
+   * The async DB reload after stream finalize captures the current generation
+   * and discards the result if it changed (meaning a new message or conv switch
+   * happened while the reload was in flight).
+   */
+  private _messageGeneration = 0
+  get messageGeneration(): number {
+    return this._messageGeneration
+  }
+  bumpGeneration(): void {
+    this._messageGeneration++
+  }
 
   /** Bind the Zustand get/set refs — called once during store creation */
   bind(get: GetFn, set: SetFn): void {
@@ -113,8 +127,11 @@ export class ChatStreamingInternals {
       () => {
         if (this.storeGet?.().isStreaming) {
           rendererLog.warn('Safety timeout: isStreaming stuck for 2 minutes — force-resetting')
+          // STREAM-SAFETY-PARTIAL-01: Also clear activeRequestId so late chunks
+          // from the timed-out request are rejected instead of silently accepted.
           this.storeSet?.({
             isStreaming: false,
+            activeRequestId: null,
             streamingConversationIds: new Set<string>(),
             conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
           })
@@ -138,14 +155,30 @@ export function appendStreamChunkAction(
   role?: 'da-vinci' | 'specialist',
   taskId?: string,
   specialist?: string,
-  requestId?: string,
-  conversationId?: string
+  requestId?: string
 ): void {
-  const { activeRequestId, isStreaming } = get()
-  if (!isStreaming) return
-  if (activeRequestId && requestId && requestId !== activeRequestId) return
-  // STORE-01: guard against stale chunks leaking across conversation switches
-  if (conversationId && get().activeConversation?.id !== conversationId) return
+  const activeRequestId = get().activeRequestId
+  const isCurrentlyStreaming = get().isStreaming
+
+  // CHUNK-LEAK-01: Drop chunks when no active request is expected AND not streaming.
+  // Previously, the null-guard was inverted: when activeRequestId was null (e.g. after
+  // conv switch), the check was bypassed, leaking chunks to the wrong conversation.
+  if (!activeRequestId && !isCurrentlyStreaming) return
+
+  // Drop stale chunks (mismatched request)
+  if (activeRequestId && requestId && requestId !== activeRequestId) {
+    rendererLog.debug(
+      `[appendStreamChunk] Dropped stale chunk: expected=${activeRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
+    )
+    return
+  }
+
+  // STREAM-REQID-BYPASS-01: If we expect a specific request but this chunk has no ID,
+  // drop it — it's likely a late chunk from a previous request that omitted requestId.
+  if (activeRequestId && !requestId) {
+    rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (activeRequestId set)')
+    return
+  }
 
   // Reset safety timer — backend is still alive
   streamingInternals.resetSafetyTimer()
@@ -153,13 +186,17 @@ export function appendStreamChunkAction(
 
   const isNewTask = taskId != null && taskId !== get().streamingTaskId
 
-  // If task changed, flush old accumulator and reset
+  // STREAM-TASK-FLUSH-RACE-01: On task switch, flush the accumulator (which pushes
+  // buffered text to the store via onFlush), then read the flushed state BEFORE
+  // clearing — otherwise the set() below overwrites what flush just wrote.
   if (isNewTask) {
     streamingInternals.flushAccumulator()
     streamingInternals.resetAccumulator()
   }
 
-  // Update streaming metadata (non-content state) immediately
+  // Update streaming metadata (non-content state) immediately.
+  // On task switch the segments/content were already archived by flush above,
+  // so clearing here is safe (flush output was consumed by the accumulator's onFlush).
   set((state) => ({
     isStreaming: true, // Ensure streaming bubble renders for specialist chunks
     streamingPhase: role === 'specialist' ? 'specialist-executing' : 'da-vinci-responding',
@@ -174,6 +211,88 @@ export function appendStreamChunkAction(
   streamingInternals.getOrCreateAccumulator().appendText(chunk)
 }
 
+// ── finalizeStream helpers ───────────────────────────────────────────────
+
+function mergeStreamedContent(
+  streamingSegments: StreamSegment[],
+  streamingContent: string,
+  toolActivities: ToolActivity[]
+): { mergedContent: string; mergedTools: ToolActivity[] } {
+  const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  const mergedTools = [
+    ...streamingSegments.flatMap((s) => s.toolActivities),
+    ...toolActivities
+  ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
+  return { mergedContent, mergedTools }
+}
+
+function computeFinalizeStateDelta(
+  taskId: string | undefined,
+  activeConversation: { id: string } | null,
+  currentStreamingIds: Set<string>
+): Partial<ChatState> {
+  const newStreamingIds = taskId
+    ? currentStreamingIds
+    : (() => {
+        const s = new Set(currentStreamingIds)
+        if (activeConversation) s.delete(activeConversation.id)
+        return s
+      })()
+
+  const base: Partial<ChatState> = {
+    streamingContent: '',
+    streamingSegments: [],
+    isStreaming: !!taskId,
+    activeRequestId: taskId ? undefined : null,
+    streamingPhase: taskId ? undefined : null,
+    streamingTaskId: null,
+    streamingConversationIds: newStreamingIds
+  }
+
+  if (!taskId) {
+    Object.assign(base, {
+      toolActivities: [],
+      streamingSpecialist: null,
+      pendingQuestions: null,
+      pendingQuestionAction: null,
+      pendingQuestionRequestId: null
+    })
+  }
+
+  return base
+}
+
+function reloadMessagesFromDb(
+  conversationId: string,
+  get: GetFn,
+  set: SetFn
+): void {
+  const reloadGeneration = streamingInternals.messageGeneration
+  window.api
+    .getMessages({ conversationId })
+    .then((dbMessages) => {
+      const current = get()
+      if (
+        current.activeConversation?.id === conversationId &&
+        !current.isStreaming &&
+        streamingInternals.messageGeneration === reloadGeneration &&
+        dbMessages.length > 0
+      ) {
+        set({ messages: dbMessages })
+      }
+    })
+    .catch((error) => {
+      rendererLog.error('Failed to reload messages after stream finalize:', error)
+    })
+}
+
+// ── finalizeStreamAction ──────────────────────────────────────────────
+
 export function finalizeStreamAction(
   get: GetFn,
   set: SetFn,
@@ -181,16 +300,12 @@ export function finalizeStreamAction(
   taskId?: string,
   requestId?: string
 ): void {
-  // Force-flush any remaining buffered content before finalizing
   streamingInternals.flushAccumulator()
 
   const activeRequestId = get().activeRequestId
   if (activeRequestId && requestId && requestId !== activeRequestId) return
 
-  // Clear safety timer on normal stream completion (only on final complete, not per-task)
-  if (!taskId) {
-    streamingInternals.clearSafetyTimer()
-  }
+  if (!taskId) streamingInternals.clearSafetyTimer()
 
   const {
     streamingSegments,
@@ -201,17 +316,11 @@ export function finalizeStreamAction(
     toolActivities
   } = get()
 
+  // Main path: streamed content exists and we have a conversation
   if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
-    // Merge all segments + current content into a single message
-    const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
-      .map((c) => c.trim())
-      .filter(Boolean)
-      .join('\n\n')
-
-    const mergedTools = [
-      ...streamingSegments.flatMap((s) => s.toolActivities),
-      ...toolActivities
-    ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+    const { mergedContent, mergedTools } = mergeStreamedContent(
+      streamingSegments, streamingContent, toolActivities
+    )
 
     const newMessages: Message[] = []
     if (mergedContent || mergedTools.length > 0) {
@@ -232,39 +341,22 @@ export function finalizeStreamAction(
       })
     }
 
-    set((state) => {
-      // Remove from per-conversation streaming set on final complete
-      const newStreamingIds = taskId
-        ? state.streamingConversationIds
-        : (() => {
-            const s = new Set(state.streamingConversationIds)
-            if (activeConversation) s.delete(activeConversation.id)
-            return s
-          })()
-      return {
-        messages: [...state.messages, ...newMessages],
-        streamingContent: '',
-        streamingSegments: [],
-        // Only stop streaming if this is the final complete (no taskId = final summary)
-        isStreaming: !!taskId,
-        activeRequestId: taskId ? state.activeRequestId : null,
-        streamingPhase: taskId ? state.streamingPhase : null,
-        toolActivities: taskId ? state.toolActivities : [],
-        streamingTaskId: null,
-        streamingSpecialist: taskId ? state.streamingSpecialist : null,
-        streamingConversationIds: newStreamingIds,
-        // Clear stale ask-question state on final complete
-        ...(!taskId
-          ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
-          : {})
-      }
-    })
+    set((state) => ({
+      messages: [...state.messages, ...newMessages],
+      ...computeFinalizeStateDelta(taskId, activeConversation, state.streamingConversationIds),
+      // Preserve mutable refs when task is still active
+      ...(taskId ? {
+        activeRequestId: state.activeRequestId,
+        streamingPhase: state.streamingPhase,
+        toolActivities: state.toolActivities,
+        streamingSpecialist: state.streamingSpecialist
+      } : {})
+    }))
   } else if (taskId) {
-    // Per-task complete with no accumulated content — just reset task tracking
+    // Per-task complete with no accumulated content
     set({ streamingContent: '', streamingSegments: [], streamingTaskId: null })
   } else if (activeConversation) {
-    // Clear streaming state synchronously to prevent the thinking indicator
-    // from hanging while the DB reload completes.
+    // Clear streaming state + reload from DB
     set((state) => {
       const newStreamingIds = new Set(state.streamingConversationIds)
       newStreamingIds.delete(activeConversation.id)
@@ -276,26 +368,12 @@ export function finalizeStreamAction(
         toolActivities: [],
         streamingTaskId: null,
         streamingConversationIds: newStreamingIds,
-        // Clear stale ask-question state
         pendingQuestions: null,
         pendingQuestionAction: null,
         pendingQuestionRequestId: null
       }
     })
-    // Reload messages from DB asynchronously.
-    // DB is the source of truth — no optimistic message preservation.
-    // The previous merge strategy incorrectly kept temp-* optimistic messages
-    // (whose IDs never exist in the DB), causing duplicate user bubbles.
-    window.api
-      .getMessages({ conversationId: activeConversation.id })
-      .then((dbMessages) => {
-        if (dbMessages.length > 0) {
-          set({ messages: dbMessages })
-        }
-      })
-      .catch((error) => {
-        rendererLog.error('Failed to reload messages after stream finalize:', error)
-      })
+    reloadMessagesFromDb(activeConversation.id, get, set)
   } else {
     set({
       streamingContent: '',

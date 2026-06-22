@@ -65,7 +65,7 @@ export default function SearchPlayground({
 
   return (
     <SettingsCard>
-      <div className="flex items-center gap-2 mb-3">
+      <div data-testid="search-playground" className="flex items-center gap-2 mb-3">
         <Search size={14} className="text-text-secondary" />
         <h3 className="text-sm font-medium text-text-body">Search Playground</h3>
       </div>

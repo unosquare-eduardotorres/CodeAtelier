@@ -117,7 +117,7 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   const hasRemote = !!(localRepoInfo?.hasRemote && localRepoInfo?.remoteUrl)
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-8 space-y-6">
+    <div data-testid="repository-settings" className="max-w-2xl mx-auto px-6 py-8 space-y-6">
       {/* Fix #11: Page header for consistency with other settings tabs */}
       <div className="mb-2">
         <h2 className="text-base font-semibold text-text-primary">Repository & GitHub</h2>

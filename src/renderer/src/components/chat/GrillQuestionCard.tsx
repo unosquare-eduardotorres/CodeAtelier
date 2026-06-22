@@ -15,6 +15,171 @@ export interface QuestionState {
   skipped: boolean
 }
 
+// ── Style helpers ──
+
+function getOptionBg(isSelected: boolean, isRecommended: boolean): string {
+  if (isSelected) return 'bg-primary/10'
+  if (isRecommended) return 'bg-warning-muted/30 hover:bg-surface-hover'
+  return 'hover:bg-surface-hover'
+}
+
+// ── Icons ──
+export function RadioIcon({ selected }: { selected: boolean }): React.JSX.Element {
+  return (
+    <div
+      className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
+        selected ? 'border-primary bg-primary' : 'border-text-muted'
+      }`}
+    >
+      {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+    </div>
+  )
+}
+
+export function CheckboxIcon({ selected }: { selected: boolean }): React.JSX.Element {
+  return (
+    <div
+      className={`mt-0.5 w-4 h-4 rounded shrink-0 border-2 flex items-center justify-center transition-colors ${
+        selected ? 'border-primary bg-primary' : 'border-text-muted'
+      }`}
+    >
+      {selected && (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path
+            d="M2 5L4 7L8 3"
+            stroke="white"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </div>
+  )
+}
+
+// ── Option row sub-component ──
+
+function OptionRow({
+  option,
+  optionIndex,
+  isSelected,
+  multiSelect,
+  onToggle,
+  onKeyDown
+}: {
+  option: GrillQuestion['options'][number]
+  optionIndex: number
+  isSelected: boolean
+  multiSelect: boolean
+  onToggle: () => void
+  onKeyDown: (e: React.KeyboardEvent) => void
+}): React.JSX.Element {
+  const isRecommended = !!option.recommended
+
+  return (
+    <button
+      key={option.label}
+      data-testid="grill-question-option"
+      data-option-index={optionIndex}
+      role={multiSelect ? 'checkbox' : 'radio'}
+      aria-checked={isSelected}
+      tabIndex={optionIndex === 0 ? 0 : -1}
+      onClick={onToggle}
+      onKeyDown={onKeyDown}
+      className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 min-h-[44px] outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset ${getOptionBg(isSelected, isRecommended)}`}
+    >
+      {multiSelect ? (
+        <CheckboxIcon selected={isSelected} />
+      ) : (
+        <RadioIcon selected={isSelected} />
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-text-primary font-medium">{option.label}</span>
+          {isRecommended && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-warning-muted text-warning border border-warning/20">
+              <Star size={10} className="fill-warning" />
+              Recommended
+            </span>
+          )}
+        </div>
+        {option.recommendedReason && (
+          <p className="text-xs text-warning/80 mt-0.5 italic">
+            {option.recommendedReason}
+          </p>
+        )}
+        {option.description && (
+          <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
+        )}
+      </div>
+    </button>
+  )
+}
+
+// ── Other option row sub-component ──
+
+function OtherOptionRow({
+  state,
+  question,
+  optionIndex,
+  onSelect,
+  onChange,
+  onKeyDown,
+  otherInputRef
+}: {
+  state: QuestionState
+  question: GrillQuestion
+  optionIndex: number
+  onSelect: () => void
+  onChange: (state: QuestionState) => void
+  onKeyDown: (e: React.KeyboardEvent) => void
+  otherInputRef: React.RefObject<HTMLTextAreaElement | null>
+}): React.JSX.Element {
+  return (
+    <div
+      data-option-index={optionIndex}
+      className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
+        state.otherSelected ? 'bg-primary/10' : 'hover:bg-surface-hover'
+      }`}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+    >
+      <button
+        type="button"
+        className="mt-0.5 outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-full"
+        onClick={onSelect}
+        aria-label="Other option"
+      >
+        {question.multiSelect ? (
+          <CheckboxIcon selected={state.otherSelected} />
+        ) : (
+          <RadioIcon selected={state.otherSelected} />
+        )}
+      </button>
+      <div className="flex-1 cursor-pointer" onClick={onSelect}>
+        <span className="text-sm text-text-muted">Other:</span>
+        <textarea
+          ref={otherInputRef}
+          value={state.otherText}
+          rows={1}
+          onChange={(e) => {
+            const newState = { ...state, otherText: e.target.value, otherSelected: true }
+            if (!question.multiSelect) {
+              newState.selectedOptions = []
+            }
+            onChange(newState)
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          placeholder="Type your answer..."
+          className="mt-1 w-full resize-none overflow-y-auto max-h-60 bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-primary transition-colors leading-relaxed"
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Individual question item ──
 export function QuestionItem({
   question,
@@ -132,134 +297,31 @@ export function QuestionItem({
           aria-labelledby={question.header ? `question-header-${question.id}` : undefined}
           className="divide-y divide-border-subtle"
         >
-          {(question.options ?? []).map((option, optIdx) => {
-            const isSelected = state.selectedOptions.includes(option.label)
-            const isRecommended = !!option.recommended
-
-            return (
-              <button
-                key={option.label}
-                data-option-index={optIdx}
-                role={question.multiSelect ? 'checkbox' : 'radio'}
-                aria-checked={isSelected}
-                tabIndex={optIdx === 0 ? 0 : -1}
-                onClick={() => handleOptionToggle(option.label)}
-                onKeyDown={(e) => handleKeyDown(e, optIdx)}
-                className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 min-h-[44px] outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset ${
-                  isSelected
-                    ? 'bg-primary/10'
-                    : isRecommended
-                      ? 'bg-warning-muted/30 hover:bg-surface-hover'
-                      : 'hover:bg-surface-hover'
-                }`}
-              >
-                {question.multiSelect ? (
-                  <CheckboxIcon selected={isSelected} />
-                ) : (
-                  <RadioIcon selected={isSelected} />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm text-text-primary font-medium">{option.label}</span>
-                    {isRecommended && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-warning-muted text-warning border border-warning/20">
-                        <Star size={10} className="fill-warning" />
-                        Recommended
-                      </span>
-                    )}
-                  </div>
-                  {option.recommendedReason && (
-                    <p className="text-xs text-warning/80 mt-0.5 italic">
-                      {option.recommendedReason}
-                    </p>
-                  )}
-                  {option.description && (
-                    <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
-                  )}
-                </div>
-              </button>
-            )
-          })}
+          {(question.options ?? []).map((option, optIdx) => (
+            <OptionRow
+              key={option.label}
+              option={option}
+              optionIndex={optIdx}
+              isSelected={state.selectedOptions.includes(option.label)}
+              multiSelect={!!question.multiSelect}
+              onToggle={() => handleOptionToggle(option.label)}
+              onKeyDown={(e) => handleKeyDown(e, optIdx)}
+            />
+          ))}
 
           {/* Other option row */}
           {question.allowOther !== false && (
-            <div
-              data-option-index={(question.options ?? []).length}
-              className={`flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
-                state.otherSelected ? 'bg-primary/10' : 'hover:bg-surface-hover'
-              }`}
-              tabIndex={-1}
+            <OtherOptionRow
+              state={state}
+              question={question}
+              optionIndex={(question.options ?? []).length}
+              onSelect={handleOtherSelect}
+              onChange={onChange}
               onKeyDown={(e) => handleKeyDown(e, (question.options ?? []).length)}
-            >
-              <button
-                type="button"
-                className="mt-0.5 outline-none focus-visible:ring-2 focus-visible:ring-primary/50 rounded-full"
-                onClick={handleOtherSelect}
-                aria-label="Other option"
-              >
-                {question.multiSelect ? (
-                  <CheckboxIcon selected={state.otherSelected} />
-                ) : (
-                  <RadioIcon selected={state.otherSelected} />
-                )}
-              </button>
-              <div className="flex-1 cursor-pointer" onClick={handleOtherSelect}>
-                <span className="text-sm text-text-muted">Other:</span>
-                <textarea
-                  ref={otherInputRef}
-                  value={state.otherText}
-                  rows={1}
-                  onChange={(e) => {
-                    const newState = { ...state, otherText: e.target.value, otherSelected: true }
-                    if (!question.multiSelect) {
-                      newState.selectedOptions = []
-                    }
-                    onChange(newState)
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  placeholder="Type your answer..."
-                  className="mt-1 w-full resize-none overflow-y-auto max-h-60 bg-surface-overlay text-sm text-text-body placeholder-text-muted rounded-lg px-3 py-1.5 outline-none border border-border-subtle focus:border-primary transition-colors leading-relaxed"
-                />
-              </div>
-            </div>
+              otherInputRef={otherInputRef}
+            />
           )}
         </div>
-      )}
-    </div>
-  )
-}
-
-// ── Icons ──
-export function RadioIcon({ selected }: { selected: boolean }): React.JSX.Element {
-  return (
-    <div
-      className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors ${
-        selected ? 'border-primary bg-primary' : 'border-text-muted'
-      }`}
-    >
-      {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-    </div>
-  )
-}
-
-export function CheckboxIcon({ selected }: { selected: boolean }): React.JSX.Element {
-  return (
-    <div
-      className={`mt-0.5 w-4 h-4 rounded shrink-0 border-2 flex items-center justify-center transition-colors ${
-        selected ? 'border-primary bg-primary' : 'border-text-muted'
-      }`}
-    >
-      {selected && (
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-          <path
-            d="M2 5L4 7L8 3"
-            stroke="white"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
       )}
     </div>
   )
@@ -338,6 +400,7 @@ export default function GrillQuestionCard({
   return (
     <div
       ref={cardRef}
+      data-testid="grill-question-card"
       className="rounded-xl border border-border-subtle bg-surface-overlay overflow-hidden shadow-sm"
     >
       {/* Header */}

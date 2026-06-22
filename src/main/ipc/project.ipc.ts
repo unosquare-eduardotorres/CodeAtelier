@@ -18,6 +18,7 @@ import { join, resolve, basename } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { GrillDecision, GrillTrackScore, Workspace } from '../../shared/types'
 import { workspaceRepository } from '../db/repositories'
+import { presetRepository } from '../db/repositories/preset.repository'
 import { grillSessionRepository } from '../db/repositories/grill-session.repository'
 import { generateClaudeMd } from '../services/claude-md-generator'
 import { validateSender } from './validate-sender'
@@ -106,6 +107,13 @@ function createShell(args: CreateShellArgs): Workspace {
     false // not a git repo
   )
   projectLog.info(`[project:shell] Workspace registered: ${workspace.id}`)
+
+  // Seed built-in LLM presets
+  try {
+    presetRepository.ensureBuiltIns(workspace.id)
+  } catch (err) {
+    projectLog.warn('[project:shell] Failed to seed built-in presets (non-fatal):', err)
+  }
 
   // ── Seed Project Specialist row ──
   try {

@@ -230,11 +230,11 @@ describe('PromptBuilder.extractEssentialSections (private)', () => {
     assert.equal(result, '')
   })
 
-  test('keeps conventions and guidelines', () => {
-    const prompt = `## Conventions\nFollow these.\n\n## Guidelines\nDo this.`
+  test('keeps conventions and error handling', () => {
+    const prompt = `## Conventions\nFollow these.\n\n## Error Handling\nDo this.`
     const result = (builder as any).extractEssentialSections(prompt)
     assert.ok(result.includes('Conventions'))
-    assert.ok(result.includes('Guidelines'))
+    assert.ok(result.includes('Error Handling'))
   })
 })
 

@@ -30,7 +30,6 @@ const bpLog = log.scope('blueprint-plan')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintPlanService extends EventEmitter {
-
   async startPlanPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -64,14 +63,19 @@ export class BlueprintPlanService extends EventEmitter {
 
     // 4. Emit phaseStart
     this.emit('phaseStart', {
-      blueprintId, workspaceId, phase: 'plan'
+      blueprintId,
+      workspaceId,
+      phase: 'plan'
     } satisfies BlueprintPhaseStartPayload)
 
     // 5. Wire streaming
     session.on('chunk', (chunk: StreamChunk) => {
       if (chunk.type === 'text' && chunk.content) {
         this.emit('phaseProgress', {
-          blueprintId, workspaceId, phase: 'plan', text: chunk.content
+          blueprintId,
+          workspaceId,
+          phase: 'plan',
+          text: chunk.content
         } satisfies BlueprintPhaseProgressPayload)
       }
     })
@@ -92,9 +96,14 @@ export class BlueprintPlanService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        if (abortSignal?.aborted) {
+          onAbort()
+        }
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -107,7 +116,7 @@ export class BlueprintPlanService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
       const planJson = parseBlueprintPlan(text)
 
       // 8. Save artifacts
@@ -122,7 +131,8 @@ export class BlueprintPlanService extends EventEmitter {
       }
 
       // 9. Advance to TASKS phase
-      blueprintRepository.updateStatus(blueprintId, 'planning')
+      // BP-04: Use correct status 'tasking' (not 'planning') for tasks phase
+      blueprintRepository.updateStatus(blueprintId, 'tasking')
       blueprintRepository.update(blueprintId, { currentPhase: 'tasks' })
 
       const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
@@ -134,12 +144,18 @@ export class BlueprintPlanService extends EventEmitter {
 
       // 10. Emit events
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'plan', status: 'complete', completion
+        blueprintId,
+        workspaceId,
+        phase: 'plan',
+        status: 'complete',
+        completion
       } satisfies BlueprintPhaseCompletePayload)
 
       if (planPhase) {
         this.emit('phaseArtifact', {
-          blueprintId, workspaceId, phase: 'plan',
+          blueprintId,
+          workspaceId,
+          phase: 'plan',
           artifact: { type: 'plan', contentMd: text }
         } satisfies BlueprintPhaseArtifactPayload)
       }
@@ -164,7 +180,10 @@ export class BlueprintPlanService extends EventEmitter {
       }
 
       this.emit('phaseComplete', {
-        blueprintId, workspaceId, phase: 'plan', status: 'failed'
+        blueprintId,
+        workspaceId,
+        phase: 'plan',
+        status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       await session.stop()

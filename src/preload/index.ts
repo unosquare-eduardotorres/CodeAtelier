@@ -37,7 +37,6 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   EmbeddingModelStatus,
-  EmbeddingModelProgress,
   OllamaStatus,
   PullProgress,
   IndexingState,
@@ -146,6 +145,7 @@ const api = {
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    presetId?: string | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
   updatePersona: (args: {
@@ -1247,15 +1247,6 @@ const api = {
 
   embeddingInitialize: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE),
 
-  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: EmbeddingModelProgress): void =>
-      callback(data)
-    ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.EMBEDDING_MODEL_PROGRESS, handler)
-    }
-  },
-
   onEmbeddingModelReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()
     ipcRenderer.on(IPC_CHANNELS.EMBEDDING_MODEL_READY, handler)
@@ -1635,6 +1626,16 @@ const api = {
     error?: string
   }> => ipcRenderer.invoke(IPC_CHANNELS.SDK_RESOLVE_SETTINGS),
 
+  // Stream Diagnostics — aggregated streaming health metrics
+  getStreamMetrics: (): Promise<{
+    completionRate: number
+    ttftP50: number | null
+    ttftP95: number | null
+    ttftP99: number | null
+    sampleSize: number
+    outcomeCounts: Record<string, number>
+  }> => ipcRenderer.invoke(IPC_CHANNELS.STREAM_METRICS_GET),
+
   // Chat resume at checkpoint — undo to a specific message point
   chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args),
@@ -1753,8 +1754,7 @@ const api = {
     linkedConversationId?: string
     linkedMpaRunId?: string
     linkedCouncilSessionId?: string
-  }): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.PLAN_UPDATE_STATUS, args),
+  }): Promise<{ success: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.PLAN_UPDATE_STATUS, args),
 
   planDelete: (args: { planId: string }): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_DELETE, args),
@@ -1764,6 +1764,27 @@ const api = {
     workspaceId: string
   }): Promise<{ conversationId: string; planId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
+
+  // ── LLM Presets ──
+  getPresets: (args: { workspaceId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_ALL, args),
+  getPreset: (args: { presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_BY_ID, args),
+  createPreset: (args: {
+    workspaceId: string
+    name: string
+    actionConfig: Record<string, unknown>
+  }) => ipcRenderer.invoke(IPC_CHANNELS.PRESET_CREATE, args),
+  updatePreset: (args: {
+    presetId: string
+    changes: { name?: string; actionConfig?: Record<string, unknown> }
+  }) => ipcRenderer.invoke(IPC_CHANNELS.PRESET_UPDATE, args),
+  deletePreset: (args: { presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_DELETE, args),
+  setDefaultPreset: (args: { workspaceId: string; presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_SET_DEFAULT, args),
+  switchConversationPreset: (args: { conversationId: string; presetId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRESET_SWITCH, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -2352,20 +2373,20 @@ const api = {
     settingsJson?: Record<string, unknown>
   }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE, args),
 
-  blueprintCreateFromIdea: (args: {
-    ideaId: string
-    workspaceId: string
-  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
+  blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }): Promise<unknown> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
 
   blueprintStartSpecify: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, args),
 
   blueprintStartClarify: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_CLARIFY, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_CLARIFY, args),
 
   blueprintClarifyAnswer: (args: {
     blueprintId: string
@@ -2373,9 +2394,8 @@ const api = {
     message: string
   }): Promise<{ sent: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ANSWER, args),
 
-  blueprintSkipClarify: (args: {
-    blueprintId: string
-  }): Promise<{ skipped: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY, args),
+  blueprintSkipClarify: (args: { blueprintId: string }): Promise<{ skipped: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY, args),
 
   blueprintStartPlan: (args: {
     blueprintId: string
@@ -2390,7 +2410,8 @@ const api = {
   blueprintStartReview: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_REVIEW, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_REVIEW, args),
 
   blueprintStartBuild: (args: {
     blueprintId: string
@@ -2400,7 +2421,8 @@ const api = {
   blueprintStartVerify: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ started: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_VERIFY, args),
+  }): Promise<{ started: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_START_VERIFY, args),
 
   blueprintGet: (args: { id: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET, args),
@@ -2408,14 +2430,11 @@ const api = {
   blueprintGetDetails: (args: { id: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_DETAILS, args),
 
-  blueprintList: (args: {
-    workspaceId: string
-    limit?: number
-  }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_LIST, args),
+  blueprintList: (args: { workspaceId: string; limit?: number }): Promise<unknown[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_LIST, args),
 
-  blueprintCancel: (args: {
-    workspaceId: string
-  }): Promise<{ cancelled: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
+  blueprintCancel: (args: { workspaceId: string }): Promise<{ cancelled: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
 
   blueprintGetConstitution: (args: {
     workspaceId: string
@@ -2426,7 +2445,8 @@ const api = {
     workspaceId: string
     constitutionMd: string
     version?: string
-  }): Promise<{ saved: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION, args),
+  }): Promise<{ saved: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION, args),
 
   blueprintGetPipelineStatus: (args: {
     workspaceId: string
@@ -2595,12 +2615,7 @@ const api = {
   },
 
   onBlueprintWaveComplete: (
-    cb: (data: {
-      blueprintId: string
-      workspaceId: string
-      wave: number
-      status: string
-    }) => void
+    cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ): (() => void) => {
     const handler = (
       _: unknown,

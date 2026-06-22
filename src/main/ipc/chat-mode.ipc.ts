@@ -6,6 +6,7 @@ import {
   specialistRepository
 } from '../db/repositories'
 import { chatAgentService } from '../services'
+import { chatStreamService } from '../services/chat-stream.service'
 import { modelConfigService } from '../services/model-config.service'
 import { contextWindowResolver } from '../services/context-window-resolver'
 import {
@@ -19,6 +20,7 @@ import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 import { resolveContextLevel } from './context-usage-level'
+import { conversationLifecycle } from '../services/conversation-lifecycle'
 
 const log = chatIpcLogger
 
@@ -32,6 +34,14 @@ export function registerChatModeIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_UPDATE_MODE)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_UPDATE_MODE)
     const mode = requireString(args, 'mode', IPC_CHANNELS.CHAT_UPDATE_MODE)
+
+    // CONV-MODIFY-RACE-01: Prevent mode changes during active streaming
+    if (
+      conversationLifecycle.conversationId === conversationId &&
+      conversationLifecycle.isActive
+    ) {
+      throw new Error('Cannot change mode while streaming — stop or wait for completion')
+    }
 
     const validModes = ['plan', 'build', 'danger']
     if (!validModes.includes(mode)) {
@@ -52,6 +62,14 @@ export function registerChatModeIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_UPDATE_EFFORT)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_UPDATE_EFFORT)
     const effort = requireString(args, 'effort', IPC_CHANNELS.CHAT_UPDATE_EFFORT)
+
+    // CONV-MODIFY-RACE-01: Prevent effort changes during active streaming
+    if (
+      conversationLifecycle.conversationId === conversationId &&
+      conversationLifecycle.isActive
+    ) {
+      throw new Error('Cannot change effort while streaming — stop or wait for completion')
+    }
 
     const validEfforts: ThinkingEffort[] = ['low', 'medium', 'high']
     if (!validEfforts.includes(effort as ThinkingEffort)) {
@@ -99,6 +117,19 @@ export function registerChatModeIpc(): void {
     swapSettings.specialistSwapAccepted = true
     workspaceRepository.updateSettings(workspace.id, swapSettings)
 
+    // SWAP-01: Force-reset any active stream before tearing down session.
+    // Without this, a swap triggered mid-stream orphans the onComplete listener,
+    // leaving streamingLock permanently stuck.
+    chatStreamService.forceResetIfStuck()
+
+    // SWAP-NOCLEANUP-01: Explicitly abort lifecycle if still active after force-reset.
+    // forceResetIfStuck() only acts when the lock is stuck or state isn't idle;
+    // if the stream just finished but async finalization is still running,
+    // this ensures it's properly cancelled before starting the specialist session.
+    if (conversationLifecycle.isActive) {
+      conversationLifecycle.abort('specialist-swap')
+    }
+
     // Re-start so resolveAdapter() now picks the ProjectSpecialistRoleAdapter,
     // which tears down the DaVinci session and rebuilds as the specialist.
     await chatAgentService.start(workspace.repoPath)
@@ -110,6 +141,15 @@ export function registerChatModeIpc(): void {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_UPDATE_PERSONA)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_UPDATE_PERSONA)
+
+    // CONV-MODIFY-RACE-01: Prevent persona changes during active streaming
+    if (
+      conversationLifecycle.conversationId === conversationId &&
+      conversationLifecycle.isActive
+    ) {
+      throw new Error('Cannot change persona while streaming — stop or wait for completion')
+    }
+
     const personaSpecialistId = (args.personaSpecialistId as string | null) ?? null
     if (personaSpecialistId) {
       const specialist = specialistRepository.findById(personaSpecialistId)

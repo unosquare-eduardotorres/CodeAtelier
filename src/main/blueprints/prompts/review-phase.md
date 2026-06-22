@@ -47,25 +47,15 @@ For every user story:
 
 ### 4. Constitution Compliance
 
-If a constitution exists:
-- Do plan items follow required patterns?
-- Are prohibited patterns avoided?
-- Does the tech stack match?
+Verify: required patterns followed, prohibited patterns avoided, tech stack matches.
 
 ### 5. Risk Assessment
 
-- **Missing coverage**: Requirements with no implementation path
-- **Over-scoping**: Tasks that go beyond spec requirements
-- **Dependency risks**: Long dependency chains that delay delivery
-- **Parallel bottlenecks**: Too many sequential dependencies
-- **File conflicts**: Tasks in same wave touching same files
+Check for: missing coverage, over-scoping beyond spec, long dependency chains, parallel bottlenecks, same-wave file conflicts.
 
 ### 6. Quality Checks
 
-- Are success criteria measurable and testable?
-- Are task descriptions specific enough for autonomous execution?
-- Are file paths realistic for the project structure?
-- Is the wave count reasonable (2-6 waves typical)?
+Success criteria measurable? Task descriptions specific enough for autonomous execution? File paths realistic? Wave count reasonable (2-6)?
 
 ## Severity Classification
 
@@ -88,31 +78,7 @@ service handles the routing.
 
 ## Output Format
 
-Present findings in a structured report:
-
-```markdown
-## Review Report
-
-### Coverage Summary
-- Requirements with tasks: X/Y (Z%)
-- User stories with full traceability: A/B
-- Unmapped tasks (potential scope creep): N
-- Constitution violations: M
-
-### Critical Findings
-1. [Finding]: [Description] → [Recommended fix]
-2. ...
-
-### High Priority Findings
-1. [Finding]: [Description] → [Recommended fix]
-2. ...
-
-### Medium/Low Findings
-1. ...
-
-### Recommendations
-- [Overall recommendation: proceed / fix critical / re-specify]
-```
+Structured report with: Coverage Summary (requirements with tasks X/Y, user story traceability, unmapped tasks, constitution violations), then findings grouped by severity (Critical → High → Medium/Low), each with description and recommended fix. End with overall recommendation: proceed / fix critical / re-specify.
 
 ## Completion
 

@@ -42,6 +42,7 @@ export default function HealthLanding({
   // Load history on mount + workspace change
   useEffect(() => {
     if (!workspaceId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before refresh
     setIsLoading(true)
     refresh()
   }, [workspaceId, refresh])
@@ -87,7 +88,7 @@ export default function HealthLanding({
   // ── Empty state ──
   if (history.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full px-4">
+      <div data-testid="health-landing" className="flex flex-col items-center justify-center h-full px-4">
         <div className="max-w-2xl w-full space-y-6">
           <div className="text-center space-y-2">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-success/15 mb-2">
@@ -133,6 +134,7 @@ export default function HealthLanding({
 
           <div className="flex justify-center">
             <button
+              data-testid="health-start-btn"
               onClick={onNewAudit}
               className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-success/20 hover:bg-success/30 text-success rounded-xl transition-colors"
             >

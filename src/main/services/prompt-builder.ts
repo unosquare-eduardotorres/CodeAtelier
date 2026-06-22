@@ -19,6 +19,7 @@ import {
 } from './default-prompts'
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { SkillPromptComposer } from './skill-prompt-composer'
+import { sanitizePromptInput } from './sanitize-prompt-input'
 
 // ── Prompt Builder Types ──
 
@@ -31,11 +32,6 @@ interface PromptBuildOptions {
   mode: ConversationMode
   /** Workspace path for CLAUDE.md project context injection */
   workspacePath?: string
-  /**
-   * @deprecated Strategy C moved memory context to the user prompt (effectiveMessage prefix).
-   * This field is no longer passed by any caller. Left for backward compat — will be removed.
-   */
-  memoryContext?: string
   /** Budget tier — controls context size for model-aware prompt budgeting (Strategy 4) */
   budgetTier?: BudgetTier
   /** Persona specialist ID for generalist impersonation (null = no persona) */
@@ -153,7 +149,6 @@ export class PromptBuilder {
     const baselineSkills = this.skillComposer.buildBaselineSkillsLayer(budgetTier)
     if (baselineSkills) layers.push(baselineSkills)
     this.appendProjectContextLayer(layers, options, budgetTier)
-    this.appendMemoryContextLayer(layers, options)
 
     return layers.join('\n\n---\n\n')
   }
@@ -175,9 +170,9 @@ export class PromptBuilder {
     budgetTier: BudgetTier = 'standard'
   ): string {
     if (!workspacePath) return ''
-    const projectContext = this.readProjectContext(workspacePath, 'da-vinci', mode, budgetTier)
+    const projectContext = this.readProjectContext(workspacePath, mode, budgetTier)
     if (!projectContext) return ''
-    return `## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`
+    return `## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`
   }
 
   /**
@@ -196,7 +191,7 @@ export class PromptBuilder {
       `## Your Specialized Identity\n\n` +
         `You are operating with the following domain expertise. ` +
         `Apply it to all conversations and analyses.\n\n` +
-        options.personaPrompt
+        sanitizePromptInput(options.personaPrompt)
     )
     if (options.personaSkills && options.personaSkills.length > 0) {
       const filtered = this.skillComposer.filterAssignedSkills(
@@ -232,24 +227,11 @@ export class PromptBuilder {
 
     const projectContext = this.readProjectContext(
       options.workspacePath,
-      options.role,
       options.mode,
       budgetTier
     )
     if (projectContext) {
-      layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${projectContext}`)
-    }
-  }
-
-  /**
-   * Layer 5: Auto Memory context.
-   */
-  private appendMemoryContextLayer(layers: string[], options: PromptBuildOptions): void {
-    if (options.memoryContext) {
-      log.warn(
-        '[prompt-builder] memoryContext passed via PromptBuildOptions is deprecated (Strategy C). Memory should be in the user prompt.'
-      )
-      layers.push(`## Auto Memory\n\n${options.memoryContext}`)
+      layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`)
     }
   }
 
@@ -315,14 +297,13 @@ export class PromptBuilder {
    */
   private readProjectContext(
     workspacePath: string,
-    _role: PromptRole = 'da-vinci',
     mode: ConversationMode = 'build',
     budgetTier: BudgetTier = 'standard'
   ): string {
     // Strategy 5: Minimal-budget generalist (turn 5+) already has CLAUDE.md in history —
     // send a micro-summary instead of re-extracting sections (~600 tokens saved per turn)
     if (budgetTier === 'minimal') {
-      return 'Tech: Electron 41, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
+      return 'Tech: Electron 42, React 19, TS 5.9, Tailwind 4, SQLite, Zustand 5. See CLAUDE.md in prior context for conventions/structure.'
     }
 
     try {
@@ -463,7 +444,6 @@ export class PromptBuilder {
     if (options.workspacePath) {
       const claudeMd = this.readProjectContext(
         options.workspacePath,
-        options.role,
         options.mode,
         'minimal'
       )
@@ -527,8 +507,7 @@ Fallback (if emit_plan unavailable):
       'conventions',
       'key commands',
       'what not to do',
-      'error handling',
-      'guidelines'
+      'error handling'
     ]
 
     const sections = prompt.split(/^## /m)

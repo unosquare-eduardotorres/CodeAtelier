@@ -44,7 +44,7 @@ export default function GoalRunHistory({
   }
 
   return (
-    <div className="space-y-2">
+    <div data-testid="goal-run-history" className="space-y-2">
       {/* Filter tabs */}
       <div className="flex items-center gap-3 mb-3">
         <div className="flex items-center bg-surface-overlay border border-border-subtle rounded-lg p-0.5">

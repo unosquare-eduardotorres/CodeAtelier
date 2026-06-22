@@ -125,6 +125,7 @@ export default function GitConfigSection({
               </p>
             </div>
             <button
+              data-testid="git-init-btn"
               onClick={onInitRepo}
               disabled={isInitializingRepo}
               className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5 shrink-0"

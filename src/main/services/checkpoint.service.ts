@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { checkpointRepository } from '../db/repositories/checkpoint.repository'
@@ -181,29 +181,44 @@ class CheckpointService {
       return { success: false, message: 'Checkpoint has no git state to restore' }
     }
 
+    // MCP-02: Validate SHA format before passing to git — prevents command injection
+    // if the DB value is corrupted or tampered with.
+    const SHA_REGEX = /^[0-9a-f]{7,40}$/i
+    if (!SHA_REGEX.test(checkpoint.gitCommitSha)) {
+      return { success: false, message: 'Invalid checkpoint commit SHA format' }
+    }
+
     try {
       // Check for uncommitted changes first
-      const status = execSync('git status --porcelain', {
+      // CHKPT-01: Use spawnSync (array args, no shell) for all git commands
+      const statusResult = spawnSync('git', ['status', '--porcelain'], {
         cwd: workspacePath,
         encoding: 'utf-8',
         timeout: 5000
-      }).trim()
+      })
+      const status = statusResult.stdout?.trim() ?? ''
 
       if (status) {
         checkpointLogger.warn(`Uncommitted changes detected — stashing before restore`)
-        execSync('git stash push -m "checkpoint-restore-auto-stash"', {
-          cwd: workspacePath,
-          encoding: 'utf-8',
-          timeout: 10000
-        })
+        const stashResult = spawnSync(
+          'git',
+          ['stash', 'push', '-m', 'checkpoint-restore-auto-stash'],
+          { cwd: workspacePath, encoding: 'utf-8', timeout: 10000 }
+        )
+        if (stashResult.status !== 0) {
+          throw new Error(stashResult.stderr || 'git stash failed')
+        }
       }
 
       // Reset to the checkpoint commit
-      execSync(`git reset --hard ${checkpoint.gitCommitSha}`, {
+      const resetResult = spawnSync('git', ['reset', '--hard', checkpoint.gitCommitSha], {
         cwd: workspacePath,
         encoding: 'utf-8',
         timeout: 10000
       })
+      if (resetResult.status !== 0) {
+        throw new Error(resetResult.stderr || `git reset failed with code ${resetResult.status}`)
+      }
 
       const record = checkpointRepository.findById(checkpointId)
       if (record) {

@@ -19,10 +19,6 @@ import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
 import { workspaceRepository } from '../db/repositories'
-import {
-  blueprintRepository,
-  blueprintPhaseRepository
-} from '../db/repositories/blueprint.repository'
 import { getSessionEventRouter } from '../services/session-event-router'
 import type { AgentStatus } from '../../shared/types'
 import type {
@@ -53,7 +49,16 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_CREATE,
-    (event, args: { workspaceId: string; title: string; description?: string; priority?: BlueprintPriority; settingsJson?: Record<string, unknown> }) => {
+    (
+      event,
+      args: {
+        workspaceId: string
+        title: string
+        description?: string
+        priority?: BlueprintPriority
+        settingsJson?: Record<string, unknown>
+      }
+    ) => {
       validateSender(event)
       return blueprintService.create({
         workspaceId: args.workspaceId,
@@ -112,19 +117,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.BLUEPRINT_CANCEL, async (event, args: { workspaceId: string }) => {
     validateSender(event)
 
-    // Cancel phase-service sessions first (CLARIFY may be streaming)
-    const activeBlueprintId = blueprintService.getActiveBlueprintId(args.workspaceId)
-    if (activeBlueprintId) {
-      await blueprintSpecService.cancelBlueprint(activeBlueprintId)
-      await blueprintPlanService.cancelBlueprint(activeBlueprintId)
-      await blueprintTasksService.cancelBlueprint(activeBlueprintId)
-      await blueprintReviewService.cancelBlueprint(activeBlueprintId)
-      await blueprintBuildService.cancelBlueprint(activeBlueprintId)
-      await blueprintVerifyService.cancelBlueprint(activeBlueprintId)
+    // BP-CANCEL-LOCK-01: Wrap in try/finally to guarantee blueprintService.cancel()
+    // always runs — even if a phase cancel throws. Without this, a single phase
+    // cancel failure orphans the startLock and permanently blocks new blueprints.
+    try {
+      const activeBlueprintId = blueprintService.getActiveBlueprintId(args.workspaceId)
+      if (activeBlueprintId) {
+        // Best-effort cancel each phase service — don't let one failure block others
+        const phaseServices = [
+          blueprintSpecService, blueprintPlanService, blueprintTasksService,
+          blueprintReviewService, blueprintBuildService, blueprintVerifyService
+        ]
+        for (const svc of phaseServices) {
+          try { await svc.cancelBlueprint(activeBlueprintId) }
+          catch (e) { bpLog.error(`[cancel] Phase cancel failed:`, e) }
+        }
+      }
+    } finally {
+      // ALWAYS release the lock, even if phase cancels threw
+      blueprintService.cancel(args.workspaceId)
     }
-
-    // Then cancel the main pipeline (aborts signal, updates DB, clears state)
-    blueprintService.cancel(args.workspaceId)
     return { cancelled: true }
   })
 
@@ -171,7 +183,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_SAVE_ARTIFACT,
-    (event, args: { blueprintId: string; phase: BlueprintPhaseType; artifact: BlueprintArtifact }) => {
+    (
+      event,
+      args: { blueprintId: string; phase: BlueprintPhaseType; artifact: BlueprintArtifact }
+    ) => {
       validateSender(event)
       blueprintService.savePhaseArtifact(args.blueprintId, args.phase, args.artifact)
       return { saved: true }
@@ -205,6 +220,20 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       }
     ) => {
       validateSender(event)
+
+      // TASK-02: Validate input bounds before passing to service
+      if (!args.blueprintId || typeof args.blueprintId !== 'string') {
+        throw new Error('BLUEPRINT_POPULATE_TASKS: blueprintId is required')
+      }
+      if (!Array.isArray(args.tasks)) {
+        throw new Error('BLUEPRINT_POPULATE_TASKS: tasks must be an array')
+      }
+      if (args.tasks.length > 500) {
+        throw new Error(
+          `BLUEPRINT_POPULATE_TASKS: tasks array too large (${args.tasks.length}, max 500)`
+        )
+      }
+
       return blueprintService.populateTasks(args.blueprintId, args.tasks)
     }
   )
@@ -228,7 +257,9 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
       if (args.approved) {
         // Advance to BUILD phase — DB state is set by blueprintBuildService.startBuildPhase()
-        bpLog.info(`[blueprint:approvalRespond] Blueprint ${args.blueprintId} — approved, triggering BUILD`)
+        bpLog.info(
+          `[blueprint:approvalRespond] Blueprint ${args.blueprintId} — approved, triggering BUILD`
+        )
 
         // Look up workspace for the repo path
         const blueprint = blueprintService.getBlueprint(args.blueprintId)
@@ -239,15 +270,19 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
             wireBlueprintEvents(blueprint.workspaceId)
 
             // Start the BUILD phase (non-blocking)
-            blueprintBuildService.startBuildPhase({
-              blueprintId: args.blueprintId,
-              workspaceId: blueprint.workspaceId,
-              workspacePath: workspace.repoPath
-            }).catch((err) => {
-              bpLog.error('[blueprint:approvalRespond] BUILD phase failed:', err)
-            })
+            blueprintBuildService
+              .startBuildPhase({
+                blueprintId: args.blueprintId,
+                workspaceId: blueprint.workspaceId,
+                workspacePath: workspace.repoPath
+              })
+              .catch((err) => {
+                bpLog.error('[blueprint:approvalRespond] BUILD phase failed:', err)
+              })
           } else {
-            bpLog.error(`[blueprint:approvalRespond] Workspace not found for blueprint ${args.blueprintId}`)
+            bpLog.error(
+              `[blueprint:approvalRespond] Workspace not found for blueprint ${args.blueprintId}`
+            )
           }
         } else {
           bpLog.error(`[blueprint:approvalRespond] Blueprint not found: ${args.blueprintId}`)
@@ -255,7 +290,9 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       } else {
         // Not approved — rewind to plan phase for iteration
         blueprintService.rewindToPhase(args.blueprintId, 'plan')
-        bpLog.info(`[blueprint:approvalRespond] Blueprint ${args.blueprintId} — rejected, rewound to plan`)
+        bpLog.info(
+          `[blueprint:approvalRespond] Blueprint ${args.blueprintId} — rejected, rewound to plan`
+        )
       }
 
       return { responded: true }
@@ -322,15 +359,17 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the SPECIFY phase (non-blocking)
-      blueprintSpecService.startSpecifyPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath,
-        description: blueprint.description,
-        grillDecisions
-      }).catch((err) => {
-        bpLog.error('[blueprint:startSpecify] Phase failed:', err)
-      })
+      blueprintSpecService
+        .startSpecifyPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath,
+          description: blueprint.description,
+          grillDecisions
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startSpecify] Phase failed:', err)
+        })
 
       return { started: true }
     }
@@ -352,13 +391,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the CLARIFY phase (non-blocking)
-      blueprintSpecService.startClarifyPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath
-      }).catch((err) => {
-        bpLog.error('[blueprint:startClarify] Phase failed:', err)
-      })
+      blueprintSpecService
+        .startClarifyPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startClarify] Phase failed:', err)
+        })
 
       return { started: true }
     }
@@ -412,13 +453,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the PLAN phase (non-blocking)
-      blueprintPlanService.startPlanPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath
-      }).catch((err) => {
-        bpLog.error('[blueprint:startPlan] Phase failed:', err)
-      })
+      blueprintPlanService
+        .startPlanPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startPlan] Phase failed:', err)
+        })
 
       return { started: true }
     }
@@ -444,13 +487,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the TASKS phase (non-blocking)
-      blueprintTasksService.startTasksPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath
-      }).catch((err) => {
-        bpLog.error('[blueprint:startTasks] Phase failed:', err)
-      })
+      blueprintTasksService
+        .startTasksPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startTasks] Phase failed:', err)
+        })
 
       return { started: true }
     }
@@ -476,13 +521,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the REVIEW phase (non-blocking)
-      blueprintReviewService.startReviewPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath
-      }).catch((err) => {
-        bpLog.error('[blueprint:startReview] Phase failed:', err)
-      })
+      blueprintReviewService
+        .startReviewPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startReview] Phase failed:', err)
+        })
 
       return { started: true }
     }
@@ -508,13 +555,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the BUILD phase (non-blocking)
-      blueprintBuildService.startBuildPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath
-      }).catch((err) => {
-        bpLog.error('[blueprint:startBuild] Phase failed:', err)
-      })
+      blueprintBuildService
+        .startBuildPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startBuild] Phase failed:', err)
+        })
 
       return { started: true }
     }
@@ -540,13 +589,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       wireBlueprintEvents(args.workspaceId)
 
       // Start the VERIFY phase (non-blocking)
-      blueprintVerifyService.startVerifyPhase({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        workspacePath: workspace.repoPath
-      }).catch((err) => {
-        bpLog.error('[blueprint:startVerify] Phase failed:', err)
-      })
+      blueprintVerifyService
+        .startVerifyPhase({
+          blueprintId: args.blueprintId,
+          workspaceId: args.workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[blueprint:startVerify] Phase failed:', err)
+        })
 
       return { started: true }
     }

@@ -39,7 +39,10 @@ describe('parseCouncilReview', () => {
   })
 
   test('uses the LAST block when multiple are present', () => {
-    const text = fence('council-review', { ...valid, score: 1 }) + '\n' + fence('council-review', { ...valid, score: 9 })
+    const text =
+      fence('council-review', { ...valid, score: 1 }) +
+      '\n' +
+      fence('council-review', { ...valid, score: 9 })
     const out = parseCouncilReview(text, 'contrarian')
     assert.equal(out!.score, 9)
   })
@@ -47,7 +50,10 @@ describe('parseCouncilReview', () => {
 
 describe('parsePeerReview', () => {
   test('parses and applies defaults for missing optional fields', () => {
-    const out = parsePeerReview(fence('council-peer-review', { strongestResponse: 'B' }), 'outsider')
+    const out = parsePeerReview(
+      fence('council-peer-review', { strongestResponse: 'B' }),
+      'outsider'
+    )
     assert.ok(out)
     assert.equal(out!.reviewerRole, 'outsider')
     assert.equal(out!.strongestResponse, 'B')

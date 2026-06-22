@@ -110,6 +110,10 @@ export interface Conversation {
   effort?: ThinkingEffort
   /** Per-conversation thinking budget cap — max thinking tokens per turn (0 = no limit) */
   thinkingBudget?: number
+  /** LLM preset controlling model selection for each action */
+  presetId?: string | null
+  /** Handoff context injected into system prompt when switching providers mid-chat */
+  handoffContext?: string | null
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -379,6 +383,7 @@ export interface AppPreferences {
   updateDrivePath: string
   updateGithubOwner: string
   updateGithubRepo: string
+  context7ApiKey?: string
 }
 
 // ── Workspace Deploy Models ──
@@ -527,6 +532,37 @@ export type ModelAction =
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
   [key: string]: string // ModelAction → model ID string
+}
+
+// ── Preset System ──
+
+/** Per-action model assignment within a preset */
+export interface ActionModelConfig {
+  provider: LLMProvider
+  modelId: string
+  localBackend?: LocalLLMBackend
+}
+
+/** Named LLM configuration preset (maps actions → models) */
+export interface LLMPreset {
+  id: string
+  workspaceId: string
+  name: string
+  isBuiltIn: boolean
+  actionConfig: Partial<Record<ModelAction, ActionModelConfig>>
+  createdAt: string
+  updatedAt: string
+}
+
+/** Logical grouping of ModelActions for the preset editor UI */
+export interface ActionGroup {
+  id: string
+  label: string
+  icon: string
+  description: string
+  providerConstrained?: boolean
+  advanced?: boolean
+  actions: ModelAction[]
 }
 
 // ── YAML ↔ DB Sync Models ──
@@ -725,6 +761,8 @@ export interface StructuredPlan {
   expectedOutcome?: string
   deferredItems?: string[]
   diagrams?: Array<{ title: string; mermaid: string }>
+  /** Architectural constraints from grill decisions (PLAN-GEN-05) */
+  constraints?: string[]
 }
 
 export interface PlanDetectedEvent {
@@ -956,36 +994,20 @@ export interface AutoConfigureResult {
 
 // ── Embedding Provider ──
 
-/** Which embedding backend is active. Currently llamafile-only. */
-export type EmbeddingBackend = 'llamafile'
+/** Which embedding backend is active. oMLX is the only supported backend. */
+export type EmbeddingBackend = 'omlx'
 
-/** Which downloaded artefact a progress/phase event refers to. */
-export type EmbeddingDownloadPhase = 'binary' | 'model'
-
-/** Status of the downloaded embedding sidecar + model */
+/** Status of the oMLX embedding backend */
 export interface EmbeddingModelStatus {
-  /** Server is spawned and ready for inference */
+  /** oMLX is running and an embedding model is loaded + responding */
   ready: boolean
-  /** Both engine binary + GGUF model are present on disk (no download needed) */
-  cached: boolean
-  /** Active embedding backend */
-  backend: EmbeddingBackend
-  /** Engine binary exists + passes the SHA-256/size check */
-  engineInstalled: boolean
-  /** GGUF model exists + passes the SHA-256/size check */
-  modelInstalled: boolean
-}
-
-/** Progress event during model/binary download */
-export interface EmbeddingModelProgress {
-  /** Percentage 0–100 */
-  progress: number
-  /** Bytes downloaded */
-  loaded: number
-  /** Total bytes */
-  total: number
-  /** Which artefact this progress refers to ('binary' = engine, 'model' = GGUF) */
-  phase: EmbeddingDownloadPhase
+  backend: 'omlx'
+  /** oMLX server is reachable */
+  omlxRunning: boolean
+  /** ID of the loaded embedding model (e.g. 'bge-m3') or null if none */
+  omlxEmbeddingModelId: string | null
+  /** Whether the embedding model is loaded in oMLX memory */
+  omlxEmbeddingModelLoaded: boolean
 }
 
 // ── Ollama ──
@@ -1185,6 +1207,9 @@ export interface WorkspaceSettings {
   // ── Misc ──
   additionalDirectories?: string[]
   modelOverrides?: Record<string, unknown>
+
+  // ── Presets ──
+  defaultPresetId?: string
 
   /** Catch-all for forward-compatibility */
   [key: string]: unknown

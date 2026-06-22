@@ -52,7 +52,7 @@ export default function GoalCampaignHistory({
   if (campaigns.length === 0) return null
 
   return (
-    <div className="space-y-2">
+    <div data-testid="goal-campaign-history" className="space-y-2">
       <h4 className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
         <Layers size={13} className="text-cyan-400" /> Campaigns
       </h4>

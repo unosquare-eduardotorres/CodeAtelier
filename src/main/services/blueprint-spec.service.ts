@@ -144,9 +144,14 @@ export class BlueprintSpecService extends EventEmitter {
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        if (abortSignal?.aborted) {
+          onAbort()
+        }
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -159,7 +164,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 11. Get accumulated text and parse completion
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       // 12. Save spec artifact to phase
       if (specifyPhase) {
@@ -329,7 +334,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Check if the first turn already produced a completion block
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       if (completion) {
         // Clarify completed in first turn (no gaps found)
@@ -381,7 +386,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Check accumulated text for completion block
       const text = sessionState.session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       if (completion) {
         // Clarify phase complete — agent is satisfied

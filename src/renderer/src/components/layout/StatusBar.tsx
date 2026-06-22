@@ -102,7 +102,10 @@ export default function StatusBar({
   sidebarView
 }: StatusBarProps): React.JSX.Element {
   return (
-    <div className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]">
+    <div
+      data-testid="status-bar"
+      className="flex items-center justify-between px-4 py-2 bg-surface-base border-t border-border-subtle text-[13px]"
+    >
       <div className="flex items-center gap-4">
         {activeWorkspace ? (
           <span className="flex items-center gap-1.5 text-text-secondary">

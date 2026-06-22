@@ -187,19 +187,21 @@ export default function GrillChatView({
     ) : null
 
   return (
-    <StreamingTranscript
-      messages={messages}
-      renderMessage={renderGrillMessage}
-      segments={segments}
-      currentContent={currentContent}
-      currentToolActivities={currentToolActivities}
-      isStreaming={phase === 'evaluating'}
-      identity={GRILL_IDENTITY}
-      thinkingLabel="Analyzing your requirement…"
-      transformContent={stripGrillEvaluationBlocks}
-      header={header}
-      footer={footer}
-      scrollDeps={[phase]}
-    />
+    <div data-testid="grill-chat-view">
+      <StreamingTranscript
+        messages={messages}
+        renderMessage={renderGrillMessage}
+        segments={segments}
+        currentContent={currentContent}
+        currentToolActivities={currentToolActivities}
+        isStreaming={phase === 'evaluating'}
+        identity={GRILL_IDENTITY}
+        thinkingLabel="Analyzing your requirement…"
+        transformContent={stripGrillEvaluationBlocks}
+        header={header}
+        footer={footer}
+        scrollDeps={[phase]}
+      />
+    </div>
   )
 }

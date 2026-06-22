@@ -45,10 +45,11 @@ export default function SkillDetailPage({
   const isWorkspaceSkill = skill.source === 'workspace'
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-raised min-w-0">
+    <div data-testid="skill-detail-page" className="flex-1 flex flex-col bg-surface-raised min-w-0">
       {/* Header */}
       <div className="flex items-center gap-3 px-6 py-3 border-b border-border-subtle bg-surface-raised">
         <button
+          data-testid="skill-detail-back"
           onClick={onBack}
           className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-text-primary transition-colors"
           aria-label="Back to Skills"

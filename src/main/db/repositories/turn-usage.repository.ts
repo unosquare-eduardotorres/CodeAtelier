@@ -35,10 +35,13 @@ function toModel(row: TurnUsageRow): TurnUsage {
     sessionId: row.session_id,
     conversationId: row.conversation_id,
     turnNumber: row.turn_number,
-    inputTokens: row.input_tokens,
-    outputTokens: row.output_tokens,
-    cacheReadTokens: row.cache_read_tokens,
-    cacheCreationTokens: row.cache_creation_tokens,
+    // TURN-TOMODEL-NULL-01: Guard all token fields against NULL from SQLite.
+    // Without these, null + number = NaN which propagates through aggregation
+    // (cache hit rates, cost estimates) and produces impossible values.
+    inputTokens: row.input_tokens ?? 0,
+    outputTokens: row.output_tokens ?? 0,
+    cacheReadTokens: row.cache_read_tokens ?? 0,
+    cacheCreationTokens: row.cache_creation_tokens ?? 0,
     contextTokens: row.context_tokens ?? 0,
     model: row.model,
     createdAt: row.created_at

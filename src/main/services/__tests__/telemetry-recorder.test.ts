@@ -31,7 +31,13 @@ describe('TelemetryRecorder — recordFailure', () => {
     const recorder = new TelemetryRecorder('opus')
     recorder.recordFailure(new Error('connection timeout'))
     // finalize returns a copy of the entry
-    const entry = recorder.finalize({ input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindowTokens: 0 })
+    const entry = recorder.finalize({
+      input: 0,
+      output: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 0
+    })
     assert.equal(entry.status, 'failed')
     assert.equal(entry.error, 'connection timeout')
   })
@@ -39,7 +45,13 @@ describe('TelemetryRecorder — recordFailure', () => {
   test('computes durationMs on failure', () => {
     const recorder = new TelemetryRecorder('sonnet')
     recorder.recordFailure(new Error('timeout'))
-    const entry = recorder.finalize({ input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindowTokens: 0 })
+    const entry = recorder.finalize({
+      input: 0,
+      output: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 0
+    })
     assert.equal(typeof entry.durationMs, 'number')
     assert.ok(entry.durationMs! >= 0)
   })
@@ -48,7 +60,13 @@ describe('TelemetryRecorder — recordFailure', () => {
 describe('TelemetryRecorder — finalize', () => {
   test('sets status to succeeded when still started', () => {
     const recorder = new TelemetryRecorder('haiku')
-    const entry = recorder.finalize({ input: 100, output: 50, cacheReadInputTokens: 10, cacheCreationInputTokens: 5, contextWindowTokens: 0 })
+    const entry = recorder.finalize({
+      input: 100,
+      output: 50,
+      cacheReadInputTokens: 10,
+      cacheCreationInputTokens: 5,
+      contextWindowTokens: 0
+    })
     assert.equal(entry.status, 'succeeded')
     assert.equal(entry.model, 'haiku')
     assert.ok(entry.durationMs! >= 0)
@@ -56,7 +74,13 @@ describe('TelemetryRecorder — finalize', () => {
 
   test('copies tokenUsage via spread (not shared reference)', () => {
     const recorder = new TelemetryRecorder('sonnet')
-    const tokens = { input: 100, output: 50, cacheReadInputTokens: 10, cacheCreationInputTokens: 5, contextWindowTokens: 0 }
+    const tokens = {
+      input: 100,
+      output: 50,
+      cacheReadInputTokens: 10,
+      cacheCreationInputTokens: 5,
+      contextWindowTokens: 0
+    }
     const entry = recorder.finalize(tokens)
     // Mutate original — entry should be unaffected
     tokens.input = 999
@@ -66,7 +90,13 @@ describe('TelemetryRecorder — finalize', () => {
   test('finalize after recordFailure is a no-op (stays failed)', () => {
     const recorder = new TelemetryRecorder('opus')
     recorder.recordFailure(new Error('boom'))
-    const entry = recorder.finalize({ input: 500, output: 200, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindowTokens: 0 })
+    const entry = recorder.finalize({
+      input: 500,
+      output: 200,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 0
+    })
     assert.equal(entry.status, 'failed')
     assert.equal(entry.error, 'boom')
     // tokenUsage should NOT be set since finalize was a no-op
@@ -75,8 +105,20 @@ describe('TelemetryRecorder — finalize', () => {
 
   test('returns a copy (not the internal entry)', () => {
     const recorder = new TelemetryRecorder('sonnet')
-    const entry1 = recorder.finalize({ input: 10, output: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindowTokens: 0 })
-    const entry2 = recorder.finalize({ input: 99, output: 99, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindowTokens: 0 })
+    const entry1 = recorder.finalize({
+      input: 10,
+      output: 5,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 0
+    })
+    const entry2 = recorder.finalize({
+      input: 99,
+      output: 99,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 0
+    })
     // Both should be identical since finalize only sets on first call
     assert.equal(entry1.tokenUsage!.input, 10)
     assert.equal(entry2.tokenUsage!.input, 10)
@@ -86,7 +128,13 @@ describe('TelemetryRecorder — finalize', () => {
 
   test('requestId getter returns the constructor-assigned ID', () => {
     const recorder = new TelemetryRecorder('haiku')
-    const entry = recorder.finalize({ input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, contextWindowTokens: 0 })
+    const entry = recorder.finalize({
+      input: 0,
+      output: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 0
+    })
     assert.equal(entry.requestId, recorder.requestId)
   })
 })

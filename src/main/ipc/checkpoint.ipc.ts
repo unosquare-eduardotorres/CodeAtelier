@@ -1,10 +1,13 @@
 import { ipcMain } from 'electron'
+import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { checkpointService } from '../services/checkpoint.service'
 import { chatAgentService } from '../services'
 import { messageRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalBoolean } from './validate-args'
+
+const cpLog = log.scope('checkpoint-ipc')
 
 export function registerCheckpointIpc(): void {
   ipcMain.handle(IPC_CHANNELS.CHECKPOINT_LIST, (event, rawArgs: unknown) => {
@@ -45,14 +48,28 @@ export function registerCheckpointIpc(): void {
     }
 
     // 2) Truncate messages after checkpoint timestamp
+    // ATOM-04: If message truncation fails, log the error but don't leave
+    // the user in an inconsistent state — git was already restored.
     const checkpoints = checkpointService.listCheckpoints(conversationId)
     const checkpoint = checkpoints.find((c) => c.id === checkpointId)
     let messagesRemoved = 0
     if (checkpoint) {
-      messagesRemoved = messageRepository.truncateAfterTimestamp(
-        conversationId,
-        checkpoint.createdAt
-      )
+      try {
+        messagesRemoved = messageRepository.truncateAfterTimestamp(
+          conversationId,
+          checkpoint.createdAt
+        )
+      } catch (err) {
+        cpLog.error(
+          `[checkpoint:rewind] Message truncation failed after git restore (checkpoint=${checkpointId}):`,
+          err
+        )
+        return {
+          success: false,
+          message: `Git state restored but message truncation failed: ${(err as Error).message}`,
+          messagesRemoved: 0
+        }
+      }
     }
 
     return {

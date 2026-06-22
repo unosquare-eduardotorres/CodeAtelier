@@ -35,89 +35,35 @@ From <previous_artifacts>, load:
 
 ### Step 2: 4-Level Artifact Verification
 
-For each artifact the plan says should exist:
+For each planned artifact, verify 4 levels:
+1. **EXISTS** — file at expected path
+2. **SUBSTANTIVE** — real implementation, not stubs (`return null`, `TODO`, `=> {}`)
+3. **WIRED** — imported AND used elsewhere (not orphaned)
+4. **DATA FLOWING** — real data flows through (no static returns, no hardcoded empty props)
 
-**Level 1 — EXISTS**: Does the file exist at the expected path?
-
-**Level 2 — SUBSTANTIVE**: Is it a real implementation or a stub?
-- Check line count (> minimum expected)
-- Check for patterns: `return null`, `return {}`, `return []`, `=> {}`
-- Check for placeholder text: "not implemented", "TODO", "coming soon"
-
-**Level 3 — WIRED**: Is it imported and used by other code?
-- Import check: is it imported elsewhere?
-- Usage check: is it actually called/rendered?
-- WIRED: Imported AND used
-- ORPHANED: Exists but not imported/used
-- PARTIAL: Imported but not used
-
-**Level 4 — DATA FLOWING**: Does real data flow through the wiring?
-- Trace the data variable from component → API → database
-- Flag: static returns with no DB query
-- Flag: props hardcoded empty at call site
-- Flag: state exists but not rendered
-
-| Exists | Substantive | Wired | Data Flows | Status |
-|--------|-------------|-------|------------|--------|
-| ✓ | ✓ | ✓ | ✓ | ✓ VERIFIED |
-| ✓ | ✓ | ✓ | ✗ | ⚠️ HOLLOW |
-| ✓ | ✓ | ✗ | - | ⚠️ ORPHANED |
-| ✓ | ✗ | - | - | ✗ STUB |
-| ✗ | - | - | - | ✗ MISSING |
+Status: all 4 pass = VERIFIED, L1-3 pass = ⚠️ HOLLOW, L1-2 only = ⚠️ ORPHANED, L1 only = ✗ STUB, L0 = ✗ MISSING
 
 ### Step 3: Key Link Verification
 
-For each key link from the plan's `mustHaves.keyLinks`:
-- Verify the connection exists
-- Verify data flows through it
-- Common patterns to check:
-  - Component → API call
-  - API route → Database query
-  - Form → Submit handler
-  - State → Render output
+For each `mustHaves.keyLinks`: verify connection exists and data flows (Component→API, API→DB, Form→Handler, State→Render).
 
 ### Step 4: Anti-Pattern Scanning
 
-Scan for red flags:
-- `TODO`, `FIXME`, `HACK`, `XXX` markers
-- Empty function bodies: `() => {}`, `{ }`
-- Console-only handlers: `console.log` instead of real logic
-- Hardcoded data that should be dynamic
-- Missing error handling on async operations
+Scan for: TODO/FIXME/HACK, empty bodies, console-only handlers, hardcoded dynamic data, missing async error handling.
 
-### Step 5: Requirement Verification
+### Step 5-6: Requirement & Success Criteria Check
 
-For each requirement in spec.md:
-- Can you trace it to implemented code?
-- Does the implementation match the requirement?
-- Are acceptance scenarios satisfiable?
+For each requirement and success criterion in spec.md: trace to implemented code, verify match, confirm acceptance scenarios are satisfiable.
 
-### Step 6: Success Criteria Check
+### Step 7: Human Verification
 
-For each success criterion:
-- Is it achievable with the current implementation?
-- Can it be measured/tested?
-
-### Step 7: Human Verification Identification
-
-Some things cannot be verified by code analysis alone:
-- Visual correctness (UI looks right)
-- End-to-end user flows (multi-step interactions)
-- Real-time behavior (WebSocket, streaming)
-- External service integration (API keys, auth)
-
-List these as "requires human verification."
+List items requiring manual verification: visual correctness, end-to-end flows, real-time behavior, external integrations.
 
 {{AGENT_ENHANCEMENT}}
 
 ## Status Determination
 
-Decision tree:
-1. Any MISSING or STUB artifacts? → **gaps_found**
-2. Any HOLLOW key links? → **gaps_found**
-3. Any critical anti-patterns? → **gaps_found**
-4. Human verification items? → **human_needed**
-5. All checks pass? → **passed**
+MISSING/STUB artifacts or HOLLOW key links or critical anti-patterns → **gaps_found**. Human verification items → **human_needed**. All pass → **passed**.
 
 ## Completion
 

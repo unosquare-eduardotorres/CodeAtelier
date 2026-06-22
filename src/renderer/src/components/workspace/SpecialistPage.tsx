@@ -19,68 +19,23 @@ import { SystemPromptSection } from './specialist/SystemPromptSection'
 
 type RebuildState = 'idle' | 'building' | 'success' | 'failed'
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Hooks ─────────────────────────────────────────────────────────────────
 
-export default function SpecialistPage(): React.JSX.Element {
-  const { activeWorkspace } = useWorkspaceStore()
-  const workspaces = useWorkspaceStore((s) => s.workspaces)
-  const workspaceId = activeWorkspace?.id ?? null
-
-  const specialist = useProjectSpecialistStore((s) =>
-    workspaceId ? s.byWorkspace[workspaceId] : null
-  )
-  const buildProgress = useProjectSpecialistStore((s) =>
-    specialist ? s.buildProgress[specialist.id] : null
-  )
-  const storeError = useProjectSpecialistStore((s) => s.error)
-  const {
-    loadForWorkspace,
-    build,
-    rebuildPrompt,
-    updatePrompt,
-    toggleSkill,
-    attachSkill,
-    detachSkill,
-    refreshRecommendations,
-    clearError
-  } = useProjectSpecialistStore()
-
-  const { skills, loadSkills, importSkill } = useSkillStore()
-  const addToast = useToastStore((s) => s.addToast)
-
-  // ── Local state ──────────────────────────────────────────────────────────
-
+/** Track rebuild lifecycle from build-progress events. */
+function useRebuildState(
+  buildProgress: { phase: string; message?: string } | null | undefined
+): {
+  rebuildState: RebuildState
+  rebuildError: string | null
+  setRebuildState: (s: RebuildState) => void
+  setRebuildError: (e: string | null) => void
+} {
   const [rebuildState, setRebuildState] = useState<RebuildState>('idle')
   const [rebuildError, setRebuildError] = useState<string | null>(null)
-  const [editedPrompt, setEditedPrompt] = useState<string>('')
-  const [savingPrompt, setSavingPrompt] = useState(false)
-  const [promptModalOpen, setPromptModalOpen] = useState(false)
-  const [refreshingRecs, setRefreshingRecs] = useState(false)
-  const [importingSkill, setImportingSkill] = useState(false)
 
-  // ── Effects ──────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (workspaceId) void loadForWorkspace(workspaceId)
-  }, [workspaceId, loadForWorkspace])
-
-  useEffect(() => {
-    void loadSkills()
-  }, [loadSkills])
-
-  // Sync local prompt when specialist prompt changes
-  useEffect(() => {
-    if (specialist?.prompt !== undefined) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync from external store update
-      setEditedPrompt(specialist.prompt)
-    }
-  }, [specialist?.prompt])
-
-  // Track rebuild state from build progress events
   useEffect(() => {
     if (!buildProgress) return undefined
     if (buildProgress.phase === 'started') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync from event stream
       setRebuildState('building')
       setRebuildError(null)
     } else if (buildProgress.phase === 'ready') {
@@ -89,60 +44,47 @@ export default function SpecialistPage(): React.JSX.Element {
       return () => clearTimeout(timer)
     } else if (buildProgress.phase === 'failed') {
       setRebuildState('failed')
-      setRebuildError(buildProgress.message)
+      setRebuildError(buildProgress.message ?? null)
     }
     return undefined
   }, [buildProgress])
 
-  // ── Handlers ─────────────────────────────────────────────────────────────
+  return { rebuildState, rebuildError, setRebuildState, setRebuildError }
+}
 
-  const handleRebuild = useCallback(async () => {
-    if (!workspaceId) return
-    setRebuildState('building')
-    setRebuildError(null)
-    try {
-      await build(workspaceId)
-    } catch (err) {
-      setRebuildState('failed')
-      setRebuildError((err as Error).message)
-    }
-  }, [workspaceId, build])
-
-  const handleRebuildPrompt = useCallback(async () => {
-    if (!specialist) return
-    setRebuildState('building')
-    setRebuildError(null)
-    try {
-      await rebuildPrompt(specialist.id)
-    } catch (err) {
-      setRebuildState('failed')
-      setRebuildError((err as Error).message)
-    }
-  }, [specialist, rebuildPrompt])
-
-  const handleSavePrompt = useCallback(
-    async (newPrompt: string) => {
-      if (!specialist) return
-      setSavingPrompt(true)
-      try {
-        await updatePrompt(specialist.id, newPrompt)
-        setPromptModalOpen(false)
-        addToast({ message: 'Prompt saved', type: 'success' })
-      } catch {
-        addToast({ message: 'Failed to save prompt', type: 'error' })
-      } finally {
-        setSavingPrompt(false)
-      }
-    },
-    [specialist, updatePrompt, addToast]
-  )
+/** Manage skill import/toggle/attach/detach/recommend actions. */
+function useSkillActions(opts: {
+  specialist: { id: string } | null
+  workspaceId: string | null
+  toggleSkill: (sid: string, skillId: string, enabled: boolean) => Promise<void>
+  attachSkill: (sid: string, skillId: string) => Promise<void>
+  detachSkill: (sid: string, skillId: string) => Promise<void>
+  refreshRecommendations: (sid: string) => Promise<void>
+  importSkill: (filePath: string) => Promise<{ success: boolean; error?: string | null }>
+  loadForWorkspace: (workspaceId: string) => Promise<void>
+  addToast: (t: Omit<import('@renderer/store/toast.store').Toast, 'id' | 'createdAt'>) => void
+}): {
+  handleImportSkill: () => Promise<void>
+  handleToggleSkill: (skillId: string, enabled: boolean) => Promise<void>
+  handleAttachSkill: (skillId: string) => Promise<void>
+  handleDetachSkill: (skillId: string) => Promise<void>
+  handleRefreshRecommendations: () => Promise<void>
+  importingSkill: boolean
+  refreshingRecs: boolean
+} {
+  const {
+    specialist, workspaceId, toggleSkill, attachSkill, detachSkill,
+    refreshRecommendations, importSkill, loadForWorkspace, addToast
+  } = opts
+  const [isImporting, setIsImporting] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const handleImportSkill = useCallback(async () => {
-    setImportingSkill(true)
+    setIsImporting(true)
     try {
       const filePath = await window.api.selectSkillFile()
       if (!filePath) {
-        setImportingSkill(false)
+        setIsImporting(false)
         return
       }
       const result = await importSkill(filePath)
@@ -155,20 +97,20 @@ export default function SpecialistPage(): React.JSX.Element {
     } catch (err) {
       addToast({ message: (err as Error).message, type: 'error' })
     } finally {
-      setImportingSkill(false)
+      setIsImporting(false)
     }
   }, [importSkill, workspaceId, loadForWorkspace, addToast])
 
   const handleRefreshRecommendations = useCallback(async () => {
     if (!specialist) return
-    setRefreshingRecs(true)
+    setIsRefreshing(true)
     try {
       await refreshRecommendations(specialist.id)
       addToast({ message: 'Recommendations refreshed', type: 'success' })
     } catch {
       addToast({ message: 'Failed to refresh recommendations', type: 'error' })
     } finally {
-      setRefreshingRecs(false)
+      setIsRefreshing(false)
     }
   }, [specialist, refreshRecommendations, addToast])
 
@@ -213,6 +155,135 @@ export default function SpecialistPage(): React.JSX.Element {
     [specialist, workspaceId, detachSkill, loadForWorkspace, addToast]
   )
 
+  return {
+    handleImportSkill,
+    handleToggleSkill,
+    handleAttachSkill,
+    handleDetachSkill,
+    handleRefreshRecommendations,
+    importingSkill: isImporting,
+    refreshingRecs: isRefreshing
+  }
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+export default function SpecialistPage(): React.JSX.Element {
+  const { activeWorkspace } = useWorkspaceStore()
+  const workspaces = useWorkspaceStore((s) => s.workspaces)
+  const workspaceId = activeWorkspace?.id ?? null
+
+  const specialist = useProjectSpecialistStore((s) =>
+    workspaceId ? s.byWorkspace[workspaceId] : null
+  )
+  const buildProgress = useProjectSpecialistStore((s) =>
+    specialist ? s.buildProgress[specialist.id] : null
+  )
+  const storeError = useProjectSpecialistStore((s) => s.error)
+  const {
+    loadForWorkspace,
+    build,
+    rebuildPrompt,
+    updatePrompt,
+    toggleSkill,
+    attachSkill,
+    detachSkill,
+    refreshRecommendations,
+    clearError
+  } = useProjectSpecialistStore()
+
+  const { skills, loadSkills, importSkill } = useSkillStore()
+  const addToast = useToastStore((s) => s.addToast)
+
+  // ── Local state ──────────────────────────────────────────────────────────
+
+  const [editedPrompt, setEditedPrompt] = useState<string>('')
+  const [savingPrompt, setSavingPrompt] = useState(false)
+  const [promptModalOpen, setPromptModalOpen] = useState(false)
+
+  const { rebuildState, rebuildError, setRebuildState, setRebuildError } =
+    useRebuildState(buildProgress)
+  const {
+    handleImportSkill,
+    handleToggleSkill,
+    handleAttachSkill,
+    handleDetachSkill,
+    handleRefreshRecommendations,
+    importingSkill,
+    refreshingRecs
+  } = useSkillActions({
+    specialist,
+    workspaceId,
+    toggleSkill,
+    attachSkill,
+    detachSkill,
+    refreshRecommendations,
+    importSkill,
+    loadForWorkspace,
+    addToast
+  })
+
+  // ── Effects ──────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (workspaceId) void loadForWorkspace(workspaceId)
+  }, [workspaceId, loadForWorkspace])
+
+  useEffect(() => {
+    void loadSkills()
+  }, [loadSkills])
+
+  // Sync local prompt when specialist prompt changes
+  useEffect(() => {
+    if (specialist?.prompt !== undefined) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync from external store update
+      setEditedPrompt(specialist.prompt)
+    }
+  }, [specialist?.prompt])
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
+
+  const handleRebuild = useCallback(async () => {
+    if (!workspaceId) return
+    setRebuildState('building')
+    setRebuildError(null)
+    try {
+      await build(workspaceId)
+    } catch (err) {
+      setRebuildState('failed')
+      setRebuildError((err as Error).message)
+    }
+  }, [workspaceId, build])
+
+  const handleRebuildPrompt = useCallback(async () => {
+    if (!specialist) return
+    setRebuildState('building')
+    setRebuildError(null)
+    try {
+      await rebuildPrompt(specialist.id)
+    } catch (err) {
+      setRebuildState('failed')
+      setRebuildError((err as Error).message)
+    }
+  }, [specialist, rebuildPrompt])
+
+  const handleSavePrompt = useCallback(
+    async (newPrompt: string) => {
+      if (!specialist) return
+      setSavingPrompt(true)
+      try {
+        await updatePrompt(specialist.id, newPrompt)
+        setPromptModalOpen(false)
+        addToast({ message: 'Prompt saved', type: 'success' })
+      } catch {
+        addToast({ message: 'Failed to save prompt', type: 'error' })
+      } finally {
+        setSavingPrompt(false)
+      }
+    },
+    [specialist, updatePrompt, addToast]
+  )
+
   // ── Derived data ─────────────────────────────────────────────────────────
 
   const { attachedSkillIds, recommendedSkills, otherSkills } = useSpecialistSkillData({
@@ -227,7 +298,7 @@ export default function SpecialistPage(): React.JSX.Element {
 
   if (!specialist) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+      <div data-testid="specialist-page" className="flex-1 flex flex-col items-center justify-center p-12 text-center">
         <div className="w-16 h-16 rounded-2xl bg-surface-overlay border border-border-subtle flex items-center justify-center mb-4">
           <Bot size={28} className="text-text-muted" />
         </div>
@@ -243,7 +314,7 @@ export default function SpecialistPage(): React.JSX.Element {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-8 max-w-5xl mx-auto">
+    <div data-testid="specialist-page" className="p-6 space-y-8 max-w-5xl mx-auto">
       <SpecialistHeroBanner
         displayName={specialist.displayName}
         buildStatus={specialist.buildStatus}

@@ -55,28 +55,11 @@ Classify each gap as:
 
 ## Step 4: Ask Questions
 
-Present gaps to the user in a structured format:
-
-```
-## Gap Analysis Results
-
-### Critical Gaps (must resolve)
-
-**Q1** [Category: Missing Requirements]
-The spec mentions "user authentication" but doesn't specify the method.
-- Option A: Email/password with email verification
-- Option B: OAuth (Google, GitHub)
-- Option C: Both
-- **Recommended**: Option C (most flexible)
-
-### High Priority Gaps
-
-**Q2** [Category: Ambiguous Language]
-FR-003 says "system must respond quickly." What is the target response time?
-- Suggested: < 200ms p95 for API calls, < 3s for page loads
-
-...
-```
+Present gaps grouped by severity (Critical → High → Medium). For each gap:
+- Label with category (e.g., [Missing Requirements])
+- State the ambiguity concisely
+- Provide 2-3 options with a recommended choice
+- Critical gaps must resolve before proceeding
 
 ## Step 5: Process Answers
 
@@ -93,19 +76,7 @@ Maximum 3 rounds of questions to avoid analysis paralysis.
 
 ## Step 7: Coverage Assessment
 
-After all questions are resolved, assess coverage:
-
-| Category | Status |
-|----------|--------|
-| Missing Requirements | ✅ Resolved / ⚠️ Deferred / ❌ Outstanding |
-| Ambiguous Language | ... |
-| Unstated Assumptions | ... |
-| Conflicting Requirements | ... |
-| Missing Edge Cases | ... |
-| Incomplete User Stories | ... |
-| Missing Success Criteria | ... |
-| Security Gaps | ... |
-| Performance Gaps | ... |
+After all questions resolved, assess each of the 9 gap categories as: ✅ Resolved / ⚠️ Deferred / ❌ Outstanding.
 
 ## Step 8: Save Updated Spec
 

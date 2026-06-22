@@ -1,5 +1,13 @@
 import { BaseRepository } from '../base-repository'
 
+/**
+ * MCP-06: Escape SQL LIKE wildcard characters in user-supplied path values.
+ * Without this, a path containing '%' or '_' would match more broadly than intended.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[%_\\]/g, '\\$&')
+}
+
 export type EdgeType = 'calls' | 'imports' | 'extends' | 'implements' | 'references'
 
 export interface CodeGraphEdge {
@@ -192,12 +200,14 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
     const db = this.db()
     const minCoupling = opts?.minCoupling ?? 2
     const maxResults = opts?.maxResults ?? 50
+    // MCP-06: Escape LIKE wildcards in user-supplied path
     const pathFilter = opts?.path
-      ? `AND (source_file LIKE ? || '%' OR target_file LIKE ? || '%')`
+      ? `AND (source_file LIKE ? || '%' ESCAPE '\\' OR target_file LIKE ? || '%' ESCAPE '\\')`
       : ''
     const params: (string | number)[] = [workspaceId]
     if (opts?.path) {
-      params.push(opts.path, opts.path)
+      const escapedPath = escapeLikePattern(opts.path)
+      params.push(escapedPath, escapedPath)
     }
     params.push(minCoupling, maxResults)
 

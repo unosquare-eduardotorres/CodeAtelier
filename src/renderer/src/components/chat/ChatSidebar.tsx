@@ -59,6 +59,7 @@ export default function ChatSidebar({
     personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
+    presetId?: string | null
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -68,7 +69,8 @@ export default function ChatSidebar({
       data.personaSpecialistId,
       undefined,
       undefined,
-      data.communicationTone
+      data.communicationTone,
+      data.presetId
     )
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {
@@ -193,7 +195,7 @@ export default function ChatSidebar({
 
   return (
     <>
-      <div className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
+      <div data-testid="chat-sidebar" className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2 min-w-0">
@@ -205,6 +207,7 @@ export default function ChatSidebar({
           <div className="flex items-center gap-1 flex-shrink-0">
             <button
               onClick={handleNewChat}
+              data-testid="chat-new-btn"
               className="p-1.5 rounded-md hover:bg-surface-overlay text-text-secondary hover:text-primary-text transition-colors"
               aria-label="New chat"
               title="New Chat (Cmd+N)"
@@ -223,7 +226,7 @@ export default function ChatSidebar({
         </div>
 
         {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+        <div data-testid="chat-sidebar-list" className="flex-1 overflow-y-auto p-3 space-y-1.5">
           {!activeWorkspace ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
               <FolderOpen size={32} className="text-border-default mb-3" />

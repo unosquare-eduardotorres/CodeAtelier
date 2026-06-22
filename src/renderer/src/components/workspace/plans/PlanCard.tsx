@@ -31,13 +31,14 @@ const TYPE_CONFIG: Record<string, { label: string; classes: string }> = {
 
 // ── Status config ──
 
-const STATUS_CONFIG: Record<
-  PlanStatus,
-  { label: string; dotColor: string; textColor: string }
-> = {
+const STATUS_CONFIG: Record<PlanStatus, { label: string; dotColor: string; textColor: string }> = {
   saved: { label: 'Saved', dotColor: 'bg-info', textColor: 'text-info' },
   handed_off: { label: 'Handed off', dotColor: 'bg-warning', textColor: 'text-warning' },
-  in_progress: { label: 'In Progress', dotColor: 'bg-success animate-pulse', textColor: 'text-success' },
+  in_progress: {
+    label: 'In Progress',
+    dotColor: 'bg-success animate-pulse',
+    textColor: 'text-success'
+  },
   completed: { label: 'Completed', dotColor: 'bg-success', textColor: 'text-success' },
   archived: { label: 'Archived', dotColor: 'bg-text-muted', textColor: 'text-text-muted' }
 }
@@ -97,7 +98,7 @@ export default function PlanCard({
   const metrics = buildMetrics(plan)
 
   return (
-    <div className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm">
+    <div data-testid="plan-card" className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm">
       {/* Header: source badge + title + type badge */}
       <div className="flex items-start justify-between gap-3 mb-1">
         <div className="flex items-center gap-2 min-w-0">
@@ -133,9 +134,7 @@ export default function PlanCard({
         <span className={`w-1.5 h-1.5 rounded-full ${status.dotColor}`} />
         <span className={`text-[11px] font-medium ${status.textColor}`}>{status.label}</span>
         {plan.status === 'handed_off' && plan.linkedConversationId && (
-          <span className="text-[10px] text-text-muted">
-            → linked conversation
-          </span>
+          <span className="text-[10px] text-text-muted">→ linked conversation</span>
         )}
       </div>
 
@@ -151,7 +150,8 @@ export default function PlanCard({
           onArchive: () => onArchive(plan),
           onRestore: () => onRestore(plan),
           onDelete: () => onDelete(plan),
-          onOpenConversation: () => plan.linkedConversationId && onOpenConversation(plan.linkedConversationId)
+          onOpenConversation: () =>
+            plan.linkedConversationId && onOpenConversation(plan.linkedConversationId)
         }}
       />
     </div>

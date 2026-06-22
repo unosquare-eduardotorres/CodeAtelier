@@ -105,6 +105,152 @@ function resolveOpConfig(activity: ToolActivity): OpConfig {
   return OP_TYPE_CONFIG[CATEGORY_TO_OP[category]]
 }
 
+// ── Status styling ──
+
+const STATUS_STYLES: Record<string, { iconColor: string; outputColor: string; outputLabel: string }> = {
+  running: { iconColor: 'text-purple-400 animate-pulse', outputColor: 'text-text-muted', outputLabel: 'Output' },
+  error: { iconColor: 'text-danger', outputColor: 'text-danger', outputLabel: 'Error' },
+  completed: { iconColor: 'text-emerald-400', outputColor: 'text-text-muted', outputLabel: 'Output' }
+}
+
+// ── ToolRow sub-components ──
+
+function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Element {
+  const isError = activity.status === 'error'
+  return (
+    <span className="flex-1 min-w-0">
+      <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
+        <span className="text-[13px] font-medium flex-shrink-0 text-text-secondary">
+          {getToolDisplayName(activity.toolName)}
+        </span>
+        {activity.filePath && (
+          <span className="font-mono text-[12px] truncate max-w-[240px] text-text-muted">
+            {activity.filePath}
+          </span>
+        )}
+        {activity.lineRange && (
+          <span className="text-[10px] text-text-muted bg-surface-overlay px-1 py-px rounded flex-shrink-0">
+            L{activity.lineRange}
+          </span>
+        )}
+      </span>
+      {!activity.filePath && activity.input && (
+        <span className="block text-[12px] text-text-secondary min-w-0 truncate mt-0.5">
+          {shortenInput(activity.input)}
+        </span>
+      )}
+      {activity.status !== 'running' && activity.result && (
+        <span
+          className={`block text-[11px] mt-0.5 truncate ${
+            isError ? 'text-danger/80' : 'text-text-muted italic'
+          }`}
+        >
+          → {activity.result}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.JSX.Element {
+  const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
+  return (
+    <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
+      {activity.input && (activity.operationType === 'shell' || activity.input.length > 30) && (
+        <div className="px-3 py-2 border-b border-border-subtle/50">
+          <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+            {activity.operationType === 'shell' ? 'Command' : 'Input'}
+            <CopyButton text={activity.input} />
+          </span>
+          <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
+            {activity.input}
+          </pre>
+        </div>
+      )}
+      {(activity.resultDetail || activity.result) && (
+        <div className="px-3 py-2 max-h-64 overflow-y-auto">
+          <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+            {statusStyle.outputLabel}
+            <CopyButton text={activity.resultDetail || activity.result || ''} />
+          </span>
+          <pre
+            className={`mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${statusStyle.outputColor}`}
+          >
+            {activity.resultDetail || activity.result}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── ToolRow component ──
+
+function hasExpandableContent(activity: ToolActivity): boolean {
+  if (activity.resultDetail) return true
+  if (activity.result && activity.result.length > 40) return true
+  if (activity.input && activity.input.length > 60) return true
+  return false
+}
+
+interface ToolRowProps {
+  activity: ToolActivity
+  isExpanded: boolean
+  onToggleExpand: (id: string) => void
+}
+
+function ToolRow({ activity, isExpanded, onToggleExpand }: ToolRowProps): React.JSX.Element {
+  const expandable = hasExpandableContent(activity)
+  const opConfig = resolveOpConfig(activity)
+  const CategoryIcon = opConfig.icon
+  const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
+  const isRunning = activity.status === 'running'
+
+  return (
+    <div key={activity.id} data-testid="tool-activity-row" className="min-w-0">
+      {/* Clickable row with subtle left-border */}
+      <button
+        type="button"
+        onClick={() => expandable && onToggleExpand(activity.id)}
+        className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 border-l-border-subtle ${
+          expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'
+        } ${isExpanded ? 'bg-surface-overlay/40' : ''}`}
+        data-testid="tool-activity-expand"
+        aria-expanded={expandable ? isExpanded : undefined}
+      >
+        {/* Category icon — color = status */}
+        <span className={`flex items-center flex-shrink-0 mt-0.5 ${statusStyle.iconColor}`}>
+          <CategoryIcon size={13} />
+        </span>
+
+        {/* Main content */}
+        <ToolRowSummary activity={activity} />
+
+        {/* Right side — elapsed time + expand chevron */}
+        <span className="flex items-center gap-1.5 flex-shrink-0 ml-auto mt-0.5">
+          {isRunning && activity.elapsedSeconds !== undefined && (
+            <span className="text-[11px] text-purple-400 tabular-nums">
+              {activity.elapsedSeconds}s
+            </span>
+          )}
+          {expandable && !isRunning && (
+            <span
+              className={`text-text-muted transition-transform duration-150 ${
+                isExpanded ? 'rotate-90' : ''
+              } opacity-0 group-hover:opacity-100 ${isExpanded ? '!opacity-100' : ''}`}
+            >
+              <ChevronRight size={12} />
+            </span>
+          )}
+        </span>
+      </button>
+
+      {/* Expand panel */}
+      {isExpanded && <ToolRowExpandedPanel activity={activity} />}
+    </div>
+  )
+}
+
 // ── Component ──
 
 interface ToolActivityBlockProps {
@@ -113,12 +259,20 @@ interface ToolActivityBlockProps {
   defaultExpanded?: boolean
 }
 
+/**
+ * During streaming, only render the most recent N tool activity rows to prevent
+ * DOM bloat when agents invoke 50+ tools. Older activities are collapsed behind
+ * a "Show N earlier" button. Once the user clicks it, all activities render.
+ */
+const VISIBLE_ACTIVITY_LIMIT = 20
+
 export default function ToolActivityBlock({
   activities,
   defaultExpanded = false
 }: ToolActivityBlockProps): React.JSX.Element | null {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [showAllActivities, setShowAllActivities] = useState(false)
 
   if (activities.length === 0) return null
 
@@ -139,139 +293,6 @@ export default function ToolActivityBlock({
     })
   }
 
-  /** Determine if a tool row has content worth expanding */
-  const hasExpandableContent = (activity: ToolActivity): boolean => {
-    if (activity.resultDetail) return true
-    if (activity.result && activity.result.length > 40) return true
-    if (activity.input && activity.input.length > 60) return true
-    return false
-  }
-
-  /** Render a single tool activity as a compact row with left-border accent */
-  const renderToolRow = (activity: ToolActivity): React.JSX.Element => {
-    const isActivityExpanded = expandedIds.has(activity.id)
-    const expandable = hasExpandableContent(activity)
-    const opConfig = resolveOpConfig(activity)
-    const CategoryIcon = opConfig.icon
-    const isRunning = activity.status === 'running'
-    const isError = activity.status === 'error'
-
-    // Icon color driven by status, not tool type
-    const iconColor = isRunning
-      ? 'text-purple-400 animate-pulse'
-      : isError
-        ? 'text-danger'
-        : 'text-emerald-400'
-
-    return (
-      <div key={activity.id} className="min-w-0">
-        {/* Clickable row with subtle left-border */}
-        <button
-          type="button"
-          onClick={() => expandable && toggleActivityExpand(activity.id)}
-          className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 border-l-border-subtle ${
-            expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'
-          } ${isActivityExpanded ? 'bg-surface-overlay/40' : ''}`}
-          aria-expanded={expandable ? isActivityExpanded : undefined}
-        >
-          {/* Category icon — color = status */}
-          <span className={`flex items-center flex-shrink-0 mt-0.5 ${iconColor}`}>
-            <CategoryIcon size={13} />
-          </span>
-
-          {/* Main content */}
-          <span className="flex-1 min-w-0">
-            {/* Line 1: tool name + file path + line range */}
-            <span className="flex items-center gap-1.5 min-w-0 flex-wrap">
-              <span className="text-[13px] font-medium flex-shrink-0 text-text-secondary">
-                {getToolDisplayName(activity.toolName)}
-              </span>
-              {activity.filePath && (
-                <span className="font-mono text-[12px] truncate max-w-[240px] text-text-muted">
-                  {activity.filePath}
-                </span>
-              )}
-              {activity.lineRange && (
-                <span className="text-[10px] text-text-muted bg-surface-overlay px-1 py-px rounded flex-shrink-0">
-                  L{activity.lineRange}
-                </span>
-              )}
-            </span>
-
-            {/* Line 2: input summary (when no file path) OR result summary */}
-            {!activity.filePath && activity.input && (
-              <span className="block text-[12px] text-text-secondary min-w-0 truncate mt-0.5">
-                {shortenInput(activity.input)}
-              </span>
-            )}
-            {activity.status !== 'running' && activity.result && (
-              <span
-                className={`block text-[11px] mt-0.5 truncate ${
-                  isError ? 'text-danger/80' : 'text-text-muted italic'
-                }`}
-              >
-                → {activity.result}
-              </span>
-            )}
-          </span>
-
-          {/* Right side — elapsed time + expand chevron */}
-          <span className="flex items-center gap-1.5 flex-shrink-0 ml-auto mt-0.5">
-            {isRunning && activity.elapsedSeconds !== undefined && (
-              <span className="text-[11px] text-purple-400 tabular-nums">
-                {activity.elapsedSeconds}s
-              </span>
-            )}
-            {expandable && !isRunning && (
-              <span
-                className={`text-text-muted transition-transform duration-150 ${
-                  isActivityExpanded ? 'rotate-90' : ''
-                } opacity-0 group-hover:opacity-100 ${isActivityExpanded ? '!opacity-100' : ''}`}
-              >
-                <ChevronRight size={12} />
-              </span>
-            )}
-          </span>
-        </button>
-
-        {/* Expand panel — shows input AND output with clear labels */}
-        {isActivityExpanded && (
-          <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
-            {/* Input/Command section — always show for shell, length-gated for others */}
-            {activity.input &&
-              (activity.operationType === 'shell' || activity.input.length > 30) && (
-                <div className="px-3 py-2 border-b border-border-subtle/50">
-                  <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
-                    {activity.operationType === 'shell' ? 'Command' : 'Input'}
-                    <CopyButton text={activity.input} />
-                  </span>
-                  <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
-                    {activity.input}
-                  </pre>
-                </div>
-              )}
-            {/* Output section */}
-            {(activity.resultDetail || activity.result) && (
-              <div className="px-3 py-2 max-h-64 overflow-y-auto">
-                <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
-                  {isError ? 'Error' : 'Output'}
-                  <CopyButton text={activity.resultDetail || activity.result || ''} />
-                </span>
-                <pre
-                  className={`mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${
-                    isError ? 'text-danger' : 'text-text-muted'
-                  }`}
-                >
-                  {activity.resultDetail || activity.result}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    )
-  }
-
   // ── Header summary ──
   const summaryParts: string[] = []
   if (completedCount > 0) summaryParts.push(`${completedCount} done`)
@@ -279,7 +300,7 @@ export default function ToolActivityBlock({
   if (errorCount > 0) summaryParts.push(`${errorCount} failed`)
 
   return (
-    <div className="my-2">
+    <div data-testid="tool-activity-block" className="my-2">
       {/* Header toggle */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
@@ -307,14 +328,47 @@ export default function ToolActivityBlock({
       {/* Collapsed — show running tools only as compact rows */}
       {!isExpanded && runningActivities.length > 0 && (
         <div className="mt-1.5 ml-1 space-y-0.5">
-          {runningActivities.map((a) => renderToolRow(a))}
+          {runningActivities.map((a) => (
+            <ToolRow
+              key={a.id}
+              activity={a}
+              isExpanded={expandedIds.has(a.id)}
+              onToggleExpand={toggleActivityExpand}
+            />
+          ))}
         </div>
       )}
 
-      {/* Expanded — all activities as compact rows */}
-      {isExpanded && (
-        <div className="mt-1.5 ml-1 space-y-0.5">{activities.map((a) => renderToolRow(a))}</div>
-      )}
+      {/* Expanded — render activities with optional truncation for long lists */}
+      {isExpanded && (() => {
+        const shouldTruncate = !showAllActivities && activities.length > VISIBLE_ACTIVITY_LIMIT
+        const hiddenCount = shouldTruncate ? activities.length - VISIBLE_ACTIVITY_LIMIT : 0
+        const visibleActivities = shouldTruncate
+          ? activities.slice(-VISIBLE_ACTIVITY_LIMIT)
+          : activities
+
+        return (
+          <div className="mt-1.5 ml-1 space-y-0.5">
+            {shouldTruncate && (
+              <button
+                type="button"
+                onClick={() => setShowAllActivities(true)}
+                className="text-[11px] text-text-muted hover:text-text-secondary transition-colors pl-2.5 py-1"
+              >
+                ▸ Show {hiddenCount} earlier tool{hiddenCount !== 1 ? 's' : ''}
+              </button>
+            )}
+            {visibleActivities.map((a) => (
+              <ToolRow
+                key={a.id}
+                activity={a}
+                isExpanded={expandedIds.has(a.id)}
+                onToggleExpand={toggleActivityExpand}
+              />
+            ))}
+          </div>
+        )
+      })()}
     </div>
   )
 }

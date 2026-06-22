@@ -10,7 +10,6 @@ import { test, describe, summaryAsync } from './test-harness'
 import { BlueprintReviewService } from '../blueprint-review.service'
 
 describe('BlueprintReviewService', () => {
-
   describe('buildApprovalSummary', () => {
     // Access private method via prototype for unit testing
     const buildSummary = (BlueprintReviewService.prototype as any).buildApprovalSummary

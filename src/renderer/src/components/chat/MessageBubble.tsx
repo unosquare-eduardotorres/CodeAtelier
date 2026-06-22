@@ -194,6 +194,203 @@ const markdownComponents = {
   )
 }
 
+// ── Module-level council helper ──
+
+function startCouncilReview(
+  workspaceId: string,
+  planContent: string,
+  structuredPlan: StructuredPlan | null,
+  originalUserRequest: string
+): void {
+  const councilStore = useCouncilStore.getState()
+  councilStore.startCouncil()
+  window.api
+    .councilStart({
+      workspaceId,
+      inputType: 'plan',
+      planContent,
+      structuredPlan: structuredPlan ?? undefined,
+      originalUserRequest,
+      conversationId: undefined
+    })
+    .then(({ sessionId }) => {
+      councilStore.setSessionIdentity(sessionId, workspaceId)
+    })
+    .catch(console.error)
+}
+
+// ── Extracted sub-components ──
+
+interface BubbleContentBodyProps {
+  content: ReturnType<typeof useMessageContent>
+  message: Message
+  isUser: boolean
+  aiBubbleClass: string
+  sizeClasses: { text: string; userMax: string; aiMax: string }
+  hasStructuredContent: boolean
+  onBuildNow: () => void
+  onRefine: () => void
+  onSaveAsIdea?: () => void
+  onCouncilReview?: () => void
+}
+
+function BubbleContentBody({
+  content,
+  message,
+  isUser,
+  aiBubbleClass,
+  sizeClasses,
+  hasStructuredContent,
+  onBuildNow,
+  onRefine,
+  onSaveAsIdea,
+  onCouncilReview
+}: BubbleContentBodyProps): React.JSX.Element | null {
+  const {
+    imageAttachments,
+    fileAttachments,
+    isGrillActivation,
+    ideaToRefineMatch,
+    displayContent,
+    planContent
+  } = content
+
+  if (hasStructuredContent) {
+    return (
+      <MessageCardRenderer
+        content={content}
+        aiBubbleClass={aiBubbleClass}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        markdownComponents={markdownComponents}
+        onBuildNow={onBuildNow}
+        onRefine={onRefine}
+        onSaveAsIdea={onSaveAsIdea}
+        onCouncilReview={planContent ? onCouncilReview : undefined}
+      />
+    )
+  }
+
+  const hasVisibleContent =
+    isUser ||
+    !!(isUser ? displayContent : message.contentMd?.trim()) ||
+    imageAttachments.length > 0 ||
+    fileAttachments.length > 0 ||
+    isGrillActivation ||
+    ideaToRefineMatch
+
+  if (!hasVisibleContent) return null
+
+  return (
+    <div
+      data-testid="message-bubble-content"
+      className={`rounded shadow-sm ${
+        isUser
+          ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${isGrillActivation ? 'border-grill' : 'border-primary'}`
+          : aiBubbleClass
+      }`}
+    >
+      {isGrillActivation && (
+        <div className="flex items-center gap-2 mb-3 pb-3 border-b border-grill/30">
+          <Flame size={16} className="text-accent shrink-0" />
+          <span className="text-sm font-semibold text-accent">Grill Mode Activated</span>
+          <Flame size={16} className="text-accent shrink-0" />
+        </div>
+      )}
+
+      {ideaToRefineMatch && (
+        <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-warning-muted rounded-lg border border-warning/20">
+          <Lightbulb size={14} className="text-warning shrink-0" />
+          <span className="text-sm font-medium text-warning">
+            Idea to Refine: <span className="text-text-body">{ideaToRefineMatch[1]}</span>
+          </span>
+        </div>
+      )}
+
+      <AttachmentList imageAttachments={imageAttachments} fileAttachments={fileAttachments} />
+
+      {(isUser ? displayContent : message.contentMd) ? (
+        <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>
+          <ReactMarkdown
+            remarkPlugins={isUser ? REMARK_PLUGINS_BASE : REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
+            components={markdownComponents}
+          >
+            {isUser ? displayContent : message.contentMd}
+          </ReactMarkdown>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+interface BubbleFooterActionsProps {
+  message: Message
+  isUser: boolean
+  isStreaming?: boolean
+  toolActivities?: ToolActivity[]
+}
+
+function BubbleFooterActions({
+  message,
+  isUser,
+  isStreaming,
+  toolActivities
+}: BubbleFooterActionsProps): React.JSX.Element {
+  return (
+    <>
+      {toolActivities && toolActivities.length > 0 && (
+        <ToolActivityBlock activities={toolActivities} defaultExpanded={!!isStreaming} />
+      )}
+
+      <div className="flex items-center gap-2 mt-1 px-1 group">
+        <span className="text-xs text-text-secondary inline-flex items-center gap-1">
+          {formatTime(message.createdAt)}
+          {isStreaming && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="inline-flex items-center gap-1 ml-0.5">
+                <span
+                  className="typing-dot !w-[4px] !h-[4px]"
+                  style={{ animationDelay: '0ms' }}
+                />
+                <span
+                  className="typing-dot !w-[4px] !h-[4px]"
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span
+                  className="typing-dot !w-[4px] !h-[4px]"
+                  style={{ animationDelay: '300ms' }}
+                />
+              </span>
+            </>
+          )}
+        </span>
+        {!isUser && !isStreaming && (
+          <button
+            onClick={async () => {
+              if (message.conversationId && message.id) {
+                try {
+                  await window.api.chatResumeAt({
+                    conversationId: message.conversationId,
+                    messageId: message.id
+                  })
+                } catch (err) {
+                  console.error('Failed to resume at checkpoint:', err)
+                }
+              }
+            }}
+            className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100"
+            title="Undo to this message"
+          >
+            Undo to here
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
 function MessageBubbleInner({
   message,
   isStreaming,
@@ -212,11 +409,11 @@ function MessageBubbleInner({
   // Extracted hook: parses message content to detect structured blocks
   const content = useMessageContent(message.contentMd, message.attachmentsJson, isUser)
   const {
-    imageAttachments,
-    fileAttachments,
-    isGrillActivation,
-    ideaToRefineMatch,
-    displayContent,
+    imageAttachments: _imageAttachments,
+    fileAttachments: _fileAttachments,
+    isGrillActivation: _isGrillActivation,
+    ideaToRefineMatch: _ideaToRefineMatch,
+    displayContent: _displayContent,
     planContent,
     structuredPlan,
     buildSummaryData
@@ -250,24 +447,7 @@ function MessageBubbleInner({
   const handleCouncilReview = (): void => {
     const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
     if (!workspaceId || !planContent) return
-
-    const councilStore = useCouncilStore.getState()
-    councilStore.startCouncil()
-
-    // Start the council via IPC
-    window.api
-      .councilStart({
-        workspaceId,
-        inputType: 'plan',
-        planContent,
-        structuredPlan: structuredPlan ?? undefined,
-        originalUserRequest: message.contentMd ?? '',
-        conversationId: undefined
-      })
-      .then(({ sessionId }) => {
-        councilStore.setSessionIdentity(sessionId, workspaceId)
-      })
-      .catch(console.error)
+    startCouncilReview(workspaceId, planContent, structuredPlan, message.contentMd ?? '')
   }
 
   /** Shared AI bubble styles */
@@ -297,7 +477,7 @@ function MessageBubbleInner({
         }`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
-          <span className="text-sm font-semibold text-text-primary leading-tight">
+          <span data-testid="message-bubble-identity" className="text-sm font-semibold text-text-primary leading-tight">
             {identity.displayName}
           </span>
           {identity.subtitle && (
@@ -305,118 +485,25 @@ function MessageBubbleInner({
           )}
         </div>
 
-        {/* Structured card rendering (plan, build summary) */}
-        {hasStructuredContent ? (
-          <MessageCardRenderer
-            content={content}
-            aiBubbleClass={aiBubbleClass}
-            remarkPlugins={REMARK_PLUGINS}
-            rehypePlugins={REHYPE_PLUGINS}
-            markdownComponents={markdownComponents}
-            onBuildNow={handleBuildNow}
-            onRefine={handleRefine}
-            onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
-            onCouncilReview={planContent ? handleCouncilReview : undefined}
-          />
-        ) : /* Skip empty bubble wrapper for AI messages with no visible content (tools-only segments) */
-        isUser ||
-          !!(isUser ? displayContent : message.contentMd?.trim()) ||
-          imageAttachments.length > 0 ||
-          fileAttachments.length > 0 ||
-          isGrillActivation ||
-          ideaToRefineMatch ? (
-          <div
-            className={`rounded shadow-sm ${
-              isUser
-                ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${isGrillActivation ? 'border-grill' : 'border-primary'}`
-                : aiBubbleClass
-            }`}
-          >
-            {/* 🔥 Grill Mode activation banner */}
-            {isGrillActivation && (
-              <div className="flex items-center gap-2 mb-3 pb-3 border-b border-grill/30">
-                <Flame size={16} className="text-accent shrink-0" />
-                <span className="text-sm font-semibold text-accent">Grill Mode Activated</span>
-                <Flame size={16} className="text-accent shrink-0" />
-              </div>
-            )}
+        <BubbleContentBody
+          content={content}
+          message={message}
+          isUser={isUser}
+          aiBubbleClass={aiBubbleClass}
+          sizeClasses={sizeClasses}
+          hasStructuredContent={hasStructuredContent}
+          onBuildNow={handleBuildNow}
+          onRefine={handleRefine}
+          onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
+          onCouncilReview={planContent ? handleCouncilReview : undefined}
+        />
 
-            {/* 💡 Idea to Refine subtitle */}
-            {ideaToRefineMatch && (
-              <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-warning-muted rounded-lg border border-warning/20">
-                <Lightbulb size={14} className="text-warning shrink-0" />
-                <span className="text-sm font-medium text-warning">
-                  Idea to Refine: <span className="text-text-body">{ideaToRefineMatch[1]}</span>
-                </span>
-              </div>
-            )}
-
-            {/* Attachments (images + files) */}
-            <AttachmentList imageAttachments={imageAttachments} fileAttachments={fileAttachments} />
-
-            {(isUser ? displayContent : message.contentMd) ? (
-              <div className={`prose max-w-none overflow-hidden ${sizeClasses.text}`}>
-                <ReactMarkdown
-                  remarkPlugins={isUser ? REMARK_PLUGINS_BASE : REMARK_PLUGINS}
-                  rehypePlugins={REHYPE_PLUGINS}
-                  components={markdownComponents}
-                >
-                  {isUser ? displayContent : message.contentMd}
-                </ReactMarkdown>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* Inline tool activity block */}
-        {toolActivities && toolActivities.length > 0 && (
-          <ToolActivityBlock activities={toolActivities} defaultExpanded={!!isStreaming} />
-        )}
-
-        <div className="flex items-center gap-2 mt-1 px-1 group">
-          <span className="text-xs text-text-secondary inline-flex items-center gap-1">
-            {formatTime(message.createdAt)}
-            {isStreaming && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="inline-flex items-center gap-1 ml-0.5">
-                  <span
-                    className="typing-dot !w-[4px] !h-[4px]"
-                    style={{ animationDelay: '0ms' }}
-                  />
-                  <span
-                    className="typing-dot !w-[4px] !h-[4px]"
-                    style={{ animationDelay: '150ms' }}
-                  />
-                  <span
-                    className="typing-dot !w-[4px] !h-[4px]"
-                    style={{ animationDelay: '300ms' }}
-                  />
-                </span>
-              </>
-            )}
-          </span>
-          {!isUser && !isStreaming && (
-            <button
-              onClick={async () => {
-                if (message.conversationId && message.id) {
-                  try {
-                    await window.api.chatResumeAt({
-                      conversationId: message.conversationId,
-                      messageId: message.id
-                    })
-                  } catch (err) {
-                    console.error('Failed to resume at checkpoint:', err)
-                  }
-                }
-              }}
-              className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100"
-              title="Undo to this message"
-            >
-              Undo to here
-            </button>
-          )}
-        </div>
+        <BubbleFooterActions
+          message={message}
+          isUser={isUser}
+          isStreaming={isStreaming}
+          toolActivities={toolActivities}
+        />
       </div>
     </div>
   )

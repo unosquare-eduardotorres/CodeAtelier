@@ -65,7 +65,7 @@ export default function PersonaSelector({ conversation }: PersonaSelectorProps):
   }
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div data-testid="persona-selector" className="relative" ref={dropdownRef}>
       {/* Trigger button */}
       <button
         onClick={() => setOpen((prev) => !prev)}

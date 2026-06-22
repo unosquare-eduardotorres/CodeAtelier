@@ -317,6 +317,171 @@ describe('AgentSessionService', () => {
     assert.equal(calls.buildMcpConfig.length, 1)
     assert.equal(calls.buildMcpConfig[0].contextTier, 'small')
   })
+
+  // ── Run 34: Additional getter / state / lifecycle coverage ──────────
+
+  test('wasTimedOut_defaults_to_false', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.wasTimedOut(), false)
+  })
+
+  test('getWorkspaceId_returns_null_before_start', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getWorkspaceId(), null)
+  })
+
+  test('getWorkspacePath_returns_null_before_start', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getWorkspacePath(), null)
+  })
+
+  test('getCurrentConversationId_returns_null_before_start', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getCurrentConversationId(), null)
+  })
+
+  test('getMode_defaults_to_plan', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getMode(), 'plan')
+  })
+
+  test('getStreamedContent_defaults_to_empty_string', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getStreamedContent(), '')
+  })
+
+  test('isRunning_false_before_start', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.isRunning(), false)
+  })
+
+  test('clearSession_is_idempotent_on_unknown_id', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    // Should not throw
+    session.clearSession('unknown-conv-id')
+    session.clearSession('unknown-conv-id')
+    assert.equal(session.getSessionId('unknown-conv-id'), undefined)
+  })
+
+  test('getAdapter_returns_the_injected_adapter', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getAdapter(), adapter)
+  })
+
+  test('getRole_delegates_to_adapter_role', () => {
+    const { adapter } = createTestAdapter({ role: 'da-vinci' })
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getRole(), 'da-vinci')
+  })
+
+  test('getAgentId_delegates_to_adapter_agentId', () => {
+    const { adapter } = createTestAdapter({ agentId: 'custom-agent-xyz' })
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getAgentId(), 'custom-agent-xyz')
+  })
+
+  test('getStatus_shape_has_all_expected_fields', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    const status = session.getStatus()
+    assert.equal(typeof status.agentId, 'string')
+    assert.equal(typeof status.agentType, 'string')
+    assert.equal(typeof status.status, 'string')
+    assert.equal(typeof status.tokenUsage, 'number')
+    assert.equal(typeof status.elapsedMs, 'number')
+  })
+
+  test('getStatus_agentType_maps_non_da_vinci_to_specialist', () => {
+    const { adapter } = createTestAdapter({ role: 'grill' as AgentRoleAdapter['role'] })
+    const session = new AgentSessionService(adapter)
+    // All non-da-vinci roles map to 'specialist' agentType
+    assert.equal(session.getStatus().agentType, 'specialist')
+  })
+
+  test('getStatus_agentType_maps_project_specialist_role', () => {
+    const { adapter } = createTestAdapter({
+      role: 'project-specialist',
+      agentId: 'workspace-specialist-ws-1'
+    })
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.getStatus().agentType, 'specialist')
+  })
+
+  test('multiple_event_listeners_on_same_event_all_fire', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    const results: number[] = []
+    session.on('chunk', () => results.push(1))
+    session.on('chunk', () => results.push(2))
+    session.on('chunk', () => results.push(3))
+    session.emit('chunk', { type: 'text', content: 'hi' })
+    assert.deepEqual(results, [1, 2, 3])
+  })
+
+  test('switchMode_no_op_when_no_workspace_path', async () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    // switchMode returns early when workspacePath is null
+    await session.switchMode('build')
+    assert.equal(session.getMode(), 'plan', 'mode unchanged when no workspace path')
+  })
+
+  test('switchMode_no_op_for_danger_when_no_workspace_path', async () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    await session.switchMode('danger')
+    assert.equal(session.getMode(), 'plan', 'mode unchanged when no workspace path')
+  })
+
+  test('compact_defaults_show_zero_compaction_state', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.compactSuggested, false)
+    assert.equal(session.turnsSinceCompactSuggestion, 0)
+  })
+
+  test('maxTurnsContinuations_defaults_to_zero', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.maxTurnsContinuations, 0)
+  })
+
+  test('lastStreamOpts_defaults_to_null', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.lastStreamOpts, null)
+  })
+
+  test('respondToAskUser_logs_warning_when_no_ipc_bridge', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    // Should not throw even without an IPC bridge
+    session.respondToAskUser('req-1', 'user response')
+    assert.ok(true, 'respondToAskUser completed without error')
+  })
+
+  test('getCacheEfficiency_returns_report_object', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    const report = session.getCacheEfficiency()
+    // Returns a report object (shape varies, but should not throw)
+    assert.ok(report !== null && report !== undefined)
+  })
+
+  test('effectiveContextWindow_defaults_to_undefined', () => {
+    const { adapter } = createTestAdapter()
+    const session = new AgentSessionService(adapter)
+    assert.equal(session.effectiveContextWindow, undefined)
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

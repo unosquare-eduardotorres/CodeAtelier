@@ -43,7 +43,12 @@ describe('auditContextBudget', () => {
   })
 
   test('warningRatio is 0 when contextWindow is 0 (no divide-by-zero)', () => {
-    const b = auditContextBudget({ systemPrompt: 'a', toolCount: 1, contextWindow: 0, tier: 'small' })
+    const b = auditContextBudget({
+      systemPrompt: 'a',
+      toolCount: 1,
+      contextWindow: 0,
+      tier: 'small'
+    })
     assert.equal(b.warningRatio, 0)
   })
 
@@ -62,7 +67,11 @@ describe('auditContextBudget', () => {
 describe('estimateToolCount', () => {
   test('explicit allowedTools list returns its length', () => {
     assert.equal(
-      estimateToolCount({ allowedTools: ['Read', 'Grep', 'Glob'], disallowedTools: [], isLocalProvider: true }),
+      estimateToolCount({
+        allowedTools: ['Read', 'Grep', 'Glob'],
+        disallowedTools: [],
+        isLocalProvider: true
+      }),
       3
     )
   })

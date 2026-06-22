@@ -141,6 +141,122 @@ interface TaskPlanCardProps {
   onCouncilReview?: () => void
 }
 
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function PlanHeader({
+  isInlinePlan,
+  structuredPlan,
+  summary,
+  mode
+}: {
+  isInlinePlan: boolean
+  structuredPlan: StructuredPlan | null
+  summary: string
+  mode: 'plan' | 'build' | 'danger'
+}): React.JSX.Element {
+  const headerBg = isInlinePlan
+    ? 'border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)]'
+    : 'border-border-subtle bg-surface-raised'
+  const headerIconBg = isInlinePlan ? 'bg-[var(--color-plan-card-muted)]' : 'bg-primary-muted'
+  const headerIconColor = isInlinePlan ? 'text-[var(--color-plan-card)]' : 'text-primary-text'
+  const headerTitle = isInlinePlan ? 'Implementation Plan' : 'Task Plan'
+  const planTypeConfig = structuredPlan?.type ? PLAN_TYPE_CONFIG[structuredPlan.type] : null
+
+  return (
+    <div className={`flex items-center gap-3 px-5 py-4 border-b ${headerBg}`}>
+      <div className={`w-8 h-8 rounded flex items-center justify-center ${headerIconBg}`}>
+        <ClipboardList size={16} className={headerIconColor} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-text-primary">{headerTitle}</p>
+        <p className="text-xs text-text-secondary truncate">{structuredPlan?.title ?? summary}</p>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {planTypeConfig && (
+          <span className={`text-[10px] px-2 py-0.5 rounded ${planTypeConfig.badgeClass}`}>
+            {planTypeConfig.emoji} {planTypeConfig.label}
+          </span>
+        )}
+        <span
+          className={`text-[10px] px-2 py-0.5 rounded ${
+            mode === 'build'
+              ? 'bg-mode-build-muted text-mode-build-text'
+              : 'bg-mode-plan-muted text-mode-plan-text'
+          }`}
+        >
+          {mode}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function PlanBody({
+  isInlinePlan,
+  structuredPlan,
+  planContent,
+  sectionMap
+}: {
+  isInlinePlan: boolean
+  structuredPlan: StructuredPlan | null
+  planContent: string | undefined
+  sectionMap: Record<SectionKey, React.ReactNode>
+}): React.JSX.Element | null {
+  if (!isInlinePlan) return null
+
+  if (structuredPlan) {
+    const planType = structuredPlan.type ?? 'default'
+    const sequence = SECTION_SEQUENCES[planType] ?? SECTION_SEQUENCES.default
+    return (
+      <div data-testid="task-plan-sections" className="px-5 py-4 space-y-4">
+        {sequence.map((key) => (
+          <React.Fragment key={key}>{sectionMap[key]}</React.Fragment>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="px-5 py-4 prose prose-sm prose-invert max-w-none">
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>
+        {planContent!}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+function PlanActionButtons({
+  hasUserChosen,
+  onBuildNow,
+  onSaveAsIdea,
+  onRefine,
+  onCouncilReview,
+  onUserClicked
+}: {
+  hasUserChosen: boolean
+  onBuildNow?: () => void
+  onSaveAsIdea?: () => void
+  onRefine?: () => void
+  onCouncilReview?: () => void
+  onUserClicked: () => void
+}): React.JSX.Element | null {
+  if (hasUserChosen) return null
+  if (!onBuildNow && !onSaveAsIdea && !onRefine && !onCouncilReview) return null
+
+  return (
+    <BuildActionBar
+      onBuildNow={onBuildNow}
+      onSaveAsIdea={onSaveAsIdea}
+      onRefine={onRefine}
+      onCouncilReview={onCouncilReview}
+      onUserClicked={onUserClicked}
+      savedToPlans
+    />
+  )
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
+
 export default function TaskPlanCard({
   summary,
   mode,
@@ -150,7 +266,6 @@ export default function TaskPlanCard({
   onRefine,
   onCouncilReview
 }: TaskPlanCardProps): React.JSX.Element {
-  // ── Content type detection ──
   const isInlinePlan = !!planContent
 
   // Try to parse planContent as structured plan JSON
@@ -167,7 +282,6 @@ export default function TaskPlanCard({
     }
   }, [planContent])
 
-  // ── Defensive filters (extracted hook) ──
   const {
     visibleFilesChanged,
     visibleFiles,
@@ -181,27 +295,13 @@ export default function TaskPlanCard({
     visibleDecisions
   } = usePlanMemos(structuredPlan)
 
-  // Simple plan: ≤2 low-risk, low-complexity phases → flat layout, no accordion
   const isSimplePlan =
     visiblePhases.length > 0 &&
     visiblePhases.length <= 2 &&
     visiblePhases.every((p) => p.risk !== 'high' && p.complexity <= 5)
 
   const [userClicked, setUserClicked] = useState(false)
-  const hasUserChosen = userClicked
 
-  // Header styling varies by content type
-  const headerBg = isInlinePlan
-    ? 'border-[var(--color-plan-card-border)] bg-[var(--color-plan-card-muted)]'
-    : 'border-border-subtle bg-surface-raised'
-  const headerIconBg = isInlinePlan ? 'bg-[var(--color-plan-card-muted)]' : 'bg-primary-muted'
-  const headerIconColor = isInlinePlan ? 'text-[var(--color-plan-card)]' : 'text-primary-text'
-  const headerTitle = isInlinePlan ? 'Implementation Plan' : 'Task Plan'
-
-  // Plan type badge
-  const planTypeConfig = structuredPlan?.type ? PLAN_TYPE_CONFIG[structuredPlan.type] : null
-
-  // ── Section renderers (extracted to TaskPlanSections) ──
   const sectionMap = buildSectionMap({
     structuredPlan,
     visibleFilesChanged,
@@ -217,73 +317,31 @@ export default function TaskPlanCard({
     isSimplePlan
   })
 
-  function renderSectionsForType(): React.ReactNode {
-    const planType = structuredPlan?.type ?? 'default'
-    const sequence = SECTION_SEQUENCES[planType] ?? SECTION_SEQUENCES.default
-    return (
-      <>
-        {sequence.map((key) => (
-          <React.Fragment key={key}>{sectionMap[key]}</React.Fragment>
-        ))}
-      </>
-    )
-  }
-
   return (
     <div
       data-testid="task-plan-card"
       className={`my-3 rounded border ${isInlinePlan ? 'border-[var(--color-plan-card-border)]' : 'border-border-subtle'} bg-surface-overlay overflow-hidden`}
     >
-      {/* Header */}
-      <div className={`flex items-center gap-3 px-5 py-4 border-b ${headerBg}`}>
-        <div className={`w-8 h-8 rounded flex items-center justify-center ${headerIconBg}`}>
-          <ClipboardList size={16} className={headerIconColor} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-text-primary">{headerTitle}</p>
-          <p className="text-xs text-text-secondary truncate">{structuredPlan?.title ?? summary}</p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          {planTypeConfig && (
-            <span className={`text-[10px] px-2 py-0.5 rounded ${planTypeConfig.badgeClass}`}>
-              {planTypeConfig.emoji} {planTypeConfig.label}
-            </span>
-          )}
-          <span
-            className={`text-[10px] px-2 py-0.5 rounded ${
-              mode === 'build'
-                ? 'bg-mode-build-muted text-mode-build-text'
-                : 'bg-mode-plan-muted text-mode-plan-text'
-            }`}
-          >
-            {mode}
-          </span>
-        </div>
-      </div>
-
-      {/* ── Inline plan content (from ```plan block) ── */}
-      {isInlinePlan && structuredPlan && (
-        <div className="px-5 py-4 space-y-4">{renderSectionsForType()}</div>
-      )}
-      {isInlinePlan && !structuredPlan && (
-        <div className="px-5 py-4 prose prose-sm prose-invert max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>
-            {planContent!}
-          </ReactMarkdown>
-        </div>
-      )}
-
-      {/* ── Unified action buttons ── */}
-      {!hasUserChosen && (onBuildNow || onSaveAsIdea || onRefine || onCouncilReview) && (
-        <BuildActionBar
-          onBuildNow={onBuildNow}
-          onSaveAsIdea={onSaveAsIdea}
-          onRefine={onRefine}
-          onCouncilReview={onCouncilReview}
-          onUserClicked={() => setUserClicked(true)}
-          savedToPlans
-        />
-      )}
+      <PlanHeader
+        isInlinePlan={isInlinePlan}
+        structuredPlan={structuredPlan}
+        summary={summary}
+        mode={mode}
+      />
+      <PlanBody
+        isInlinePlan={isInlinePlan}
+        structuredPlan={structuredPlan}
+        planContent={planContent}
+        sectionMap={sectionMap}
+      />
+      <PlanActionButtons
+        hasUserChosen={userClicked}
+        onBuildNow={onBuildNow}
+        onSaveAsIdea={onSaveAsIdea}
+        onRefine={onRefine}
+        onCouncilReview={onCouncilReview}
+        onUserClicked={() => setUserClicked(true)}
+      />
     </div>
   )
 }

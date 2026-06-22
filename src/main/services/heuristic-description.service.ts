@@ -237,6 +237,62 @@ const KIND_PREFIX: Record<string, string> = {
   method: ''
 }
 
+// ── Class role → description template ─────────────────────────────────────
+
+const CLASS_ROLE_TEMPLATES: ReadonlyMap<string, (noun: string) => string> = new Map([
+  ['service', (n) => `Service class that manages ${n.replace('service', '').trim()} operations`],
+  ['controller', (n) => `Controller that handles ${n.replace('controller', '').trim()} requests`],
+  ['repository', (n) => `Repository for ${n.replace('repository', '').trim()} data access`],
+  ['adapter', (n) => `Adapter for ${n.replace('adapter', '').trim()} integration`],
+  ['factory', (n) => `Factory that creates ${n.replace('factory', '').trim()} instances`],
+  ['handler', (n) => `Handler for ${n.replace('handler', '').trim()} events`],
+  ['provider', (n) => `Provider for ${n.replace('provider', '').trim()} functionality`],
+  ['manager', (n) => `Manager for ${n.replace('manager', '').trim()} lifecycle`],
+  ['builder', (n) => `Builder for constructing ${n.replace('builder', '').trim()} objects`],
+  ['validator', (n) => `Validator for ${n.replace('validator', '').trim()} rules`],
+  ['store', (n) => `State store for ${n.replace('store', '').trim()} data`],
+  ['component', (n) => `UI component for ${n.replace('component', '').trim()}`],
+  ['middleware', (n) => `Middleware for ${n.replace('middleware', '').trim()} processing`],
+  ['guard', (n) => `Guard that protects ${n.replace('guard', '').trim()} access`]
+])
+
+function describeClass(noun: string): string {
+  for (const [role, template] of CLASS_ROLE_TEMPLATES) {
+    if (noun.includes(role)) return template(noun)
+  }
+  return `Class that manages ${noun}`
+}
+
+// ── Interface role → description template ────────────────────────────────
+
+const INTERFACE_ROLE_TEMPLATES: ReadonlyMap<string, (noun: string) => string> = new Map([
+  ['props', (n) => `Props interface for ${n.replace('props', '').trim()} component`],
+  ['state', (n) => `State shape for ${n.replace('state', '').trim()}`],
+  ['config', (n) => `Configuration options for ${n.replace(/(config|options)/, '').trim()}`],
+  ['options', (n) => `Configuration options for ${n.replace(/(config|options)/, '').trim()}`],
+  ['request', (n) => `Request payload for ${n.replace('request', '').trim()}`],
+  ['response', (n) => `Response shape for ${n.replace('response', '').trim()}`]
+])
+
+function describeInterface(noun: string): string {
+  for (const [role, template] of INTERFACE_ROLE_TEMPLATES) {
+    if (noun.includes(role)) return template(noun)
+  }
+  return `Interface defining the shape for ${noun}`
+}
+
+// ── Parameter context rules ──────────────────────────────────────────────
+
+const PARAM_CONTEXT_RULES: ReadonlyArray<{ keyword: string; format: (h: string) => string }> = [
+  { keyword: 'id', format: (h) => ` by ${h}` },
+  { keyword: 'path', format: (h) => ` for a given ${h}` },
+  { keyword: 'name', format: (h) => ` by ${h}` },
+  { keyword: 'key', format: (h) => ` by ${h}` },
+  { keyword: 'query', format: (h) => ` matching a ${h}` },
+  { keyword: 'config', format: (h) => ` with the given ${h}` },
+  { keyword: 'options', format: (h) => ` with the given ${h}` }
+]
+
 // ── Name splitting ────────────────────────────────────────────────────────
 
 /**
@@ -353,14 +409,9 @@ function paramContext(params: string[]): string {
   const firstWords = splitName(first)
   const humanized = humanize(firstWords)
 
-  // Common patterns
-  if (humanized.includes('id')) return ` by ${humanized}`
-  if (humanized.includes('path')) return ` for a given ${humanized}`
-  if (humanized.includes('name')) return ` by ${humanized}`
-  if (humanized.includes('key')) return ` by ${humanized}`
-  if (humanized.includes('query')) return ` matching a ${humanized}`
-  if (humanized.includes('config') || humanized.includes('options'))
-    return ` with the given ${humanized}`
+  for (const rule of PARAM_CONTEXT_RULES) {
+    if (humanized.includes(rule.keyword)) return rule.format(humanized)
+  }
 
   if (params.length === 1) return ` for ${humanized}`
   return ''
@@ -402,17 +453,7 @@ export function generateHeuristicDescription(chunk: RawChunk): string {
 
   // ── Interfaces / types ──────────────────────────────────────────────────
   if (symbolKind === 'interface') {
-    const noun = humanize(words)
-    // Detect common patterns
-    if (noun.includes('props'))
-      return `Props interface for ${noun.replace('props', '').trim()} component`
-    if (noun.includes('state')) return `State shape for ${noun.replace('state', '').trim()}`
-    if (noun.includes('config') || noun.includes('options'))
-      return `Configuration options for ${noun.replace(/(config|options)/, '').trim()}`
-    if (noun.includes('request')) return `Request payload for ${noun.replace('request', '').trim()}`
-    if (noun.includes('response'))
-      return `Response shape for ${noun.replace('response', '').trim()}`
-    return `Interface defining the shape for ${noun}`
+    return describeInterface(humanize(words))
   }
 
   if (symbolKind === 'type') {
@@ -422,35 +463,7 @@ export function generateHeuristicDescription(chunk: RawChunk): string {
 
   // ── Classes ─────────────────────────────────────────────────────────────
   if (symbolKind === 'class') {
-    const noun = humanize(words)
-    // Detect common patterns
-    if (noun.includes('service'))
-      return `Service class that manages ${noun.replace('service', '').trim()} operations`
-    if (noun.includes('controller'))
-      return `Controller that handles ${noun.replace('controller', '').trim()} requests`
-    if (noun.includes('repository'))
-      return `Repository for ${noun.replace('repository', '').trim()} data access`
-    if (noun.includes('adapter'))
-      return `Adapter for ${noun.replace('adapter', '').trim()} integration`
-    if (noun.includes('factory'))
-      return `Factory that creates ${noun.replace('factory', '').trim()} instances`
-    if (noun.includes('handler')) return `Handler for ${noun.replace('handler', '').trim()} events`
-    if (noun.includes('provider'))
-      return `Provider for ${noun.replace('provider', '').trim()} functionality`
-    if (noun.includes('manager'))
-      return `Manager for ${noun.replace('manager', '').trim()} lifecycle`
-    if (noun.includes('builder'))
-      return `Builder for constructing ${noun.replace('builder', '').trim()} objects`
-    if (noun.includes('validator'))
-      return `Validator for ${noun.replace('validator', '').trim()} rules`
-    if (noun.includes('store')) return `State store for ${noun.replace('store', '').trim()} data`
-    if (noun.includes('component'))
-      return `UI component for ${noun.replace('component', '').trim()}`
-    if (noun.includes('middleware'))
-      return `Middleware for ${noun.replace('middleware', '').trim()} processing`
-    if (noun.includes('guard'))
-      return `Guard that protects ${noun.replace('guard', '').trim()} access`
-    return `Class that manages ${noun}`
+    return describeClass(humanize(words))
   }
 
   // ── Functions / methods ─────────────────────────────────────────────────

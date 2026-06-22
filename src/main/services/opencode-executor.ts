@@ -147,6 +147,8 @@ export class OpenCodeExecutor {
   /** C-4: Promise that resolves when server.connected fires (MCP handshakes complete) */
   private serverReadyResolve?: () => void
   private serverReadyPromise?: Promise<void>
+  /** EXEC-05: Track the serverReady fallback timeout so it can be cancelled */
+  private serverReadyTimeout: ReturnType<typeof setTimeout> | null = null
 
   /**
    * Start the OpenCode server in-process.
@@ -178,6 +180,12 @@ export class OpenCodeExecutor {
 
       openCodeLog.info(`[opencode] Starting server in ${cwd}`)
 
+      // OC-01: Clear stale env vars from any prior workspace to prevent
+      // cross-workspace contamination when start() is called without stop()
+      delete process.env.OPENCODE_CONFIG
+      delete process.env.OPENCODE_EXPERIMENTAL_LSP_TOOL
+      delete process.env.OPENCODE_ENABLE_EXA
+
       // Set OPENCODE_CONFIG env var so OpenCode reads from the temp dir
       // instead of looking for opencode.json in the workspace root.
       if (config?.configPath) {
@@ -204,15 +212,24 @@ export class OpenCodeExecutor {
         signal: this.startupAbortController.signal
       })
 
+      // EXEC-06: Validate client exists before marking as started
+      if (!result?.client) {
+        throw new Error('OpenCode SDK initialization failed: no client returned')
+      }
       this.client = result.client
       this.isStarted = true
 
       // C-4: Set up serverReady promise — resolved when server.connected event fires.
       // This gates the first prompt to ensure MCP handshakes are complete.
+      // EXEC-05: Cancel any prior timeout before creating a new promise
+      if (this.serverReadyTimeout) {
+        clearTimeout(this.serverReadyTimeout)
+        this.serverReadyTimeout = null
+      }
       this.serverReadyPromise = new Promise<void>((resolve) => {
         this.serverReadyResolve = resolve
         // Timeout fallback — don't block forever if event never fires
-        setTimeout(() => {
+        this.serverReadyTimeout = setTimeout(() => {
           if (this.serverReadyResolve) {
             openCodeLog.warn(
               '[opencode] server.connected not received within 10s — proceeding anyway'
@@ -220,6 +237,7 @@ export class OpenCodeExecutor {
             this.serverReadyResolve()
             this.serverReadyResolve = undefined
           }
+          this.serverReadyTimeout = null
         }, 10_000)
       })
 
@@ -234,12 +252,127 @@ export class OpenCodeExecutor {
     }
   }
 
+  // ── Event stream processing ────────────────────────────────────────────────
+
+  /**
+   * Handle a transient error chunk: yield recovery events, wait, resend.
+   * Returns the updated retry count, or -1 if max retries are exhausted.
+   */
+  private async *handleTransientRetry(
+    chunk: StreamChunk,
+    retryCount: number,
+    sessionId: string,
+    promptBody: SessionPromptData['body']
+  ): AsyncGenerator<StreamChunk, number> {
+    const retry = this.computeTransientRetry(retryCount, chunk.error!)
+    if (!retry) {
+      // Max retries exhausted
+      this.consecutiveErrors++
+      openCodeLog.warn(
+        `[opencode] Max transient retries exhausted (${this.consecutiveErrors} consecutive errors)`
+      )
+      return -1
+    }
+
+    yield {
+      type: 'session_recovery',
+      recoveryPhase: 'started',
+      content: retry.startedMessage
+    } as StreamChunk
+
+    await new Promise((r) => setTimeout(r, retry.delayMs))
+    this.resendPrompt(sessionId, promptBody)
+
+    yield {
+      type: 'session_recovery',
+      recoveryPhase: 'resuming',
+      content: retry.resumingMessage
+    } as StreamChunk
+
+    return retry.attemptNumber
+  }
+
+  /**
+   * Process the event stream, handling transient retries and turn counting.
+   * Yields StreamChunks and collects resultText + maxTurnsReached status.
+   */
+  private async *processEventStream(params: {
+    events: { stream: AsyncIterable<unknown> }
+    openCodeSessionId: string
+    promptBody: SessionPromptData['body']
+    tokenUsage: ExecutorTokenUsage
+    maxTurns: number
+    abortController?: AbortController
+  }): AsyncGenerator<StreamChunk, { resultText: string; maxTurnsReached: boolean }> {
+    const { events, openCodeSessionId, promptBody, tokenUsage, maxTurns, abortController } = params
+    let resultText = ''
+    let turnCount = 0
+    let maxTurnsReached = false
+    let transientRetryCount = 0
+
+    for await (const event of events.stream) {
+      if (abortController?.signal.aborted) break
+
+      const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
+      for (const chunk of chunks) {
+        if (chunk.type === 'text' && chunk.content) {
+          resultText += chunk.content
+        }
+
+        // Handle transient errors with retry
+        if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
+          const retryGen = this.handleTransientRetry(
+            chunk, transientRetryCount, openCodeSessionId, promptBody
+          )
+          let retryResult = await retryGen.next()
+          while (!retryResult.done) {
+            yield retryResult.value
+            retryResult = await retryGen.next()
+          }
+          const newRetryCount = retryResult.value
+          if (newRetryCount >= 0) {
+            transientRetryCount = newRetryCount
+            continue
+          }
+          // Max retries exhausted — fall through to emit the error
+        }
+
+        // Count tool invocations as turns
+        if (chunk.type === 'tool_use') {
+          turnCount++
+          if (maxTurns > 0 && turnCount >= maxTurns) {
+            openCodeLog.info(
+              `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
+            )
+            maxTurnsReached = true
+            if (this.client) {
+              this.client.session
+                .abort({ path: { id: openCodeSessionId } })
+                .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
+            }
+          }
+        }
+
+        yield chunk
+      }
+
+      if (maxTurnsReached) break
+
+      // Check for session completion — skip error-based termination during active retries
+      const retriesAvailable = transientRetryCount < MAX_TRANSIENT_RETRIES
+      if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable)) {
+        break
+      }
+    }
+
+    return { resultText, maxTurnsReached }
+  }
+
+  // ── execute ──────────────────────────────────────────────────────────
+
   /**
    * Execute a prompt through OpenCode's agent loop.
    * Streams events as StreamChunks for UI display.
-   *
-   * #3: Includes transient error detection with exponential backoff retry.
-   * Circuit breaker trips after MAX consecutive errors across interactions.
    */
   async *execute(
     options: OpenCodeExecuteOptions
@@ -249,7 +382,7 @@ export class OpenCodeExecutor {
       return
     }
 
-    // #3: Circuit breaker check — prevent repeated failures from hammering the provider
+    // Circuit breaker check
     if (this.consecutiveErrors >= OpenCodeExecutor.CIRCUIT_BREAKER_THRESHOLD) {
       yield {
         type: 'error',
@@ -270,7 +403,6 @@ export class OpenCodeExecutor {
     }
 
     let openCodeSessionId: string | undefined
-    let resultText = ''
 
     try {
       // C-4: Wait for server.connected before first prompt to ensure MCP handshakes complete
@@ -301,10 +433,11 @@ export class OpenCodeExecutor {
           body: { title: sessionTitle }
         })
         ?.catch(() => {
-          /* non-fatal: session title is cosmetic — does not affect execution */
+          /* non-fatal: session title is cosmetic */
         })
 
-      // Fire and forget the prompt — events come via SSE
+      // OC-04: Track prompt promise to surface send errors to the stream consumer
+      let promptSendError: Error | null = null
       this.client.session
         .prompt({
           path: { id: openCodeSessionId },
@@ -312,81 +445,34 @@ export class OpenCodeExecutor {
         })
         .catch((err) => {
           openCodeLog.error('[opencode] Prompt send error:', err)
+          promptSendError = err instanceof Error ? err : new Error(String(err))
         })
 
-      // Stream events → StreamChunks
-      let turnCount = 0
+      // Process event stream
+      let resultText = ''
       let maxTurnsReached = false
-      const maxTurns = options.maxTurns ?? 0 // 0 = unlimited
-      let transientRetryCount = 0
 
       if (events.stream) {
-        for await (const event of events.stream) {
-          if (abortController?.signal.aborted) break
-
-          const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
-          for (const chunk of chunks) {
-            if (chunk.type === 'text' && chunk.content) {
-              resultText += chunk.content
-            }
-
-            // #3: Handle transient errors with retry
-            if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
-              const retry = this.computeTransientRetry(transientRetryCount, chunk.error)
-              if (retry) {
-                transientRetryCount = retry.attemptNumber
-
-                yield {
-                  type: 'session_recovery',
-                  recoveryPhase: 'started',
-                  content: retry.startedMessage
-                } as StreamChunk
-
-                await new Promise((r) => setTimeout(r, retry.delayMs))
-                this.resendPrompt(openCodeSessionId!, promptBody)
-
-                yield {
-                  type: 'session_recovery',
-                  recoveryPhase: 'resuming',
-                  content: retry.resumingMessage
-                } as StreamChunk
-
-                continue
-              }
-              // Max retries exhausted — fall through to emit the error
-              this.consecutiveErrors++
-              openCodeLog.warn(
-                `[opencode] Max transient retries exhausted (${this.consecutiveErrors} consecutive errors)`
-              )
-            }
-
-            // Count tool invocations as turns
-            if (chunk.type === 'tool_use') {
-              turnCount++
-              if (maxTurns > 0 && turnCount >= maxTurns) {
-                openCodeLog.info(
-                  `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
-                )
-                maxTurnsReached = true
-                if (this.client) {
-                  this.client.session
-                    .abort({ path: { id: openCodeSessionId } })
-                    .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
-                }
-              }
-            }
-
-            yield chunk
-          }
-
-          if (maxTurnsReached) break
-
-          // Check for session completion — skip error-based termination during active retries
-          const retriesAvailable = transientRetryCount < MAX_TRANSIENT_RETRIES
-          if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable)) {
-            break
-          }
+        const streamGen = this.processEventStream({
+          events: events as { stream: AsyncIterable<unknown> },
+          openCodeSessionId,
+          promptBody,
+          tokenUsage,
+          maxTurns: options.maxTurns ?? 0,
+          abortController
+        })
+        let streamResult = await streamGen.next()
+        while (!streamResult.done) {
+          yield streamResult.value
+          streamResult = await streamGen.next()
         }
+        ;({ resultText, maxTurnsReached } = streamResult.value)
+      }
+
+      // OC-04: If prompt send failed before/during streaming, surface the error
+      if (promptSendError) {
+        yield { type: 'error', error: `Prompt send failed: ${(promptSendError as Error).message}` }
+        return
       }
 
       // Success — reset consecutive error counter
@@ -441,6 +527,20 @@ export class OpenCodeExecutor {
     this.isStarted = false
     this.sessionMap.clear()
     this.consecutiveErrors = 0
+
+    // EXEC-05: Cancel the serverReady fallback timeout
+    if (this.serverReadyTimeout) {
+      clearTimeout(this.serverReadyTimeout)
+      this.serverReadyTimeout = null
+    }
+    this.serverReadyResolve = undefined
+    this.serverReadyPromise = undefined
+
+    // EXEC-01: Clean up global env vars set during start() to prevent
+    // cross-session contamination when switching workspaces
+    delete process.env.OPENCODE_CONFIG
+    delete process.env.OPENCODE_EXPERIMENTAL_LSP_TOOL
+    delete process.env.OPENCODE_ENABLE_EXA
   }
 
   /**

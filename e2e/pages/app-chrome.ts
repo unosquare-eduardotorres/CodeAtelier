@@ -1,55 +1,80 @@
 /**
- * AppChrome POM — navigation and top-level app elements.
+ * AppChrome — Page Object Model for app-level navigation.
  *
- * Wraps the header buttons, status bar, and global navigation
- * so tests don't repeat aria-label/testid selectors.
+ * Encapsulates selectors and actions for:
+ *   - Sidebar tab navigation (chats, goals, health, settings)
+ *   - Workspace settings access
+ *   - Workspace open detection
+ *   - Home navigation
  */
-import type { Page, Locator } from '@playwright/test'
+import type { Page } from '@playwright/test'
+
+/** Sidebar navigation tab names. */
+type SidebarTab = 'chats' | 'goals' | 'health' | 'settings'
 
 export class AppChrome {
-  readonly page: Page
-
-  // Header buttons
-  readonly homeButton: Locator
-  readonly settingsButton: Locator
-  readonly helpButton: Locator
-  readonly bugTrackerButton: Locator
-
-  // Layout elements
-  readonly statusBar: Locator
-  readonly appHeader: Locator
+  private readonly page: Page
 
   constructor(page: Page) {
     this.page = page
-    this.homeButton = page.getByRole('button', { name: 'Home' })
-    this.settingsButton = page.getByRole('button', { name: 'Settings' })
-    this.helpButton = page.getByRole('button', { name: 'Help' })
-    this.bugTrackerButton = page.getByRole('button', { name: 'Bug Tracker' })
-    this.statusBar = page.locator('[data-testid="status-bar"]')
-    this.appHeader = page.locator('[data-testid="app-header"]')
   }
 
+  // ── Queries ──────────────────────────────────────────────────────
+
+  /** Check if a workspace is currently open (chat panel or sidebar visible). */
+  async isWorkspaceOpen(): Promise<boolean> {
+    const chatPanel = this.page.locator('[data-testid="chat-panel"]')
+    const sidebar = this.page.locator('[data-testid="unified-sidebar"]')
+    const hasChat = await chatPanel.isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSidebar = await sidebar.isVisible({ timeout: 1_000 }).catch(() => false)
+    return hasChat || hasSidebar
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────
+
+  /** Navigate to a sidebar tab. Tries data-testid first, then aria-label/text. */
+  async navigateToTab(tab: SidebarTab): Promise<void> {
+    // Try data-testid convention: sidebar-tab-{name}
+    const byTestId = this.page.locator(`[data-testid="sidebar-tab-${tab}"]`)
+    if (await byTestId.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await byTestId.click()
+      await this.page.waitForTimeout(800)
+      return
+    }
+
+    // Fallback: button with matching text
+    const byText = this.page
+      .getByRole('button', { name: new RegExp(tab, 'i') })
+      .first()
+    if (await byText.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await byText.click()
+      await this.page.waitForTimeout(800)
+      return
+    }
+
+    // Fallback: aria-label
+    const byLabel = this.page.locator(`[aria-label="${tab}"], [aria-label="${tab[0].toUpperCase() + tab.slice(1)}"]`).first()
+    if (await byLabel.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await byLabel.click()
+      await this.page.waitForTimeout(800)
+    }
+  }
+
+  /** Open the workspace settings modal. */
+  async openWorkspaceSettings(): Promise<void> {
+    const settingsBtn = this.page.locator('[aria-label="Workspace Settings"]')
+    if (await settingsBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+      await settingsBtn.click()
+      await this.page.waitForTimeout(800)
+    }
+  }
+
+  /** Navigate to the home/welcome screen. */
   async goHome(): Promise<void> {
-    await this.homeButton.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  async openSettings(): Promise<void> {
-    await this.settingsButton.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  async openHelp(): Promise<void> {
-    await this.helpButton.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  async openBugTracker(): Promise<void> {
-    await this.bugTrackerButton.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  getStatusBar(): Locator {
-    return this.statusBar
+    const homeBtn = this.page.locator('[aria-label="Home"]')
+    if (await homeBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await homeBtn.click()
+      await this.page.waitForTimeout(800)
+    }
   }
 }

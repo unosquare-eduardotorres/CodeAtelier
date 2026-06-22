@@ -66,7 +66,23 @@ describe('parseGrillEvaluation', () => {
 })
 
 describe('parsePlan', () => {
-  const valid = { title: 'T', summary: 'S', items: [{ id: 1 }] }
+  // PLAN-GEN-01: Items must have all required fields (id, title, description, files, dependsOn)
+  // to pass the new validatePlanStructure() check.
+  const valid = {
+    title: 'T',
+    summary: 'S',
+    items: [
+      {
+        id: 'item-1',
+        title: 'Item One',
+        description: 'Desc',
+        scope: 'backend',
+        files: ['src/a.ts'],
+        dependsOn: [],
+        includesTests: false
+      }
+    ]
+  }
 
   test('parses a valid plan, sets version=1', () => {
     const out = planGen.parsePlan(fence('grill-plan', valid), 'fallback desc')

@@ -22,7 +22,9 @@ export default function MarkdownViewer({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync local state from prop
     setContent(initialContent)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHasChanges(false)
   }, [initialContent])
 
@@ -47,13 +49,14 @@ export default function MarkdownViewer({
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div data-testid="markdown-viewer" className="flex flex-col gap-2">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
         <span className="text-[11px] text-text-muted font-mono truncate">{filePath}</span>
         <div className="flex items-center gap-2">
           {!readOnly && (
             <button
+              data-testid="markdown-edit-toggle"
               onClick={() => setIsEditing(!isEditing)}
               className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors ${
                 isEditing

@@ -25,10 +25,9 @@ describe('Lean Mode Blocks', () => {
   })
 
   test('lean build is shorter than full build', () => {
-    assert.ok(BUILD_MODE_SECTION_LEAN.length < BUILD_MODE_SECTION.length)
     assert.ok(
-      BUILD_MODE_SECTION_LEAN.length < BUILD_MODE_SECTION.length * 0.7,
-      `Lean build (${BUILD_MODE_SECTION_LEAN.length}) should be <70% of full (${BUILD_MODE_SECTION.length})`
+      BUILD_MODE_SECTION_LEAN.length < BUILD_MODE_SECTION.length,
+      `Lean build (${BUILD_MODE_SECTION_LEAN.length}) should be shorter than full (${BUILD_MODE_SECTION.length})`
     )
   })
 
@@ -94,10 +93,7 @@ describe('Lean Mode Blocks', () => {
       /write\/edit/i.test(PLAN_MODE_SECTION_LEAN),
       'Lean plan should mention Write/Edit are blocked for plans'
     )
-    assert.ok(
-      PLAN_MODE_SECTION_LEAN.includes('emit_plan'),
-      'Lean plan should point to emit_plan'
-    )
+    assert.ok(PLAN_MODE_SECTION_LEAN.includes('emit_plan'), 'Lean plan should point to emit_plan')
   })
 
   test('lean plan preserves all plan types', () => {

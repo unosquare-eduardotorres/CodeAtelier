@@ -113,7 +113,11 @@ describe('createTimedCleanupMap — scheduleAutoCleanup', () => {
     // Wait past the auto-cleanup timeout
     await new Promise((r) => setTimeout(r, 30))
     // off count should not have increased (timer was canceled)
-    assert.equal(emitter.off.callCount, offCountAfterManual, 'timer should have been cancelled by manual cleanup')
+    assert.equal(
+      emitter.off.callCount,
+      offCountAfterManual,
+      'timer should have been cancelled by manual cleanup'
+    )
   })
 })
 

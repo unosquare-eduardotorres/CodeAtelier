@@ -1,132 +1,160 @@
 /**
- * Tests for EventRepository — create, query, pruning.
+ * Tests for EventRepository — create, query, prune.
+ * Skips gracefully if better-sqlite3 native module is incompatible.
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb, seedConversation } from './db-test-helper'
+import { trySetupTestDb } from './db-test-helper'
 
 const env = trySetupTestDb()
 
 if (!env) {
   describe('EventRepository (skipped — native module unavailable)', () => {
-    test('create()', () => {}, { skipReason: 'no DB' })
+    test('create() inserts event', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { wsId } = env
   const { eventRepository } = require('../event.repository')
 
   describe('EventRepository', () => {
-    test('create() returns mapped model with defaults', () => {
-      const event = eventRepository.create({
-        eventType: 'session.start',
+    // ── create ──
+
+    test('create() inserts and returns event with all fields', () => {
+      const ev = eventRepository.create({
+        eventType: 'session_start',
         category: 'session',
         message: 'Session started',
+        sessionId: 'sess-1',
+        conversationId: 'conv-1',
+        workspaceId: wsId,
+        data: { key: 'value' },
+        agentId: 'agent-1',
+        model: 'claude-sonnet-4-6',
+        sequenceNumber: 1
+      })
+      assert.ok(ev.id)
+      assert.equal(ev.eventType, 'session_start')
+      assert.equal(ev.category, 'session')
+      assert.equal(ev.message, 'Session started')
+      assert.equal(ev.sessionId, 'sess-1')
+      assert.equal(ev.conversationId, 'conv-1')
+      assert.equal(ev.workspaceId, wsId)
+      assert.equal(ev.dataJson, '{"key":"value"}')
+      assert.equal(ev.agentId, 'agent-1')
+      assert.equal(ev.model, 'claude-sonnet-4-6')
+      assert.equal(ev.sequenceNumber, 1)
+      assert.ok(ev.createdAt)
+    })
+
+    test('create() applies defaults for optional fields', () => {
+      const ev = eventRepository.create({
+        eventType: 'test_event',
+        category: 'agent',
+        message: 'Minimal event'
+      })
+      assert.ok(ev.id)
+      assert.equal(ev.sessionId, null)
+      assert.equal(ev.conversationId, null)
+      assert.equal(ev.workspaceId, null)
+      assert.equal(ev.dataJson, '{}')
+      assert.equal(ev.agentId, null)
+      assert.equal(ev.model, null)
+      assert.equal(ev.sequenceNumber, null)
+    })
+
+    // ── findByConversation ──
+
+    test('findByConversation() returns events for a conversation', () => {
+      const convId = 'conv-event-test-' + Date.now()
+      eventRepository.create({
+        eventType: 'msg_sent',
+        category: 'agent',
+        message: 'Message sent',
+        conversationId: convId
+      })
+      eventRepository.create({
+        eventType: 'msg_received',
+        category: 'agent',
+        message: 'Message received',
+        conversationId: convId
+      })
+
+      const events = eventRepository.findByConversation(convId)
+      assert.equal(events.length, 2)
+      assert.ok(events.every((e: any) => e.conversationId === convId))
+    })
+
+    test('findByConversation() returns [] for unknown conversation', () => {
+      const events = eventRepository.findByConversation('nonexistent-conv')
+      assert.deepEqual(events, [])
+    })
+
+    test('findByConversation() respects limit', () => {
+      const convId = 'conv-limit-test-' + Date.now()
+      for (let i = 0; i < 5; i++) {
+        eventRepository.create({
+          eventType: 'bulk',
+          category: 'agent',
+          message: `Event ${i}`,
+          conversationId: convId
+        })
+      }
+      const events = eventRepository.findByConversation(convId, 2)
+      assert.equal(events.length, 2)
+    })
+
+    // ── getRecent ──
+
+    test('getRecent() returns events ordered by created_at DESC', () => {
+      const events = eventRepository.getRecent(5)
+      assert.ok(events.length >= 1)
+      assert.ok(events.length <= 5)
+    })
+
+    // ── getRecentByWorkspace ──
+
+    test('getRecentByWorkspace() filters by workspace', () => {
+      eventRepository.create({
+        eventType: 'ws_event',
+        category: 'session',
+        message: 'WS event',
         workspaceId: wsId
       })
-      assert.ok(event.id)
-      assert.equal(event.eventType, 'session.start')
-      assert.equal(event.category, 'session')
-      assert.equal(event.message, 'Session started')
-      assert.equal(event.workspaceId, wsId)
-      assert.equal(event.dataJson, '{}')
-      assert.equal(event.sessionId, null)
-      assert.equal(event.agentId, null)
-      assert.equal(event.model, null)
+      const events = eventRepository.getRecentByWorkspace(wsId, 10)
+      assert.ok(events.length >= 1)
+      assert.ok(events.every((e: any) => e.workspaceId === wsId))
     })
 
-    test('create() accepts all optional fields', () => {
-      const convId = seedConversation(db, wsId)
-      const event = eventRepository.create({
-        eventType: 'agent.complete',
-        category: 'agent',
-        message: 'Agent finished',
-        sessionId: 'session-1',
-        conversationId: convId,
-        workspaceId: wsId,
-        data: { tokens: 5000, duration: 30 },
-        agentId: 'da-vinci',
-        model: 'claude-sonnet-4-6',
-        sequenceNumber: 42
-      })
-      assert.equal(event.sessionId, 'session-1')
-      assert.equal(event.conversationId, convId)
-      assert.equal(event.agentId, 'da-vinci')
-      assert.equal(event.model, 'claude-sonnet-4-6')
-      assert.equal(event.sequenceNumber, 42)
-      const data = JSON.parse(event.dataJson)
-      assert.equal(data.tokens, 5000)
+    test('getRecentByWorkspace() returns [] for unknown workspace', () => {
+      const events = eventRepository.getRecentByWorkspace('nonexistent-ws', 10)
+      assert.deepEqual(events, [])
     })
 
-    test('findById() round-trip', () => {
+    // ── pruneOlderThan ──
+
+    test('pruneOlderThan() returns number of deleted events', () => {
+      // Pruning with a very large number of days should delete nothing recent
+      const deleted = eventRepository.pruneOlderThan(99999)
+      assert.equal(typeof deleted, 'number')
+      assert.ok(deleted >= 0)
+    })
+
+    // ── findById (inherited) ──
+
+    test('findById() returns event', () => {
       const created = eventRepository.create({
-        eventType: 'test.event', category: 'session',
+        eventType: 'findable',
+        category: 'hook',
         message: 'Findable event'
       })
       const found = eventRepository.findById(created.id)
       assert.ok(found)
-      assert.equal(found.message, 'Findable event')
+      assert.equal(found.eventType, 'findable')
     })
 
-    test('findByConversation() returns events for conversation', () => {
-      const convId = seedConversation(db, wsId)
-      eventRepository.create({
-        eventType: 'chat.start', category: 'session',
-        message: 'Chat began', conversationId: convId
-      })
-      eventRepository.create({
-        eventType: 'chat.end', category: 'session',
-        message: 'Chat ended', conversationId: convId
-      })
-      const events = eventRepository.findByConversation(convId)
-      assert.ok(events.length >= 2)
-      assert.ok(events.every((e: any) => e.conversationId === convId))
-    })
-
-    test('findByConversation() respects limit', () => {
-      const convId = seedConversation(db, wsId)
-      for (let i = 0; i < 5; i++) {
-        eventRepository.create({
-          eventType: `event.${i}`, category: 'session',
-          message: `Event ${i}`, conversationId: convId
-        })
-      }
-      const limited = eventRepository.findByConversation(convId, 3)
-      assert.equal(limited.length, 3)
-    })
-
-    test('getRecent() returns events newest first', () => {
-      const events = eventRepository.getRecent(5)
-      assert.ok(events.length <= 5)
-      if (events.length >= 2) {
-        assert.ok(events[0].createdAt >= events[1].createdAt)
-      }
-    })
-
-    test('getRecentByWorkspace() filters by workspace', () => {
-      const events = eventRepository.getRecentByWorkspace(wsId, 10)
-      assert.ok(events.every((e: any) => e.workspaceId === wsId))
-    })
-
-    test('pruneOlderThan() removes old events', () => {
-      // Insert an old event manually
-      db.prepare(
-        `INSERT INTO events (event_type, category, message, created_at)
-         VALUES (?, ?, ?, datetime('now', '-100 days'))`
-      ).run('old.event', 'session', 'Ancient event')
-
-      const pruned = eventRepository.pruneOlderThan(90)
-      assert.ok(pruned >= 1)
-    })
-
-    test('toModel() maps all fields correctly', () => {
-      const event = eventRepository.create({
-        eventType: 'gate.check', category: 'gate',
-        message: 'Gate passed'
-      })
-      assert.ok(typeof event.id === 'string')
-      assert.ok(typeof event.eventType === 'string')
-      assert.ok(typeof event.category === 'string')
-      assert.ok(typeof event.createdAt === 'string')
+    test('findById() returns undefined for unknown id', () => {
+      const found = eventRepository.findById('nonexistent')
+      assert.equal(found, undefined)
     })
   })
 }

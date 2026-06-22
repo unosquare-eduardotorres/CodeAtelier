@@ -1,5 +1,6 @@
 /**
- * Tests for SpecialistRepository — CRUD, skill assignment, priority reorder, canDelete.
+ * Tests for SpecialistRepository — CRUD, skill associations, reorder, canDelete.
+ * Skips gracefully if better-sqlite3 native module is incompatible.
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
@@ -9,54 +10,67 @@ const env = trySetupTestDb()
 
 if (!env) {
   describe('SpecialistRepository (skipped — native module unavailable)', () => {
-    test('create()', () => {}, { skipReason: 'no DB' })
+    test('create() inserts and returns specialist', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { db: _db, wsId: _wsId } = env
   const { specialistRepository } = require('../specialist.repository')
   const { skillRepository } = require('../skill.repository')
 
   describe('SpecialistRepository', () => {
-    test('create() returns mapped model with defaults', () => {
-      const spec = specialistRepository.create({
+    // ── create ──
+
+    test('create() inserts and returns specialist with all fields', () => {
+      const s = specialistRepository.create({
         agentId: 'agent-1',
-        displayName: 'Test Specialist'
-      })
-      assert.ok(spec.id)
-      assert.equal(spec.agentId, 'agent-1')
-      assert.equal(spec.displayName, 'Test Specialist')
-      assert.equal(spec.icon, '🔧')
-      assert.equal(spec.color, '#6366F1')
-      assert.equal(spec.isActive, false)
-      assert.equal(spec.isCore, false)
-      assert.equal(spec.prompt, '')
-      assert.equal(spec.priority, 100)
-    })
-
-    test('create() respects all provided fields', () => {
-      const spec = specialistRepository.create({
-        agentId: 'agent-2',
-        displayName: 'Custom Spec',
-        description: 'A description',
-        icon: '🔬',
+        displayName: 'Builder',
+        description: 'Builds things',
+        icon: '🔨',
         color: '#FF0000',
-        prompt: 'Be helpful',
-        priority: 5,
-        isActive: true,
-        sourceYaml: 'yaml content'
+        prompt: 'You are a builder',
+        priority: 10,
+        isActive: true
       })
-      assert.equal(spec.description, 'A description')
-      assert.equal(spec.icon, '🔬')
-      assert.equal(spec.color, '#FF0000')
-      assert.equal(spec.prompt, 'Be helpful')
-      assert.equal(spec.priority, 5)
-      assert.equal(spec.isActive, true)
-      assert.equal(spec.sourceYaml, 'yaml content')
+      assert.ok(s.id)
+      assert.equal(s.agentId, 'agent-1')
+      assert.equal(s.displayName, 'Builder')
+      assert.equal(s.description, 'Builds things')
+      assert.equal(s.icon, '🔨')
+      assert.equal(s.color, '#FF0000')
+      assert.equal(s.prompt, 'You are a builder')
+      assert.equal(s.priority, 10)
+      assert.equal(s.isActive, true)
     })
 
-    test('findById() round-trip', () => {
+    test('create() applies defaults for optional fields', () => {
+      const s = specialistRepository.create({
+        agentId: 'agent-defaults',
+        displayName: 'Defaults'
+      })
+      assert.equal(s.icon, '🔧')
+      assert.equal(s.color, '#6366F1')
+      assert.equal(s.prompt, '')
+      assert.equal(s.priority, 100)
+      assert.equal(s.isActive, false)
+    })
+
+    // ── findAll ──
+
+    test('findAll() returns specialists sorted by priority ASC', () => {
+      // Clean slate
+      specialistRepository.deleteAll()
+      specialistRepository.create({ agentId: 'low', displayName: 'Low', priority: 50 })
+      specialistRepository.create({ agentId: 'high', displayName: 'High', priority: 1 })
+      const all = specialistRepository.findAll()
+      assert.ok(all.length >= 2)
+      assert.equal(all[0].displayName, 'High')
+    })
+
+    // ── findById ──
+
+    test('findById() returns specialist', () => {
       const created = specialistRepository.create({
-        agentId: 'agent-find',
+        agentId: 'find-test',
         displayName: 'Findable'
       })
       const found = specialistRepository.findById(created.id)
@@ -64,219 +78,244 @@ if (!env) {
       assert.equal(found.displayName, 'Findable')
     })
 
-    test('findById() returns undefined for unknown', () => {
+    test('findById() returns undefined for unknown id', () => {
       const found = specialistRepository.findById('nonexistent')
       assert.equal(found, undefined)
     })
 
-    test('findByAgentId() looks up by agent_id', () => {
-      specialistRepository.create({ agentId: 'unique-agent', displayName: 'By Agent' })
+    // ── findByAgentId ──
+
+    test('findByAgentId() returns specialist by agentId', () => {
+      specialistRepository.create({ agentId: 'unique-agent', displayName: 'Agent Find' })
       const found = specialistRepository.findByAgentId('unique-agent')
       assert.ok(found)
-      assert.equal(found.displayName, 'By Agent')
+      assert.equal(found.displayName, 'Agent Find')
     })
 
-    test('findAll() returns all specialists', () => {
-      const all = specialistRepository.findAll()
-      assert.ok(all.length > 0)
-    })
-
-    test('findActive() filters to is_active = 1', () => {
-      specialistRepository.create({ agentId: 'active-1', displayName: 'Active', isActive: true })
-      specialistRepository.create({ agentId: 'inactive-1', displayName: 'Inactive', isActive: false })
-      const active = specialistRepository.findActive()
-      assert.ok(active.every((s: any) => s.isActive === true))
-    })
-
-    test('update() changes fields and updates timestamp', () => {
-      const spec = specialistRepository.create({ agentId: 'update-test', displayName: 'Old Name' })
-      const updated = specialistRepository.update(spec.id, {
-        displayName: 'New Name',
-        isActive: true,
-        alias: 'the-alias',
-        avatarUrl: 'https://example.com/avatar.png'
-      })
-      assert.equal(updated.displayName, 'New Name')
-      assert.equal(updated.isActive, true)
-      assert.equal(updated.alias, 'the-alias')
-      assert.equal(updated.avatarUrl, 'https://example.com/avatar.png')
-    })
-
-    test('update() with empty data returns existing', () => {
-      const spec = specialistRepository.create({ agentId: 'noop-upd', displayName: 'No Change' })
-      const result = specialistRepository.update(spec.id, {})
-      assert.equal(result.displayName, 'No Change')
-    })
-
-    test('update() throws for nonexistent id with changes', () => {
-      assert.throws(() => specialistRepository.update('nonexistent', { displayName: 'X' }), /not found/i)
-    })
-
-    test('delete() removes specialist', () => {
-      const spec = specialistRepository.create({ agentId: 'del-test', displayName: 'Delete Me' })
-      specialistRepository.delete(spec.id)
-      const found = specialistRepository.findById(spec.id)
+    test('findByAgentId() returns undefined for unknown agentId', () => {
+      const found = specialistRepository.findByAgentId('no-such-agent')
       assert.equal(found, undefined)
     })
 
-    test('assignSkill() + getSkills() round-trip', () => {
-      const spec = specialistRepository.create({ agentId: 'skill-test', displayName: 'Skill Test' })
-      const skill = skillRepository.create({
-        name: 'Test Skill',
-        filename: 'test-skill.md',
-        filePath: '/skills/test-skill.md'
-      })
-      specialistRepository.assignSkill(spec.id, skill.id)
-      const skills = specialistRepository.getSkills(spec.id)
-      assert.equal(skills.length, 1)
-      assert.equal(skills[0].name, 'Test Skill')
+    // ── findActive ──
+
+    test('findActive() returns only active specialists', () => {
+      specialistRepository.deleteAll()
+      specialistRepository.create({ agentId: 'active-1', displayName: 'A', isActive: true })
+      specialistRepository.create({ agentId: 'inactive-1', displayName: 'B', isActive: false })
+      const active = specialistRepository.findActive()
+      assert.equal(active.length, 1)
+      assert.equal(active[0].displayName, 'A')
     })
 
-    test('removeSkill() detaches skill', () => {
-      const spec = specialistRepository.create({ agentId: 'rm-skill', displayName: 'RM Skill' })
-      const skill = skillRepository.create({
-        name: 'Removable',
-        filename: 'removable.md',
-        filePath: '/skills/removable.md'
+    // ── update ──
+
+    test('update() modifies specified fields', () => {
+      const s = specialistRepository.create({ agentId: 'upd-1', displayName: 'Original' })
+      const updated = specialistRepository.update(s.id, {
+        displayName: 'Updated',
+        description: 'New desc',
+        icon: '🚀',
+        color: '#00FF00',
+        prompt: 'New prompt',
+        priority: 5,
+        isActive: true,
+        alias: 'my-alias',
+        avatarUrl: 'https://example.com/avatar.png'
       })
-      specialistRepository.assignSkill(spec.id, skill.id)
-      specialistRepository.removeSkill(spec.id, skill.id)
-      const skills = specialistRepository.getSkills(spec.id)
+      assert.equal(updated.displayName, 'Updated')
+      assert.equal(updated.description, 'New desc')
+      assert.equal(updated.icon, '🚀')
+      assert.equal(updated.color, '#00FF00')
+      assert.equal(updated.prompt, 'New prompt')
+      assert.equal(updated.priority, 5)
+      assert.equal(updated.isActive, true)
+      assert.equal(updated.alias, 'my-alias')
+      assert.equal(updated.avatarUrl, 'https://example.com/avatar.png')
+    })
+
+    test('update() with no fields returns existing specialist', () => {
+      const s = specialistRepository.create({ agentId: 'upd-noop', displayName: 'NoOp' })
+      const result = specialistRepository.update(s.id, {})
+      assert.equal(result.displayName, 'NoOp')
+    })
+
+    test('update() throws for unknown id', () => {
+      assert.throws(() => specialistRepository.update('nonexistent', { displayName: 'X' }), {
+        message: /not found/i
+      })
+    })
+
+    // ── delete ──
+
+    test('delete() removes specialist', () => {
+      const s = specialistRepository.create({ agentId: 'del-1', displayName: 'ToDelete' })
+      specialistRepository.delete(s.id)
+      const found = specialistRepository.findById(s.id)
+      assert.equal(found, undefined)
+    })
+
+    // ── skill associations ──
+
+    test('assignSkill() and getSkills() round-trip', () => {
+      const s = specialistRepository.create({
+        agentId: 'skill-test',
+        displayName: 'SkillTest',
+        isActive: true
+      })
+      const sk = skillRepository.create({
+        name: 'TypeScript',
+        filename: 'ts.md',
+        filePath: '/skills/ts.md',
+        isActive: true
+      })
+      specialistRepository.assignSkill(s.id, sk.id)
+      const skills = specialistRepository.getSkills(s.id)
+      assert.equal(skills.length, 1)
+      assert.equal(skills[0].name, 'TypeScript')
+    })
+
+    test('getSkills() returns only active skills', () => {
+      const s = specialistRepository.create({
+        agentId: 'skill-active-test',
+        displayName: 'SkillActiveTest'
+      })
+      const activeSk = skillRepository.create({
+        name: 'Active Skill',
+        filename: 'active.md',
+        filePath: '/skills/active.md',
+        isActive: true
+      })
+      const inactiveSk = skillRepository.create({
+        name: 'Inactive Skill',
+        filename: 'inactive.md',
+        filePath: '/skills/inactive.md',
+        isActive: false
+      })
+      specialistRepository.assignSkill(s.id, activeSk.id)
+      specialistRepository.assignSkill(s.id, inactiveSk.id)
+      const skills = specialistRepository.getSkills(s.id)
+      assert.equal(skills.length, 1)
+      assert.equal(skills[0].name, 'Active Skill')
+    })
+
+    test('getAllSkills() returns active and inactive', () => {
+      const s = specialistRepository.create({
+        agentId: 'skill-all-test',
+        displayName: 'AllSkillsTest'
+      })
+      const sk1 = skillRepository.create({
+        name: 'All-Active',
+        filename: 'a.md',
+        filePath: '/skills/a.md',
+        isActive: true
+      })
+      const sk2 = skillRepository.create({
+        name: 'All-Inactive',
+        filename: 'b.md',
+        filePath: '/skills/b.md',
+        isActive: false
+      })
+      specialistRepository.assignSkill(s.id, sk1.id)
+      specialistRepository.assignSkill(s.id, sk2.id)
+      const all = specialistRepository.getAllSkills(s.id)
+      assert.equal(all.length, 2)
+    })
+
+    test('removeSkill() removes skill association', () => {
+      const s = specialistRepository.create({
+        agentId: 'rm-skill',
+        displayName: 'RmSkill'
+      })
+      const sk = skillRepository.create({
+        name: 'Removable',
+        filename: 'rm.md',
+        filePath: '/skills/rm.md'
+      })
+      specialistRepository.assignSkill(s.id, sk.id)
+      specialistRepository.removeSkill(s.id, sk.id)
+      const skills = specialistRepository.getAllSkills(s.id)
       assert.equal(skills.length, 0)
     })
 
-    test('reorderPriorities() sets sequential priorities', () => {
-      const a = specialistRepository.create({ agentId: 'reorder-a', displayName: 'A', priority: 10 })
-      const b = specialistRepository.create({ agentId: 'reorder-b', displayName: 'B', priority: 20 })
-      specialistRepository.reorderPriorities([b.id, a.id])
-      const updB = specialistRepository.findById(b.id)
-      const updA = specialistRepository.findById(a.id)
-      assert.equal(updB!.priority, 1)
-      assert.equal(updA!.priority, 2)
+    test('findSpecialistsForSkill() returns specialists assigned to a skill', () => {
+      specialistRepository.deleteAll()
+      const s1 = specialistRepository.create({ agentId: 'for-skill-1', displayName: 'S1' })
+      const s2 = specialistRepository.create({ agentId: 'for-skill-2', displayName: 'S2' })
+      const sk = skillRepository.create({
+        name: 'Shared',
+        filename: 'shared.md',
+        filePath: '/skills/shared.md'
+      })
+      specialistRepository.assignSkill(s1.id, sk.id)
+      specialistRepository.assignSkill(s2.id, sk.id)
+      const specialists = specialistRepository.findSpecialistsForSkill(sk.id)
+      assert.equal(specialists.length, 2)
     })
 
+    // ── reorder ──
+
+    test('reorderPriorities() updates priorities in order', () => {
+      specialistRepository.deleteAll()
+      const a = specialistRepository.create({ agentId: 'ord-a', displayName: 'A', priority: 99 })
+      const b = specialistRepository.create({ agentId: 'ord-b', displayName: 'B', priority: 98 })
+      specialistRepository.reorderPriorities([b.id, a.id])
+      const bUpdated = specialistRepository.findById(b.id)
+      const aUpdated = specialistRepository.findById(a.id)
+      assert.ok(bUpdated)
+      assert.ok(aUpdated)
+      assert.equal(bUpdated.priority, 1)
+      assert.equal(aUpdated.priority, 2)
+    })
+
+    // ── canDelete ──
+
     test('canDelete() returns allowed:true when no blocking skills', () => {
-      const spec = specialistRepository.create({ agentId: 'can-del', displayName: 'Can Del' })
-      const result = specialistRepository.canDelete(spec.id)
+      const s = specialistRepository.create({ agentId: 'can-del', displayName: 'CanDel' })
+      const result = specialistRepository.canDelete(s.id)
       assert.equal(result.allowed, true)
     })
 
-    test('canDelete() returns allowed:false when specialist is sole owner of active skill', () => {
-      const spec = specialistRepository.create({ agentId: 'sole-owner', displayName: 'Sole' })
-      const skill = skillRepository.create({
-        name: 'Sole Skill',
+    test('canDelete() returns allowed:false when specialist is only assignee for an active skill', () => {
+      const s = specialistRepository.create({ agentId: 'sole-1', displayName: 'Sole' })
+      const sk = skillRepository.create({
+        name: 'OnlySole',
         filename: 'sole.md',
         filePath: '/skills/sole.md',
         isActive: true
       })
-      specialistRepository.assignSkill(spec.id, skill.id)
-      const result = specialistRepository.canDelete(spec.id)
+      specialistRepository.assignSkill(s.id, sk.id)
+      const result = specialistRepository.canDelete(s.id)
       assert.equal(result.allowed, false)
       assert.ok(result.blockingSkills)
-      assert.ok(result.blockingSkills!.includes('Sole Skill'))
+      assert.ok(result.blockingSkills!.includes('OnlySole'))
     })
 
-    test('findAllWithSkills() includes skills array', () => {
-      const all = specialistRepository.findAllWithSkills()
-      assert.ok(Array.isArray(all))
-      if (all.length > 0) {
-        assert.ok('skills' in all[0])
-        assert.ok(Array.isArray(all[0].skills))
-      }
-    })
+    // ── findAllWithSkills ──
 
-    // ── Phase 6C: Untested methods ──
-
-    test('findReadyByWorkspace() returns null when no ready specialist', () => {
-      const result = specialistRepository.findReadyByWorkspace(wsId)
-      // Most test specialists don't have build_status = 'ready'
-      // This verifies the method doesn't throw and returns null/Specialist
-      assert.ok(result === null || typeof result.id === 'string')
-    })
-
-    test('findReadyByWorkspace() returns specialist with ready build_status', () => {
-      const spec = specialistRepository.create({
-        workspaceId: wsId,
-        agentId: 'ready-agent',
-        name: 'Ready Specialist',
-        description: 'test'
-      })
-      // Set build_status to 'ready' directly
-      db.prepare(`UPDATE specialists SET build_status = 'ready' WHERE id = ?`).run(spec.id)
-      const result = specialistRepository.findReadyByWorkspace(wsId)
-      assert.ok(result !== null)
-      assert.equal(result!.id, spec.id)
-    })
-
-    test('deleteAll() removes all specialists and skill assignments', () => {
-      // Create a fresh specialist + skill assignment for this test
-      const spec = specialistRepository.create({
-        workspaceId: wsId,
-        agentId: 'delete-all-agent',
-        name: 'Doomed',
-        description: 'will be deleted'
-      })
-      const skill = skillRepository.create({
-        workspaceId: wsId,
-        name: 'Doomed Skill',
-        filename: 'doomed.skill.md'
-      })
-      specialistRepository.assignSkill(spec.id, skill.id)
-
+    test('findAllWithSkills() returns specialists with their skills', () => {
       specialistRepository.deleteAll()
-      assert.deepEqual(specialistRepository.findAll(), [])
+      const s = specialistRepository.create({ agentId: 'with-skills', displayName: 'WithSkills' })
+      const sk = skillRepository.create({
+        name: 'Attached',
+        filename: 'attached.md',
+        filePath: '/skills/attached.md'
+      })
+      specialistRepository.assignSkill(s.id, sk.id)
+      const all = specialistRepository.findAllWithSkills()
+      assert.ok(all.length >= 1)
+      const withSkills = all.find((x: any) => x.id === s.id)
+      assert.ok(withSkills)
+      assert.ok(withSkills.skills.length >= 1)
     })
 
-    test('getAllSkills() includes inactive skills', () => {
-      // Recreate specialist + skills after deleteAll
-      const spec = specialistRepository.create({
-        workspaceId: wsId,
-        agentId: 'all-skills-agent',
-        name: 'All Skills',
-        description: 'test'
-      })
-      const activeSkill = skillRepository.create({
-        workspaceId: wsId,
-        name: 'Active Skill',
-        filename: 'active.skill.md'
-      })
-      const inactiveSkill = skillRepository.create({
-        workspaceId: wsId,
-        name: 'Inactive Skill',
-        filename: 'inactive.skill.md'
-      })
-      skillRepository.setActive(inactiveSkill.id, false)
-      specialistRepository.assignSkill(spec.id, activeSkill.id)
-      specialistRepository.assignSkill(spec.id, inactiveSkill.id)
+    // ── deleteAll ──
 
-      // getSkills() only returns active
-      const activeOnly = specialistRepository.getSkills(spec.id)
-      assert.equal(activeOnly.length, 1)
-      assert.equal(activeOnly[0].name, 'Active Skill')
-
-      // getAllSkills() returns both
-      const all = specialistRepository.getAllSkills(spec.id)
-      assert.equal(all.length, 2)
-    })
-
-    test('findSpecialistsForSkill() returns specialists with given skill', () => {
-      const spec = specialistRepository.create({
-        workspaceId: wsId,
-        agentId: 'for-skill-agent',
-        name: 'Skill Specialist',
-        description: 'test'
-      })
-      const skill = skillRepository.create({
-        workspaceId: wsId,
-        name: 'Lookup Skill',
-        filename: 'lookup.skill.md'
-      })
-      specialistRepository.assignSkill(spec.id, skill.id)
-
-      const result = specialistRepository.findSpecialistsForSkill(skill.id)
-      assert.ok(result.length >= 1)
-      const found = result.find((s: any) => s.id === spec.id)
-      assert.ok(found, 'should find the specialist with the assigned skill')
+    test('deleteAll() removes all specialists and skill associations', () => {
+      specialistRepository.create({ agentId: 'del-all-1', displayName: 'DA1' })
+      specialistRepository.deleteAll()
+      const all = specialistRepository.findAll()
+      assert.equal(all.length, 0)
     })
   })
 }

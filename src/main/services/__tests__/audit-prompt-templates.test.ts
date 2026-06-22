@@ -12,7 +12,13 @@ import { renderAuditPrompt } from '../audit-prompt-templates'
 import type { AuditTrackId } from '../../../shared/types'
 
 const ALL_TRACK_IDS: AuditTrackId[] = [
-  'database', 'code', 'testing', 'architecture', 'security', 'documentation', 'ui-ux'
+  'database',
+  'code',
+  'testing',
+  'architecture',
+  'security',
+  'documentation',
+  'ui-ux'
 ]
 
 describe('renderAuditPrompt', () => {
@@ -37,7 +43,10 @@ describe('renderAuditPrompt', () => {
       // Note: String.replace() only replaces the first occurrence, so
       // templates with duplicate placeholders may retain one — this is
       // a known pre-existing behavior. We verify the key substitutions worked.
-      assert.ok(prompt.includes('TestProject'), `${trackId}: first workspaceName should be replaced`)
+      assert.ok(
+        prompt.includes('TestProject'),
+        `${trackId}: first workspaceName should be replaced`
+      )
     }
   })
 
@@ -59,7 +68,7 @@ describe('renderAuditPrompt', () => {
       trackId: 'code',
       workspaceName: 'MyApp',
       detectedTechs: ['Node.js'],
-      model: 'claude-sonnet-4-6' // full verbosity
+      model: 'claude-haiku-4-5-20251001' // full verbosity
     })
     const leanPrompt = renderAuditPrompt({
       trackId: 'code',
@@ -80,7 +89,7 @@ describe('renderAuditPrompt', () => {
         trackId,
         workspaceName: 'Test',
         detectedTechs: ['Go'],
-        model: 'claude-sonnet-4-6'
+        model: 'claude-haiku-4-5-20251001'
       })
       const lean = renderAuditPrompt({
         trackId,

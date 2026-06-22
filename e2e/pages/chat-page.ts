@@ -1,15 +1,17 @@
 /**
- * ChatPage POM — Chat panel interactions.
+ * ChatPage — Page Object Model for the chat interface.
  *
- * Covers message input, streaming indicators, conversation sidebar,
- * mode switching, and message history.
+ * Encapsulates selectors and actions for:
+ *   - Chat panel and message list
+ *   - Message input and send/stop buttons
+ *   - Streaming indicator and completion detection
+ *   - New chat page
  */
-import type { Page, Locator } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 export class ChatPage {
-  readonly page: Page
+  private readonly page: Page
 
-  // Chat panel elements
   readonly chatPanel: Locator
   readonly messageInput: Locator
   readonly sendButton: Locator
@@ -27,73 +29,74 @@ export class ChatPage {
     this.newChatPage = page.locator('[data-testid="new-chat-page"]')
   }
 
-  /** Type text into the message input and send. */
+  // ── Queries ──────────────────────────────────────────────────────
+
+  /** Return all message elements in the message list. */
+  getMessages(): Locator {
+    return this.page.locator(
+      '[data-testid="message-bubble"], [data-testid="message-card"]'
+    )
+  }
+
+  /** Check if the message input is enabled and ready for typing. */
+  async isInputEnabled(): Promise<boolean> {
+    try {
+      const isVisible = await this.messageInput
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
+      if (!isVisible) return false
+      return !(await this.messageInput.isDisabled())
+    } catch {
+      return false
+    }
+  }
+
+  /** Check if the assistant is currently streaming a response. */
+  async isStreaming(): Promise<boolean> {
+    const hasIndicator = await this.streamingIndicator
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
+    const hasStop = await this.stopButton
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
+    return hasIndicator || hasStop
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────
+
+  /** Type a message and click send. */
   async sendMessage(text: string): Promise<void> {
     await this.messageInput.fill(text)
+    await this.page.waitForTimeout(200)
     await this.sendButton.click()
+    await this.page.waitForTimeout(500)
   }
 
-  /** Wait for the streaming indicator to appear. */
-  async waitForStreaming(timeout = 30_000): Promise<void> {
-    await this.streamingIndicator.waitFor({ state: 'visible', timeout })
+  /**
+   * Wait for streaming to complete (stop button disappears).
+   * @param timeout Max wait time in ms (default: 60s)
+   */
+  async waitForStreamComplete(timeout = 60_000): Promise<void> {
+    // First wait briefly for streaming to start
+    await this.page.waitForTimeout(2_000)
+
+    // Then wait for stop button / streaming indicator to disappear
+    const deadline = Date.now() + timeout
+    while (Date.now() < deadline) {
+      const isActive = await this.isStreaming()
+      if (!isActive) return
+      await this.page.waitForTimeout(1_000)
+    }
   }
 
-  /** Wait for streaming to complete (indicator disappears). */
-  async waitForStreamComplete(timeout = 120_000): Promise<void> {
-    await this.streamingIndicator.waitFor({ state: 'hidden', timeout })
-  }
-
-  /** Click the stop button to interrupt streaming. */
+  /** Click the stop button to halt streaming. */
   async stopGeneration(): Promise<void> {
-    await this.stopButton.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  /** Get all message bubbles in the chat. */
-  getMessages(): Locator {
-    return this.page.locator('[data-testid="message-bubble"]')
-  }
-
-  /** Get the last message bubble. */
-  getLastMessage(): Locator {
-    return this.page.locator('[data-testid="message-bubble"]').last()
-  }
-
-  /** Switch conversation mode (plan/build/danger). */
-  async switchMode(mode: 'plan' | 'build' | 'danger'): Promise<void> {
-    const modeButton = this.page.getByRole('button', { name: new RegExp(mode, 'i') })
-    await modeButton.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  /** Open a new chat via the sidebar button. */
-  async openNewChat(): Promise<void> {
-    const newChatBtn = this.page.getByRole('button', { name: /new chat/i })
-    await newChatBtn.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  /** Click a conversation in the sidebar by title. */
-  async openConversation(title: string): Promise<void> {
-    const item = this.page.getByRole('button', {
-      name: new RegExp(`Open conversation.*${title}`, 'i')
-    })
-    await item.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  /** Get the scroll-to-bottom button if visible. */
-  getScrollToBottomButton(): Locator {
-    return this.page.getByRole('button', { name: /scroll to latest/i })
-  }
-
-  /** Check if message input is enabled. */
-  async isInputEnabled(): Promise<boolean> {
-    return !(await this.messageInput.isDisabled())
-  }
-
-  /** Check if streaming is active (stop button visible). */
-  async isStreaming(): Promise<boolean> {
-    return this.stopButton.isVisible({ timeout: 1_000 }).catch(() => false)
+    const isVisible = await this.stopButton
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (isVisible) {
+      await this.stopButton.click()
+      await this.page.waitForTimeout(1_000)
+    }
   }
 }

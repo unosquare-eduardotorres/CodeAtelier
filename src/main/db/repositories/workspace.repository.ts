@@ -1,4 +1,5 @@
 import { BaseRepository } from '../base-repository'
+import { safeParseJSON } from '../json-utils'
 import type { Workspace, WorkspaceSettings } from '../../../shared/types'
 
 interface WorkspaceRow {
@@ -98,11 +99,8 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
   getSettings(id: string): WorkspaceSettings {
     const workspace = this.findById(id)
     if (!workspace) return {}
-    try {
-      return JSON.parse(workspace.settingsJson || '{}') as WorkspaceSettings
-    } catch {
-      return {}
-    }
+    // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
+    return safeParseJSON<WorkspaceSettings>(workspace.settingsJson, {})
   }
 
   /** Get settings for a workspace by its repo path (used when only path is available) */
@@ -112,11 +110,8 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
       | WorkspaceRow
       | undefined
     if (!row) return {}
-    try {
-      return JSON.parse(row.settings_json || '{}') as WorkspaceSettings
-    } catch {
-      return {}
-    }
+    // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
+    return safeParseJSON<WorkspaceSettings>(row.settings_json, {})
   }
 
   /** Update workspace constitution markdown and version. */

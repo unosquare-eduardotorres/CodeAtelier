@@ -46,7 +46,10 @@ export default function StartCouncilModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-surface-float rounded-xl border border-indigo-500/30 shadow-xl w-[520px] overflow-hidden">
+      <div
+        data-testid="council-start-modal"
+        className="bg-surface-float rounded-xl border border-indigo-500/30 shadow-xl w-[520px] overflow-hidden"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 bg-indigo-500/10 border-b border-indigo-500/20">
           <div className="flex items-center gap-2">

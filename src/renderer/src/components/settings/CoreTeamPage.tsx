@@ -43,7 +43,7 @@ export default function CoreTeamPage(): React.JSX.Element {
   })
 
   return (
-    <div className="p-6">
+    <div data-testid="core-team-page" className="p-6">
       <div className="flex items-center gap-2 mb-2">
         <Users size={16} className="text-primary-text" />
         <h3 className="text-sm font-semibold text-text-primary">Core Team</h3>
@@ -56,6 +56,7 @@ export default function CoreTeamPage(): React.JSX.Element {
         {cards.map((card) => (
           <div
             key={card.id}
+            data-testid="core-agent-card"
             className="group relative flex flex-col items-center text-center p-6 rounded-xl border border-border-subtle bg-surface-overlay hover:border-primary/30 hover:shadow-md transition-all"
           >
             {/* Avatar */}

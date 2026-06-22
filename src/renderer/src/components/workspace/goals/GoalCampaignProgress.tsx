@@ -53,7 +53,7 @@ export default function GoalCampaignProgress({
   const { title, currentIndex, totalGoals, goals, paused } = activeCampaign
 
   return (
-    <div className="space-y-3">
+    <div data-testid="goal-campaign-progress" className="space-y-3">
       <div className="rounded-xl border border-border-subtle bg-surface-overlay p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-text-primary truncate">{title}</span>
@@ -107,6 +107,7 @@ export default function GoalCampaignProgress({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-testid="goal-campaign-action-btn"
               onClick={() => respondToCampaign(workspaceId, 'retry')}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-cyan-400 bg-cyan-500/20 hover:bg-cyan-500/30 rounded-lg"
             >

@@ -46,6 +46,7 @@ export default function RewindDialog({
 
   useEffect(() => {
     if (isOpen && conversationId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
       setLoading(true)
       setError(null)
       setSelectedId(null)
@@ -116,7 +117,7 @@ export default function RewindDialog({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
       {/* Dialog */}
-      <div className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
+      <div data-testid="rewind-dialog" className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center">
@@ -161,6 +162,7 @@ export default function RewindDialog({
               {sortedCheckpoints.map((cp) => (
                 <button
                   key={cp.id}
+                  data-testid="rewind-checkpoint-item"
                   onClick={() => setSelectedId(cp.id)}
                   disabled={isRewinding}
                   className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${
@@ -218,6 +220,7 @@ export default function RewindDialog({
             Cancel
           </button>
           <button
+            data-testid="rewind-confirm-btn"
             onClick={handleRewind}
             disabled={isRewinding || !selectedId}
             className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 bg-orange-500 hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"

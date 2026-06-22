@@ -11,6 +11,7 @@ import { runOneShotClaude } from './one-shot-claude'
 import { modelConfigService } from './model-config.service'
 import { grillSessionRepository } from '../db/repositories/grill-session.repository'
 import { planRegistryService } from './plan-registry.service'
+import { resolvePromptVerbosity } from '../../shared/constants'
 import type { GrillStructuredPlan, GrillDecision, GrillTrackScore } from '../../shared/types'
 import type { GrillSession } from '../db/repositories/grill-session.repository'
 
@@ -18,38 +19,22 @@ const planLog = log.scope('grill-plan-generator')
 
 // ── System Prompt ───────────────────────────────────────────────────────────
 
-const PLAN_GENERATION_SYSTEM_PROMPT = `You are a senior technical architect synthesizing grill evaluation results into a structured implementation plan.
+/**
+ * W3-F17: Compressed system prompt for grill plan generation.
+ * Verbose JSON example removed — model derives structure from field names.
+ */
+const PLAN_GENERATION_SYSTEM_PROMPT = `You are a senior architect synthesizing grill evaluation results into a GrillStructuredPlan.
 
-You receive a grill session's decisions, scores, iteration history, and idea description.
-Your job is to produce a comprehensive GrillStructuredPlan JSON document.
+Synthesize ALL decisions into a coherent plan. Identify files, dependencies, scope per item. Derive constraints from decisions. Order items by dependency (no dependsOn first). Include a standalone requirementDocument (markdown).
 
-RULES:
-- Synthesize ALL grill decisions into a coherent implementation plan
-- Identify specific files, dependencies, and scope per item
-- Derive constraints from the grill decisions (e.g., "User chose circuit breaker pattern → must use resilience library")
-- Produce the GrillStructuredPlan JSON inside a fenced \`\`\`grill-plan block
-- Each implementation item should have a unique short ID (e.g., "item-1", "item-2")
-- Order items by dependency — items with no dependsOn come first
-- Include a full requirement document as markdown in the requirementDocument field
-- The requirement document should be a complete, standalone specification derived from all grill decisions
+Output one \`\`\`grill-plan block: {version: 1, title, summary, goalType: "feature"|"refactor"|"bugfix"|"tests", decisions, items: [{id, title, description, files, scope, dependsOn, includesTests}], risks, constraints, originalDescription, requirementDocument}
 
-OUTPUT FORMAT:
-\`\`\`grill-plan
-{
-  "version": 1,
-  "title": "...",
-  "summary": "...",
-  "goalType": "feature|refactor|bugfix|tests",
-  "decisions": [...],
-  "items": [...],
-  "risks": [...],
-  "constraints": [...],
-  "originalDescription": "...",
-  "requirementDocument": "..."
-}
-\`\`\`
+Valid, complete JSON. Do not truncate.`
 
-The JSON must be valid and complete. Do not truncate or abbreviate.`
+/** W3-F18: Lean variant for Opus/Sonnet — minimal framing. */
+const PLAN_GENERATION_SYSTEM_PROMPT_LEAN = `Synthesize grill decisions into a GrillStructuredPlan. One \`\`\`grill-plan block:
+{version: 1, title, summary, goalType, decisions, items: [{id, title, description, files, scope, dependsOn, includesTests}], risks, constraints, originalDescription, requirementDocument (standalone markdown spec)}
+Order items by dependency. Valid JSON, no truncation.`
 
 // ── Service ─────────────────────────────────────────────────────────────────
 
@@ -87,7 +72,7 @@ class GrillPlanGeneratorService {
     // 3. Resolve model
     const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
 
-    // 4. Call Opus via CLI one-shot
+    // 4. Call Claude via CLI one-shot (W3-F18: lean gating)
     const responseText = await this.callClaude(prompt, model, params.workspaceId)
 
     // 5. Parse structured plan from response
@@ -139,7 +124,7 @@ class GrillPlanGeneratorService {
     // 2. Resolve model (reuse the grill:plan model config)
     const model = modelConfigService.getModelById(params.workspaceId, 'grill:plan')
 
-    // 3. Call Claude via CLI one-shot
+    // 3. Call Claude via CLI one-shot (W3-F18: lean gating)
     const responseText = await this.callClaude(prompt, model, params.workspaceId)
 
     // 4. Parse structured plan from response
@@ -304,8 +289,11 @@ class GrillPlanGeneratorService {
     return sections.join('\n')
   }
 
-  /** Call Claude CLI in one-shot mode */
+  /** Call Claude CLI in one-shot mode (W3-F18: selects lean system prompt when model qualifies) */
   private async callClaude(prompt: string, model: string, workspaceId?: string): Promise<string> {
+    const systemPrompt = resolvePromptVerbosity(model) === 'lean'
+      ? PLAN_GENERATION_SYSTEM_PROMPT_LEAN
+      : PLAN_GENERATION_SYSTEM_PROMPT
     try {
       const { text } = await runOneShotClaude({
         feature: 'grill_plan',
@@ -317,7 +305,7 @@ class GrillPlanGeneratorService {
           '--model',
           model,
           '--system-prompt',
-          PLAN_GENERATION_SYSTEM_PROMPT,
+          systemPrompt,
           '--permission-mode',
           'plan',
           '--max-turns',
@@ -338,40 +326,95 @@ class GrillPlanGeneratorService {
   /** Parse the grill-plan JSON block from Claude's response */
   private parsePlan(text: string, fallbackDescription: string): GrillStructuredPlan | null {
     const regex = /```grill-plan\n([\s\S]*?)```/g
-    let lastMatch: RegExpExecArray | null = null
+    const blocks: string[] = []
     let match: RegExpExecArray | null
 
     while ((match = regex.exec(text)) !== null) {
-      lastMatch = match
+      blocks.push(match[1])
     }
 
-    if (!lastMatch) {
+    if (blocks.length === 0) {
       planLog.error('[plan-gen] No ```grill-plan``` block found in response')
       return null
     }
 
-    try {
-      const parsed = JSON.parse(lastMatch[1]) as GrillStructuredPlan
-
-      // Validate required fields
-      if (!parsed.title || !parsed.summary || !Array.isArray(parsed.items)) {
-        planLog.error('[plan-gen] Parsed plan missing required fields')
-        return null
-      }
-
-      // Ensure version is set
-      parsed.version = 1
-
-      // Ensure originalDescription is populated from the fallback if missing
-      if (!parsed.originalDescription) {
-        parsed.originalDescription = fallbackDescription
-      }
-
-      return parsed
-    } catch (err) {
-      planLog.error('[plan-gen] Failed to parse grill-plan JSON:', err)
-      return null
+    // PLAN-GEN-03: Prefer first parseable block over last match.
+    // If Claude self-corrects, the first block is usually the valid one.
+    if (blocks.length > 1) {
+      planLog.warn(`[plan-gen] Found ${blocks.length} grill-plan blocks — using first valid`)
     }
+
+    for (const block of blocks) {
+      try {
+        const parsed = JSON.parse(block) as GrillStructuredPlan
+        const validated = this.validatePlanStructure(parsed)
+        if (!validated) continue
+
+        // Ensure version is set
+        parsed.version = 1
+
+        // Ensure originalDescription is populated from the fallback if missing
+        if (!parsed.originalDescription) {
+          parsed.originalDescription = fallbackDescription
+        }
+
+        return parsed
+      } catch (err) {
+        planLog.warn('[plan-gen] Failed to parse grill-plan block, trying next:', err)
+        continue
+      }
+    }
+
+    planLog.error('[plan-gen] No valid grill-plan block found in any of the candidates')
+    return null
+  }
+
+  /**
+   * PLAN-GEN-01: Validate the structure of a parsed GrillStructuredPlan.
+   * Checks required fields and nested structure to prevent malformed plans
+   * from corrupting downstream pipelines (mapper, council, MPA).
+   */
+  private validatePlanStructure(parsed: GrillStructuredPlan): boolean {
+    // Top-level required fields
+    if (!parsed.title || !parsed.summary || !Array.isArray(parsed.items)) {
+      planLog.error('[plan-gen] Parsed plan missing required top-level fields (title/summary/items)')
+      return false
+    }
+
+    // Validate each item has required structure
+    for (let i = 0; i < parsed.items.length; i++) {
+      const item = parsed.items[i]
+      if (
+        typeof item.id !== 'string' ||
+        typeof item.title !== 'string' ||
+        typeof item.description !== 'string' ||
+        !Array.isArray(item.files) ||
+        !Array.isArray(item.dependsOn)
+      ) {
+        planLog.error(
+          `[plan-gen] Plan item[${i}] missing required fields (id/title/description/files/dependsOn)`
+        )
+        return false
+      }
+    }
+
+    // Validate decisions array structure (if present)
+    if (parsed.decisions && !Array.isArray(parsed.decisions)) {
+      planLog.error('[plan-gen] Plan decisions must be an array')
+      return false
+    }
+
+    // Validate risks/constraints are arrays (if present)
+    if (parsed.risks && !Array.isArray(parsed.risks)) {
+      planLog.error('[plan-gen] Plan risks must be an array')
+      return false
+    }
+    if (parsed.constraints && !Array.isArray(parsed.constraints)) {
+      planLog.error('[plan-gen] Plan constraints must be an array')
+      return false
+    }
+
+    return true
   }
 }
 

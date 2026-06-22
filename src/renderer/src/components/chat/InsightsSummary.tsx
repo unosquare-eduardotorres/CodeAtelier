@@ -61,7 +61,7 @@ export default function InsightsSummary({
 }: InsightsSummaryProps): React.JSX.Element | null {
   if (loading) {
     return (
-      <div className="mb-4 p-3 bg-surface-base rounded-lg border border-border-subtle animate-pulse">
+      <div data-testid="insights-loading" className="mb-4 p-3 bg-surface-base rounded-lg border border-border-subtle animate-pulse">
         <div className="flex items-center gap-2 mb-2">
           <div className="w-4 h-4 bg-surface-overlay rounded" />
           <div className="w-24 h-4 bg-surface-overlay rounded" />
@@ -80,7 +80,7 @@ export default function InsightsSummary({
   const totalTokens = insights.tokenSummary.inputTokens + insights.tokenSummary.outputTokens
 
   return (
-    <div className="mb-4 p-3 bg-surface-base rounded-lg border border-border-subtle">
+    <div data-testid="insights-summary" className="mb-4 p-3 bg-surface-base rounded-lg border border-border-subtle">
       <div className="flex items-center gap-2 mb-2">
         <Zap size={14} className="text-primary-text" />
         <span className="text-xs font-medium text-text-secondary uppercase tracking-wide">

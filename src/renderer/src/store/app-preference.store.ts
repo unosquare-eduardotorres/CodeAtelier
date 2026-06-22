@@ -14,7 +14,8 @@ const defaultPreferences: AppPreferences = {
   updateSource: 'drive',
   updateDrivePath: '',
   updateGithubOwner: '',
-  updateGithubRepo: ''
+  updateGithubRepo: '',
+  context7ApiKey: ''
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -26,7 +27,8 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   updateSource: 'update_source',
   updateDrivePath: 'update_drive_path',
   updateGithubOwner: 'update_github_owner',
-  updateGithubRepo: 'update_github_repo'
+  updateGithubRepo: 'update_github_repo',
+  context7ApiKey: 'context7_api_key'
 }
 
 interface AppPreferenceState {

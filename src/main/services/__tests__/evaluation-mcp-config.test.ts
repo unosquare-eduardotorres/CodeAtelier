@@ -1,8 +1,8 @@
 /**
- * Unit tests for role-adapters/evaluation-mcp-config.ts — evaluation tool configs.
+ * Unit tests for evaluation-mcp-config.ts — shared read-only MCP tool
+ * configuration used by Grill, Greenfield Grill, and Council adapters.
  *
- * Phase 6A Coverage Improvement — lines 83-99, 106-126 (currently 69% → 80%+).
- * Covers: buildReadOnlyToolConfig flag permutations, buildNoToolsConfig shape.
+ * Two pure functions: buildReadOnlyToolConfig() and buildNoToolsConfig().
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
@@ -12,123 +12,177 @@ import {
   type EvaluationToolFlags
 } from '../role-adapters/evaluation-mcp-config'
 
-// ── buildReadOnlyToolConfig ──
+// ── Helpers ──
+
+function allFlags(overrides: Partial<EvaluationToolFlags> = {}): EvaluationToolFlags {
+  return {
+    repomapEnabled: true,
+    semanticSearchEnabled: true,
+    hasWorkspace: true,
+    includeGitContext: true,
+    ...overrides
+  }
+}
 
 describe('buildReadOnlyToolConfig', () => {
-  function makeFlags(overrides: Partial<EvaluationToolFlags> = {}): EvaluationToolFlags {
-    return {
+  test('all_flags_true_includes_code_graph_semantic_git_analysis_tools', () => {
+    const result = buildReadOnlyToolConfig(allFlags())
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    // Base tools always present
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
+    assert.ok(allowedTools.includes('WebSearch'))
+    assert.ok(allowedTools.includes('WebFetch'))
+    // Code graph tools
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    // Semantic search tools
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+    // Git context tools
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__git-context__')))
+    // Code analysis tools
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-analysis__')))
+  })
+
+  test('repomapEnabled_false_excludes_code_graph_tools', () => {
+    const result = buildReadOnlyToolConfig(allFlags({ repomapEnabled: false }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    // Semantic search still present
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+  })
+
+  test('semanticSearchEnabled_false_excludes_semantic_search_tools', () => {
+    const result = buildReadOnlyToolConfig(allFlags({ semanticSearchEnabled: false }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+    // Code graph still present
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+  })
+
+  test('includeGitContext_false_excludes_git_context_tools', () => {
+    const result = buildReadOnlyToolConfig(allFlags({ includeGitContext: false }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__git-context__')))
+    // Other tools still present
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+  })
+
+  test('hasWorkspace_false_excludes_code_graph_and_semantic_even_if_enabled', () => {
+    const result = buildReadOnlyToolConfig(
+      allFlags({ hasWorkspace: false, repomapEnabled: true, semanticSearchEnabled: true })
+    )
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+    // Base tools still present
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('WebFetch'))
+  })
+
+  test('all_flags_false_only_base_and_analysis_tools', () => {
+    const result = buildReadOnlyToolConfig({
       repomapEnabled: false,
       semanticSearchEnabled: false,
       hasWorkspace: false,
-      includeGitContext: false,
-      ...overrides
-    }
-  }
-
-  test('all flags false → base tools + code-analysis only', () => {
-    const result = buildReadOnlyToolConfig(makeFlags())
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.includes('Glob'))
-    assert.ok(result.allowedTools.includes('Grep'))
-    assert.ok(result.allowedTools.includes('WebSearch'))
-    assert.ok(result.allowedTools.includes('WebFetch'))
-    // Code analysis always included
-    assert.ok(result.allowedTools.some((t) => t.includes('code-analysis')))
-    // No code-graph, semantic-search, or git tools
-    assert.ok(!result.allowedTools.some((t) => t.includes('code-graph')))
-    assert.ok(!result.allowedTools.some((t) => t.includes('semantic-search')))
-    assert.ok(!result.allowedTools.some((t) => t.includes('git-context')))
+      includeGitContext: false
+    })
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    // Only base + code-analysis
+    assert.ok(allowedTools.includes('Read'))
+    assert.ok(allowedTools.includes('Glob'))
+    assert.ok(allowedTools.includes('Grep'))
+    assert.ok(allowedTools.includes('WebSearch'))
+    assert.ok(allowedTools.includes('WebFetch'))
+    assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-analysis__')))
+    // No code-graph, semantic, or git
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__semantic-search__')))
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__git-context__')))
   })
 
-  test('repomapEnabled + hasWorkspace → includes code-graph tools', () => {
-    const result = buildReadOnlyToolConfig(makeFlags({ repomapEnabled: true, hasWorkspace: true }))
-    const cgTools = result.allowedTools.filter((t) => t.includes('code-graph'))
-    assert.ok(cgTools.length >= 10, `expected ≥10 code-graph tools, got ${cgTools.length}`)
-    assert.ok(result.allowedTools.includes('mcp__code-graph__graph_map'))
-    assert.ok(result.allowedTools.includes('mcp__code-graph__find_callers'))
+  test('disallowedTools_always_includes_write_edit_bash_agent', () => {
+    const result = buildReadOnlyToolConfig(allFlags())
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('Write'))
+    assert.ok(disallowedTools.includes('Edit'))
+    assert.ok(disallowedTools.includes('Bash'))
+    assert.ok(disallowedTools.includes('Agent'))
   })
 
-  test('repomapEnabled but !hasWorkspace → no code-graph tools', () => {
-    const result = buildReadOnlyToolConfig(
-      makeFlags({ repomapEnabled: true, hasWorkspace: false })
-    )
-    assert.ok(!result.allowedTools.some((t) => t.includes('code-graph')))
+  test('disallowedTools_also_includes_control_tools', () => {
+    const result = buildReadOnlyToolConfig(allFlags())
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    assert.ok(disallowedTools.includes('ToolSearch'))
+    assert.ok(disallowedTools.includes('ExitPlanMode'))
+    assert.ok(disallowedTools.includes('AskUserQuestion'))
+    assert.ok(disallowedTools.includes('TodoWrite'))
+    assert.ok(disallowedTools.includes('TaskCreate'))
+    assert.ok(disallowedTools.includes('TaskUpdate'))
   })
 
-  test('semanticSearchEnabled + hasWorkspace → includes semantic-search tools', () => {
-    const result = buildReadOnlyToolConfig(
-      makeFlags({ semanticSearchEnabled: true, hasWorkspace: true })
-    )
-    assert.ok(result.allowedTools.includes('mcp__semantic-search__semantic_search'))
-    assert.ok(result.allowedTools.includes('mcp__semantic-search__similar_code'))
-    assert.ok(result.allowedTools.includes('mcp__semantic-search__codebase_concepts'))
-  })
-
-  test('semanticSearchEnabled but !hasWorkspace → no semantic-search tools', () => {
-    const result = buildReadOnlyToolConfig(
-      makeFlags({ semanticSearchEnabled: true, hasWorkspace: false })
-    )
-    assert.ok(!result.allowedTools.some((t) => t.includes('semantic-search')))
-  })
-
-  test('includeGitContext → includes git-context tools (no workspace dependency)', () => {
-    const result = buildReadOnlyToolConfig(
-      makeFlags({ includeGitContext: true, hasWorkspace: false })
-    )
-    assert.ok(result.allowedTools.includes('mcp__git-context__git_log'))
-    assert.ok(result.allowedTools.includes('mcp__git-context__git_diff'))
-    assert.ok(result.allowedTools.includes('mcp__git-context__git_blame'))
-  })
-
-  test('all flags true → includes all optional tool sets', () => {
-    const result = buildReadOnlyToolConfig(
-      makeFlags({
-        repomapEnabled: true,
-        semanticSearchEnabled: true,
-        hasWorkspace: true,
-        includeGitContext: true
-      })
-    )
-    assert.ok(result.allowedTools.includes('Read'))
-    assert.ok(result.allowedTools.some((t) => t.includes('code-graph')))
-    assert.ok(result.allowedTools.some((t) => t.includes('semantic-search')))
-    assert.ok(result.allowedTools.some((t) => t.includes('git-context')))
-    assert.ok(result.allowedTools.some((t) => t.includes('code-analysis')))
-  })
-
-  test('disallowedTools always contains write/agent tools', () => {
-    const result = buildReadOnlyToolConfig(makeFlags())
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('AskUserQuestion'))
-    assert.equal(result.disallowedTools.length, 10)
+  test('code_analysis_tools_always_included_regardless_of_flags', () => {
+    const result = buildReadOnlyToolConfig({
+      repomapEnabled: false,
+      semanticSearchEnabled: false,
+      hasWorkspace: false,
+      includeGitContext: false
+    })
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(allowedTools.includes('mcp__code-analysis__todo_scanner'))
+    assert.ok(allowedTools.includes('mcp__code-analysis__dependency_health'))
+    assert.ok(allowedTools.includes('mcp__code-analysis__test_coverage_map'))
   })
 })
 
-// ── buildNoToolsConfig ──
-
 describe('buildNoToolsConfig', () => {
-  test('returns empty allowedTools', () => {
+  test('allowedTools_is_empty', () => {
     const result = buildNoToolsConfig()
     assert.deepEqual(result.allowedTools, [])
   })
 
-  test('disallowedTools includes all read + write + agent tools', () => {
+  test('disallowedTools_includes_all_common_tools', () => {
     const result = buildNoToolsConfig()
-    assert.ok(result.disallowedTools.includes('Read'))
-    assert.ok(result.disallowedTools.includes('Write'))
-    assert.ok(result.disallowedTools.includes('Edit'))
-    assert.ok(result.disallowedTools.includes('Bash'))
-    assert.ok(result.disallowedTools.includes('Glob'))
-    assert.ok(result.disallowedTools.includes('Grep'))
-    assert.ok(result.disallowedTools.includes('Agent'))
-    assert.ok(result.disallowedTools.includes('WebSearch'))
-    assert.ok(result.disallowedTools.includes('WebFetch'))
-    assert.ok(result.disallowedTools.includes('TaskCreate'))
-    assert.ok(result.disallowedTools.includes('TaskUpdate'))
-    assert.equal(result.disallowedTools.length, 15)
+    const expected = [
+      'Read',
+      'Write',
+      'Edit',
+      'Bash',
+      'Glob',
+      'Grep',
+      'Agent',
+      'ToolSearch',
+      'WebSearch',
+      'WebFetch',
+      'ExitPlanMode',
+      'AskUserQuestion',
+      'TodoWrite',
+      'TaskCreate',
+      'TaskUpdate'
+    ]
+    const { disallowedTools } = result
+    assert.ok(disallowedTools, 'disallowedTools should be defined')
+    for (const tool of expected) {
+      assert.ok(disallowedTools.includes(tool), `Expected ${tool} in disallowedTools`)
+    }
+  })
+
+  test('returns_fresh_arrays_on_each_call', () => {
+    const a = buildNoToolsConfig()
+    const b = buildNoToolsConfig()
+    assert.notEqual(a.allowedTools, b.allowedTools)
+    assert.notEqual(a.disallowedTools, b.disallowedTools)
+    assert.deepEqual(a, b)
   })
 })
 

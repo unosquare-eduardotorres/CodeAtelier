@@ -59,49 +59,38 @@ function extractInputTitle(inputContent: string): string {
   return firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine
 }
 
-export default function CouncilLanding({
-  onAcceptAndBuild,
-  onRevisePlan,
-  onDismiss,
-  onSendToGoal
-}: CouncilLandingProps): React.JSX.Element {
-  const { activeWorkspace } = useWorkspaceStore()
-  const workspaceId = activeWorkspace?.id ?? ''
+// ── Pure helpers ──────────────────────────────────────────────────────────
 
-  const councilIsActive = useCouncilStore((s) => s.isActive)
+/** Map a session status string to a council phase for store hydration. */
+function getPhaseFromStatus(status: string): 'complete' | 'failed' | 'cancelled' {
+  if (status === 'completed') return 'complete'
+  if (status === 'failed') return 'failed'
+  return 'cancelled'
+}
 
-  const [history, setHistory] = useState<CouncilSessionSummary[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+const EMPTY_MESSAGES: Record<string, string> = {
+  completed: 'No completed sessions yet',
+  active: 'No active sessions',
+  failed: 'No failed sessions',
+  all: 'No council sessions yet'
+}
+
+function getEmptyMessage(filter: CouncilFilter, searchQuery: string): string {
+  if (searchQuery.trim()) return 'No sessions match your search'
+  return EMPTY_MESSAGES[filter] ?? EMPTY_MESSAGES.all
+}
+
+// ── Hooks ─────────────────────────────────────────────────────────────────
+
+function useFilteredCouncilSessions(history: CouncilSessionSummary[]): {
+  filteredHistory: CouncilSessionSummary[]
+  filter: CouncilFilter
+  setFilter: (f: CouncilFilter) => void
+  searchQuery: string
+  setSearchQuery: (q: string) => void
+} {
   const [filter, setFilter] = useState<CouncilFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [showStartModal, setShowStartModal] = useState(false)
-  const [isStarting, setIsStarting] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-
-  // Load history on mount + workspace change
-  useEffect(() => {
-    if (!workspaceId) return
-    setIsLoading(true)
-    window.api
-      .councilGetHistory({ workspaceId, limit: 50 })
-      .then((records) => setHistory(records as CouncilSessionSummary[]))
-      .finally(() => setIsLoading(false))
-  }, [workspaceId])
-
-  // Refresh history when a council reaches a terminal phase
-  useEffect(() => {
-    if (!workspaceId) return
-    const cleanup = window.api.onCouncilPhaseChanged((data) => {
-      if (data.phase === 'complete' || data.phase === 'failed' || data.phase === 'cancelled') {
-        window.api
-          .councilGetHistory({ workspaceId, limit: 50 })
-          .then((records) => setHistory(records as CouncilSessionSummary[]))
-      }
-    })
-    return cleanup
-  }, [workspaceId])
-
-  // ── Filter + search ────────────────────────────────────────────────────
 
   const filteredHistory = useMemo(() => {
     let result = history
@@ -119,7 +108,24 @@ export default function CouncilLanding({
     return result
   }, [history, filter, searchQuery])
 
-  // ── Actions ────────────────────────────────────────────────────────────
+  return { filteredHistory, filter, setFilter, searchQuery, setSearchQuery }
+}
+
+function useCouncilLandingHandlers(opts: {
+  workspaceId: string
+  history: CouncilSessionSummary[]
+  setHistory: (fn: (prev: CouncilSessionSummary[]) => CouncilSessionSummary[]) => void
+  setShowStartModal: (show: boolean) => void
+  setDeleteTarget: (id: string | null) => void
+}): {
+  handleStartCouncil: (inputType: CouncilInputType, content: string) => Promise<void>
+  handleView: (sessionId: string) => void
+  handleDelete: (sessionId: string) => Promise<void>
+  handleResume: (sessionId: string) => Promise<void>
+  isStarting: boolean
+} {
+  const { workspaceId, history, setHistory, setShowStartModal, setDeleteTarget } = opts
+  const [isStarting, setIsStarting] = useState(false)
 
   const handleStartCouncil = useCallback(
     async (inputType: CouncilInputType, content: string) => {
@@ -145,7 +151,7 @@ export default function CouncilLanding({
         setIsStarting(false)
       }
     },
-    [workspaceId, isStarting]
+    [workspaceId, isStarting, setShowStartModal]
   )
 
   const handleView = useCallback(
@@ -156,20 +162,13 @@ export default function CouncilLanding({
       const councilState = useCouncilStore.getState()
 
       if (session.status === 'running') {
-        // Rehydrate the council view for a running session
         councilState.startCouncil()
         councilState.setSessionIdentity(sessionId, workspaceId)
       } else {
-        // Hydrate store from completed/failed/cancelled session record
         councilState.hydrateFromRecord({
           sessionId,
           workspaceId,
-          phase:
-            session.status === 'completed'
-              ? 'complete'
-              : session.status === 'failed'
-                ? 'failed'
-                : 'cancelled',
+          phase: getPhaseFromStatus(session.status),
           verdict: session.verdict,
           peerReviews: session.peerReviews ?? [],
           advisorReviews: session.advisorReviews ?? [],
@@ -180,15 +179,18 @@ export default function CouncilLanding({
     [history, workspaceId]
   )
 
-  const handleDelete = useCallback(async (sessionId: string) => {
-    try {
-      await window.api.councilDeleteSession({ sessionId })
-      setHistory((prev) => prev.filter((s) => s.id !== sessionId))
-    } catch (err) {
-      console.error('Failed to delete council session:', err)
-    }
-    setDeleteTarget(null)
-  }, [])
+  const handleDelete = useCallback(
+    async (sessionId: string) => {
+      try {
+        await window.api.councilDeleteSession({ sessionId })
+        setHistory((prev) => prev.filter((s) => s.id !== sessionId))
+      } catch (err) {
+        console.error('Failed to delete council session:', err)
+      }
+      setDeleteTarget(null)
+    },
+    [setHistory, setDeleteTarget]
+  )
 
   const handleResume = useCallback(
     async (sessionId: string) => {
@@ -205,6 +207,62 @@ export default function CouncilLanding({
     },
     [workspaceId]
   )
+
+  return { handleStartCouncil, handleView, handleDelete, handleResume, isStarting }
+}
+
+// ── Component ─────────────────────────────────────────────────────────────
+
+export default function CouncilLanding({
+  onAcceptAndBuild,
+  onRevisePlan,
+  onDismiss,
+  onSendToGoal
+}: CouncilLandingProps): React.JSX.Element {
+  const { activeWorkspace } = useWorkspaceStore()
+  const workspaceId = activeWorkspace?.id ?? ''
+
+  const councilIsActive = useCouncilStore((s) => s.isActive)
+
+  const [history, setHistory] = useState<CouncilSessionSummary[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [showStartModal, setShowStartModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+
+  const { filteredHistory, filter, setFilter, searchQuery, setSearchQuery } =
+    useFilteredCouncilSessions(history)
+  const { handleStartCouncil, handleView, handleDelete, handleResume, isStarting } =
+    useCouncilLandingHandlers({
+      workspaceId,
+      history,
+      setHistory,
+      setShowStartModal,
+      setDeleteTarget
+    })
+
+  // Load history on mount + workspace change
+  useEffect(() => {
+    if (!workspaceId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
+    setIsLoading(true)
+    window.api
+      .councilGetHistory({ workspaceId, limit: 50 })
+      .then((records) => setHistory(records as CouncilSessionSummary[]))
+      .finally(() => setIsLoading(false))
+  }, [workspaceId])
+
+  // Refresh history when a council reaches a terminal phase
+  useEffect(() => {
+    if (!workspaceId) return
+    const cleanup = window.api.onCouncilPhaseChanged((data) => {
+      if (data.phase === 'complete' || data.phase === 'failed' || data.phase === 'cancelled') {
+        window.api
+          .councilGetHistory({ workspaceId, limit: 50 })
+          .then((records) => setHistory(records as CouncilSessionSummary[]))
+      }
+    })
+    return cleanup
+  }, [workspaceId])
 
   // ── Active council → delegate to CouncilView ──────────────────────────
 
@@ -246,7 +304,10 @@ export default function CouncilLanding({
   if (history.length === 0) {
     return (
       <>
-        <div className="flex flex-col items-center justify-center py-10 px-4">
+        <div
+          data-testid="council-landing"
+          className="flex flex-col items-center justify-center py-10 px-4"
+        >
           <div className="max-w-2xl w-full space-y-6">
             {/* Header */}
             <div className="text-center space-y-2">
@@ -360,6 +421,7 @@ export default function CouncilLanding({
             <div className="flex justify-center">
               <button
                 onClick={() => setShowStartModal(true)}
+                data-testid="council-start-btn"
                 className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-xl transition-colors"
               >
                 <Plus size={16} />
@@ -395,15 +457,7 @@ export default function CouncilLanding({
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <Landmark size={32} className="text-indigo-400/30 mb-3" />
           <p className="text-sm text-text-secondary">
-            {searchQuery
-              ? 'No sessions match your search'
-              : filter === 'completed'
-                ? 'No completed sessions yet'
-                : filter === 'active'
-                  ? 'No active sessions'
-                  : filter === 'failed'
-                    ? 'No failed sessions'
-                    : 'No council sessions yet'}
+            {getEmptyMessage(filter, searchQuery)}
           </p>
         </div>
       ) : (

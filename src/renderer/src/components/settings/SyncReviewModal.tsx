@@ -114,7 +114,7 @@ export default function SyncReviewModal({
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-surface-base min-w-0">
+    <div data-testid="sync-review-modal" className="flex-1 flex flex-col bg-surface-base min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-base">
         <div className="flex items-center gap-3">
@@ -294,6 +294,7 @@ export default function SyncReviewModal({
           <button
             onClick={handleApply}
             disabled={isSyncing}
+            data-testid="sync-review-apply"
             className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50"
           >
             {isSyncing ? (

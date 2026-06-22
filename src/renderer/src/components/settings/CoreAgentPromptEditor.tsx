@@ -40,8 +40,10 @@ export default function CoreAgentPromptEditor({
   // Sync editor text when prompt loads or mode changes
   useEffect(() => {
     if (activePrompt) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync editor state from loaded prompt
       setEditedText(activePrompt.promptText)
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null)
     setSaved(false)
     setShowResetConfirm(false)
@@ -97,7 +99,7 @@ export default function CoreAgentPromptEditor({
   }
 
   return (
-    <div className="space-y-3">
+    <div data-testid="core-prompt-editor" className="space-y-3">
       {/* Mode tabs */}
       <div className="flex items-center justify-between">
         <div className="flex items-center bg-surface-base border border-border-subtle rounded-lg p-0.5">

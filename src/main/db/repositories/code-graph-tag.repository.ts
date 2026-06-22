@@ -1,5 +1,13 @@
 import { BaseRepository } from '../base-repository'
 
+/**
+ * MCP-06: Escape SQL LIKE wildcard characters in user-supplied path values.
+ * Without this, a path containing '%' or '_' would match more broadly than intended.
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[%_\\]/g, '\\$&')
+}
+
 interface CodeGraphTagRow {
   id: number
   workspace_id: string
@@ -190,10 +198,11 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
   ): RepomapTag[] {
     const db = this.db()
     const limit = options?.maxResults ?? 100
-    const pathFilter = options?.path ? `AND d.rel_fname LIKE ? || '%'` : ''
+    // MCP-06: Escape LIKE wildcards in user-supplied path
+    const pathFilter = options?.path ? `AND d.rel_fname LIKE ? || '%' ESCAPE '\\'` : ''
     const params: (string | number)[] = [workspaceId, workspaceId]
     if (options?.path) {
-      params.push(options.path)
+      params.push(escapeLikePattern(options.path))
     }
     params.push(limit)
 
@@ -226,9 +235,10 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
   ): { name: string; refCount: number }[] {
     const db = this.db()
     const maxResults = opts?.maxResults ?? 30
-    const pathFilter = opts?.path ? `AND rel_fname LIKE ? || '%'` : ''
+    // MCP-06: Escape LIKE wildcards in user-supplied path
+    const pathFilter = opts?.path ? `AND rel_fname LIKE ? || '%' ESCAPE '\\'` : ''
     const params: (string | number)[] = [workspaceId]
-    if (opts?.path) params.push(opts.path)
+    if (opts?.path) params.push(escapeLikePattern(opts.path))
     params.push(maxResults)
 
     const rows = db

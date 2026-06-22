@@ -12,24 +12,26 @@ import baseLog from '../logger'
 import { chatAgentService } from '../services'
 import { mpaOrchestrationService } from '../services/mpa-orchestration.service'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 
 const log = baseLog.scope('permission-ipc')
 
 export function registerPermissionIpc(): void {
-  ipcMain.handle(
-    IPC_CHANNELS.PERMISSION_RESPONSE,
-    async (
-      event,
-      args: {
-        permissionId: string
-        workspaceId: string
-        type: 'elicitation' | 'askQuestion' | 'mpaApproval'
-        response: unknown
-      }
-    ) => {
-      validateSender(event)
+  ipcMain.handle(IPC_CHANNELS.PERMISSION_RESPONSE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.PERMISSION_RESPONSE
 
-      const { workspaceId, type, response } = args
+    try {
+      // IPC-02: Runtime validation — matches pattern used by 27+ other handlers
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const type = requireString(args, 'type', ch)
+
+      if (!['elicitation', 'askQuestion', 'mpaApproval'].includes(type)) {
+        throw new Error(`${ch}: type must be one of: elicitation, askQuestion, mpaApproval`)
+      }
+
+      const response = args.response
 
       log.info(`[permission] Response received — workspace=${workspaceId} type=${type}`)
 
@@ -49,9 +51,16 @@ export function registerPermissionIpc(): void {
 
         case 'askQuestion': {
           // Route askQuestion response — extract requestId and answer from response
-          const resp = response as { requestId?: string; answer?: string }
+          const resp = requireObject(response, `${ch}.response`) as {
+            requestId?: string
+            answer?: string
+          }
           if (resp.requestId && resp.answer) {
-            chatAgentService.respondToAskUserForWorkspace(workspaceId, resp.requestId, resp.answer)
+            chatAgentService.respondToAskUserForWorkspace(
+              workspaceId,
+              resp.requestId as string,
+              resp.answer as string
+            )
           } else {
             log.warn(`[permission] askQuestion response missing requestId or answer`)
           }
@@ -60,7 +69,11 @@ export function registerPermissionIpc(): void {
 
         case 'mpaApproval': {
           // Route MPA gate response
-          const resp = response as { approved: boolean; feedback?: string; runId?: string }
+          const resp = requireObject(response, `${ch}.response`) as {
+            approved: boolean
+            feedback?: string
+            runId?: string
+          }
           const runId = resp.runId ?? mpaOrchestrationService.currentRunId
           if (runId) {
             mpaOrchestrationService.respondToGate(runId, resp.approved, resp.feedback)
@@ -73,6 +86,9 @@ export function registerPermissionIpc(): void {
         default:
           log.warn(`[permission] Unknown permission type: ${type}`)
       }
+    } catch (err) {
+      log.error('[permission] Handler error:', err)
+      throw err
     }
-  )
+  })
 }

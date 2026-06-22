@@ -41,7 +41,7 @@ export default function AuditPlanCard({
   onExport
 }: AuditPlanCardProps): React.JSX.Element {
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div data-testid="audit-plan-card" className="flex-1 overflow-y-auto">
       <div className="max-w-5xl mx-auto px-6 py-6 space-y-5">
         {/* Header */}
         <div className="rounded-xl border border-primary/30 bg-primary-muted/15 p-5">

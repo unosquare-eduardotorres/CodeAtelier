@@ -10,6 +10,7 @@
 
 import { workspaceRepository, memoryRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
+import { sanitizePromptInput } from './sanitize-prompt-input'
 
 type PrimingPart = { type: 'text'; text: string }
 
@@ -68,9 +69,12 @@ export class PrimingContextGatherer {
       }).trim()
 
       if (gitDiff && gitDiff.length > 10) {
+        // PROMPT-05: Truncate git diff output to prevent consuming the entire priming budget
+        const truncatedDiff =
+          gitDiff.length > 3000 ? gitDiff.slice(0, 3000) + '\n[...truncated]' : gitDiff
         return {
           type: 'text',
-          text: `[Workspace Context: Recent Changes]\n${gitDiff}`
+          text: `[Workspace Context: Recent Changes]\n${truncatedDiff}`
         }
       }
     } catch {
@@ -113,7 +117,13 @@ export class PrimingContextGatherer {
       const memories = memoryRepository.search(workspaceId, userPrompt.slice(0, 100))
       const topMemories = memories.slice(0, 5)
       if (topMemories.length > 0) {
-        const memoryText = topMemories.map((m) => `- [${m.type}] ${m.content}`).join('\n')
+        const memoryText = topMemories
+          .map((m) => {
+            const truncated =
+              m.content.length > 500 ? m.content.slice(0, 500) + '...' : m.content
+            return `- [${m.type}] ${sanitizePromptInput(truncated)}`
+          })
+          .join('\n')
         return {
           type: 'text',
           text: `[Workspace Context: Relevant Memories]\n${memoryText}`

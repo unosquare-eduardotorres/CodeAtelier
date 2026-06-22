@@ -52,9 +52,9 @@ interface BuildResult {
 }
 
 export class BlueprintBuildService extends EventEmitter {
-  /** Active session for the currently executing task (used for cancel). */
-  private activeSession: AgentSessionService | null = null
-  private activeBlueprintId: string | null = null
+  /** BP-05: Per-workspace active sessions to prevent cross-workspace cancel. */
+  private activeSessions = new Map<string, AgentSessionService>()
+  private activeBlueprintIds = new Map<string, string>()
 
   async startBuildPhase(params: {
     blueprintId: string
@@ -67,7 +67,7 @@ export class BlueprintBuildService extends EventEmitter {
 
     // 1. Pipeline + DB state
     blueprintService.markPipelineRunning(workspaceId, blueprintId, 'build')
-    this.activeBlueprintId = blueprintId
+    this.activeBlueprintIds.set(workspaceId, blueprintId)
 
     const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
     if (buildPhase) {
@@ -89,10 +89,17 @@ export class BlueprintBuildService extends EventEmitter {
 
     // 4. Emit phaseStart
     this.emit('phaseStart', {
-      blueprintId, workspaceId, phase: 'build'
+      blueprintId,
+      workspaceId,
+      phase: 'build'
     } satisfies BlueprintPhaseStartPayload)
 
-    const result: BuildResult = { tasksCompleted: 0, filesCreated: [], filesModified: [], failed: false }
+    const result: BuildResult = {
+      tasksCompleted: 0,
+      filesCreated: [],
+      filesModified: [],
+      failed: false
+    }
     let verifyTriggered = false
 
     try {
@@ -100,33 +107,103 @@ export class BlueprintBuildService extends EventEmitter {
       for (const waveNum of sortedWaves) {
         const waveTasks = waveMap.get(waveNum) ?? []
         await this.executeWave({
-          waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result
+          waveNum,
+          waveTasks,
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          phaseContext,
+          result
         })
         if (result.failed) break
       }
 
       // 6. Save build phase artifact (summary)
       if (buildPhase) {
-        const summary = this.buildArtifactSummary(result.tasksCompleted, totalTasks, result.filesCreated, result.filesModified)
+        const summary = this.buildArtifactSummary(
+          result.tasksCompleted,
+          totalTasks,
+          result.filesCreated,
+          result.filesModified
+        )
         blueprintPhaseRepository.appendArtifact(buildPhase.id, {
           type: 'build',
           contentMd: summary,
-          contentJson: { tasksCompleted: result.tasksCompleted, totalTasks, filesCreated: result.filesCreated, filesModified: result.filesModified }
+          contentJson: {
+            tasksCompleted: result.tasksCompleted,
+            totalTasks,
+            filesCreated: result.filesCreated,
+            filesModified: result.filesModified
+          }
         })
       }
 
       if (result.failed) {
+        // BP-SKIP-01 + BP-CLEANUP-RUNNING-TASKS-01: Mark all remaining pending/running
+        // tasks across subsequent waves as 'skipped'
+        for (const waveNum of sortedWaves) {
+          const waveTasks = waveMap.get(waveNum) ?? []
+          for (const task of waveTasks) {
+            const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+            if (currentStatus === 'pending' || currentStatus === 'running') {
+              blueprintTaskRepository.updateStatus(task.id, 'skipped')
+            }
+          }
+        }
         this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
       } else {
-        this.finalizeSuccess(blueprintId, workspaceId, workspacePath, buildPhase?.id ?? null, result, totalTasks)
+        // BP-BUILD-VERIFY-STARTLOCK-COLLISION: Release BUILD's pipeline lock
+        // before VERIFY acquires its own. Without this, VERIFY's markPipelineRunning()
+        // always throws because BUILD's startLock is still held.
+        // VERIFY's finally block owns markPipelineStopped() from this point.
+        blueprintService.markPipelineStopped(workspaceId)
+        this.finalizeSuccess(
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          buildPhase?.id ?? null,
+          result,
+          totalTasks
+        )
         verifyTriggered = true
       }
     } catch (err) {
       bpLog.error(`[startBuildPhase] BUILD phase failed:`, err)
+      // BP-WAVE-EXCEPTION-01: Mark ALL unfinished tasks as 'skipped' when wave throws.
+      // Without this, tasks stuck in 'running'/'pending' permanently after an exception
+      // because lines 141-151 (normal-path cleanup) were skipped.
+      for (const waveNum of sortedWaves) {
+        const waveTasks = waveMap.get(waveNum) ?? []
+        for (const task of waveTasks) {
+          const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+          // BP-CLEANUP-RUNNING-TASKS-01: Include 'running' — tasks marked 'running'
+          // before executeTask() returned are stuck if the wave threw mid-execution.
+          if (currentStatus === 'pending' || currentStatus === 'running') {
+            try { blueprintTaskRepository.updateStatus(task.id, 'skipped') }
+            catch { /* best effort — DB may be the cause of the original throw */ }
+          }
+        }
+      }
+      // BP-BUILD-ARTIFACT-LOSS-ON-EXCEPTION-01: Save partial artifact so build
+      // progress is not silently lost when a wave throws an exception.
+      if (buildPhase && result.tasksCompleted > 0) {
+        try {
+          const summary = this.buildArtifactSummary(
+            result.tasksCompleted,
+            totalTasks,
+            result.filesCreated,
+            result.filesModified
+          )
+          blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+            type: 'build-partial',
+            contentMd: `${summary}\n\n_Build interrupted by exception._`
+          })
+        } catch { /* best effort — DB may be the cause of the original throw */ }
+      }
       this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
     } finally {
-      this.activeSession = null
-      this.activeBlueprintId = null
+      this.activeSessions.delete(workspaceId)
+      this.activeBlueprintIds.delete(workspaceId)
       // Only mark pipeline stopped if verify was NOT auto-triggered.
       // When verify is triggered, its own finally block owns markPipelineStopped()
       // to avoid destroying the AbortController that the verify phase needs.
@@ -151,10 +228,16 @@ export class BlueprintBuildService extends EventEmitter {
     phaseContext: import('../../shared/blueprint-types').PhaseContext
     result: BuildResult
   }): Promise<void> {
-    const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } = params
+    const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } =
+      params
 
-    this.emit('waveStart', {
-      blueprintId, workspaceId, wave: waveNum, taskCount: waveTasks.length
+    // BP-EMIT-UNHANDLED-01: Use safeEmit to isolate listener failures from wave execution.
+    // A listener throw (e.g. IPC channel closed) would otherwise kill the wave loop.
+    this.safeEmit('waveStart', {
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
+      taskCount: waveTasks.length
     } satisfies BlueprintWaveStartPayload)
 
     bpLog.info(`[executeWave] Wave ${waveNum}: ${waveTasks.length} tasks`)
@@ -170,15 +253,22 @@ export class BlueprintBuildService extends EventEmitter {
         break
       }
 
-      this.emit('waveTaskStart', {
-        blueprintId, workspaceId, wave: waveNum, taskId: task.taskId,
+      this.safeEmit('waveTaskStart', {
+        blueprintId,
+        workspaceId,
+        wave: waveNum,
+        taskId: task.taskId,
         description: task.description
       } satisfies BlueprintWaveTaskStartPayload)
 
       blueprintTaskRepository.updateStatus(task.id, 'running')
 
       const taskResult = await this.executeTask({
-        task, blueprintId, workspaceId, workspacePath, phaseContext
+        task,
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        phaseContext
       })
 
       if (taskResult.success) {
@@ -195,8 +285,11 @@ export class BlueprintBuildService extends EventEmitter {
         waveFailed = true
       }
 
-      this.emit('waveTaskComplete', {
-        blueprintId, workspaceId, wave: waveNum, taskId: task.taskId,
+      this.safeEmit('waveTaskComplete', {
+        blueprintId,
+        workspaceId,
+        wave: waveNum,
+        taskId: task.taskId,
         status: taskResult.success ? 'complete' : 'failed'
       } satisfies BlueprintWaveTaskCompletePayload)
 
@@ -206,9 +299,23 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
+    // BP-SKIP-01 + BP-CLEANUP-RUNNING-TASKS-01: Mark remaining pending/running tasks
+    // in this wave as 'skipped' so the UI distinguishes "never ran" from "pending".
+    if (waveFailed || result.failed) {
+      for (const task of waveTasks) {
+        const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+        if (currentStatus === 'pending' || currentStatus === 'running') {
+          blueprintTaskRepository.updateStatus(task.id, 'skipped')
+        }
+      }
+    }
+
     const waveStatus = waveFailed || result.failed ? 'failed' : 'complete'
-    this.emit('waveComplete', {
-      blueprintId, workspaceId, wave: waveNum, status: waveStatus
+    this.safeEmit('waveComplete', {
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
+      status: waveStatus
     } satisfies BlueprintWaveCompletePayload)
 
     if (waveFailed) {
@@ -217,9 +324,30 @@ export class BlueprintBuildService extends EventEmitter {
     }
   }
 
+  // ── Safe Event Emission ──
+
+  /**
+   * BP-EMIT-UNHANDLED-01: Emit an event with error isolation.
+   * Prevents a listener failure (e.g. renderer closed during build) from
+   * crashing the wave loop. Without this, a listener throw propagates up
+   * and triggers BP-WAVE-EXCEPTION-01.
+   */
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
+    }
+  }
+
   // ── Phase Finalization ──
 
-  private finalizeFailed(blueprintId: string, workspaceId: string, buildPhaseId: string | null): void {
+  private finalizeFailed(
+    blueprintId: string,
+    workspaceId: string,
+    buildPhaseId: string | null
+  ): void {
     if (buildPhaseId) {
       blueprintPhaseRepository.updateStatus(buildPhaseId, 'failed')
     }
@@ -230,8 +358,13 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'failed')
     }
 
-    this.emit('phaseComplete', {
-      blueprintId, workspaceId, phase: 'build', status: 'failed'
+    // BP-BUILD-FINALIZE-RAW-EMIT-01: Use safeEmit to prevent listener throws
+    // from crashing the catch handler or creating a double-call loop.
+    this.safeEmit('phaseComplete', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      status: 'failed'
     } satisfies BlueprintPhaseCompletePayload)
   }
 
@@ -250,27 +383,68 @@ export class BlueprintBuildService extends EventEmitter {
     // NOTE: DB state transitions (status='verifying', currentPhase='verify', verifyPhase='active')
     // are owned by blueprintVerifyService.startVerifyPhase() — not duplicated here.
 
-    bpLog.info(`[finalizeSuccess] Blueprint ${blueprintId} — build complete (${result.tasksCompleted}/${totalTasks} tasks), advancing to VERIFY`)
+    bpLog.info(
+      `[finalizeSuccess] Blueprint ${blueprintId} — build complete (${result.tasksCompleted}/${totalTasks} tasks), advancing to VERIFY`
+    )
 
-    this.emit('phaseComplete', {
-      blueprintId, workspaceId, phase: 'build', status: 'complete',
-      completion: { tasksCompleted: result.tasksCompleted, totalTasks, filesCreated: result.filesCreated, filesModified: result.filesModified }
+    // BP-BUILD-FINALIZE-RAW-EMIT-01: Use safeEmit to prevent listener throws
+    // from propagating through finalizeSuccess into the catch handler.
+    this.safeEmit('phaseComplete', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      status: 'complete',
+      completion: {
+        phase: 'build',
+        status: 'complete',
+        tasksCompleted: result.tasksCompleted,
+        totalTasks,
+        filesCreated: result.filesCreated,
+        filesModified: result.filesModified
+      }
     } satisfies BlueprintPhaseCompletePayload)
 
-    this.emit('phaseArtifact', {
-      blueprintId, workspaceId, phase: 'build',
+    this.safeEmit('phaseArtifact', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
       artifact: {
         type: 'build',
-        contentMd: this.buildArtifactSummary(result.tasksCompleted, totalTasks, result.filesCreated, result.filesModified)
+        contentMd: this.buildArtifactSummary(
+          result.tasksCompleted,
+          totalTasks,
+          result.filesCreated,
+          result.filesModified
+        )
       }
     } satisfies BlueprintPhaseArtifactPayload)
 
-    // Auto-trigger VERIFY phase (non-blocking)
-    blueprintVerifyService.startVerifyPhase({
-      blueprintId, workspaceId, workspacePath
-    }).catch((err) => {
-      bpLog.error('[build→verify] Verify phase failed:', err)
-    })
+    // Auto-trigger VERIFY phase (non-blocking).
+    // BP-VERIFY-AUTOFIRE-01: Verify event listeners are already wired by the IPC handler
+    // that started this build phase (wireBlueprintEvents persists for 180min via
+    // scheduleAutoCleanup). No additional wiring needed here.
+    // BP-VERIFY-SYNC-01: Wrap in try-catch for synchronous throws (e.g. markPipelineRunning()
+    // throwing if lock is held). .catch() only handles Promise rejections, not sync throws
+    // that occur before the Promise is returned.
+    try {
+      blueprintVerifyService
+        .startVerifyPhase({
+          blueprintId,
+          workspaceId,
+          workspacePath
+        })
+        .catch((err) => {
+          bpLog.error('[build→verify] Verify phase failed:', err)
+          // BP-02: If verify rejects, pipeline is never marked stopped.
+          // Clean up here so the workspace isn't permanently locked.
+          blueprintService.markPipelineStopped(workspaceId)
+          blueprintRepository.updateStatus(blueprintId, 'failed')
+        })
+    } catch (syncErr) {
+      bpLog.error('[build→verify] Verify startup failed (sync):', syncErr)
+      blueprintService.markPipelineStopped(workspaceId)
+      blueprintRepository.updateStatus(blueprintId, 'failed')
+    }
   }
 
   // ── Task Execution ──
@@ -295,18 +469,24 @@ export class BlueprintBuildService extends EventEmitter {
 
     // Create adapter + session
     const adapter = new BlueprintBuildAdapter({
-      workspaceId, blueprintId, phaseContext, taskContext
+      workspaceId,
+      blueprintId,
+      phaseContext,
+      taskContext
     })
     adapter.setGoalCondition(buildBuildGoalCondition(task.taskId, task.description))
 
     const session = new AgentSessionService(adapter)
-    this.activeSession = session
+    this.activeSessions.set(workspaceId, session)
 
     // Wire streaming — forward progress events
     const onChunk = (chunk: StreamChunk): void => {
       if (chunk.type === 'text' && chunk.content) {
         this.emit('phaseProgress', {
-          blueprintId, workspaceId, phase: 'build', text: chunk.content
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text: chunk.content
         } satisfies BlueprintPhaseProgressPayload)
       }
     }
@@ -325,13 +505,23 @@ export class BlueprintBuildService extends EventEmitter {
       // Race: send vs timeout vs abort
       let timeoutId: NodeJS.Timeout | undefined
       const timeoutPromise = new Promise<void>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(`Task ${task.taskId} timeout`)), TASK_TIMEOUT_MS)
+        timeoutId = setTimeout(
+          () => reject(new Error(`Task ${task.taskId} timeout`)),
+          TASK_TIMEOUT_MS
+        )
       })
 
       const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      // BP-ABORT-TOCTOU-01: Attach listener BEFORE checking aborted status to
+      // close the race window where the signal fires between check and addEventListener.
+      // BP-ABORT-LISTENER-LEAK-01: Hoist handler so it can be removed in finally.
+      let abortHandler: (() => void) | undefined
       const abortPromise = new Promise<void>((_, reject) => {
-        if (abortSignal?.aborted) { reject(new Error('Phase cancelled')); return }
-        abortSignal?.addEventListener('abort', () => reject(new Error('Phase cancelled')), { once: true })
+        abortHandler = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', abortHandler, { once: true })
+        if (abortSignal?.aborted) {
+          abortHandler()
+        }
       })
 
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -340,13 +530,17 @@ export class BlueprintBuildService extends EventEmitter {
         await Promise.race([sendPromise, timeoutPromise, abortPromise])
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        // BP-ABORT-LISTENER-LEAK-01: Clean up abort listener if task completed normally
+        if (abortHandler) abortSignal?.removeEventListener('abort', abortHandler)
       }
 
       // Parse output
       const text = session.getStreamedContent()
       const completion = parsePhaseCompletionBlock(text)
 
-      bpLog.info(`[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`)
+      bpLog.info(
+        `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
+      )
 
       return { success: true, completion }
     } catch (err) {
@@ -368,9 +562,15 @@ export class BlueprintBuildService extends EventEmitter {
     } finally {
       session.removeListener('chunk', onChunk)
       session.removeListener('statusUpdate', onStatus)
-      await session.stop()
-      if (this.activeSession === session) {
-        this.activeSession = null
+      // BP-SESSION-LEAK-01: Wrap session.stop() in its own try-catch so a stop()
+      // failure doesn't skip activeSessions cleanup, causing a resource leak.
+      try {
+        await session.stop()
+      } catch (stopErr) {
+        bpLog.error(`[executeTask] session.stop() failed for task ${task.taskId}:`, stopErr)
+      }
+      if (this.activeSessions.get(workspaceId) === session) {
+        this.activeSessions.delete(workspaceId)
       }
     }
   }
@@ -440,20 +640,28 @@ export class BlueprintBuildService extends EventEmitter {
   // ── Cancel / Shutdown ──
 
   async cancelBlueprint(blueprintId: string): Promise<void> {
-    if (this.activeBlueprintId === blueprintId && this.activeSession) {
-      bpLog.info(`[cancelBlueprint] Stopping active session for blueprint ${blueprintId}`)
-      await this.activeSession.stop()
-      this.activeSession = null
-      this.activeBlueprintId = null
+    // BP-05: Find the workspace whose active blueprint matches
+    for (const [wsId, bpId] of this.activeBlueprintIds) {
+      if (bpId === blueprintId) {
+        const session = this.activeSessions.get(wsId)
+        if (session) {
+          bpLog.info(`[cancelBlueprint] Stopping active session for blueprint ${blueprintId}`)
+          await session.stop()
+          this.activeSessions.delete(wsId)
+          this.activeBlueprintIds.delete(wsId)
+        }
+        break
+      }
     }
   }
 
   async shutdown(): Promise<void> {
-    if (this.activeSession) {
-      await this.activeSession.stop()
-      this.activeSession = null
-      this.activeBlueprintId = null
+    for (const [wsId, session] of this.activeSessions) {
+      await session.stop()
+      this.activeBlueprintIds.delete(wsId)
     }
+    this.activeSessions.clear()
+    this.activeBlueprintIds.clear()
   }
 }
 

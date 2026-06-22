@@ -1,83 +1,68 @@
 /**
- * context-handoff.service — Generates structured context extraction
- * when switching providers mid-conversation.
+ * context-handoff.service — Generates a compact handoff document when
+ * switching LLM providers mid-conversation.
  *
- * Uses the OUTGOING model (which has context in memory) to produce
- * a structured handoff document that captures the essential conversation
- * state for the incoming model.
+ * The handoff captures the conversation's key decisions, open tasks,
+ * and context so the new provider can continue without re-asking.
  */
 
 import log from 'electron-log'
 
 const handoffLog = log.scope('context-handoff')
 
-/** The extraction prompt sent to the outgoing model */
-export const HANDOFF_EXTRACTION_PROMPT = `You are about to hand off this conversation to a different AI model.
-Generate a structured handoff document that captures the essential context.
-
-## Required Sections:
-### Goal
-What is the user trying to accomplish? One paragraph.
-
-### Decisions Made
-Bullet list of key decisions with brief rationale.
-
-### Progress
-What has been done so far — files modified, features implemented, tests passing.
-
-### Open Questions
-Unresolved items that need attention.
-
-### Key Code Context
-Files, directories, and patterns currently being worked on.
-
-### Current State
-Where things left off — what the user would expect to continue with.
-
-Be concise but complete. This document will be the ONLY context the next model receives.`
+interface MessageSummary {
+  role: string
+  content: string
+}
 
 class ContextHandoffService {
   /**
-   * Format a handoff document as a system prompt section.
-   * This is injected into the new model's system prompt after a cross-provider switch.
-   */
-  formatAsSystemPreamble(handoffDocument: string): string {
-    return `## Prior Session Context (Handoff)
-
-The previous AI model in this conversation generated the following context summary
-before handing off to you. Use this to understand the conversation state:
-
-${handoffDocument}
-
----
-
-`
-  }
-
-  /**
-   * Generate a minimal handoff from conversation messages when the outgoing
-   * model is unavailable (e.g., session already terminated).
+   * Generate a fallback handoff document from conversation messages.
+   * This is a simple extractive summary — it takes the last N messages
+   * and formats them into a handoff document.
    *
-   * Extracts the last N messages as a condensed context summary.
+   * A future version could use an LLM to generate a smarter summary,
+   * but for now this gives the new provider enough context to continue.
    */
-  generateFallbackHandoff(messages: Array<{ role: string; content: string }>): string {
-    const recent = messages.slice(-10) // Last 10 messages
-    const sections: string[] = []
+  generateFallbackHandoff(messages: MessageSummary[]): string {
+    const MAX_MESSAGES = 20
+    const MAX_CHARS = 8000
 
-    sections.push('### Conversation History (Last Messages)')
-    for (const msg of recent) {
-      const role = msg.role === 'user' ? 'User' : 'Assistant'
-      // Truncate long messages
-      const content =
-        msg.content.length > 500 ? msg.content.slice(0, 500) + '…' : msg.content
-      sections.push(`**${role}:** ${content}`)
+    // Take the most recent messages
+    const recentMessages = messages.slice(-MAX_MESSAGES)
+
+    if (recentMessages.length === 0) {
+      return 'No prior conversation context available.'
+    }
+
+    const lines: string[] = ['The following is a summary of the prior conversation context:', '']
+
+    let totalChars = 0
+    for (const msg of recentMessages) {
+      const prefix = msg.role === 'user' ? 'User' : 'Assistant'
+      const content = msg.content?.trim()
+      if (!content) continue
+
+      // Truncate individual messages that are too long
+      const truncated = content.length > 1000 ? content.slice(0, 1000) + '… [truncated]' : content
+
+      const line = `**${prefix}:** ${truncated}`
+      totalChars += line.length
+
+      if (totalChars > MAX_CHARS) {
+        lines.push('… [earlier messages omitted for brevity]')
+        break
+      }
+
+      lines.push(line)
+      lines.push('')
     }
 
     handoffLog.info(
-      `[fallback] Generated fallback handoff from ${recent.length} messages`
+      `[handoff] Generated fallback handoff: ${recentMessages.length} messages, ${totalChars} chars`
     )
 
-    return sections.join('\n\n')
+    return lines.join('\n')
   }
 }
 

@@ -1,86 +1,102 @@
 /**
- * WelcomePage POM — Welcome screen and workspace selection.
+ * WelcomePage — Page Object Model for the welcome/home screen.
  *
- * Covers the WelcomeModal flow (first launch) and WelcomeScreen
- * with workspace card grid.
+ * Encapsulates selectors and actions for:
+ *   - Welcome modal (first-launch profile setup)
+ *   - Home screen workspace card list
+ *   - Navigation to workspace
  */
-import type { Page, Locator } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 export class WelcomePage {
-  readonly page: Page
+  private readonly page: Page
 
-  // Welcome screen
-  readonly welcomeScreen: Locator
-  readonly addWorkspaceCard: Locator
-
-  // Welcome modal (first-launch)
-  readonly welcomeModal: Locator
+  /** The welcome modal dialog (first-launch flow). */
+  private readonly welcomeModal: Locator
+  /** The workspace card list on the home screen. */
+  private readonly workspaceCards: Locator
 
   constructor(page: Page) {
     this.page = page
-    this.welcomeScreen = page.locator('[data-testid="welcome-screen"]')
-    this.addWorkspaceCard = page.locator('[data-testid="add-workspace-card"]')
     this.welcomeModal = page.locator('[role="dialog"]').first()
+    this.workspaceCards = page.locator(
+      '[data-testid="workspace-item"], .group[class*="cursor-pointer"], [class*="hover:bg-"]'
+    )
   }
 
+  // ── Queries ──────────────────────────────────────────────────────
+
+  /** Check if we're on the welcome/home screen (no workspace open). */
   async isVisible(): Promise<boolean> {
-    return this.welcomeScreen.isVisible({ timeout: 5_000 }).catch(() => false)
+    // Home screen has workspace cards or an "Add Project" CTA
+    const homeIndicators = this.page.locator(
+      '[data-testid="welcome-screen"], [data-testid="home-screen"], button:has-text("Add Project")'
+    )
+    const hasHome = await homeIndicators.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    if (hasHome) return true
+
+    // Fallback: check for workspace cards
+    const cardCount = await this.workspaceCards.count()
+    if (cardCount > 0) return true
+
+    // Check if there's no chat panel visible (meaning we're on welcome)
+    const chatPanel = this.page.locator('[data-testid="chat-panel"]')
+    const hasChat = await chatPanel.isVisible({ timeout: 1_000 }).catch(() => false)
+    return !hasChat
   }
 
+  /** Check if the first-launch welcome modal is showing. */
   async isWelcomeModalVisible(): Promise<boolean> {
     return this.welcomeModal.isVisible({ timeout: 3_000 }).catch(() => false)
   }
 
+  /** Return the workspace card locator list. */
+  getWorkspaceCards(): Locator {
+    return this.workspaceCards
+  }
+
+  // ── Actions ──────────────────────────────────────────────────────
+
   /**
-   * Complete the first-launch welcome modal.
-   * Fills the profile name, selects an avatar, and clicks through.
+   * Complete the welcome modal flow (name entry + avatar selection).
+   * Safe to call even if the modal has already been dismissed.
    */
   async completeWelcomeModal(name: string): Promise<void> {
-    // Fill name input
-    const nameInput = this.page.locator('input').first()
-    await nameInput.fill(name)
+    const isShowing = await this.isWelcomeModalVisible()
+    if (!isShowing) return
 
-    // Click Continue (first step)
-    const continueBtn = this.page
+    // Step 1: Fill in name
+    const nameInput = this.welcomeModal.locator('input').first()
+    if (await nameInput.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await nameInput.fill(name)
+    }
+
+    // Click Continue (step 1 → step 2)
+    const continueBtn = this.welcomeModal
       .getByRole('button', { name: /continue/i })
       .first()
     if (await continueBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await continueBtn.click()
+      await this.page.waitForTimeout(1_000)
+    }
+
+    // Step 2: Select an avatar (click first avatar-like button)
+    const avatarBtn = this.welcomeModal
+      .locator('button')
+      .filter({ has: this.page.locator('img') })
+      .first()
+    if (await avatarBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await avatarBtn.click()
       await this.page.waitForTimeout(500)
     }
 
-    // Select an avatar
-    const avatarBtn = this.page.locator('button img').first()
-    if (await avatarBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await avatarBtn.click()
-      await this.page.waitForTimeout(300)
-    }
-
-    // Click "Get Started" or equivalent submit button
-    const submitBtn = this.page
-      .getByRole('button', { name: /get started|save|let.*go/i })
+    // Click "Get Started" to complete
+    const getStarted = this.welcomeModal
+      .getByRole('button', { name: /get started|let.*go/i })
       .first()
-    if (await submitBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await submitBtn.click()
+    if (await getStarted.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await getStarted.click()
       await this.page.waitForTimeout(2_000)
     }
-  }
-
-  /** Click a workspace card by name. */
-  async clickWorkspace(name: string): Promise<void> {
-    const card = this.page.getByRole('button', { name: new RegExp(`Open workspace.*${name}`, 'i') })
-    await card.click()
-    await this.page.waitForTimeout(1_500)
-  }
-
-  /** Click the "Add Workspace" card. */
-  async clickAddWorkspace(): Promise<void> {
-    await this.addWorkspaceCard.click()
-    await this.page.waitForTimeout(500)
-  }
-
-  /** Get all workspace card locators. */
-  getWorkspaceCards(): Locator {
-    return this.page.locator('[data-testid^="workspace-card-"]')
   }
 }

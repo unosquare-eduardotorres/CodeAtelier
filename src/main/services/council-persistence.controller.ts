@@ -145,7 +145,10 @@ export class CouncilPersistenceController {
       try {
         const session = councilSessionRepository.findById(this.activeSessionId)
         if (session?.structuredPlanJson) {
-          const originalPlan = safeParseJSON<StructuredPlan | null>(session.structuredPlanJson, null)
+          const originalPlan = safeParseJSON<StructuredPlan | null>(
+            session.structuredPlanJson,
+            null
+          )
           if (originalPlan) {
             planRegistryService.registerCouncilVerdict({
               workspaceId: data.workspaceId,

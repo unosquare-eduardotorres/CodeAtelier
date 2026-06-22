@@ -88,7 +88,7 @@ export default function GrillRadarChart({
   const dataPolygon = dataPoints.map((p) => `${p.x},${p.y}`).join(' ')
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div data-testid="grill-radar-chart" className="flex flex-col items-center gap-2">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="select-none">
         {/* Concentric level polygons */}
         {levelPolygons.map((points, i) => (

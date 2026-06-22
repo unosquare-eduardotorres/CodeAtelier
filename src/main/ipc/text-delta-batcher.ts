@@ -43,6 +43,9 @@ export class TextDeltaBatcher {
   flush(key?: string): void {
     if (key !== undefined) {
       this.flushKey(key)
+      // BATCHER-FLUSH-RETAINS-FLUSHER-01: Clear flusher after flush to prevent
+      // stale callbacks (capturing old ctx/mainWindow) from firing on reuse.
+      this.flushers.delete(key)
       return
     }
     for (const k of [...this.buffers.keys()]) {
@@ -73,7 +76,13 @@ export class TextDeltaBatcher {
     const buffer = this.buffers.get(key)
     const flusher = this.flushers.get(key)
     if (buffer && flusher) {
-      flusher(buffer)
+      try {
+        flusher(buffer)
+      } catch (err) {
+        // All current callers use safeSend-wrapped callbacks, but the batcher
+        // is a shared primitive — guard against future flusher regressions.
+        if (typeof console !== 'undefined') console.warn('[TextDeltaBatcher] Flush error:', err)
+      }
       this.buffers.delete(key)
     }
   }

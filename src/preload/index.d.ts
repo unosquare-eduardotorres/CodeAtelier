@@ -38,7 +38,6 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   EmbeddingModelStatus,
-  EmbeddingModelProgress,
   SemanticSearchResult,
   OllamaStatus,
   OmlxExtendedStatus,
@@ -125,6 +124,7 @@ interface Api {
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    presetId?: string | null
   }) => Promise<Conversation>
   updatePersona: (args: {
     conversationId: string
@@ -720,7 +720,6 @@ interface Api {
   // Embedding Provider
   embeddingCheckStatus: () => Promise<EmbeddingModelStatus>
   embeddingInitialize: () => Promise<void>
-  onEmbeddingModelProgress: (callback: (data: EmbeddingModelProgress) => void) => () => void
   onEmbeddingModelReady: (callback: () => void) => () => void
   onEmbeddingModelError: (callback: (error: string) => void) => () => void
 
@@ -949,6 +948,22 @@ interface Api {
     planId: string
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
+
+  // LLM Presets
+  getPresets: (args: { workspaceId: string }) => Promise<unknown>
+  getPreset: (args: { presetId: string }) => Promise<unknown>
+  createPreset: (args: {
+    workspaceId: string
+    name: string
+    actionConfig: Record<string, unknown>
+  }) => Promise<unknown>
+  updatePreset: (args: {
+    presetId: string
+    changes: { name?: string; actionConfig?: Record<string, unknown> }
+  }) => Promise<unknown>
+  deletePreset: (args: { presetId: string }) => Promise<unknown>
+  setDefaultPreset: (args: { workspaceId: string; presetId: string }) => Promise<unknown>
+  switchConversationPreset: (args: { conversationId: string; presetId: string }) => Promise<unknown>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
@@ -1181,10 +1196,7 @@ interface Api {
     priority?: string
     settingsJson?: Record<string, unknown>
   }) => Promise<unknown>
-  blueprintCreateFromIdea: (args: {
-    ideaId: string
-    workspaceId: string
-  }) => Promise<unknown>
+  blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }) => Promise<unknown>
   blueprintStartSpecify: (args: {
     blueprintId: string
     workspaceId: string
@@ -1198,9 +1210,7 @@ interface Api {
     workspaceId: string
     message: string
   }) => Promise<{ sent: boolean }>
-  blueprintSkipClarify: (args: {
-    blueprintId: string
-  }) => Promise<{ skipped: boolean }>
+  blueprintSkipClarify: (args: { blueprintId: string }) => Promise<{ skipped: boolean }>
   blueprintStartPlan: (args: {
     blueprintId: string
     workspaceId: string
@@ -1299,12 +1309,7 @@ interface Api {
     }) => void
   ) => () => void
   onBlueprintWaveComplete: (
-    cb: (data: {
-      blueprintId: string
-      workspaceId: string
-      wave: number
-      status: string
-    }) => void
+    cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ) => () => void
 
   // Council (LLM Council — multi-advisor review)

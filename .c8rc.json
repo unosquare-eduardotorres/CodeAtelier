@@ -13,6 +13,10 @@
     "**/*.d.ts",
     "src/**/index.ts",
     "src/main/db/migrations/**",
+    "src/shared/types.ts",
+    "src/shared/mpa-types.ts",
+    "src/main/services/agent-session.types.ts",
+    "src/main/services/executor-types.ts",
     "e2e/**",
     "out/**",
     "dist/**"

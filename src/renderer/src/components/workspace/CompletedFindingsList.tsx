@@ -78,7 +78,7 @@ export default function CompletedFindingsList({
     passedChecks.length > 0 && (severityFilter === 'all' || severityFilter === 'info')
 
   return (
-    <>
+    <div data-testid="completed-findings-list">
       {/* Severity filter bar */}
       {findings.length > 0 && (
         <div className="px-5 py-2.5 border-b border-border-subtle flex items-center gap-2 flex-wrap">
@@ -155,6 +155,7 @@ export default function CompletedFindingsList({
             {issues.map((finding) => (
               <div
                 key={finding.id}
+                data-testid="finding-item"
                 onClick={() => onToggleFinding(finding)}
                 className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-colors ${
                   selectedIds.has(finding.id)
@@ -292,7 +293,7 @@ export default function CompletedFindingsList({
           {rerunningTrackId === activeTrackId ? 'Re-running…' : 'Re-run'}
         </button>
       </div>
-    </>
+    </div>
   )
 }
 

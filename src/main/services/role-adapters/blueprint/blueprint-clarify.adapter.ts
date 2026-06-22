@@ -18,11 +18,7 @@ export class BlueprintClarifyAdapter extends BlueprintBaseAdapter {
 
   private readonly phaseContext: PhaseContext
 
-  constructor(params: {
-    workspaceId: string
-    blueprintId: string
-    phaseContext: PhaseContext
-  }) {
+  constructor(params: { workspaceId: string; blueprintId: string; phaseContext: PhaseContext }) {
     super({ workspaceId: params.workspaceId, blueprintId: params.blueprintId })
     this.phaseContext = params.phaseContext
     this.agentId = `blueprint-clarify-${params.blueprintId}`

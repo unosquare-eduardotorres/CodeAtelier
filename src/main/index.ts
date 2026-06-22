@@ -28,13 +28,14 @@ import { memoryFeedService } from './services/memory-feed.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
 import { grillAgentService } from './services/grill-agent.service'
+import { grillPersistenceController } from './services/grill-persistence.controller'
 import { auditAgentService } from './services/audit-agent.service'
 import { mpaOrchestrationService } from './services/mpa-orchestration.service'
 import { councilService } from './services/council.service'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
-import { llamafileEmbeddingProvider } from './services/llamafile-embedding.service'
+import { omlxEmbeddingProvider } from './services/omlx-embedding.service'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 
 // Initialize electron-log for the main process
@@ -165,29 +166,47 @@ function createWindow(): void {
     }
   })
 
+  // ELECTRON-01: Null out mainWindow reference when the window is closed
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
   const splashStartTime = Date.now()
   const MINIMUM_SPLASH_DURATION = 3000 // 3s minimum for brand feel
+
+  // ELECTRON-02: Track timers for cleanup — use event-driven splash dismissal
+  let splashTimer: ReturnType<typeof setTimeout> | undefined
+  let safetyTimer: ReturnType<typeof setTimeout> | undefined
+
+  const dismissSplash = (): void => {
+    if (splashTimer) {
+      clearTimeout(splashTimer)
+      splashTimer = undefined
+    }
+    if (safetyTimer) {
+      clearTimeout(safetyTimer)
+      safetyTimer = undefined
+    }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.destroy()
+      splashWindow = null
+    }
+  }
 
   mainWindow.on('ready-to-show', () => {
     const elapsed = Date.now() - splashStartTime
     const remaining = Math.max(0, MINIMUM_SPLASH_DURATION - elapsed)
 
-    setTimeout(() => {
+    splashTimer = setTimeout(() => {
       mainWindow?.show()
-      if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.destroy()
-        splashWindow = null
-      }
+      dismissSplash()
     }, remaining)
   })
 
   // Safety timeout: if main window fails to load within 15s, show it anyway
-  setTimeout(() => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.destroy()
-      splashWindow = null
-    }
-    if (mainWindow && !mainWindow.isVisible()) {
+  safetyTimer = setTimeout(() => {
+    dismissSplash()
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show()
     }
   }, 15000)
@@ -448,6 +467,14 @@ app.on('before-quit', async (event) => {
     log.debug('Grill shutdown error (expected during quit):', e)
   }
 
+  // GRILL-SHUTDOWN-01: Flush pending grill persistence buffers and clear timers
+  // before DB closes. Without this, scheduled flush timers fire after DB closes.
+  try {
+    grillPersistenceController.clearTracking()
+  } catch (e) {
+    log.debug('Grill persistence cleanup error (expected during quit):', e)
+  }
+
   // Cleanup audit operations
   try {
     await auditAgentService.shutdown()
@@ -479,11 +506,11 @@ app.on('before-quit', async (event) => {
   // Stop all file watchers for Code Graph / Semantic Search
   fileWatcherService.stopAll()
 
-  // Kill the llamafile embedding sidecar so it doesn't orphan after quit
+  // Reset the oMLX embedding provider state on quit
   try {
-    llamafileEmbeddingProvider.dispose()
+    omlxEmbeddingProvider.dispose()
   } catch (e) {
-    log.debug('Llamafile embedding dispose error (expected during quit):', e)
+    log.debug('oMLX embedding dispose error (expected during quit):', e)
   }
 
   closeDatabase()

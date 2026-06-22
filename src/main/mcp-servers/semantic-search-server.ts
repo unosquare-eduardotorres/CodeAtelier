@@ -51,7 +51,14 @@ async function registerTools(): Promise<void> {
       query: z.string().describe('Natural language search query'),
       language: z.string().optional().describe('Filter by programming language'),
       directory: z.string().optional().describe('Filter by directory path prefix'),
-      nResults: z.number().optional().default(10).describe('Number of results to return')
+      nResults: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(10)
+        .describe('Number of results to return')
     },
     async (args) => {
       // Build where clause from optional filters
@@ -69,7 +76,7 @@ async function registerTools(): Promise<void> {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ results, count: results.length }, null, 2),
+              JSON.stringify({ results, count: results.length }),
               15_000
             )
           }
@@ -83,7 +90,7 @@ async function registerTools(): Promise<void> {
     'Find code similar to a given code snippet or symbol.',
     {
       code: z.string().describe('Code snippet to find similar patterns for'),
-      nResults: z.number().optional().default(5)
+      nResults: z.number().int().min(1).max(100).optional().default(5)
     },
     async (args) => {
       const results = await vectorSearchService.searchByCode(WORKSPACE_ID, args.code, {
@@ -94,7 +101,7 @@ async function registerTools(): Promise<void> {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ results, count: results.length }, null, 2),
+              JSON.stringify({ results, count: results.length }),
               15_000
             )
           }
@@ -107,7 +114,7 @@ async function registerTools(): Promise<void> {
     'codebase_concepts',
     'Get a high-level overview of concepts and patterns in the codebase.',
     {
-      maxConcepts: z.number().optional().default(20)
+      maxConcepts: z.number().int().min(1).max(100).optional().default(20)
     },
     async (args) => {
       const concepts = await vectorSearchService.getConceptClusters(WORKSPACE_ID, {
@@ -117,7 +124,7 @@ async function registerTools(): Promise<void> {
         content: [
           {
             type: 'text' as const,
-            text: truncateToolOutput(JSON.stringify({ concepts }, null, 2), 15_000)
+            text: truncateToolOutput(JSON.stringify({ concepts }), 15_000)
           }
         ]
       }

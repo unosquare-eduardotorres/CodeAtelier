@@ -141,7 +141,10 @@ export default function CompactContextModal({
       />
 
       {/* Dialog */}
-      <div data-testid="compact-context-modal" className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto">
+      <div
+        data-testid="compact-context-modal"
+        className="relative bg-surface-float border border-border-default rounded-lg shadow-2xl max-w-md w-full mx-4 animate-in fade-in zoom-in-95 max-h-[85vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex items-start justify-between p-5 pb-3">
           <div className="flex items-center gap-3">
@@ -179,7 +182,10 @@ export default function CompactContextModal({
               {tokensK}K / {windowK}K ({percentage}%) — Quality: {qualityLabel}
             </span>
           </div>
-          <div data-testid="context-usage-bar" className="w-full h-2 bg-surface-overlay rounded-full overflow-hidden">
+          <div
+            data-testid="context-usage-bar"
+            className="w-full h-2 bg-surface-overlay rounded-full overflow-hidden"
+          >
             <div
               className={`h-full rounded-full transition-all duration-300 ${barColor}`}
               style={{ width: `${percentage}%` }}

@@ -17,7 +17,10 @@ import {
 } from '../audit-response-parser'
 import type { AuditFinding, AuditCoverageStats } from '../../../shared/types'
 
-function finding(severity: AuditFinding['severity'], overrides: Partial<AuditFinding> = {}): AuditFinding {
+function finding(
+  severity: AuditFinding['severity'],
+  overrides: Partial<AuditFinding> = {}
+): AuditFinding {
   return {
     id: 'x',
     severity,
@@ -54,11 +57,7 @@ describe('audit-response-parser › parseAuditResponse — Strategy 1: progressi
   })
 
   test('infers score from findings when audit-score block is absent', () => {
-    const text = [
-      '```audit-finding',
-      '{"severity":"critical","title":"RCE"}',
-      '```'
-    ].join('\n')
+    const text = ['```audit-finding', '{"severity":"critical","title":"RCE"}', '```'].join('\n')
 
     const result = parseAuditResponse(text)
     // critical penalty = 25 → 100 - 25 = 75

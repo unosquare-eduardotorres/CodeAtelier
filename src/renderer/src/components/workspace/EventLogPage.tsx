@@ -99,7 +99,7 @@ export default function EventLogPage(): React.JSX.Element {
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-8">
+    <div data-testid="event-log-page" className="max-w-5xl mx-auto px-6 py-8">
       {/* Header */}
       <div className="flex items-center gap-2 mb-6">
         <ScrollText size={18} className="text-danger" />
@@ -110,7 +110,7 @@ export default function EventLogPage(): React.JSX.Element {
       </div>
 
       {/* Category filter pills */}
-      <div className="flex flex-wrap gap-1.5 mb-4">
+      <div data-testid="event-category-filter" className="flex flex-wrap gap-1.5 mb-4">
         {CATEGORIES.map((cat) => (
           <button
             key={cat}
