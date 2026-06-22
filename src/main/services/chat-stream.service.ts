@@ -891,6 +891,11 @@ export class ChatStreamService {
     }
 
     const onChunk = (chunk: StreamChunk): void => {
+      // CHAT-ONCHUNK-NO-LIFECYCLE-GUARD: Skip chunks after lifecycle abort
+      // or supersession. Matches the guard in onComplete (line ~930).
+      if (!conversationLifecycle.isActive || conversationLifecycle.requestId !== ctx.requestId) {
+        return
+      }
       try {
         log.info(
           `[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`
@@ -940,6 +945,10 @@ export class ChatStreamService {
         })
         .catch((err) => {
           log.error('[PIPELINE:complete] Finalize failed:', err)
+          // STREAM-METRICS-STORE-LEAK-01: If finalizeStreamMessage crashed before
+          // calling completeStreamMetrics, clean up the orphaned metrics entry.
+          // Idempotent — harmless if already called inside finalizeStreamMessage.
+          completeStreamMetrics(ctx.conversationId, 'error')
           // Safety net: if finalizeStreamMessage's inner catch block threw before
           // reaching the transition (e.g. mainWindow destroyed), ensure the state
           // machine still moves to idle. Idempotent when already idle.

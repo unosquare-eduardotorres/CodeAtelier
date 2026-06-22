@@ -152,6 +152,11 @@ export class BlueprintBuildService extends EventEmitter {
         }
         this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
       } else {
+        // BP-BUILD-VERIFY-STARTLOCK-COLLISION: Release BUILD's pipeline lock
+        // before VERIFY acquires its own. Without this, VERIFY's markPipelineRunning()
+        // always throws because BUILD's startLock is still held.
+        // VERIFY's finally block owns markPipelineStopped() from this point.
+        blueprintService.markPipelineStopped(workspaceId)
         this.finalizeSuccess(
           blueprintId,
           workspaceId,
@@ -178,6 +183,22 @@ export class BlueprintBuildService extends EventEmitter {
             catch { /* best effort — DB may be the cause of the original throw */ }
           }
         }
+      }
+      // BP-BUILD-ARTIFACT-LOSS-ON-EXCEPTION-01: Save partial artifact so build
+      // progress is not silently lost when a wave throws an exception.
+      if (buildPhase && result.tasksCompleted > 0) {
+        try {
+          const summary = this.buildArtifactSummary(
+            result.tasksCompleted,
+            totalTasks,
+            result.filesCreated,
+            result.filesModified
+          )
+          blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+            type: 'build-partial',
+            contentMd: `${summary}\n\n_Build interrupted by exception._`
+          })
+        } catch { /* best effort — DB may be the cause of the original throw */ }
       }
       this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null)
     } finally {
@@ -337,7 +358,9 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'failed')
     }
 
-    this.emit('phaseComplete', {
+    // BP-BUILD-FINALIZE-RAW-EMIT-01: Use safeEmit to prevent listener throws
+    // from crashing the catch handler or creating a double-call loop.
+    this.safeEmit('phaseComplete', {
       blueprintId,
       workspaceId,
       phase: 'build',
@@ -364,7 +387,9 @@ export class BlueprintBuildService extends EventEmitter {
       `[finalizeSuccess] Blueprint ${blueprintId} — build complete (${result.tasksCompleted}/${totalTasks} tasks), advancing to VERIFY`
     )
 
-    this.emit('phaseComplete', {
+    // BP-BUILD-FINALIZE-RAW-EMIT-01: Use safeEmit to prevent listener throws
+    // from propagating through finalizeSuccess into the catch handler.
+    this.safeEmit('phaseComplete', {
       blueprintId,
       workspaceId,
       phase: 'build',
@@ -379,7 +404,7 @@ export class BlueprintBuildService extends EventEmitter {
       }
     } satisfies BlueprintPhaseCompletePayload)
 
-    this.emit('phaseArtifact', {
+    this.safeEmit('phaseArtifact', {
       blueprintId,
       workspaceId,
       phase: 'build',

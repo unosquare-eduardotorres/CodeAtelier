@@ -108,7 +108,11 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
       )
       .run(id, ideaId, workspaceId, trackId ?? null)
 
-    return this.findById(id)!
+    // GRILL-CREATE-NONNULL-ASSERTION-01: Explicit check instead of non-null assertion
+    // to surface a clear error if the row is not immediately readable.
+    const created = this.findById(id)
+    if (!created) throw new Error(`GrillSessionRepository.create: row not found after INSERT (id=${id})`)
+    return created
   }
 
   /** Find by primary key */
@@ -123,20 +127,21 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
       .run(status, id)
   }
 
-  /** Bulk-append messages (more efficient than one-by-one) */
+  /** Bulk-append messages — reads once, writes once. */
   appendMessages(id: string, messages: unknown[]): void {
     if (messages.length === 0) return
-    const stmt = this.db().prepare(
-      `UPDATE grill_sessions
-       SET messages = json_insert(messages, '$[#]', json(?)),
-           updated_at = datetime('now')
-       WHERE id = ?`
-    )
-    this.runTransaction(() => {
-      for (const msg of messages) {
-        stmt.run(JSON.stringify(msg), id)
-      }
-    })
+    // GRILL-APPENDMSGS-QUADRATIC-01: Build array in JS and write once
+    // instead of N individual json_insert calls that each read/write the full column.
+    const existing = this.db()
+      .prepare(`SELECT messages FROM grill_sessions WHERE id = ?`)
+      .get(id) as { messages: string } | undefined
+    const parsed: unknown[] = existing?.messages ? safeParseJSON<unknown[]>(existing.messages, []) : []
+    parsed.push(...messages)
+    this.db()
+      .prepare(
+        `UPDATE grill_sessions SET messages = ?, updated_at = datetime('now') WHERE id = ?`
+      )
+      .run(JSON.stringify(parsed), id)
   }
 
   /** Update score, label, and feedback after evaluation */
