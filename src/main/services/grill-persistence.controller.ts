@@ -237,8 +237,14 @@ export class GrillPersistenceController {
       // evaluationHandled stays false — handleComplete() will recover gracefully
     }
 
-    // Emit status change
-    this.emitStatusChange(workspaceId, router, 'awaiting_answers')
+    // GRILL-HANDLEEVAL-EMIT-UNGUARDED-01: Wrap in try-catch matching
+    // startTracking/clearTracking pattern. If router throws here,
+    // evaluationHandled is already set — recovery in handleComplete() is safe.
+    try {
+      this.emitStatusChange(workspaceId, router, 'awaiting_answers')
+    } catch {
+      /* router may not be initialized or window destroyed */
+    }
 
     ctrlLog.info(
       `[grill-persistence] Evaluation complete — session=${tracking.sessionId} score=${evaluation.score}`
@@ -346,8 +352,14 @@ export class GrillPersistenceController {
       })
     }
 
-    const router = getSessionEventRouter()
-    this.emitStatusChange(workspaceId, router, 'evaluating')
+    // GRILL-MARKEVALUATING-EMIT-UNGUARDED-01: Wrap router calls in try-catch
+    // matching the pattern in startTracking/clearTracking.
+    try {
+      const router = getSessionEventRouter()
+      this.emitStatusChange(workspaceId, router, 'evaluating')
+    } catch {
+      /* router may not be initialized during re-evaluation */
+    }
   }
 
   /** Get the current grill status for a workspace (for status bar + icons) */
