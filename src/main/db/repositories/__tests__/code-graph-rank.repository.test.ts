@@ -13,7 +13,7 @@ if (!env) {
     test('placeholder', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { db: _db, wsId } = env
   const { codeGraphRankRepository } = require('../code-graph-rank.repository')
 
   describe('CodeGraphRankRepository', () => {

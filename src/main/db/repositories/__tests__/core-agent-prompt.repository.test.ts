@@ -12,7 +12,7 @@ if (!env) {
     test('findByRoleAndMode()', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { db, wsId: _wsId } = env
   const { coreAgentPromptRepository } = require('../core-agent-prompt.repository')
 
   // Seed core_agent_prompts (the schema may not have seeds, so insert them)

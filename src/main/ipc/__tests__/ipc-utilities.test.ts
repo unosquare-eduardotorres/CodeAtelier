@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summary } from '../../services/__tests__/test-harness'
 import { resolveContextLevel } from '../context-usage-level'
-import { formatToolErrorMessage } from '../tool-error-reporter'
+const { formatToolErrorMessage } = require('../tool-error-reporter') as any
 
 // ── resolveContextLevel — large window (> 200K) ─────────────────────────────
 

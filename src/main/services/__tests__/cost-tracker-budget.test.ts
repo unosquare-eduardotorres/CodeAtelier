@@ -32,7 +32,7 @@ describe('CostTracker — estimateCostCents edge cases', () => {
 
   test('haiku is the cheapest model', () => {
     const haikuCost = estimateCostCents(1_000_000, 1_000_000, 'claude-haiku-4-5-20251001')
-    for (const [model, pricing] of Object.entries(MODEL_PRICING)) {
+    for (const [model, _pricing] of Object.entries(MODEL_PRICING)) {
       if (model === 'claude-haiku-4-5-20251001') continue
       const otherCost = estimateCostCents(1_000_000, 1_000_000, model)
       // claude-3-5-haiku-20241022 is even cheaper (0.8/4.0 vs 1.0/5.0)

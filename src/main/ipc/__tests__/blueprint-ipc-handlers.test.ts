@@ -13,7 +13,7 @@ import {
   extractGrillDecisions,
   determineApprovalAction
 } from '../blueprint-ipc-handlers'
-import type { BlueprintPhase, BlueprintPhaseType } from '../../../shared/blueprint-types'
+import type { BlueprintPhase } from '../../../shared/blueprint-types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -12,7 +12,6 @@ import { test, describe, summary } from '../../services/__tests__/test-harness'
 import {
   requireObject,
   requireString,
-  optionalString,
   optionalNumber,
   optionalBoolean,
   optionalNullableString

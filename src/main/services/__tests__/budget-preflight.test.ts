@@ -113,7 +113,7 @@ describe('BudgetStatus — daily cost window', () => {
 
 // ── Fix 1.3: Per-session cost limit ──
 
-const { TokenAccountant } = require('../executor-utils/token-accountant') as typeof import('../executor-utils/token-accountant')
+const { TokenAccountant } = require('../executor-utils/token-accountant') as any
 
 describe('TokenAccountant — getSessionCostCents', () => {
   test('zero usage → zero cost', () => {

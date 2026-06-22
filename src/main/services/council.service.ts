@@ -272,7 +272,7 @@ export class CouncilService extends EventEmitter {
       if (entry.dbSessionId) councilSessionRepository.updateStatus(entry.dbSessionId, 'failed')
     } finally {
       entry.running = false
-      this.startLocks.delete(params.workspaceId)
+      this.startLocks.delete(entry.workspaceId)
       // Defensive cleanup — stop any sessions still held by advisors
       for (const advisor of entry.advisors.values()) {
         if (advisor.session) {

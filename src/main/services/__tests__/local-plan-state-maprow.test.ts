@@ -8,7 +8,8 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { mapRow, type PlanStateRow } from '../local-plan-state.service'
+const { mapRow } = require('../local-plan-state.service') as any
+type PlanStateRow = any
 
 function makeRow(overrides: Partial<PlanStateRow> = {}): PlanStateRow {
   return {

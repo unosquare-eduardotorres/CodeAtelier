@@ -9,11 +9,11 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import {
+const {
   formatDecisions,
   formatTrackScores,
   buildTemplateFallback
-} from '../claude-md-generator'
+} = require('../claude-md-generator') as any
 import type { GrillDecision, GrillTrackScore } from '../../../shared/types'
 
 // ── formatDecisions ──

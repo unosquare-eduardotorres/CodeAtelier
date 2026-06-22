@@ -11,8 +11,7 @@ import type {
   AuditFinding,
   AuditResult,
   AuditRun,
-  AuditPlan,
-  AuditorStatus
+  AuditPlan
 } from '../../shared/types'
 
 // ── Overall Score ────────────────────────────────────────────────────────────

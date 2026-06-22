@@ -125,7 +125,7 @@ function createTestService(overrides?: {
   svc.forceResetIfStuck = proto.forceResetIfStuck.bind(svc)
   // Bind safeWindowSend so finalizeStreamMessage can call it on the test double
   if (proto.safeWindowSend) {
-    ;(svc as Record<string, unknown>).safeWindowSend = proto.safeWindowSend.bind(svc)
+    ;(svc as unknown as Record<string, unknown>).safeWindowSend = proto.safeWindowSend.bind(svc)
   }
 
   return svc

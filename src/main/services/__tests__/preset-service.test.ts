@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { presetService } from '../preset.service'
-import { DEFAULT_MODEL_CONFIG, AVAILABLE_MODELS, ACTION_GROUPS } from '../../../shared/constants'
+const ps = presetService as any
+import { DEFAULT_MODEL_CONFIG, AVAILABLE_MODELS } from '../../../shared/constants'
 import type { ActionModelConfig, ModelAction } from '../../../shared/types'
 import { trySetupTestDb } from '../../db/repositories/__tests__/db-test-helper'
 
@@ -14,26 +15,26 @@ import { trySetupTestDb } from '../../db/repositories/__tests__/db-test-helper'
 
 describe('PresetService.resolveAction — null presetId', () => {
   test('null presetId, known action "da-vinci" → returns DEFAULT_MODEL_CONFIG fallback', () => {
-    const result = presetService.resolveAction(null, 'da-vinci')
+    const result = ps.resolveAction(null, 'da-vinci')
     assert.equal(result.modelId, DEFAULT_MODEL_CONFIG['da-vinci'])
     assert.equal(result.provider, 'claude')
   })
 
   test('null presetId, compound action "da-vinci:plan" → falls through to default', () => {
-    const result = presetService.resolveAction(null, 'da-vinci:plan')
+    const result = ps.resolveAction(null, 'da-vinci:plan')
     assert.equal(result.modelId, DEFAULT_MODEL_CONFIG['da-vinci:plan'])
     assert.equal(result.provider, 'claude')
   })
 
   test('null presetId, unknown action → falls back to "da-vinci" catch-all', () => {
-    const result = presetService.resolveAction(null, 'unknown-action' as ModelAction)
+    const result = ps.resolveAction(null, 'unknown-action' as ModelAction)
     // When action is unknown AND base is unknown, falls to DEFAULT_MODEL_CONFIG['da-vinci']
     assert.equal(result.modelId, DEFAULT_MODEL_CONFIG['da-vinci'])
   })
 
   test('result always has provider "claude"', () => {
     for (const action of ['da-vinci', 'audit', 'grill', 'haiku'] as ModelAction[]) {
-      const result = presetService.resolveAction(null, action)
+      const result = ps.resolveAction(null, action)
       assert.equal(result.provider, 'claude', `action=${action} should be claude`)
     }
   })
@@ -55,11 +56,11 @@ describe('PresetService.resolveProvider — null presetId', () => {
 
 describe('PresetService.resolveExecutorBackend — null presetId', () => {
   test('null presetId → always returns "cli" (Claude default)', () => {
-    assert.equal(presetService.resolveExecutorBackend(null, 'da-vinci'), 'cli')
+    assert.equal(ps.resolveExecutorBackend(null, 'da-vinci'), 'cli')
   })
 
   test('with known Claude action → "cli"', () => {
-    assert.equal(presetService.resolveExecutorBackend(null, 'audit'), 'cli')
+    assert.equal(ps.resolveExecutorBackend(null, 'audit'), 'cli')
   })
 })
 
@@ -67,11 +68,11 @@ describe('PresetService.resolveExecutorBackend — null presetId', () => {
 
 describe('PresetService.resolveLocalBackend — null presetId', () => {
   test('null presetId → returns undefined (not local)', () => {
-    assert.equal(presetService.resolveLocalBackend(null, 'da-vinci'), undefined)
+    assert.equal(ps.resolveLocalBackend(null, 'da-vinci'), undefined)
   })
 
   test('Claude provider → undefined', () => {
-    assert.equal(presetService.resolveLocalBackend(null, 'grill'), undefined)
+    assert.equal(ps.resolveLocalBackend(null, 'grill'), undefined)
   })
 })
 
@@ -160,14 +161,14 @@ describe('PresetService.getModelShortLabel (private)', () => {
 const env = trySetupTestDb()
 
 if (env) {
-  const { db, wsId } = env
+  const { db: _db, wsId } = env
 
   describe('PresetService.resolveAction — with preset (DB)', () => {
     test('preset with direct action config → returns preset config', () => {
       const preset = presetService.createPreset(wsId, 'Custom Config', {
         'da-vinci': { provider: 'local-llm', modelId: 'qwen3:30b', localBackend: 'ollama' }
       })
-      const result = presetService.resolveAction(preset.id, 'da-vinci')
+      const result = ps.resolveAction(preset.id, 'da-vinci')
       assert.equal(result.provider, 'local-llm')
       assert.equal(result.modelId, 'qwen3:30b')
     })
@@ -177,7 +178,7 @@ if (env) {
         'da-vinci': { provider: 'local-llm', modelId: 'llama3:8b' }
       })
       // da-vinci:plan not set, should fall back to da-vinci base
-      const result = presetService.resolveAction(preset.id, 'da-vinci:plan')
+      const result = ps.resolveAction(preset.id, 'da-vinci:plan')
       assert.equal(result.provider, 'local-llm')
       assert.equal(result.modelId, 'llama3:8b')
     })
@@ -187,7 +188,7 @@ if (env) {
         audit: { provider: 'claude', modelId: 'claude-opus-4-8' }
       })
       // Request da-vinci which is not in preset
-      const result = presetService.resolveAction(preset.id, 'da-vinci')
+      const result = ps.resolveAction(preset.id, 'da-vinci')
       assert.equal(result.provider, 'claude')
       assert.equal(result.modelId, DEFAULT_MODEL_CONFIG['da-vinci'])
     })
@@ -198,7 +199,7 @@ if (env) {
       const preset = presetService.createPreset(wsId, 'Local Preset', {
         'da-vinci': { provider: 'local-llm', modelId: 'qwen3:30b', localBackend: 'ollama' }
       })
-      assert.equal(presetService.resolveExecutorBackend(preset.id, 'da-vinci'), 'opencode')
+      assert.equal(ps.resolveExecutorBackend(preset.id, 'da-vinci'), 'opencode')
     })
   })
 
@@ -207,28 +208,28 @@ if (env) {
       const preset = presetService.createPreset(wsId, 'Ollama Preset', {
         'da-vinci': { provider: 'local-llm', modelId: 'qwen3:30b', localBackend: 'ollama' }
       })
-      assert.equal(presetService.resolveLocalBackend(preset.id, 'da-vinci'), 'ollama')
+      assert.equal(ps.resolveLocalBackend(preset.id, 'da-vinci'), 'ollama')
     })
 
     test('local-llm without localBackend → defaults to "ollama"', () => {
       const preset = presetService.createPreset(wsId, 'NoBackend Preset', {
         'da-vinci': { provider: 'local-llm', modelId: 'qwen3:30b' }
       })
-      assert.equal(presetService.resolveLocalBackend(preset.id, 'da-vinci'), 'ollama')
+      assert.equal(ps.resolveLocalBackend(preset.id, 'da-vinci'), 'ollama')
     })
   })
 
   describe('PresetService.getPresetSummary (DB)', () => {
     test('Full Claude built-in → "All actions use Claude defaults"', () => {
-      presetService.ensureBuiltIns(wsId)
+      ps.ensureBuiltIns(wsId)
       const allPresets = presetService.getAllPresets(wsId)
       const fullClaude = allPresets.find((p) => p.name === 'Full Claude')
       assert.ok(fullClaude)
-      assert.equal(presetService.getPresetSummary(fullClaude!.id), 'All actions use Claude defaults')
+      assert.equal(ps.getPresetSummary(fullClaude!.id), 'All actions use Claude defaults')
     })
 
     test('unknown preset ID → empty string', () => {
-      assert.equal(presetService.getPresetSummary('nonexistent-id'), '')
+      assert.equal(ps.getPresetSummary('nonexistent-id'), '')
     })
   })
 } else {

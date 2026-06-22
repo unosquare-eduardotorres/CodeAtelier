@@ -8,8 +8,7 @@ import type {
   MpaRun,
   MpaPhase,
   MpaPhaseType,
-  MpaStatus,
-  MeasurableGoal
+  MpaStatus
 } from '../../shared/mpa-types'
 
 // ── Status Construction ──────────────────────────────────────────────────────

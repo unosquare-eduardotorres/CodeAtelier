@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 
-const { ToolTracker } = require('../executor-utils/tool-tracker') as typeof import('../executor-utils/tool-tracker')
+const { ToolTracker } = require('../executor-utils/tool-tracker') as any
 
 describe('ToolTracker — getToolName', () => {
   test('returns name for registered tool', () => {

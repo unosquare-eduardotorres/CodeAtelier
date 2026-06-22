@@ -24,12 +24,12 @@ import {
 
 describe('buildPhaseSystemPrompt — fallback paths', () => {
   const baseContext = {
-    blueprint: { id: 'bp-1', title: 'Test Blueprint', phases: [] },
+    blueprint: { id: 'bp-1', title: 'Test Blueprint', shortName: 'test', description: 'Test', priority: 'medium', currentPhase: 'specify', settings: {}, phases: [] },
     constitution: 'Use TypeScript strict mode.',
     previousArtifacts: [],
     specFilePath: '/workspace/.blueprint/spec.md',
     blueprintDir: '/workspace/.blueprint'
-  }
+  } as any
 
   test('specify phase → generates fallback with correct phase name', () => {
     const prompt = buildPhaseSystemPrompt('specify', baseContext)
@@ -168,12 +168,12 @@ describe('buildFallbackConstitutionPrompt (internal)', () => {
 
 describe('buildPhaseSystemPrompt — all phases', () => {
   const baseContext = {
-    blueprint: { id: 'bp-1', title: 'Test', phases: [] },
+    blueprint: { id: 'bp-1', title: 'Test', shortName: 'test', description: 'Test', priority: 'medium', currentPhase: 'specify', settings: {}, phases: [] },
     constitution: 'Use TS strict.',
     previousArtifacts: [] as Array<{ phase: string; content: string }>,
     specFilePath: '/workspace/.blueprint/spec.md',
     blueprintDir: '/workspace/.blueprint'
-  }
+  } as any
 
   test('review phase → returns non-empty prompt', () => {
     const prompt = buildPhaseSystemPrompt('review', baseContext)

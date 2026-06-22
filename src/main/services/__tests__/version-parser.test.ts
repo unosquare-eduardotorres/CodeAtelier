@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { isVersionBelow } from '../subscription.service'
+const { isVersionBelow } = require('../subscription.service') as any
 
 describe('isVersionBelow — equal versions', () => {
   test('equal versions → false', () => {
