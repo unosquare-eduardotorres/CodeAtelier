@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { subscriptionService } from '../subscription.service'
+const ss = subscriptionService as any
 
 // Save and restore original state to avoid cross-test pollution
 const originalVersion = (subscriptionService as any).cachedCliVersion
@@ -27,13 +28,13 @@ function cleanup() {
 describe('SubscriptionService.getCliVersion', () => {
   test('returns null initially (no cached version)', () => {
     setVersion(null)
-    assert.equal(subscriptionService.getCliVersion(), null)
+    assert.equal(ss.getCliVersion(), null)
     cleanup()
   })
 
   test('returns cached value after set', () => {
     setVersion('2.1.200')
-    assert.equal(subscriptionService.getCliVersion(), '2.1.200')
+    assert.equal(ss.getCliVersion(), '2.1.200')
     cleanup()
   })
 })
@@ -43,31 +44,31 @@ describe('SubscriptionService.getCliVersion', () => {
 describe('SubscriptionService.supportsGoal', () => {
   test('no cached version → false', () => {
     setVersion(null)
-    assert.equal(subscriptionService.supportsGoal(), false)
+    assert.equal(ss.supportsGoal(), false)
     cleanup()
   })
 
   test('version ≥ 2.1.139 → true', () => {
     setVersion('2.1.200')
-    assert.equal(subscriptionService.supportsGoal(), true)
+    assert.equal(ss.supportsGoal(), true)
     cleanup()
   })
 
   test('version exactly 2.1.139 → true (equal is not below)', () => {
     setVersion('2.1.139')
-    assert.equal(subscriptionService.supportsGoal(), true)
+    assert.equal(ss.supportsGoal(), true)
     cleanup()
   })
 
   test('version < 2.1.139 → false', () => {
     setVersion('2.1.100')
-    assert.equal(subscriptionService.supportsGoal(), false)
+    assert.equal(ss.supportsGoal(), false)
     cleanup()
   })
 
   test('version 2.0.999 → false (minor version below)', () => {
     setVersion('2.0.999')
-    assert.equal(subscriptionService.supportsGoal(), false)
+    assert.equal(ss.supportsGoal(), false)
     cleanup()
   })
 })

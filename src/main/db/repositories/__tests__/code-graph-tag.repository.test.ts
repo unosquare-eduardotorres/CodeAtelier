@@ -12,7 +12,7 @@ if (!env) {
     test('upsertTags()', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { db: _db, wsId } = env
   const { codeGraphTagRepository } = require('../code-graph-tag.repository')
 
   describe('CodeGraphTagRepository', () => {

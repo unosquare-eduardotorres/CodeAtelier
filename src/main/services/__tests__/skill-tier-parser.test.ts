@@ -78,7 +78,7 @@ ${'Line of instruction content here.\n'.repeat(100)}
 This should not be in tier 2.
 `
 
-const SIMPLE_SKILL = `# Simple Skill
+void `# Simple Skill
 
 Just a plain skill with no sections.
 No headings, no keywords, no bold terms.

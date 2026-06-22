@@ -27,12 +27,12 @@ flowchart LR
 
 **Project Specialist** — an opinionated, LLM-tailored expert built from your workspace's detected stack + CLAUDE.md. Built on demand, rebuilt when the stack drifts.
 
-Both adapters share the same execution model, MCP toolbox, and plan/build mode rules. The specialist is the persona; the adapter is the execution. Details: `docs/architecture/project-specialist-refactor.md`.
+Both adapters share the same execution model, MCP toolbox, and plan/build mode rules. The specialist is the persona; the adapter is the execution.
 
 ## Tech Stack
 
 - **Runtime**: Electron 42 (Chromium 148 + Node 24)
-- **Frontend**: React 19 + TypeScript 5.9
+- **Frontend**: React 19 + TypeScript 6
 - **Bundler**: electron-vite 5 (Vite 7)
 - **Styling**: Tailwind CSS 4
 - **State**: Zustand 5
@@ -102,6 +102,8 @@ src/
 │   ├── store/         # Zustand stores (agent, chat, workspace, etc.)
 │   └── hooks/         # Custom hooks (useAutoScroll, useVoiceInput)
 └── shared/            # Cross-process types + IPC channel constants
+
+e2e/                   # Playwright end-to-end tests (190+ specs)
 
 .claude/
 └── skills/            # SKILL.md modules (each may include references/)
@@ -188,7 +190,7 @@ flowchart LR
 
 ### Database
 
-Local SQLite via better-sqlite3 with a repository pattern. Schema defined in `src/main/db/schema.sql`, inline migrations in `src/main/db/index.ts`.
+Local SQLite via better-sqlite3 with a repository pattern. Schema defined in `src/main/db/schema.sql`, 107 versioned migrations in `src/main/db/index.ts`.
 
 ## IDE Setup
 

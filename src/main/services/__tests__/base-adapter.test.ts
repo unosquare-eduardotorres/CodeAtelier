@@ -322,7 +322,7 @@ describe('BaseRoleAdapter — buildControlCallbacks', () => {
       emit: () => {},
       getAccumulatedText: () => ''
     })
-    callbacks.onPlan()
+    callbacks.onPlan({} as any)
     assert.ok(true)
   })
 
@@ -333,7 +333,7 @@ describe('BaseRoleAdapter — buildControlCallbacks', () => {
       emit: () => {},
       getAccumulatedText: () => ''
     })
-    callbacks.onAskUser()
+    callbacks.onAskUser([] as any)
     assert.ok(true)
   })
 })

@@ -16,7 +16,7 @@ import {
 
 describe('resolveLlmProvider', () => {
   test('explicit provider wins', () => {
-    assert.equal(resolveLlmProvider('openai-compatible', 'claude'), 'openai-compatible')
+    assert.equal(resolveLlmProvider('openai-compatible' as any, 'claude'), 'openai-compatible')
   })
 
   test('workspace setting used when no explicit', () => {

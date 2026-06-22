@@ -88,24 +88,16 @@ describe('assertWithinRepo', () => {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 let detectLanguage: ((fp: string) => string) | null = null
 try {
-  // Dynamic import of the module to access the non-exported function
-  // We'll use a workaround: read the module and extract detectLanguage
-  // Actually, the simplest approach is to create a thin wrapper that
-  // calls getFileDiff or use the existing pattern of (instance as any).
-  // Since detectLanguage is a standalone function (not on the class),
-  // we'll test it by reading the RepoService source pattern directly.
-
-  // The actual detectLanguage function is module-scoped. We can access it
-  // through the RepoService's getFileDiff (which calls it), but that requires
-  // git setup. Instead, let's just test the EXT_TO_LANGUAGE mapping via
-  // a focused set of assertions using the public API where possible.
-
-  // For maximum coverage, let's use a direct require() to access the compiled module.
-  // In ESM/TypeScript test harness, we can still verify the mapping logic.
-  detectLanguage = null // placeholder
+  // Dynamic import of the module to access the non-exported function.
+  // Since detectLanguage is not exported, we try to access it via require.
+  const mod = require('../repo.service') as any
+  if (typeof mod.detectLanguage === 'function') {
+    detectLanguage = mod.detectLanguage
+  }
 } catch {
   detectLanguage = null
 }
+void detectLanguage // suppress unused warning if access fails
 
 // We test the EXT_TO_LANGUAGE constant's completeness and the detectLanguage
 // function's behavior through the patterns described in the source code.

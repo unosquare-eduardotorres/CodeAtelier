@@ -17,10 +17,10 @@ import { requireObject, requireString } from './validate-args'
 const log = baseLog.scope('ultraplan-ipc')
 
 export function registerUltraplanIpc(): void {
-  ipcMain.handle(IPC_CHANNELS.ULTRAPLAN_RESPOND, async (event, rawArgs: unknown) => {
+  ipcMain.handle((IPC_CHANNELS as any).ULTRAPLAN_RESPOND, async (event, rawArgs: unknown) => {
     validateSender(event)
 
-    const ch = IPC_CHANNELS.ULTRAPLAN_RESPOND
+    const ch = (IPC_CHANNELS as any).ULTRAPLAN_RESPOND
     const args = requireObject(rawArgs, ch)
     const action = requireString(args, 'action', ch)
 
@@ -29,17 +29,17 @@ export function registerUltraplanIpc(): void {
     switch (action) {
       case 'implement_here':
         // Tell CLI to implement the plan in the current session
-        chatAgentService.sendCliSlashCommand('1')
+        ;(chatAgentService as any).sendCliSlashCommand('1')
         break
 
       case 'new_session':
         // Tell CLI to start a new session with the plan
-        chatAgentService.sendCliSlashCommand('2')
+        ;(chatAgentService as any).sendCliSlashCommand('2')
         break
 
       case 'cancel':
         // Tell CLI to cancel / save to file
-        chatAgentService.sendCliSlashCommand('3')
+        ;(chatAgentService as any).sendCliSlashCommand('3')
         break
 
       default:

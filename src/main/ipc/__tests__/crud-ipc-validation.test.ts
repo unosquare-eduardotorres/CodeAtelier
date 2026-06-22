@@ -18,9 +18,7 @@ import {
   optionalString,
   optionalNumber,
   optionalBoolean,
-  requireStringArray,
-  requirePlainObject,
-  optionalNullableString
+  requireStringArray
 } from '../validate-args'
 
 // ── specialist.ipc.ts contracts ──────────────────────────────────────────────

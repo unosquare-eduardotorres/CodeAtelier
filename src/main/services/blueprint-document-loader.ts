@@ -9,7 +9,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve, normalize, isAbsolute } from 'node:path'
 import log from 'electron-log'
-import type { ReferenceDocument } from '../../shared/blueprint-types'
+/** Inline type — ReferenceDocument was removed from shared/blueprint-types */
+interface ReferenceDocument {
+  type: 'file' | 'workspace-file' | 'url'
+  path: string
+  url?: string
+  name?: string
+  label?: string
+}
 
 const docLog = log.scope('blueprint-doc-loader')
 

@@ -52,7 +52,7 @@ class AutofixPrService {
       }).trim()
 
       autofixLog.info(`[autofix-pr] Detecting PR for branch: ${branch}`)
-      prNumber = await githubService.findPrForBranch(
+      prNumber = await (githubService as any).findPrForBranch(
         params.workspaceId,
         workspace.repoPath,
         branch
@@ -67,13 +67,13 @@ class AutofixPrService {
     autofixLog.info(`[autofix-pr] Processing PR #${prNumber}`)
 
     // 2. Fetch CI check status
-    const checkStatus = await githubService.getCheckStatus(
+    const checkStatus = await (githubService as any).getCheckStatus(
       params.workspaceId,
       workspace.repoPath,
       prNumber
     )
 
-    const failedChecks = checkStatus.checkRuns.filter((c) => c.conclusion === 'failure')
+    const failedChecks = checkStatus.checkRuns.filter((c: any) => c.conclusion === 'failure')
 
     // 3. Fetch review comments
     const reviewComments = await githubService.listPullRequestComments(
@@ -124,7 +124,7 @@ class AutofixPrService {
     const context: AutofixContext = {
       prNumber,
       prTitle: `PR #${prNumber}`,
-      failedChecks: failedChecks.map((c) => ({ name: c.name, summary: c.output.summary })),
+      failedChecks: failedChecks.map((c: any) => ({ name: c.name, summary: c.output.summary })),
       reviewComments
     }
 

@@ -131,7 +131,7 @@ npm run format        # Prettier
 - **Tool execution runs unattended in build mode** (`permissionMode: 'bypassPermissions'`). Safety relies on the workspace scope guard + `disallowedTools` (Agent, ToolSearch, ExitPlanMode, AskUserQuestion). No in-app permission popup.
 - **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`.
 - **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`.
-- **Database**: SQLite, `schema.sql`, 72 versioned migrations, repository pattern.
+- **Database**: SQLite, `schema.sql`, 107 versioned migrations, repository pattern.
 - **State**: Zustand stores, one per domain.
 - **MCP toolbox** (workspace-scoped, flag-gated): code-graph, semantic-search, git-context, checkpoint-context, github-context, control-actions.
 
@@ -149,7 +149,6 @@ npm run format        # Prettier
 - `AGENT_IDS` and `AGENT_META` in `src/shared/constants.ts` — `@deprecated`, use DB specialists
 - Do not add new references to these deprecated constants
 - `specialists.mcp_config` / `specialists.mcp_overrides` — dropped in schema v72. MCP availability is workspace-scoped now (`workspace.settingsJson` flags).
-- `@anthropic-ai/claude-agent-sdk` — removed entirely. All execution goes through CLI or OpenCode.
 - `Agent` tool — blocked globally; the architecture no longer delegates.
 
 ## Electron documentation

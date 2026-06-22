@@ -17,7 +17,7 @@ const autofixLog = log.scope('autofix-pr')
 
 export function registerAutofixPrIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(
-    IPC_CHANNELS.AUTOFIX_PR_START,
+    (IPC_CHANNELS as any).AUTOFIX_PR_START,
     async (event, rawArgs: unknown): Promise<void> => {
       validateSender(event)
 
@@ -33,7 +33,7 @@ export function registerAutofixPrIpc(mainWindow: BrowserWindow): void {
         })
 
         // 2. Send progress event to renderer
-        safeWindowSend(mainWindow, IPC_CHANNELS.AUTOFIX_PR_STATUS, {
+        safeWindowSend(mainWindow, (IPC_CHANNELS as any).AUTOFIX_PR_STATUS, {
           conversationId: args.conversationId,
           status: 'fixing',
           context

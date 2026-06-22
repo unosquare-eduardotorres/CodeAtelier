@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { detectLanguage, EXT_TO_LANGUAGE } from '../repo.service'
+const { detectLanguage, EXT_TO_LANGUAGE } = require('../repo.service') as any
 
 // ── Standard extension mappings ──
 

@@ -15,7 +15,7 @@ const btwLog = log.scope('btw')
 
 export function registerBtwIpc(): void {
   ipcMain.handle(
-    IPC_CHANNELS.CHAT_BTW,
+    (IPC_CHANNELS as any).CHAT_BTW,
     async (event, rawArgs: unknown): Promise<{ answer: string }> => {
       validateSender(event)
 

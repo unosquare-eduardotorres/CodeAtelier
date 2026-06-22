@@ -23,7 +23,7 @@ if (!env) {
   const spec2 = specialistRepository.create({
     agentId: 'cs-agent-2', displayName: 'CS Spec 2', isActive: true
   })
-  const specInactive = specialistRepository.create({
+  void specialistRepository.create({
     agentId: 'cs-agent-inactive', displayName: 'Inactive', isActive: false
   })
 

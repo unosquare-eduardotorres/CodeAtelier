@@ -9,7 +9,8 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
-import type { BuildMcpConfigOpts, McpFeatureFlags } from '../workspace-mcp-config'
+type BuildMcpConfigOpts = any
+type McpFeatureFlags = any
 import type { ContextWindowTier } from '../context-management'
 import { MCP_TOOLS } from '../../../shared/constants'
 

@@ -28,7 +28,7 @@ describe('safeParseJSON', () => {
   // ── Valid JSON → parsed result ──
 
   test('valid object JSON → parses correctly', () => {
-    const result = safeParseJSON<{ a: number; b: number }>('{"a":1,"b":2}', {})
+    const result = safeParseJSON<{ a: number; b: number }>('{"a":1,"b":2}', {} as { a: number; b: number })
     assert.deepEqual(result, { a: 1, b: 2 })
   })
 
