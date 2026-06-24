@@ -20,6 +20,7 @@ import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult, ExecutorTokenUsage } from './executor-types'
 import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
 import { normalizeOpenCodeEvent } from './opencode-event-normalizer'
+import { ensureOpencodePathInEnv, getOpencodePath } from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
 
 const openCodeLog = log.scope('OpenCodeExecutor')
@@ -122,9 +123,14 @@ const MAX_TRANSIENT_RETRIES = 3
 /** Base delay for exponential backoff (ms) */
 const BASE_RETRY_DELAY_MS = 2000
 
+/** Default port used by the OpenCode SDK server */
+const OPENCODE_SERVER_PORT = 4096
+
 export class OpenCodeExecutor {
   // Store dynamic imports to handle ESM-only package
   private client: OpencodeClient | null = null
+  /** Reference to the OpenCode server child process — needed for clean shutdown */
+  private server: { url: string; close(): void } | null = null
   private isStarted = false
   /** Map of conversationId → OpenCode session ID for multi-turn reuse */
   private readonly sessionMap = new Map<string, string>()
@@ -149,6 +155,54 @@ export class OpenCodeExecutor {
   private serverReadyPromise?: Promise<void>
   /** EXEC-05: Track the serverReady fallback timeout so it can be cancelled */
   private serverReadyTimeout: ReturnType<typeof setTimeout> | null = null
+
+   /**
+    * Check if the OpenCode CLI is installed and available in PATH.
+    * Returns an error message if CLI is not found, null if available.
+    */
+   async checkCliAvailable(): Promise<string | null> {
+     try {
+       const { execSync } = await import('node:child_process')
+
+      // Use the cached resolved path (set at startup via resolveOpencodePath)
+      const opencodePath = getOpencodePath()
+
+      if (!opencodePath) {
+        return (
+          'OpenCode CLI not found. Install it by running:\n' +
+          '  npm install -g @opencode-ai/cli\n' +
+          'Or download from: https://opencode.ai/getting-started'
+        )
+      }
+
+      // Try to get version
+      const versionOutput = execSync('opencode --version', {
+        encoding: 'utf-8',
+        timeout: 5000,
+      }).trim()
+
+      openCodeLog.info(
+        `[opencode] checkCliAvailable: path=${opencodePath}, version=${versionOutput}`
+      )
+
+      // Non-empty version output confirms the binary is installed and executable.
+      // (The output format varies across versions — e.g. "1.17.9" vs "opencode v1.x")
+      if (versionOutput) {
+        openCodeLog.info(`[opencode] CLI available at: ${opencodePath}, version: ${versionOutput}`)
+        ensureOpencodePathInEnv()
+        return null
+      }
+
+      return (
+        'OpenCode CLI found but returned empty version output.\n' +
+        'Try reinstalling: npm install -g @opencode-ai/cli'
+      )
+    } catch (err) {
+      const errorMsg = `Failed to check OpenCode CLI availability: ${(err as Error).message}`
+      openCodeLog.error('[opencode]', errorMsg)
+      return errorMsg
+    }
+  }
 
   /**
    * Start the OpenCode server in-process.
@@ -175,10 +229,20 @@ export class OpenCodeExecutor {
       return
     }
 
-    try {
-      const { createOpencode } = await this.importSdk()
+    // Pre-check: Validate OpenCode CLI is installed
+    const cliError = await this.checkCliAvailable()
+    if (cliError) {
+      const cliErr = new Error(cliError)
+      openCodeLog.error('[opencode]', cliErr.message)
+      throw cliErr
+    }
 
+    try {
+      // T-1: Ensure opencode path is in PATH (uses cached value from startup)
+      // The SDK uses cross-spawn which relies on PATH.
+      ensureOpencodePathInEnv()
       openCodeLog.info(`[opencode] Starting server in ${cwd}`)
+      openCodeLog.info(`[opencode] Current env.PATH: ${process.env.PATH?.slice(0, 600)}...`)
 
       // OC-01: Clear stale env vars from any prior workspace to prevent
       // cross-workspace contamination when start() is called without stop()
@@ -186,10 +250,32 @@ export class OpenCodeExecutor {
       delete process.env.OPENCODE_EXPERIMENTAL_LSP_TOOL
       delete process.env.OPENCODE_ENABLE_EXA
 
-      // Set OPENCODE_CONFIG env var so OpenCode reads from the temp dir
-      // instead of looking for opencode.json in the workspace root.
+      // OC-02: Read config content to pass inline via the SDK.
+      // The SDK sets OPENCODE_CONFIG_CONTENT from options.config — if we don't pass it,
+      // it defaults to "{}" which overrides any file-based OPENCODE_CONFIG.
+      let configContent: Record<string, unknown> | undefined
       if (config?.configPath) {
-        process.env.OPENCODE_CONFIG = config.configPath
+        try {
+          const { readFileSync } = await import('node:fs')
+          configContent = JSON.parse(readFileSync(config.configPath, 'utf-8'))
+          openCodeLog.info(`[opencode] Loaded config inline from ${config.configPath}`)
+        } catch (err) {
+          openCodeLog.warn(`[opencode] Failed to read config at ${config.configPath}:`, err)
+        }
+      }
+
+      // OC-08: Log provider config summary for diagnostics (mask apiKey)
+      if (configContent) {
+        const providers = (configContent as any).provider ?? {}
+        for (const [provId, provConfig] of Object.entries(providers)) {
+          const opts = (provConfig as any)?.options ?? {}
+          openCodeLog.info(
+            `[opencode] Config provider [${provId}]: ` +
+            `baseURL=${opts.baseURL ?? '(none)'}, ` +
+            `apiKey=${opts.apiKey ? '***' + String(opts.apiKey).slice(-3) : '(none)'}, ` +
+            `npm=${(provConfig as any)?.npm ?? '(builtin)'}`
+          )
+        }
       }
 
       // ENH-3: Enable experimental LSP tool (goToDefinition, findReferences, etc.)
@@ -207,16 +293,82 @@ export class OpenCodeExecutor {
       this.startupAbortController = new AbortController()
       const startupTimeout = config?.isLocal ? 30_000 : 10_000
 
-      const result = await createOpencode({
-        timeout: startupTimeout,
-        signal: this.startupAbortController.signal
-      })
+      // PORT-FIX: Kill any stale opencode server process that may hold the port
+      // from a prior crash / ungraceful shutdown. Without this, createOpencode fails
+      // with "ServeError" because port 4096 is already in use.
+      await this.killStaleServer()
+
+      // OC-05: Pre-install provider npm package if needed.
+      // OpenCode auto-installs on first run, but this takes time and can cause
+      // server.connected timeout. Pre-installing avoids the cold-start delay.
+      // IMPORTANT: The .opencode/ directory is managed by the OpenCode server.
+      // We must not create a conflicting package.json — just install into the
+      // existing node_modules if the package is missing.
+      if (configContent) {
+        const providers = (configContent as any).provider ?? {}
+        for (const [provId, provConfig] of Object.entries(providers)) {
+          const npmPkg = (provConfig as any)?.npm
+          if (npmPkg) {
+            const { join } = await import('node:path')
+            const { existsSync } = await import('node:fs')
+            const { execSync } = await import('node:child_process')
+            const opencodeDir = join(cwd, '.opencode')
+            const pkgDir = join(opencodeDir, 'node_modules', ...npmPkg.split('/'))
+            if (!existsSync(pkgDir)) {
+              openCodeLog.info(`[opencode] Pre-installing ${npmPkg} for provider ${provId}...`)
+              try {
+                // Install into the existing .opencode/ dir managed by the OpenCode server.
+                // Use --save so the package persists in the existing package.json dependency tree.
+                execSync(`npm install ${npmPkg} --prefix "${opencodeDir}"`, {
+                  timeout: 30_000,
+                  stdio: 'pipe',
+                  cwd: opencodeDir
+                })
+                openCodeLog.info(`[opencode] Pre-installed ${npmPkg} successfully`)
+              } catch (err) {
+                openCodeLog.warn(`[opencode] Failed to pre-install ${npmPkg}:`, err)
+                // Non-fatal — server may still auto-install
+              }
+            } else {
+              openCodeLog.info(`[opencode] ${npmPkg} already installed for provider ${provId}`)
+            }
+          }
+        }
+      }
+
+      openCodeLog.info(`[opencode] Calling createOpencode with port ${OPENCODE_SERVER_PORT}, timeout ${startupTimeout}ms`)
+
+      // Import the SDK to get createOpencode function
+      const { createOpencode } = await import('@opencode-ai/sdk')
+
+      // OC-04: Set CWD to workspace so opencode serve inherits the correct project directory.
+      // The SDK's createOpencodeServer() doesn't support a `cwd` option, and `opencode serve`
+      // doesn't support `--project`. The child process CWD is determined at spawn time.
+      const originalCwd = process.cwd()
+      process.chdir(cwd)
+      openCodeLog.info(`[opencode] Set CWD to workspace: ${cwd}`)
+
+      let result: Awaited<ReturnType<typeof createOpencode>>
+      try {
+        result = await createOpencode({
+          port: OPENCODE_SERVER_PORT,
+          timeout: startupTimeout,
+          signal: this.startupAbortController.signal,
+          // OC-02: Pass config inline so the SDK sets OPENCODE_CONFIG_CONTENT correctly.
+          // Without this, the SDK defaults to "{}" which the server prioritizes over file-based config.
+          ...(configContent ? { config: configContent as any } : {})
+        })
+      } finally {
+        process.chdir(originalCwd)
+        openCodeLog.info(`[opencode] Restored CWD to: ${originalCwd}`)
+      }
 
       // EXEC-06: Validate client exists before marking as started
       if (!result?.client) {
         throw new Error('OpenCode SDK initialization failed: no client returned')
       }
       this.client = result.client
+      this.server = result.server ?? null
       this.isStarted = true
 
       // C-4: Set up serverReady promise — resolved when server.connected event fires.
@@ -229,16 +381,18 @@ export class OpenCodeExecutor {
       this.serverReadyPromise = new Promise<void>((resolve) => {
         this.serverReadyResolve = resolve
         // Timeout fallback — don't block forever if event never fires
+        // OC-06: Local providers need more time for npm installs + MCP handshakes
+        const serverReadyTimeoutMs = config?.isLocal ? 30_000 : 10_000
         this.serverReadyTimeout = setTimeout(() => {
           if (this.serverReadyResolve) {
             openCodeLog.warn(
-              '[opencode] server.connected not received within 10s — proceeding anyway'
+              `[opencode] server.connected not received within ${serverReadyTimeoutMs / 1000}s — proceeding anyway`
             )
             this.serverReadyResolve()
             this.serverReadyResolve = undefined
           }
           this.serverReadyTimeout = null
-        }, 10_000)
+        }, serverReadyTimeoutMs)
       })
 
       // Store restart context for auto-recovery
@@ -313,6 +467,7 @@ export class OpenCodeExecutor {
     for await (const event of events.stream) {
       if (abortController?.signal.aborted) break
 
+      let retryInitiatedThisEvent = false
       const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
       for (const chunk of chunks) {
         if (chunk.type === 'text' && chunk.content) {
@@ -332,6 +487,7 @@ export class OpenCodeExecutor {
           const newRetryCount = retryResult.value
           if (newRetryCount >= 0) {
             transientRetryCount = newRetryCount
+            retryInitiatedThisEvent = true
             continue
           }
           // Max retries exhausted — fall through to emit the error
@@ -358,8 +514,9 @@ export class OpenCodeExecutor {
 
       if (maxTurnsReached) break
 
-      // Check for session completion — skip error-based termination during active retries
-      const retriesAvailable = transientRetryCount < MAX_TRANSIENT_RETRIES
+      // Only suppress session.error when a retry was actually initiated for THIS event.
+      // Without this, the first non-retried error gets suppressed forever (deadlock).
+      const retriesAvailable = retryInitiatedThisEvent
       if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable)) {
         break
       }
@@ -436,17 +593,47 @@ export class OpenCodeExecutor {
           /* non-fatal: session title is cosmetic */
         })
 
-      // OC-04: Track prompt promise to surface send errors to the stream consumer
+      // OC-04: Fire-and-forget prompt via the async endpoint.
+      // promptAsync → POST /session/{id}/prompt_async → returns 204 immediately.
+      // Events arrive via SSE (event.subscribe). The synchronous session.prompt()
+      // blocks until the full AI response completes, which holds an HTTP connection
+      // open for the entire agent loop — wrong pattern for streaming.
       let promptSendError: Error | null = null
       this.client.session
-        .prompt({
+        .promptAsync({
           path: { id: openCodeSessionId },
           body: promptBody
+        })
+        .then((response) => {
+          // OC-07: Check the error field — HTTP 4xx/5xx errors land here.
+          // promptAsync returns 204 (void) on success, so data is undefined.
+          const errorData = (response as any)?.error
+          if (errorData) {
+            const errorMsg =
+              errorData?.data?.message ?? errorData?.message ?? JSON.stringify(errorData)
+            openCodeLog.error(`[opencode] Prompt REJECTED by server: ${errorMsg}`)
+            promptSendError = new Error(`OpenCode server error: ${errorMsg}`)
+            return
+          }
+
+          // 204 accepted — the server is processing via the agent loop.
+          // Events will arrive on the SSE stream.
+          openCodeLog.info('[opencode] Prompt accepted (204)')
         })
         .catch((err) => {
           openCodeLog.error('[opencode] Prompt send error:', err)
           promptSendError = err instanceof Error ? err : new Error(String(err))
         })
+
+      // OC-07: Start a watcher that breaks the stream if the prompt send fails.
+      // The prompt is fire-and-forget — if the server returns 500, the stream
+      // will hang forever because no events will be emitted.
+      const promptErrorWatcher = setInterval(() => {
+        if (promptSendError && abortController && !abortController.signal.aborted) {
+          openCodeLog.warn('[opencode] Prompt send failed — aborting event stream')
+          abortController.abort(promptSendError)
+        }
+      }, 500)
 
       // Process event stream
       let resultText = ''
@@ -468,6 +655,8 @@ export class OpenCodeExecutor {
         }
         ;({ resultText, maxTurnsReached } = streamResult.value)
       }
+
+      clearInterval(promptErrorWatcher)
 
       // OC-04: If prompt send failed before/during streaming, surface the error
       if (promptSendError) {
@@ -500,11 +689,35 @@ export class OpenCodeExecutor {
         }
       } else {
         this.consecutiveErrors++
+        const errorDetails = {
+          message: (error as Error).message,
+          name: (error as Error).name,
+          stack: (error as Error).stack,
+          code: (error as any)?.code,
+          syscall: (error as any)?.syscall,
+          path: (error as any)?.path,
+          spawnargs: (error as any)?.spawnargs,
+          platform: process.platform,
+          envPATH: process.env.PATH?.slice(0, 600),
+        }
         openCodeLog.error(
           `[opencode] Execution error (consecutive=${this.consecutiveErrors}):`,
-          error
+          errorDetails
         )
-        yield { type: 'error', error: `OpenCode error: ${(error as Error).message}` }
+        openCodeLog.error(
+          `[opencode] Current PATH: ${process.env.PATH || 'not set'}`
+        )
+
+        // Provide helpful troubleshooting info in the error message
+        const helpMessage = `OpenCode error: ${(error as Error).message}
+
+Troubleshooting:
+- Check that opencode is installed: npm install -g @opencode-ai/cli
+- Check the opencode path: which opencode
+- Ensure the opencode directory is in PATH: echo $PATH
+- Current PATH: ${process.env.PATH?.slice(0, 300) || 'not set'}`
+
+        yield { type: 'error', error: helpMessage }
       }
     }
   }
@@ -523,6 +736,18 @@ export class OpenCodeExecutor {
 
     this.stopHealthCheck()
     openCodeLog.info('[opencode] Stopping server')
+
+    // PORT-FIX: Close the server child process so the port is released.
+    // Previously this reference was never stored, leaving orphaned processes.
+    if (this.server) {
+      try {
+        this.server.close()
+      } catch (err) {
+        openCodeLog.warn('[opencode] Error closing server:', err)
+      }
+      this.server = null
+    }
+
     this.client = null
     this.isStarted = false
     this.sessionMap.clear()
@@ -730,20 +955,38 @@ export class OpenCodeExecutor {
   ): Promise<void> {
     if (!this.client || !contextParts.length) return
 
-    try {
+    // Wrap in a timeout — priming is best-effort and must never block the real prompt.
+    // enrichGitContext and session.prompt (synchronous) can hang if MCP handshakes are incomplete.
+    const PRIMING_TIMEOUT_MS = 8_000
+    const timeoutPromise = new Promise<'timeout'>((resolve) =>
+      setTimeout(() => resolve('timeout'), PRIMING_TIMEOUT_MS)
+    )
+
+    const primingWork = (async () => {
       // 6E-2/B-4: Enrich git context via file.status() or session.shell() fallback
       await this.enrichGitContext(sessionId, contextParts)
 
-      await this.client.session.prompt({
+      await this.client!.session.prompt({
         path: { id: sessionId },
         body: {
           parts: contextParts,
           noReply: true
         }
       })
-      openCodeLog.info(
-        `[opencode] Session ${sessionId} primed with ${contextParts.length} context parts`
-      )
+      return 'done' as const
+    })()
+
+    try {
+      const result = await Promise.race([primingWork, timeoutPromise])
+      if (result === 'timeout') {
+        openCodeLog.warn(
+          `[opencode] Session priming timed out after ${PRIMING_TIMEOUT_MS}ms — proceeding without priming`
+        )
+      } else {
+        openCodeLog.info(
+          `[opencode] Session ${sessionId} primed with ${contextParts.length} context parts`
+        )
+      }
     } catch (err) {
       // Non-fatal — priming failure shouldn't block the real prompt
       openCodeLog.warn(`[opencode] Session priming failed: ${(err as Error).message}`)
@@ -1058,7 +1301,7 @@ export class OpenCodeExecutor {
         healthPath: '/api/tags',
         hint: 'Try: ollama serve'
       },
-      omlx: { defaultUrl: 'http://localhost:8080', healthPath: '/health' }
+      omlx: { defaultUrl: 'http://localhost:8000', healthPath: '/v1/models' }
     }
 
     const provider = LOCAL_PROVIDERS[providerId]
@@ -1120,7 +1363,7 @@ export class OpenCodeExecutor {
    * Re-send a prompt to the OpenCode session (fire-and-forget for retries).
    */
   private resendPrompt(sessionId: string, promptBody: SessionPromptData['body']): void {
-    this.client!.session.prompt({
+    this.client!.session.promptAsync({
       path: { id: sessionId },
       body: promptBody
     }).catch((err) => {
@@ -1145,7 +1388,14 @@ export class OpenCodeExecutor {
         body: { title: `Code Atelier: ${new Date().toISOString()}` }
       })
       sessionId = session.data?.id
-      if (!sessionId) return undefined
+      if (!sessionId) {
+        // Log the full response so config/provider errors are diagnosable
+        openCodeLog.error(
+          '[opencode] session.create returned no ID — response:',
+          JSON.stringify(session.data ?? session, null, 2)
+        )
+        return undefined
+      }
 
       if (conversationId) {
         this.sessionMap.set(conversationId, sessionId)
@@ -1168,7 +1418,8 @@ export class OpenCodeExecutor {
 
   /**
    * Build the prompt body with parts, model config, and optional output schema.
-   * D-1: System prompt injected via plugin hook when available; falls back to user-message.
+   * D-1: System prompt uses the SDK `system` field (proper channel for model instructions).
+   * When the plugin hook is active, it injects system prompt via its own mechanism.
    */
   private buildPromptBody(
     prompt: string,
@@ -1176,35 +1427,25 @@ export class OpenCodeExecutor {
     provider: OpenCodeProviderConfig,
     outputSchema?: Record<string, unknown>
   ): SessionPromptData['body'] {
+    const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
     const body: Record<string, unknown> = {
-      parts: this.buildPromptParts(prompt, systemPrompt),
+      parts: [{ type: 'text', text: prompt }],
       model: {
         providerID: provider.providerId,
         modelID: provider.modelId
-      }
+      },
+      // Use the SDK's system field for system prompts — proper channel for model instructions.
+      // This gives the system prompt higher priority, enables provider-specific routing,
+      // and supports prefix caching. Skip when the plugin hook injects its own system prompt.
+      ...(systemPrompt && !hasPluginSystemPromptHook ? { system: systemPrompt } : {})
     }
 
     // ENH-10: Include retry config so OpenCode auto-retries on invalid JSON
     if (outputSchema) {
-      body.format = { type: 'json_schema', schema: outputSchema, retries: 2 }
+      body.format = { type: 'json_schema', schema: outputSchema, retryCount: 2 }
     }
 
     return body as SessionPromptData['body']
-  }
-
-  /**
-   * Build the text content parts for a prompt.
-   * Separates part construction from model config merging for clarity.
-   */
-  private buildPromptParts(prompt: string, systemPrompt: string): Array<Record<string, unknown>> {
-    const parts: Array<Record<string, unknown>> = []
-    // D-1: Only inject system prompt as text if the plugin hook isn't active
-    const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-    if (systemPrompt && !hasPluginSystemPromptHook) {
-      parts.push({ type: 'text', text: `[System Instructions]\n${systemPrompt}` })
-    }
-    parts.push({ type: 'text', text: prompt })
-    return parts
   }
 
   /**
@@ -1215,13 +1456,33 @@ export class OpenCodeExecutor {
   }
 
   /**
-   * Dynamically import the ESM-only @opencode-ai/sdk.
-   * Uses dynamic import() to work in our CJS-compiled Electron main process.
+   * PORT-FIX: Kill any stale `opencode serve` process holding the server port.
+   * This handles ungraceful shutdowns where stop() wasn't called or failed.
    */
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-  private async importSdk() {
-    // Dynamic import for ESM package in CJS context
-    return await import('@opencode-ai/sdk')
+  private async killStaleServer(): Promise<void> {
+    try {
+      const { execSync } = await import('node:child_process')
+      // lsof finds PIDs listening on our port; awk extracts the PID column
+      const output = execSync(
+        `lsof -ti :${OPENCODE_SERVER_PORT} 2>/dev/null`,
+        { encoding: 'utf-8', timeout: 3000 }
+      ).trim()
+      if (output) {
+        const pids = output.split('\n').filter(Boolean)
+        for (const pid of pids) {
+          openCodeLog.warn(`[opencode] Killing stale server process on port ${OPENCODE_SERVER_PORT} (PID ${pid})`)
+          try {
+            process.kill(Number(pid), 'SIGTERM')
+          } catch {
+            // Process may have already exited
+          }
+        }
+        // Brief wait for the port to be released
+        await new Promise((r) => setTimeout(r, 500))
+      }
+    } catch {
+      // lsof not found or no process on port — safe to proceed
+    }
   }
 
   /**
@@ -1244,8 +1505,10 @@ export class OpenCodeExecutor {
    * Check if an event indicates the session has completed.
    *
    * @param retriesAvailable - When true, `session.error` events are NOT treated as
-   *   terminal because the caller will retry the prompt. Only after retries are
-   *   exhausted should an error event end the stream loop.
+   *   terminal because a retry was actually initiated for this event. This flag
+   *   should only be true when handleTransientRetry fired successfully — NOT simply
+   *   because the retry budget hasn't been exhausted (which caused the suppression
+   *   deadlock: errors were suppressed but no retry ever fired).
    */
   private isSessionComplete(event: unknown, sessionId: string, retriesAvailable = false): boolean {
     const evt = event as Record<string, unknown>
@@ -1275,6 +1538,21 @@ export class OpenCodeExecutor {
       const status = properties.status as string | undefined
       if (status === 'idle') return true
       if (status === 'error' && !retriesAvailable) return true
+    }
+
+    // V2 event bus: session.next.step.ended with finish="stop" is a completion signal
+    if (type === 'session.next.step.ended') {
+      const finish = properties.finish as string | undefined
+      if (finish === 'stop') return true
+    }
+
+    // V2 event bus: session.next.step.failed is a terminal signal
+    if (type === 'session.next.step.failed') {
+      if (retriesAvailable) {
+        openCodeLog.info('[opencode] session.next.step.failed suppressed — retries still available')
+        return false
+      }
+      return true
     }
 
     return false

@@ -46,8 +46,26 @@ export function decryptSettingsKey(
   if (isEncrypted) {
     try {
       return safeStorage.decryptString(Buffer.from(value, 'base64'))
-    } catch {
-      // Corrupt or re-keyed — return undefined rather than crash
+    } catch (err) {
+      // SEC-04b: Decryption failed — the flag/value pair is inconsistent.
+      // This happens when:
+      //   1. The value was stored as plaintext but the flag was set to true
+      //   2. The OS keychain was re-keyed (password change, migration)
+      //   3. The encrypted data is corrupt
+      // Log the failure so it's diagnosable, and fall back to the raw value.
+      // A short non-base64 string is likely plaintext that was flagged incorrectly.
+      const looksLikePlaintext = value.length < 100 && !/^[A-Za-z0-9+/]+=*$/.test(value)
+      if (looksLikePlaintext) {
+        console.warn(
+          `[SEC-04b] decryptSettingsKey: encrypted flag set but value appears to be plaintext ` +
+          `(len=${value.length}). Returning raw value as fallback.`
+        )
+        return value
+      }
+      console.warn(
+        `[SEC-04b] decryptSettingsKey: decryption failed for encrypted value (len=${value.length}). ` +
+        `Key is lost — user must re-enter it.`
+      )
       return undefined
     }
   }

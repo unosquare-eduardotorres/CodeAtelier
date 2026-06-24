@@ -1,4 +1,5 @@
-import { Loader2 } from 'lucide-react'
+import { Check, Loader2, Save } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { SettingsCard } from '@renderer/components/common'
 import { useToastStore } from '@renderer/store'
 import { OLLAMA_DEFAULT_PORT, OMLX_DEFAULT_PORT } from '../../../../../shared/constants'
@@ -12,10 +13,32 @@ import type {
 import LocalModelSelector from '../LocalModelSelector'
 import OllamaSetupModal from '../OllamaSetupModal'
 
+// ─── Model Type Badge ─────────────────────────────────
+
+function ModelTypeBadge({ modelType }: { modelType?: string }): React.JSX.Element {
+  const type = modelType ?? 'llm'
+  const config =
+    type === 'embedding'
+      ? { label: 'EMB', classes: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' }
+      : type === 'vlm'
+        ? { label: 'VLM', classes: 'bg-purple-500/10 text-purple-400 border-purple-500/20' }
+        : type === 'reranker'
+          ? { label: 'RERANK', classes: 'bg-slate-500/10 text-slate-400 border-slate-500/20' }
+          : { label: 'LLM', classes: 'bg-green-500/10 text-green-400 border-green-500/20' }
+  return (
+    <span
+      className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}
+    >
+      {config.label}
+    </span>
+  )
+}
+
 // ─── Connection Status Badge ──────────────────────────────
 
 function ConnectionStatusBadge({
   localStatus,
+  connectionTesting,
   backend,
   localHost,
   localPort,
@@ -25,6 +48,7 @@ function ConnectionStatusBadge({
   onLoadOmlxModel
 }: {
   localStatus: OmlxExtendedStatus | OllamaStatus | null
+  connectionTesting: boolean
   backend: LocalLLMBackend
   localHost: string
   localPort: number
@@ -33,7 +57,30 @@ function ConnectionStatusBadge({
   isRemoteServer: boolean
   onLoadOmlxModel: (modelId: string) => void
 }): React.JSX.Element | null {
+  // Show "Connecting…" when testing and no prior status
+  if (connectionTesting) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+        <Loader2 size={12} className="animate-spin" />
+        Connecting to {backend === 'omlx' ? 'oMLX' : 'Ollama'}…
+      </span>
+    )
+  }
+
   if (!localStatus) return null
+
+  // Timeout-specific message (not running + timed out)
+  if (!localStatus.running && 'diagnostics' in localStatus) {
+    const diag = (localStatus as OmlxExtendedStatus).diagnostics
+    if (diag?.timedOut) {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          Connection timed out — check server address and network
+        </span>
+      )
+    }
+  }
 
   if (!localStatus.running) {
     return localStatus.installed ? (
@@ -47,6 +94,26 @@ function ConnectionStatusBadge({
         {isRemoteServer ? 'Cannot reach server' : 'Not installed'}
       </span>
     )
+  }
+
+  // Auth-specific error when connected but admin API returned 401
+  if ('diagnostics' in localStatus) {
+    const diag = (localStatus as OmlxExtendedStatus).diagnostics
+    if (diag?.adminAuthRequired) {
+      return (
+        <>
+          <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            Connected (limited) — {diag.errorDetail ?? 'API key required for full access'}
+          </span>
+          {localStatus.models.length > 0 && (
+            <span className="text-[10px] text-text-muted mt-0.5 block">
+              {localStatus.models.length} model{localStatus.models.length !== 1 ? 's' : ''} visible via public API
+            </span>
+          )}
+        </>
+      )
+    }
   }
 
   const versionSuffix =
@@ -80,9 +147,10 @@ function ConnectionStatusBadge({
                 key={model.id}
                 className="flex items-center justify-between px-2 py-1.5 rounded border border-border-subtle"
               >
-                <div>
+                <div className="flex items-center gap-2">
                   <span className="text-xs text-text-primary font-medium">{model.id}</span>
-                  <span className="text-[10px] text-text-muted ml-2">{model.estimatedSize}</span>
+                  <ModelTypeBadge modelType={model.modelType} />
+                  <span className="text-[10px] text-text-muted">{model.estimatedSize}</span>
                 </div>
                 <button
                   onClick={() => onLoadOmlxModel(model.id)}
@@ -233,7 +301,9 @@ interface LocalLLMConfigSectionProps {
   onBackendChange: (backend: LocalLLMBackend) => void
   onLocalModelSelect: (modelId: string) => void
   onLoadOmlxModel: (modelId: string) => void
+  onUnloadOmlxModel: (modelId: string) => void
   onTestConnection: () => void
+  onAutoTest: () => void
   onHostChange: (host: string) => void
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
@@ -255,7 +325,7 @@ interface LocalLLMConfigSectionProps {
 
 export default function LocalLLMConfigSection({
   backend,
-  platformInfo,
+  platformInfo: _platformInfo,
   localHost,
   localPort,
   localApiKey,
@@ -269,10 +339,12 @@ export default function LocalLLMConfigSection({
   showOllamaSetup,
   provider,
   activeWorkspaceId,
-  onBackendChange,
+  onBackendChange: _onBackendChange,
   onLocalModelSelect,
   onLoadOmlxModel,
+  onUnloadOmlxModel,
   onTestConnection,
+  onAutoTest,
   onHostChange,
   onPortChange,
   onApiKeyChange,
@@ -289,55 +361,63 @@ export default function LocalLLMConfigSection({
     onContextWindowChange
   )
 
+  // ── Save button state ──────────────────────────────────
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+
+  // Track last-saved values to detect unsaved changes
+  const savedRef = useRef({ host: localHost, port: localPort, apiKey: localApiKey })
+
+  // Sync savedRef on mount (props reflect persisted values on initial load)
+  useEffect(() => {
+    savedRef.current = { host: localHost, port: localPort, apiKey: localApiKey }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update savedRef when backend switch auto-saves new port
+  useEffect(() => {
+    savedRef.current = { host: localHost, port: localPort, apiKey: localApiKey }
+  }, [backend]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hasUnsavedChanges =
+    localHost !== savedRef.current.host ||
+    localPort !== savedRef.current.port ||
+    localApiKey !== savedRef.current.apiKey
+
+  const handleSaveConnection = async (): Promise<void> => {
+    setIsSaving(true)
+    setSaveStatus('idle')
+    try {
+      await saveProviderSettings(provider, {
+        host: localHost,
+        port: localPort,
+        apiKey: localApiKey
+      })
+      savedRef.current = { host: localHost, port: localPort, apiKey: localApiKey }
+      setSaveStatus('success')
+      setTimeout(() => setSaveStatus('idle'), 3000)
+      onTestConnection()
+    } catch {
+      setSaveStatus('error')
+      addToast({ message: 'Failed to save connection settings', type: 'error' })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
     <div data-testid="local-llm-config" className="space-y-6">
       {/* Section 1: Backend + Server Address */}
       <div>
-        <h3 className="text-sm text-text-secondary uppercase tracking-wider mb-3 font-medium">
-          Connection
-        </h3>
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium">
+            Connection
+          </h3>
+          <span className="text-xs text-text-muted">
+            {backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'}
+          </span>
+        </div>
         <SettingsCard>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 gap-y-4">
-            {/* Backend selector */}
-            <div>
-              <label className="text-xs font-medium text-text-secondary">Backend</label>
-              <div className="flex gap-2 mt-1">
-                <button
-                  onClick={() => onBackendChange('ollama')}
-                  className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
-                    backend === 'ollama'
-                      ? 'border-primary bg-primary-muted text-primary-text'
-                      : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
-                  }`}
-                >
-                  🦙
-                  <div className="text-left">
-                    <div>Ollama</div>
-                    <div className="text-[10px] font-normal text-text-muted">Cross-platform</div>
-                  </div>
-                </button>
-
-                {platformInfo?.isAppleSilicon && (
-                  <button
-                    onClick={() => onBackendChange('omlx')}
-                    className={`flex-1 flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
-                      backend === 'omlx'
-                        ? 'border-primary bg-primary-muted text-primary-text'
-                        : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
-                    }`}
-                  >
-                    🐧
-                    <div className="text-left">
-                      <div>oMLX</div>
-                      <div className="text-[10px] font-normal text-text-muted">
-                        Apple Silicon native
-                      </div>
-                    </div>
-                  </button>
-                )}
-              </div>
-            </div>
-
             {/* Server Address */}
             <div>
               <label className="text-xs font-medium text-text-secondary">Server Address</label>
@@ -345,7 +425,7 @@ export default function LocalLLMConfigSection({
                 <input
                   value={localHost}
                   onChange={(e) => onHostChange(e.target.value)}
-                  onBlur={() => saveProviderSettings(provider, { host: localHost })}
+                  onBlur={() => onAutoTest()}
                   placeholder="127.0.0.1"
                   className="flex-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
@@ -356,7 +436,7 @@ export default function LocalLLMConfigSection({
                     const defaultPort = backend === 'omlx' ? OMLX_DEFAULT_PORT : OLLAMA_DEFAULT_PORT
                     onPortChange(parseInt(e.target.value) || defaultPort)
                   }}
-                  onBlur={() => saveProviderSettings(provider, { port: localPort })}
+                  onBlur={() => onAutoTest()}
                   type="number"
                   placeholder={backend === 'omlx' ? '8000' : '11434'}
                   className="w-24 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -373,6 +453,7 @@ export default function LocalLLMConfigSection({
               <div className="mt-2">
                 <ConnectionStatusBadge
                   localStatus={localStatus}
+                  connectionTesting={connectionTesting}
                   backend={backend}
                   localHost={localHost}
                   localPort={localPort}
@@ -381,6 +462,27 @@ export default function LocalLLMConfigSection({
                   isRemoteServer={isRemoteServer}
                   onLoadOmlxModel={onLoadOmlxModel}
                 />
+                {/* Embedding model indicator */}
+                {(() => {
+                  const allModels = localStatus && 'allModels' in localStatus ? localStatus.allModels : null
+                  const embeddingModel = allModels?.find((m) => m.loaded && m.modelType === 'embedding')
+                  if (embeddingModel) {
+                    return (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-cyan-400 mt-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                        Embedding ready: {embeddingModel.id}
+                      </span>
+                    )
+                  }
+                  if (localStatus?.running && !embeddingModel) {
+                    return (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-text-muted mt-1">
+                        💡 Load an embedding model to enable Semantic Search
+                      </span>
+                    )
+                  }
+                  return null
+                })()}
               </div>
             </div>
 
@@ -394,7 +496,7 @@ export default function LocalLLMConfigSection({
                   <input
                     value={localApiKey}
                     onChange={(e) => onApiKeyChange(e.target.value)}
-                    onBlur={() => saveProviderSettings(provider, { apiKey: localApiKey })}
+                    onBlur={() => onAutoTest()}
                     type="password"
                     placeholder="Enter oMLX API key if authentication is enabled"
                     className="flex-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -405,6 +507,41 @@ export default function LocalLLMConfigSection({
                 </p>
               </div>
             )}
+
+            {/* Save connection settings */}
+            <div className="flex items-center gap-3 pt-2 md:col-span-2">
+              <button
+                onClick={handleSaveConnection}
+                disabled={isSaving || !hasUnsavedChanges}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  hasUnsavedChanges
+                    ? 'bg-primary text-primary-foreground hover:bg-primary-hover'
+                    : 'border border-border-subtle text-text-secondary hover:bg-surface-overlay'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isSaving ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : hasUnsavedChanges ? (
+                  <Save size={14} />
+                ) : (
+                  <Check size={14} className="text-green-400" />
+                )}
+                {hasUnsavedChanges ? 'Save Connection Settings' : 'Connection Saved'}
+                {hasUnsavedChanges && (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 ml-1" />
+                )}
+              </button>
+
+              {saveStatus === 'success' && !hasUnsavedChanges && (
+                <span className="text-sm text-green-400 flex items-center gap-1">
+                  <Check size={14} />
+                  Saved
+                </span>
+              )}
+              {saveStatus === 'error' && (
+                <span className="text-sm text-red-400">Failed to save — click to retry</span>
+              )}
+            </div>
           </div>
         </SettingsCard>
       </div>
@@ -424,6 +561,7 @@ export default function LocalLLMConfigSection({
             backend={backend}
             onSelect={onLocalModelSelect}
             onLoadModel={onLoadOmlxModel}
+            onUnloadModel={onUnloadOmlxModel}
             onPull={(modelId) => {
               if (backend === 'omlx') {
                 navigator.clipboard.writeText(modelId)

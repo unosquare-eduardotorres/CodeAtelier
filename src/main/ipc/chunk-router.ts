@@ -379,10 +379,44 @@ function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   )
 }
 
+/**
+ * Status content patterns that are internal metadata — never rendered in chat.
+ * These are operational lifecycle events (agent switches, model switches,
+ * session state transitions) emitted by the OpenCode event normalizer.
+ */
+const SUPPRESSED_STATUS_PREFIXES = [
+  'agent_switched:',
+  'model_switched:',
+  'finishReason:',
+  'message_removed:',
+  'part_removed:',
+] as const
+
+const SUPPRESSED_STATUS_VALUES: ReadonlySet<string> = new Set([
+  'idle',
+  'thinking',
+  'reviewing',
+  'writing',
+  'failed',
+])
+
 function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before status messages
   textBatcher.flush(ctx.conversationId)
   if (!chunk.content || chunk.content === 'heartbeat') return
+
+  // Guard: non-string content (e.g., object coerced via template literal)
+  if (typeof chunk.content !== 'string') return
+
+  // Suppress internal metadata status — these are operational signals,
+  // not conversational content. They come from the OpenCode event normalizer.
+  if (
+    SUPPRESSED_STATUS_VALUES.has(chunk.content) ||
+    SUPPRESSED_STATUS_PREFIXES.some((p) => chunk.content!.startsWith(p))
+  ) {
+    return
+  }
+
   const statusText = `\n\n_${chunk.content}_\n\n`
   ctx.contentAccumulator.value += statusText
   safeSend(

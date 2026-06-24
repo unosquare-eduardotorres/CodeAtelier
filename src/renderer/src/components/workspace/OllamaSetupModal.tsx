@@ -1,8 +1,8 @@
 /**
  * @deprecated — No longer used for semantic search embedding setup.
- * Semantic search now uses the bundled Transformers.js embedding model
- * via EmbeddingModelSetupModal. This component is kept for the Local LLM
- * chat backend (Ollama-as-chat-provider) until that is also replaced.
+ * Semantic search now uses oMLX embedding models configured via the Models tab.
+ * This component is kept for the Local LLM
+ * chat backend (Ollama-as-chat-provider) pull flow.
  */
 import { useState, useEffect, useCallback } from 'react'
 import { X, Download, Check, Loader2, ExternalLink, AlertTriangle, RefreshCw } from 'lucide-react'

@@ -29,7 +29,12 @@ export default function ModelConfigTab(): React.JSX.Element {
       </div>
 
       {/* ── LLM Provider Toggle ── */}
-      <ProviderToggle provider={config.provider} onProviderChange={config.handleProviderChange} />
+      <ProviderToggle
+        provider={config.provider}
+        backend={config.backend}
+        platformInfo={config.platformInfo}
+        onProviderChange={config.handleUnifiedProviderChange}
+      />
 
       {/* ── Executor Backend (advanced, Claude only) ── */}
       {config.provider === 'claude' && (
@@ -88,7 +93,9 @@ export default function ModelConfigTab(): React.JSX.Element {
           onBackendChange={config.handleBackendChange}
           onLocalModelSelect={config.handleLocalModelSelect}
           onLoadOmlxModel={config.handleLoadOmlxModel}
+          onUnloadOmlxModel={config.handleUnloadOmlxModel}
           onTestConnection={() => config.testConnection()}
+          onAutoTest={config.scheduleAutoTest}
           onHostChange={config.setLocalHost}
           onPortChange={config.setLocalPort}
           onApiKeyChange={config.setLocalApiKey}

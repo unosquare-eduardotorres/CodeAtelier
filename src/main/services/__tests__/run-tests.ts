@@ -200,6 +200,9 @@ import './blueprint-verify-adapter.test'
 import './preset-service-logic.test'
 import './repo-service-pure.test'
 import './opencode-config-writer-logic.test'
+import './opencode-config-schema.test'
+import './opencode-cli-check.test'
+import './opencode-path-augmentation.test'
 import './description-cache-pure.test'
 import './workspace-mcp-config-logic.test'
 
@@ -251,6 +254,9 @@ import '../../ipc/__tests__/ipc-blueprint-handlers.test'
 import '../../ipc/__tests__/ipc-audit-handlers.test'
 import '../../ipc/__tests__/ipc-crud-deep.test'
 import '../../mcp-servers/__tests__/mcp-server-tools-deep.test'
+
+// ─── OpenCode error pipeline (normalizer → processor end-to-end) ───
+import './opencode-error-pipeline.test'
 
 // ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
 import '../../ipc/__tests__/ipc-handler-bodies.test'

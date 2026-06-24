@@ -34,6 +34,17 @@ const bpLog = log.scope('blueprint-review')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintReviewService extends EventEmitter {
+  // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
+  // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
+    }
+  }
+
   async startReviewPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -43,53 +54,59 @@ export class BlueprintReviewService extends EventEmitter {
 
     bpLog.info(`[startReviewPhase] Blueprint ${blueprintId} — starting REVIEW`)
 
-    // 1. Pipeline + DB state
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'review')
-
-    const reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
-    if (reviewPhase) {
-      blueprintPhaseRepository.updateStatus(reviewPhase.id, 'active')
-    }
-
-    blueprintRepository.updateStatus(blueprintId, 'reviewing')
-    blueprintRepository.update(blueprintId, { currentPhase: 'review' })
-
-    // 2. Assemble context (includes spec + clarify + plan + tasks artifacts)
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'review')
-
-    // 3. Create adapter + session
-    const adapter = new BlueprintReviewAdapter({ workspaceId, blueprintId, phaseContext })
-
-    const blueprint = blueprintService.getBlueprint(blueprintId)
-    adapter.setGoalCondition(buildReviewGoalCondition(blueprint?.title ?? 'Unknown'))
-
-    const session = new AgentSessionService(adapter)
-
-    // 4. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'review'
-    } satisfies BlueprintPhaseStartPayload)
-
-    // 5. Wire streaming — named handlers for cleanup
-    const onChunk = (chunk: StreamChunk): void => {
-      if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'review',
-          text: chunk.content
-        } satisfies BlueprintPhaseProgressPayload)
-      }
-    }
-    const onStatus = (status: AgentStatus): void => {
-      this.emit('status', { workspaceId, status })
-    }
-    session.on('chunk', onChunk)
-    session.on('statusUpdate', onStatus)
+    // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
+    // finally's markPipelineStopped() is guaranteed to run.
+    let reviewPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let session: AgentSessionService | null = null
+    let onChunk: ((chunk: StreamChunk) => void) | null = null
+    let onStatus: ((status: AgentStatus) => void) | null = null
 
     try {
+      // 1. Pipeline + DB state
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'review')
+
+      reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
+      if (reviewPhase) {
+        blueprintPhaseRepository.updateStatus(reviewPhase.id, 'active')
+      }
+
+      blueprintRepository.updateStatus(blueprintId, 'reviewing')
+      blueprintRepository.update(blueprintId, { currentPhase: 'review' })
+
+      // 2. Assemble context (includes spec + clarify + plan + tasks artifacts)
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'review')
+
+      // 3. Create adapter + session
+      const adapter = new BlueprintReviewAdapter({ workspaceId, blueprintId, phaseContext })
+
+      const blueprint = blueprintService.getBlueprint(blueprintId)
+      adapter.setGoalCondition(buildReviewGoalCondition(blueprint?.title ?? 'Unknown'))
+
+      session = new AgentSessionService(adapter)
+
+      // 4. Emit phaseStart
+      this.safeEmit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'review'
+      } satisfies BlueprintPhaseStartPayload)
+
+      // 5. Wire streaming — named handlers for cleanup
+      onChunk = (chunk: StreamChunk): void => {
+        if (chunk.type === 'text' && chunk.content) {
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'review',
+            text: chunk.content
+          } satisfies BlueprintPhaseProgressPayload)
+        }
+      }
+      onStatus = (status: AgentStatus): void => {
+        this.safeEmit('status', { workspaceId, status })
+      }
+      session.on('chunk', onChunk)
+      session.on('statusUpdate', onStatus)
       // 6. Start session + send with timeout + abort race
       await session.start(workspacePath, 'plan')
 
@@ -139,7 +156,7 @@ export class BlueprintReviewService extends EventEmitter {
       )
 
       // 9. Emit phaseComplete
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'review',
@@ -148,7 +165,7 @@ export class BlueprintReviewService extends EventEmitter {
       } satisfies BlueprintPhaseCompletePayload)
 
       if (reviewPhase) {
-        this.emit('phaseArtifact', {
+        this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'review',
@@ -158,7 +175,7 @@ export class BlueprintReviewService extends EventEmitter {
 
       // 10. Emit approval gate — human must approve before BUILD
       const planSummary = this.buildApprovalSummary(completion ?? null)
-      this.emit('approvalNeeded', {
+      this.safeEmit('approvalNeeded', {
         blueprintId,
         workspaceId,
         phase: 'review',
@@ -178,7 +195,7 @@ export class BlueprintReviewService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session.getStreamedContent()
+      const partialText = session?.getStreamedContent()
       if (partialText && reviewPhase) {
         blueprintPhaseRepository.appendArtifact(reviewPhase.id, {
           type: 'review-partial',
@@ -186,16 +203,18 @@ export class BlueprintReviewService extends EventEmitter {
         })
       }
 
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'review',
         status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
-      session.removeListener('chunk', onChunk)
-      session.removeListener('statusUpdate', onStatus)
-      await session.stop()
+      if (session) {
+        if (onChunk) session.removeListener('chunk', onChunk)
+        if (onStatus) session.removeListener('statusUpdate', onStatus)
+        await session.stop()
+      }
       blueprintService.markPipelineStopped(workspaceId)
     }
   }

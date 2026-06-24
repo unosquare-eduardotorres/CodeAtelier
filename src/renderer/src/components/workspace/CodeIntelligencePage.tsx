@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { Brain } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import type { EmbeddingModelStatus, CodeGraphIndexingState, PlatformInfo } from '../../../../shared/types'
-import EmbeddingModelSetupModal from './EmbeddingModelSetupModal'
 import {
   CodeGraphCard,
   SemanticSearchCard,
@@ -11,7 +10,11 @@ import {
   LibraryDocsCard
 } from './code-intelligence'
 
-export default function CodeIntelligencePage(): React.JSX.Element {
+interface CodeIntelligencePageProps {
+  onNavigateToModels?: () => void
+}
+
+export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelligencePageProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
 
   // Workspace settings
@@ -19,7 +22,6 @@ export default function CodeIntelligencePage(): React.JSX.Element {
 
   // Embedding model status
   const [embeddingStatus, setEmbeddingStatus] = useState<EmbeddingModelStatus | null>(null)
-  const [showEmbeddingSetup, setShowEmbeddingSetup] = useState(false)
 
   // Platform info (for Apple Silicon gating)
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
@@ -144,14 +146,14 @@ export default function CodeIntelligencePage(): React.JSX.Element {
           const status = await window.api.embeddingCheckStatus()
           setEmbeddingStatus(status)
           if (!status.ready && !status.omlxEmbeddingModelLoaded) {
-            setShowEmbeddingSetup(true)
+            onNavigateToModels?.()
           }
         } catch {
-          setShowEmbeddingSetup(true)
+          onNavigateToModels?.()
         }
       }
     },
-    [handleToggleSetting]
+    [handleToggleSetting, onNavigateToModels]
   )
 
   // ── Start indexing ──
@@ -200,13 +202,13 @@ export default function CodeIntelligencePage(): React.JSX.Element {
         onToggle={handleSemanticSearchToggle}
         onSettingToggle={handleToggleSetting}
         onStartIndex={handleStartIndex}
-        onShowEmbeddingSetup={() => setShowEmbeddingSetup(true)}
+        onNavigateToModels={() => onNavigateToModels?.()}
       />
 
       <EmbeddingModelCard
         embeddingStatus={embeddingStatus}
         isAppleSilicon={platformInfo?.isAppleSilicon ?? null}
-        onShowSetup={() => setShowEmbeddingSetup(true)}
+        onNavigateToModels={() => onNavigateToModels?.()}
       />
 
       <LibraryDocsCard workspaceId={activeWorkspace.id} />
@@ -216,22 +218,7 @@ export default function CodeIntelligencePage(): React.JSX.Element {
         indexLoaded={persistedIndexStatus.loaded}
       />
 
-      {/* Embedding Model Setup Modal */}
-      {showEmbeddingSetup && (
-        <EmbeddingModelSetupModal
-          isAppleSilicon={platformInfo?.isAppleSilicon ?? true}
-          onClose={() => {
-            setShowEmbeddingSetup(false)
-            // Refresh embedding status after closing modal
-            window.api
-              .embeddingCheckStatus()
-              .then(setEmbeddingStatus)
-              .catch((err) =>
-                console.warn('[CodeIntelligence] Non-fatal: embedding status refresh failed:', err)
-              )
-          }}
-        />
-      )}
+
     </div>
   )
 }

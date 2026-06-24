@@ -50,6 +50,17 @@ export class BlueprintSpecService extends EventEmitter {
   /** Active CLARIFY sessions keyed by blueprintId — needed for follow-up sends. */
   private clarifySessions = new Map<string, BlueprintSessionState>()
 
+  // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
+  // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   //  SPECIFY Phase — One-Shot
   // ═══════════════════════════════════════════════════════════════════════════
@@ -76,61 +87,66 @@ export class BlueprintSpecService extends EventEmitter {
       throw new Error(`Blueprint not found: ${blueprintId}`)
     }
 
-    // Update pipeline state
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'specify')
-
-    // 2. Update phase record → 'active'
-    const specifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
-    if (specifyPhase) {
-      blueprintPhaseRepository.updateStatus(specifyPhase.id, 'active')
-    }
-
-    // Update blueprint status
-    blueprintRepository.updateStatus(blueprintId, 'specifying')
-    blueprintRepository.update(blueprintId, { currentPhase: 'specify' })
-
-    // 3. Assemble phase context
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'specify')
-
-    // 4. Create adapter
-    const adapter = new BlueprintSpecifyAdapter({
-      workspaceId,
-      blueprintId,
-      description,
-      grillDecisions,
-      phaseContext
-    })
-
-    // 5. Set goal condition
-    adapter.setGoalCondition(buildSpecifyGoalCondition(blueprint.title))
-
-    // 6. Create session
-    const session = new AgentSessionService(adapter)
-
-    // 7. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'specify'
-    } satisfies BlueprintPhaseStartPayload)
-
-    // 8. Wire streaming events
-    session.on('chunk', (chunk: StreamChunk) => {
-      if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'specify',
-          text: chunk.content
-        } satisfies BlueprintPhaseProgressPayload)
-      }
-    })
-
-    session.on('statusUpdate', (status: AgentStatus) => {
-      this.emit('status', { workspaceId, status })
-    })
+    // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
+    // finally's markPipelineStopped() is guaranteed to run.
+    let specifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let session: AgentSessionService | null = null
 
     try {
+      // Update pipeline state
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'specify')
+
+      // 2. Update phase record → 'active'
+      specifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
+      if (specifyPhase) {
+        blueprintPhaseRepository.updateStatus(specifyPhase.id, 'active')
+      }
+
+      // Update blueprint status
+      blueprintRepository.updateStatus(blueprintId, 'specifying')
+      blueprintRepository.update(blueprintId, { currentPhase: 'specify' })
+
+      // 3. Assemble phase context
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'specify')
+
+      // 4. Create adapter
+      const adapter = new BlueprintSpecifyAdapter({
+        workspaceId,
+        blueprintId,
+        description,
+        grillDecisions,
+        phaseContext
+      })
+
+      // 5. Set goal condition
+      adapter.setGoalCondition(buildSpecifyGoalCondition(blueprint.title))
+
+      // 6. Create session
+      session = new AgentSessionService(adapter)
+
+      // 7. Emit phaseStart
+      this.safeEmit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'specify'
+      } satisfies BlueprintPhaseStartPayload)
+
+      // 8. Wire streaming events
+      session.on('chunk', (chunk: StreamChunk) => {
+        if (chunk.type === 'text' && chunk.content) {
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'specify',
+            text: chunk.content
+          } satisfies BlueprintPhaseProgressPayload)
+        }
+      })
+
+      session.on('statusUpdate', (status: AgentStatus) => {
+        this.safeEmit('status', { workspaceId, status })
+      })
+
       // 9. Start session in plan mode (read-only)
       await session.start(workspacePath, 'plan')
 
@@ -195,7 +211,7 @@ export class BlueprintSpecService extends EventEmitter {
       )
 
       // 14. Emit phaseComplete
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'specify',
@@ -205,7 +221,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Emit artifact event
       if (specifyPhase) {
-        this.emit('phaseArtifact', {
+        this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'specify',
@@ -228,7 +244,7 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // Still save partial output regardless of cancel/fail
-      const partialText = session.getStreamedContent()
+      const partialText = session?.getStreamedContent()
       if (partialText && specifyPhase) {
         blueprintPhaseRepository.appendArtifact(specifyPhase.id, {
           type: 'spec-partial',
@@ -236,14 +252,16 @@ export class BlueprintSpecService extends EventEmitter {
         })
       }
 
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'specify',
         status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
-      await session.stop()
+      if (session) {
+        await session.stop()
+      }
 
       // Clean up pipeline state
       blueprintService.markPipelineStopped(workspaceId)
@@ -267,67 +285,72 @@ export class BlueprintSpecService extends EventEmitter {
 
     bpLog.info(`[startClarifyPhase] Blueprint ${blueprintId} — starting CLARIFY`)
 
-    // Mark pipeline running so getPipelineStatus() reflects CLARIFY activity
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'clarify')
-
-    // 1. Update blueprint status → 'clarifying'
-    blueprintRepository.updateStatus(blueprintId, 'clarifying')
-
-    // 2. Update phase record → 'active'
-    const clarifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
-    if (clarifyPhase && clarifyPhase.status !== 'active') {
-      blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'active')
-    }
-
-    // 3. Assemble phase context (includes spec from SPECIFY)
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'clarify')
-
-    // 4. Create adapter
-    const adapter = new BlueprintClarifyAdapter({
-      workspaceId,
-      blueprintId,
-      phaseContext
-    })
-
-    // 5. Set goal condition
-    adapter.setGoalCondition(buildClarifyGoalCondition())
-
-    // 6. Create session
-    const session = new AgentSessionService(adapter)
-    const syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
-
-    // Store session reference for follow-up user messages
-    this.clarifySessions.set(blueprintId, {
-      session,
-      conversationId: syntheticConvId,
-      blueprintId,
-      workspaceId
-    })
-
-    // 7. Wire streaming events
-    session.on('chunk', (chunk: StreamChunk) => {
-      if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'clarify',
-          text: chunk.content
-        } satisfies BlueprintPhaseProgressPayload)
-      }
-    })
-
-    session.on('statusUpdate', (status: AgentStatus) => {
-      this.emit('status', { workspaceId, status })
-    })
-
-    // 8. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'clarify'
-    } satisfies BlueprintPhaseStartPayload)
+    // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
+    // markPipelineStopped() is guaranteed to run on failure.
+    let clarifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let session: AgentSessionService | null = null
 
     try {
+      // Mark pipeline running so getPipelineStatus() reflects CLARIFY activity
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'clarify')
+
+      // 1. Update blueprint status → 'clarifying'
+      blueprintRepository.updateStatus(blueprintId, 'clarifying')
+
+      // 2. Update phase record → 'active'
+      clarifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
+      if (clarifyPhase && clarifyPhase.status !== 'active') {
+        blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'active')
+      }
+
+      // 3. Assemble phase context (includes spec from SPECIFY)
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'clarify')
+
+      // 4. Create adapter
+      const adapter = new BlueprintClarifyAdapter({
+        workspaceId,
+        blueprintId,
+        phaseContext
+      })
+
+      // 5. Set goal condition
+      adapter.setGoalCondition(buildClarifyGoalCondition())
+
+      // 6. Create session
+      session = new AgentSessionService(adapter)
+      const syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
+
+      // Store session reference for follow-up user messages
+      this.clarifySessions.set(blueprintId, {
+        session,
+        conversationId: syntheticConvId,
+        blueprintId,
+        workspaceId
+      })
+
+      // 7. Wire streaming events
+      session.on('chunk', (chunk: StreamChunk) => {
+        if (chunk.type === 'text' && chunk.content) {
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'clarify',
+            text: chunk.content
+          } satisfies BlueprintPhaseProgressPayload)
+        }
+      })
+
+      session.on('statusUpdate', (status: AgentStatus) => {
+        this.safeEmit('status', { workspaceId, status })
+      })
+
+      // 8. Emit phaseStart
+      this.safeEmit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'clarify'
+      } satisfies BlueprintPhaseStartPayload)
+
       // 9. Start session and send first message (triggers gap analysis)
       await session.start(workspacePath, 'plan')
       await session.send(adapter.getPhaseMessage(), syntheticConvId)
@@ -351,14 +374,16 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'failed')
       blueprintService.markPipelineStopped(workspaceId)
 
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'clarify',
         status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
 
-      await session.stop()
+      if (session) {
+        await session.stop()
+      }
     }
   }
 
@@ -415,7 +440,7 @@ export class BlueprintSpecService extends EventEmitter {
     }
     blueprintService.skipPhase(blueprintId, 'clarify')
 
-    this.emit('phaseComplete', {
+    this.safeEmit('phaseComplete', {
       blueprintId,
       workspaceId: sessionState?.workspaceId ?? '',
       phase: 'clarify',
@@ -463,7 +488,7 @@ export class BlueprintSpecService extends EventEmitter {
     blueprintService.advancePhase(blueprintId)
 
     // Emit events
-    this.emit('phaseComplete', {
+    this.safeEmit('phaseComplete', {
       blueprintId,
       workspaceId,
       phase: 'clarify',
@@ -471,7 +496,7 @@ export class BlueprintSpecService extends EventEmitter {
       completion
     } satisfies BlueprintPhaseCompletePayload)
 
-    this.emit('phaseArtifact', {
+    this.safeEmit('phaseArtifact', {
       blueprintId,
       workspaceId,
       phase: 'clarify',
@@ -505,7 +530,7 @@ export class BlueprintSpecService extends EventEmitter {
     this.clarifySessions.delete(blueprintId)
     blueprintService.markPipelineStopped(workspaceId)
 
-    this.emit('phaseComplete', {
+    this.safeEmit('phaseComplete', {
       blueprintId,
       workspaceId,
       phase: 'clarify',

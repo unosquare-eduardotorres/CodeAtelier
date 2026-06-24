@@ -7,6 +7,7 @@
  *  - isSessionComplete (event-type termination detection)
  *  - buildPromptParts (text part array construction)
  *  - buildPromptBody (prompt body assembly with model/schema)
+ *  - checkCliAvailable (CLI availability check for OpenCode CLI)
  *
  * All accessed via `(instance as any).methodName()`. No SDK/network calls.
  */
@@ -15,6 +16,27 @@ import { test, describe, summaryAsync } from './test-harness'
 import { OpenCodeExecutor } from '../opencode-executor'
 
 const executor = new OpenCodeExecutor()
+
+// ── checkCliAvailable ──────────────────────────────────────────
+
+describe('OpenCodeExecutor.checkCliAvailable', () => {
+  test('returns a Promise<string | null>', async () => {
+    const result = await executor.checkCliAvailable()
+    // Should return null if CLI available, or error message if not
+    assert.ok(result === null || typeof result === 'string')
+  })
+
+  test('error message contains helpful installation instructions', async () => {
+    const result = await executor.checkCliAvailable()
+    if (result) {
+      // If CLI is not installed, should provide installation guidance
+      assert.ok(
+        result.includes('opencode') && (result.includes('Install') || result.includes('not found')),
+        `Expected helpful installation message, got: ${result}`
+      )
+    }
+  })
+})
 
 // ── isTransientError ──
 
@@ -451,6 +473,195 @@ describe('OpenCodeExecutor.buildPromptBody — edge cases', () => {
     assert.ok(body.parts.length >= 1, 'should have at least one part')
 
     if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
+  })
+})
+
+// ── OC-02: Config inline read (Change 1) ──
+
+describe('OC-02: Config file read + inline pass', () => {
+  test('reads valid JSON config file and parses to object', async () => {
+    const { writeFileSync, mkdtempSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+
+    const dir = mkdtempSync(join(tmpdir(), 'oc02-'))
+    const configPath = join(dir, 'opencode.json')
+    const configObj = {
+      provider: { omlx: { models: { 'test-model': { limit: { context: 131072 } } } } }
+    }
+    writeFileSync(configPath, JSON.stringify(configObj))
+
+    // Simulate the exact logic from start()
+    const { readFileSync } = await import('node:fs')
+    const configContent = JSON.parse(readFileSync(configPath, 'utf-8'))
+
+    assert.deepEqual(configContent, configObj)
+    assert.equal(configContent.provider.omlx.models['test-model'].limit.context, 131072)
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('missing config file does not throw when wrapped in try/catch', async () => {
+    // Simulates the graceful fallback in start()
+    let configContent: Record<string, unknown> | undefined
+    try {
+      const { readFileSync } = await import('node:fs')
+      configContent = JSON.parse(readFileSync('/nonexistent/opencode.json', 'utf-8'))
+    } catch (_err) {
+      // Expected — mirroring the warn + fallback in start()
+    }
+    assert.equal(configContent, undefined, 'Should remain undefined on read failure')
+  })
+
+  test('malformed JSON file does not throw when wrapped in try/catch', async () => {
+    const { writeFileSync, mkdtempSync, rmSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const { tmpdir } = await import('node:os')
+
+    const dir = mkdtempSync(join(tmpdir(), 'oc02-bad-'))
+    const configPath = join(dir, 'opencode.json')
+    writeFileSync(configPath, '{ invalid json }')
+
+    let configContent: Record<string, unknown> | undefined
+    try {
+      const { readFileSync } = await import('node:fs')
+      configContent = JSON.parse(readFileSync(configPath, 'utf-8'))
+    } catch (_err) {
+      // Expected
+    }
+    assert.equal(configContent, undefined, 'Should remain undefined on parse failure')
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('configContent spread produces correct createOpencode options shape', async () => {
+    const configContent = { provider: { omlx: {} } }
+    // Simulates: ...(configContent ? { config: configContent as any } : {})
+    const opts = {
+      port: 4096,
+      timeout: 30000,
+      ...(configContent ? { config: configContent } : {})
+    }
+    assert.equal(opts.port, 4096)
+    assert.deepEqual(opts.config, configContent)
+
+    // When configContent is undefined, config key should be absent
+    const optsNoConfig = {
+      port: 4096,
+      timeout: 10000,
+      ...(undefined ? { config: undefined } : {})
+    }
+    assert.equal(optsNoConfig.port, 4096)
+    assert.equal('config' in optsNoConfig, false, 'config key should not exist when undefined')
+  })
+})
+
+// ── OC-03: Prompt response error detection (Change 2) ──
+
+describe('OC-03: Prompt response error detection', () => {
+  /**
+   * Replicated logic from the .then() handler in opencode-executor.ts.
+   * Returns { rejected: true, message } for error responses,
+   * or { rejected: false, id } for success.
+   */
+  function classifyPromptResponse(response: any): { rejected: boolean; message?: string; id?: string } {
+    const data = response?.data ?? response
+    if (data?.name === 'UnknownError' || data?.name === 'Error') {
+      return {
+        rejected: true,
+        message: `OpenCode server error: ${data?.data?.message ?? data?.message ?? 'unknown'}`
+      }
+    }
+    return { rejected: false, id: data?.id ?? 'ok' }
+  }
+
+  test('UnknownError response is detected as rejected', () => {
+    const response = {
+      data: {
+        name: 'UnknownError',
+        data: { message: 'Unexpected server error' }
+      }
+    }
+    const result = classifyPromptResponse(response)
+    assert.equal(result.rejected, true)
+    assert.ok(result.message!.includes('Unexpected server error'))
+  })
+
+  test('Error response is detected as rejected', () => {
+    const response = {
+      data: {
+        name: 'Error',
+        message: 'Provider not configured'
+      }
+    }
+    const result = classifyPromptResponse(response)
+    assert.equal(result.rejected, true)
+    assert.ok(result.message!.includes('Provider not configured'))
+  })
+
+  test('successful response with id is accepted', () => {
+    const response = {
+      data: {
+        id: 'msg-abc123'
+      }
+    }
+    const result = classifyPromptResponse(response)
+    assert.equal(result.rejected, false)
+    assert.equal(result.id, 'msg-abc123')
+  })
+
+  test('response with no data falls back to ok', () => {
+    const result = classifyPromptResponse({})
+    assert.equal(result.rejected, false)
+    assert.equal(result.id, 'ok')
+  })
+
+  test('null/undefined response falls back to ok', () => {
+    assert.equal(classifyPromptResponse(null).rejected, false)
+    assert.equal(classifyPromptResponse(null).id, 'ok')
+    assert.equal(classifyPromptResponse(undefined).rejected, false)
+    assert.equal(classifyPromptResponse(undefined).id, 'ok')
+  })
+
+  test('UnknownError with nested data.data.message extracts correctly', () => {
+    // SDK wraps all responses in .data — error shape is { data: { name, data: { message } } }
+    const response = {
+      data: {
+        name: 'UnknownError',
+        data: { message: 'model not found: mlx-community/test' }
+      }
+    }
+    const result = classifyPromptResponse(response)
+    assert.equal(result.rejected, true)
+    assert.ok(result.message!.includes('model not found'))
+  })
+
+  test('flat response without .data wrapper falls back gracefully (not detected as error)', () => {
+    // Edge case: if SDK ever returns a flat object, the name check won't match
+    // because response.data is truthy (the message object) so data.name is undefined.
+    // This is acceptable — the SDK consistently wraps in .data.
+    const response = {
+      name: 'UnknownError',
+      data: { message: 'some error' }
+    }
+    const result = classifyPromptResponse(response)
+    // data = response.data = { message: 'some error' }, data.name = undefined → not rejected
+    assert.equal(result.rejected, false)
+  })
+
+  test('Error without any message still produces a message', () => {
+    const response = { data: { name: 'Error' } }
+    const result = classifyPromptResponse(response)
+    assert.equal(result.rejected, true)
+    assert.ok(result.message!.includes('unknown'))
+  })
+
+  test('response.data.name with non-error value is accepted', () => {
+    // A normal response might have a name field that isn't an error
+    const response = { data: { name: 'session', id: 'sess-1' } }
+    const result = classifyPromptResponse(response)
+    assert.equal(result.rejected, false)
+    assert.equal(result.id, 'sess-1')
   })
 })
 

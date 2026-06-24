@@ -158,7 +158,11 @@ export default function WorkspaceSettingsContent({
       )}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
-      {tab === 'code-intelligence' && <CodeIntelligencePage />}
+      {tab === 'code-intelligence' && (
+        <CodeIntelligencePage
+          onNavigateToModels={() => onSettingsTabChange?.('models')}
+        />
+      )}
       {tab === 'integrations' && <IntegrationsPage />}
 
       {tab === 'team' && workspacePath && (

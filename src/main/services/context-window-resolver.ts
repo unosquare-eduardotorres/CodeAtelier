@@ -109,9 +109,12 @@ export class ContextWindowResolver {
       return knownValue
     }
 
-    // 4. Fallback
-    log.warn(`[ContextWindow] Unknown model "${config.localModel}", defaulting to 32768`)
-    return 32768
+    // 4. Fallback — 128K is a safer default for modern models (2025+).
+    // Most Qwen/Gemma/Llama class models support at least 128K context.
+    // This classifies unknown models as 'medium' tier instead of 'small',
+    // avoiding the critical issue where 8K context limit truncates the system prompt.
+    log.warn(`[ContextWindow] Unknown model "${config.localModel}", defaulting to 131072`)
+    return 131072
   }
 }
 

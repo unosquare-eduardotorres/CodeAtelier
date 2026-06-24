@@ -174,6 +174,46 @@ describe('chunk-router › handleStatus edge cases', () => {
   })
 })
 
+describe('chunk-router › handleStatus suppression', () => {
+  test('agent_switched: prefix → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-agent', window), { type: 'status', content: 'agent_switched:davinci' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('model_switched: prefix → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-model', window), { type: 'status', content: 'model_switched:claude-sonnet-4' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('idle status → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-idle', window), { type: 'status', content: 'idle' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('finishReason: prefix → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-finish', window), { type: 'status', content: 'finishReason:completed' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('thinking/reviewing/writing/failed → suppressed', () => {
+    const { window, send } = mockWindow()
+    for (const value of ['thinking', 'reviewing', 'writing', 'failed']) {
+      routeChunk(ctx(`c-${value}`, window), { type: 'status', content: value } as StreamChunk)
+    }
+    assert.equal(send.callCount, 0)
+  })
+
+  test('non-metadata status → still rendered', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-custom', window), { type: 'status', content: 'processing your request' } as StreamChunk)
+    assert.equal(send.callCount, 1)
+  })
+})
+
 describe('chunk-router › handleFilesPersisted', () => {
   test('sends SDK_FILES_PERSISTED with files payload', () => {
     const { window, send } = mockWindow()

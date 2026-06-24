@@ -254,7 +254,7 @@ export class AgentStreamProcessor {
     conversationId: string,
     streamState: StreamLoopState
   ): 'next' | 'break' {
-    const error = chunk.error ?? ''
+    const error = typeof chunk.error === 'string' ? chunk.error : String(chunk.error ?? '')
 
     if (error.includes('No conversation found with session ID')) {
       this.s.log.warn(

@@ -79,7 +79,7 @@ class OmlxManagerService {
       // Try admin API — returns ALL models (downloaded + loaded)
       const adminRes = await fetch(`${url}/admin/api/models`, {
         headers: adminHeaders,
-        signal: AbortSignal.timeout(3000)
+        signal: AbortSignal.timeout(5000)
       })
 
       if (adminRes.ok) {
@@ -112,16 +112,38 @@ class OmlxManagerService {
           })
         )
         log.info(
-          `[OmlxManager] Admin API: ${allModels.length} total models, ${status.models.length} loaded`
+          `[OmlxManager] Admin API: ${allModels.length} total, ` +
+          `types: ${[...new Set(allModels.map((m) => m.model_type))].join(', ')}`
         )
         return status
       }
 
       // Admin API returned non-OK (401 auth required, 404 old version, etc.)
-      // Fall back to /v1/models
-      log.info(`[OmlxManager] Admin API returned ${adminRes.status}, falling back to /v1/models`)
-    } catch {
-      // Admin API not reachable — try /v1/models fallback
+      // Fall back to /v1/models — but capture diagnostics for the UI
+      log.warn(
+        `[OmlxManager] Admin API ${adminRes.status} — ` +
+        `${adminRes.status === 401 ? 'auth required (missing API key?)' : 'falling back to /v1/models'}`
+      )
+      status.diagnostics = {
+        adminAuthRequired: adminRes.status === 401,
+        adminHttpStatus: adminRes.status,
+        timedOut: false,
+        errorDetail: adminRes.status === 401
+          ? (apiKey
+            ? 'API key rejected — check it in oMLX admin → Settings'
+            : 'API key required — set it below to access model management')
+          : undefined
+      }
+    } catch (err) {
+      // Admin API not reachable — detect timeout vs connection refused
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      status.diagnostics = {
+        adminAuthRequired: false,
+        timedOut: isTimeout,
+        errorDetail: isTimeout
+          ? 'Admin API timed out — server may be overloaded or unreachable'
+          : undefined
+      }
     }
 
     try {
@@ -143,13 +165,39 @@ class OmlxManagerService {
           data?: { id: string }[]
         }
         status.models = (data.data ?? []).map((m) => m.id)
+
+        // Synthesize allModels from /v1/models when admin API was unavailable
+        // Use name-based heuristics to infer model type
+        const EMBEDDING_PATTERN = /\b(bge|e5[-_]|gte[-_]|ember|embedding|nomic[-_]embed|mxbai[-_]embed|snowflake|modernbert)/i
+        status.allModels = status.models.map((id) => ({
+          id,
+          loaded: true, // /v1/models only returns loaded models
+          isLoading: false,
+          estimatedSize: '',
+          pinned: false,
+          isDefault: false,
+          modelType: EMBEDDING_PATTERN.test(id) ? 'embedding' : 'llm'
+        }))
+        log.info(
+          `[OmlxManager] /v1/models fallback: ${status.models.length} loaded, ` +
+          `synthesized types: ${status.allModels.map((m) => `${m.id}=${m.modelType}`).join(', ')}`
+        )
       } else {
         log.warn(
           `[OmlxManager] /v1/models returned ${res.status} — server running but models unavailable`
         )
       }
-    } catch {
-      // Not running — try to detect installation via PATH/app check
+    } catch (err) {
+      // Not running — detect timeout vs connection refused for diagnostics
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      if (isTimeout) {
+        status.diagnostics = {
+          ...status.diagnostics,
+          timedOut: true,
+          errorDetail: `Server at ${url} timed out — check network connectivity`
+        }
+      }
+      // Try to detect installation via PATH/app check
       try {
         const { execSync } = await import('node:child_process')
         // Check for oMLX CLI or .app bundle

@@ -1004,10 +1004,16 @@ export interface EmbeddingModelStatus {
   backend: 'omlx'
   /** oMLX server is reachable */
   omlxRunning: boolean
+  /** oMLX is installed on this machine (even if not running) */
+  omlxInstalled: boolean
   /** ID of the loaded embedding model (e.g. 'bge-m3') or null if none */
   omlxEmbeddingModelId: string | null
   /** Whether the embedding model is loaded in oMLX memory */
   omlxEmbeddingModelLoaded: boolean
+  /** All models from oMLX (embedding + LLM). Renderer can display this list. */
+  omlxAllModels?: OmlxModelDetail[]
+  /** False when admin API was unreachable (auth/timeout) — models inferred from /v1/models */
+  omlxAdminApiAvailable: boolean
 }
 
 // ── Ollama ──
@@ -1033,6 +1039,17 @@ export interface OmlxModelDetail {
 export interface OmlxExtendedStatus extends OllamaStatus {
   /** All models (downloaded + loaded) from admin API. Undefined when admin API unavailable. */
   allModels?: OmlxModelDetail[]
+  /** Connection diagnostics — populated when something went wrong */
+  diagnostics?: {
+    /** Admin API returned 401 — API key is missing or wrong */
+    adminAuthRequired: boolean
+    /** Admin API HTTP status code (401, 404, 500, etc.) */
+    adminHttpStatus?: number
+    /** Connection timed out (AbortError) rather than refused */
+    timedOut: boolean
+    /** Specific error message for UI display */
+    errorDetail?: string
+  }
 }
 
 export interface PullProgress {

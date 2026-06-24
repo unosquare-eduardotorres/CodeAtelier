@@ -718,8 +718,8 @@ interface Api {
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
   // Embedding Provider
-  embeddingCheckStatus: () => Promise<EmbeddingModelStatus>
-  embeddingInitialize: () => Promise<void>
+  embeddingCheckStatus: (args?: { baseUrl?: string; apiKey?: string }) => Promise<EmbeddingModelStatus>
+  embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }) => Promise<void>
   onEmbeddingModelReady: (callback: () => void) => () => void
   onEmbeddingModelError: (callback: (error: string) => void) => () => void
 

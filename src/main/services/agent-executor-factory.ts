@@ -24,6 +24,7 @@ import {
 } from '../../shared/constants'
 
 import { modelConfigService } from './model-config.service'
+import { contextWindowResolver } from './context-window-resolver'
 import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { join } from 'node:path'
@@ -34,6 +35,9 @@ export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
   /** Cached MCP config path — reused on continueSession turns to avoid rebuild. */
   private cachedMcpConfigPath: string | undefined
+  /** Cached async-resolved context window + confidence flag. */
+  private cachedContextWindow: number | null = null
+  private cachedContextWindowConfident = false
   /** F18: 1M context beta header — extracted from magic string for maintainability. */
   private static readonly CONTEXT_1M_BETA = 'context-1m-2025-08-07'
 
@@ -54,17 +58,56 @@ export class AgentExecutorFactory {
 
   // ── resolveLocalContextWindow ─────────────────────────────────────────
 
+  /** Sync fallback — checks static RECOMMENDED_LOCAL_MODELS only. */
   resolveLocalContextWindow(): number {
-    if (!this.s.workspacePath) return 32_768
+    if (!this.s.workspacePath) return 131_072
     try {
       const localConfig = modelConfigService.getLocalLLMConfig(this.s.workspacePath)
       const model = localConfig.localModel
       const recommended = RECOMMENDED_LOCAL_MODELS.find(
         (m) => m.ollamaId === model || m.omlxId === model
       )
-      return recommended?.contextWindow ?? 32_768
+      return recommended?.contextWindow ?? 131_072
     } catch {
-      return 32_768
+      return 131_072
+    }
+  }
+
+  /**
+   * Async resolver — uses the full ContextWindowResolver chain:
+   *   user override → backend API query → known models → 128K fallback.
+   *
+   * Caches the result for the session lifetime so subsequent calls are free.
+   * Returns `confident: true` when the value came from a user override or
+   * backend API (not the static table fallback), which gates whether we
+   * write `models.*.limit` into opencode.json.
+   */
+  async resolveLocalContextWindowAsync(): Promise<{ contextWindow: number; confident: boolean }> {
+    if (this.cachedContextWindow !== null) {
+      return { contextWindow: this.cachedContextWindow, confident: this.cachedContextWindowConfident }
+    }
+
+    if (!this.s.workspacePath) {
+      return { contextWindow: 131_072, confident: false }
+    }
+
+    try {
+      const localConfig = modelConfigService.getLocalLLMConfig(this.s.workspacePath)
+      const settings = workspaceRepository.getSettingsByPath(this.s.workspacePath)
+      const userOverride =
+        typeof settings?.localContextWindow === 'number' ? settings.localContextWindow : undefined
+
+      const resolved = await contextWindowResolver.resolve(localConfig, userOverride)
+
+      // Confident if user explicitly set a value, or the resolver got a
+      // non-fallback answer (i.e. backend API or known model table hit).
+      const confident = userOverride != null || resolved !== 131_072
+
+      this.cachedContextWindow = resolved
+      this.cachedContextWindowConfident = confident
+      return { contextWindow: resolved, confident }
+    } catch {
+      return { contextWindow: 131_072, confident: false }
     }
   }
 

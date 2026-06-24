@@ -85,12 +85,16 @@ export class GrillAgentService extends EventEmitter {
 
     // Wire streaming events for live output — tagged with workspaceId
     session.on('chunk', (chunk: StreamChunk) => {
+      // GRILL-CANCEL-STREAM-LEAK-01: Skip chunks after cancel. The CLI process
+      // may still emit events for up to 5s after cancelCurrentQuery() sends SIGTERM.
+      if (!entry.running) return
       this.emit('stream', { workspaceId: params.workspaceId, chunk })
     })
 
     // Re-emit inner-session status (token/context counters) so the live token
     // usage modal reflects grill activity, not just chat.
     session.on('statusUpdate', (status: AgentStatus) => {
+      if (!entry.running) return
       this.emit('status', { workspaceId: params.workspaceId, status })
     })
 
@@ -179,11 +183,14 @@ export class GrillAgentService extends EventEmitter {
 
     // Wire streaming events for live output
     session.on('chunk', (chunk: StreamChunk) => {
+      // GRILL-CANCEL-STREAM-LEAK-01: Skip chunks after cancel.
+      if (!greenfieldEntry.running) return
       this.emit('stream', { workspaceId: wsId, chunk })
     })
 
     // Wire status updates so the modal's live counters move during a greenfield grill.
     session.on('statusUpdate', (status: AgentStatus) => {
+      if (!greenfieldEntry.running) return
       this.emit('status', { workspaceId: wsId, status })
     })
 

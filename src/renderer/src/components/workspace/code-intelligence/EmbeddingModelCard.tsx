@@ -7,13 +7,13 @@ import type { EmbeddingModelStatus } from '../../../../../shared/types'
 interface EmbeddingModelCardProps {
   embeddingStatus: EmbeddingModelStatus | null
   isAppleSilicon: boolean | null // null = loading
-  onShowSetup: () => void
+  onNavigateToModels: () => void
 }
 
 export default function EmbeddingModelCard({
   embeddingStatus,
   isAppleSilicon,
-  onShowSetup
+  onNavigateToModels
 }: EmbeddingModelCardProps): React.JSX.Element {
   const [isChecking, setIsChecking] = useState(false)
 
@@ -117,10 +117,10 @@ export default function EmbeddingModelCard({
           </>
         ) : (
           <button
-            onClick={onShowSetup}
+            onClick={onNavigateToModels}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors"
           >
-            Set Up oMLX
+            Configure oMLX Connection →
           </button>
         )}
       </div>

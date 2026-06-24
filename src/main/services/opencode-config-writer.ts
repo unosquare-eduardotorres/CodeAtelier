@@ -49,16 +49,27 @@ interface OpenCodeConfig {
   provider: Record<
     string,
     {
-      baseUrl?: string
-      apiKey?: string
-      /** Request timeout in ms — cloud: 300000, local: 600000 */
-      timeout?: number
-      /** Chunk timeout in ms — detects stalled streams */
-      chunkTimeout?: number
-      /** C-1: Ensure prompt cache keys are always set (Anthropic) — up to 90% cost reduction */
-      setCacheKey?: boolean
-      /** C-5: Override context/output limits for models that advertise larger windows than they handle */
-      limit?: { context?: number; output?: number }
+      /** npm package for custom providers (e.g. '@ai-sdk/openai-compatible') */
+      npm?: string
+      /** Provider options — per OpenCode schema, all config goes here */
+      options?: {
+        baseURL?: string
+        apiKey?: string
+        /** Request timeout in ms — cloud: 300000, local: 600000 */
+        timeout?: number
+        /** Chunk timeout in ms — detects stalled streams */
+        chunkTimeout?: number
+        /** C-1: Ensure prompt cache keys are always set (Anthropic) — up to 90% cost reduction */
+        setCacheKey?: boolean
+      }
+      /** C-5: Per-model overrides — context/output limits */
+      models?: Record<
+        string,
+        {
+          name?: string
+          limit?: { context: number; output: number }
+        }
+      >
     }
   >
   mcp: Record<
@@ -129,13 +140,8 @@ interface OpenCodeConfig {
     /** Glob patterns to ignore from file watching */
     ignore?: string[]
   }
-  /** C-6/A-3: Shell configuration — executable + environment */
-  shell?: {
-    /** Shell executable path — explicit to prevent Windows cmd.exe issues */
-    executable?: string
-    /** Environment variables injected into all Bash tool executions */
-    env?: Record<string, string>
-  }
+  /** C-6/A-3: Shell path — OpenCode ≤1.17.x expects a string, not an object */
+  shell?: string
   /** Server configuration — CORS origins, mDNS, etc. */
   server?: {
     cors?: string[]
@@ -171,6 +177,9 @@ export interface OpenCodeConfigWriterOptions {
     externalMcpActive?: Record<string, boolean>
   }
   contextTier?: ContextWindowTier
+  /** Whether the context window was resolved from a confident source (user override or backend API).
+   *  When false/undefined, OpenCode resolves limits via its own models.dev registry. */
+  contextWindowConfident?: boolean
   /** IPC socket path for control-actions server */
   ipcSocketPath?: string
   /** Enable LSP diagnostics integration */
@@ -264,7 +273,7 @@ export class OpenCodeConfigWriter {
   // ── Private ──
 
   private buildConfig(opts: OpenCodeConfigWriterOptions): OpenCodeConfig {
-    const { provider, workspacePath, contextTier } = opts
+    const { provider, workspacePath, contextTier, contextWindowConfident } = opts
     const isLocal = opts.isLocalProvider ?? false
 
     // Resolve the model string in OpenCode format: provider/model
@@ -274,7 +283,7 @@ export class OpenCodeConfigWriter {
     const smallModel = this.resolveSmallModel(provider.providerId)
 
     // Build provider config with timeouts (#15)
-    const providers = this.buildProviderConfig(provider, isLocal, contextTier)
+    const providers = this.buildProviderConfig(provider, isLocal, contextTier, contextWindowConfident)
 
     // Build MCP server config
     const mcp = this.buildMcpServers(opts)
@@ -296,14 +305,19 @@ export class OpenCodeConfigWriter {
     const compaction = this.buildCompactionConfig(contextTier)
 
     // ── #8: Shell environment injection ──
+    // OpenCode ≤1.17.x doesn't support shell.env objects — inject env vars
+    // into process.env so the OpenCode server (and its Bash tool calls) inherit them.
     const shellEnv = this.buildShellEnvironment(opts)
+    for (const [key, value] of Object.entries(shellEnv)) {
+      process.env[key] = value
+    }
 
     const config: OpenCodeConfig = {
       $schema: 'https://opencode.ai/config.json',
       model: modelString,
       ...(smallModel ? { small_model: smallModel } : {}),
       // A-4: Always set default_agent so DaVinci is the active agent after server start
-      default_agent: 'DaVinci',
+      default_agent: 'davinci',
       // C-4: Disable autoupdate — we bundle @opencode-ai/sdk as a dependency;
       // a server-side update would create a version mismatch.
       autoupdate: false,
@@ -327,20 +341,19 @@ export class OpenCodeConfigWriter {
       // E-9: websearch/webfetch enabled via workspace feature flag.
       tools: {
         question: false,
-        // B-5: Disable customize-opencode skill — config is managed by Code Atelier
-        // and the agent modifying opencode.json in the workspace wouldn't affect
-        // our runtime config (which is in a temp dir).
-        skill: { 'customize-opencode': false },
+        // B-5: skill must be a boolean in OpenCode ≤1.17.x schema.
+        // Cannot selectively disable individual skills via config — use
+        // instructions to tell the agent not to run customize-opencode.
+        skill: true,
         ...(opts.webSearchEnabled ? { websearch: true, webfetch: true } : {})
       },
       permission,
       compaction,
       snapshot: true,
-      // A-3: Shell config uses a single object with both executable + env
-      shell: {
-        executable: process.platform === 'win32' ? 'pwsh' : '/bin/bash',
-        env: shellEnv
-      }
+      // A-3: Shell path — OpenCode ≤1.17.x expects a string, not an object.
+      // Env vars for Bash tool calls are inherited from the server process
+      // environment (set in buildShellEnvironment → process.env injection).
+      shell: process.platform === 'win32' ? 'pwsh' : '/bin/bash'
     }
 
     // ── #18/B-6: Formatter config with auto-detection ──
@@ -521,30 +534,84 @@ export class OpenCodeConfigWriter {
     }
   }
 
-  /** #15: Build provider entry with tier-aware timeouts and caching. */
+  /**
+   * #15: Build provider entry with tier-aware timeouts and caching.
+   *
+   * Per the OpenCode config schema (https://opencode.ai/config.json),
+   * provider config uses:
+   *   - `npm` — npm package for custom/OpenAI-compatible providers
+   *   - `options.baseURL` — provider endpoint (note uppercase URL)
+   *   - `options.apiKey` — API key
+   *   - `options.timeout` / `options.chunkTimeout` — timeouts
+   *   - `options.setCacheKey` — Anthropic prompt caching
+   *   - `models.<id>.limit` — per-model context/output limits
+   *
+   * Built-in providers (anthropic, openai, google, aws) don't need `npm`.
+   * Custom providers (omlx, ollama, etc.) need `npm: '@ai-sdk/openai-compatible'`.
+   */
   private buildProviderConfig(
     provider: OpenCodeConfigWriterOptions['provider'],
     isLocal: boolean,
-    contextTier?: ContextWindowTier
+    contextTier?: ContextWindowTier,
+    contextWindowConfident?: boolean
   ): OpenCodeConfig['provider'] {
     const providers: OpenCodeConfig['provider'] = {}
     if (provider.baseUrl || provider.apiKey || isLocal || provider.providerId === 'anthropic') {
-      providers[provider.providerId] = {
-        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      // Providers that aren't built into OpenCode need the npm package specifier
+      const builtInProviders = new Set(['anthropic', 'openai', 'google', 'aws', 'copilot'])
+      const needsNpm = !builtInProviders.has(provider.providerId) && provider.baseUrl
+
+      // OpenAI-compatible providers expect baseURL to include /v1 (e.g. http://host:8000/v1)
+      // because the SDK appends /chat/completions, /models, etc. to it.
+      // The app stores base URLs without /v1 (used by health checks), so append it here.
+      let resolvedBaseURL = provider.baseUrl
+      if (resolvedBaseURL && needsNpm && !resolvedBaseURL.endsWith('/v1')) {
+        resolvedBaseURL = resolvedBaseURL.replace(/\/$/, '') + '/v1'
+      }
+
+      const options: NonNullable<OpenCodeConfig['provider'][string]['options']> = {
+        ...(resolvedBaseURL ? { baseURL: resolvedBaseURL } : {}),
         ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
         // #15: Tier-aware timeouts — local models are slower
         timeout: isLocal ? 600_000 : 300_000,
         chunkTimeout: isLocal ? 30_000 : 15_000,
         // C-1: Enable prompt caching for Anthropic
-        ...(provider.providerId === 'anthropic' ? { setCacheKey: true } : {}),
-        // C-5: Context/output limits for local models
-        ...(isLocal && contextTier
+        ...(provider.providerId === 'anthropic' ? { setCacheKey: true } : {})
+      }
+
+      // C-5: Context/output limits for custom providers.
+      // Custom providers (omlx, ollama) MUST declare their models —
+      // OpenCode's models.dev registry only covers built-in providers.
+      // Use confident limits when available, fall back to sensible defaults.
+      const models: OpenCodeConfig['provider'][string]['models'] =
+        isLocal && needsNpm
           ? {
-              limit: {
-                context: contextTier === 'small' ? 8192 : contextTier === 'medium' ? 32768 : 131072
+              [provider.modelId]: {
+                limit:
+                  contextTier && contextWindowConfident
+                    ? {
+                        context:
+                          contextTier === 'small'
+                            ? 8192
+                            : contextTier === 'medium'
+                              ? 32768
+                              : 131072,
+                        output: contextTier === 'small' ? 4096 : 32768
+                      }
+                    : {
+                        // Defaults when context window isn't confidently resolved.
+                        // 131072 matches the ContextWindow module's default fallback.
+                        context: 131072,
+                        output: 32768
+                      }
               }
             }
-          : {})
+          : undefined
+
+      providers[provider.providerId] = {
+        ...(needsNpm ? { npm: '@ai-sdk/openai-compatible' } : {}),
+        options,
+        ...(models ? { models } : {})
       }
     }
     return providers
@@ -566,12 +633,16 @@ export class OpenCodeConfigWriter {
     }
 
     // 6D-4: Add glob patterns for broader context discovery.
+    // Only add globs whose parent directories exist in the workspace
+    // to avoid ConfigInvalidError when opencode resolves {file:} refs.
     const instructionGlobs = [
-      'docs/architecture/*.md', // Architecture decision records
-      '.cursor/rules/*.md' // Cursor rules (cross-tool compat)
+      { glob: 'docs/architecture/*.md', dir: 'docs/architecture' },
+      { glob: '.cursor/rules/*.md', dir: '.cursor/rules' }
     ]
-    for (const glob of instructionGlobs) {
-      instructions.push(`{file:${glob}}`)
+    for (const { glob, dir } of instructionGlobs) {
+      if (existsSync(join(workspacePath, dir))) {
+        instructions.push(`{file:${glob}}`)
+      }
     }
     return instructions
   }

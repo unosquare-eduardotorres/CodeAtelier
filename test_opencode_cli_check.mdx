@@ -1,0 +1,74 @@
+# OpenCode CLI Check - Test Results
+
+## Summary of Changes
+
+### 1. Added `checkCliAvailable()` method to OpenCodeExecutor
+- **File**: `src/main/services/opencode-executor.ts`
+- **Purpose**: Validates OpenCode CLI installation before attempting to start server
+- **Returns**: `Promise<string | null>` - null if available, error message if not
+
+### 2. Improved Error Messaging in `agent-session.service.ts`
+- Detects `ENOENT` and `spawn opencode` errors
+- Provides helpful installation instructions to users
+
+### 3. Added Comprehensive Tests
+
+#### Integration Tests
+- **File**: `src/main/services/__tests__/opencode-executor-integration.test.ts`
+- Tests CLI availability check
+- Tests helpful error messages when CLI missing
+
+#### Unit Tests 
+- **File**: `src/main/services/__tests__/opencode-cli-check.test.ts`
+- Tests `checkCliAvailable()` method
+- Tests `start()` validation before server startup
+
+#### New Utility Module
+- **File**: `src/shared/opencode-check.ts`
+- Reusable CLI check functions
+
+## How to Test
+
+```bash
+# Run OpenCode-specific integration tests
+OMLX_BASE_URL=http://100.70.141.52:8000 npx tsx src/main/services/__tests__/opencode-executor-integration.test.ts
+
+# Run CLI check unit tests
+npx tsx src/main/services/__tests__/opencode-cli-check.test.ts
+```
+
+## Expected Behavior
+
+### When OpenCode CLI IS installed:
+- `checkCliAvailable()` returns `null`
+- Server starts normally
+- Tests pass
+
+### When OpenCode CLI is NOT installed:
+- `checkCliAvailable()` returns helpful error:
+  ```
+  OpenCode CLI not found. Install it by running:
+    npm install -g @opencode-ai/cli
+  Or download from: https://opencode.ai/getting-started
+  ```
+- `start()` throws with this message before attempting spawn
+- User sees clear installation guidance
+
+## Files Modified
+
+1. `src/main/services/opencode-executor.ts` - Added `checkCliAvailable()` method
+2. `src/main/services/agent-session.service.ts` - Enhanced error messaging
+3. `src/main/services/__tests__/opencode-executor-integration.test.ts` - Added CLI tests
+4. `src/main/services/__tests__/opencode-cli-check.test.ts` - New test file
+5. `src/shared/opencode-check.ts` - New utility module
+
+## Diagnostic: Is CLI Installed?
+
+```bash
+# Check if OpenCode CLI is installed
+which opencode || echo "Not found"
+
+# Check version
+opencode --version 2>&1 || echo "CLI not installed"
+```
+

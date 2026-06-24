@@ -38,6 +38,17 @@ const bpLog = log.scope('blueprint-verify')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintVerifyService extends EventEmitter {
+  // BP-VERIFY-RAW-EMIT-01: Error-isolated emit prevents listener throws from
+  // crashing the VERIFY pipeline. Mirrors safeEmit() in BlueprintBuildService.
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
+    }
+  }
+
   async startVerifyPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -56,6 +67,16 @@ export class BlueprintVerifyService extends EventEmitter {
     let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
 
     try {
+      // BP-VERIFY-CANCEL-STATUS-CHECK-01 + BP-VERIFY-NULL-BLUEPRINT-01:
+      // Check if the blueprint was cancelled or deleted during the BUILD→VERIFY
+      // transition window. cancel() sets DB status to 'cancelled' even when
+      // running=false; deletion removes the row entirely.
+      const existingBlueprint = blueprintRepository.findById(blueprintId)
+      if (!existingBlueprint || existingBlueprint.status === 'cancelled') {
+        bpLog.info(`[startVerifyPhase] Blueprint ${blueprintId} ${!existingBlueprint ? 'deleted' : 'cancelled'} — skipping VERIFY`)
+        return
+      }
+
       // 1. Pipeline + DB state
       blueprintService.markPipelineRunning(workspaceId, blueprintId, 'verify')
 
@@ -79,7 +100,7 @@ export class BlueprintVerifyService extends EventEmitter {
       session = new AgentSessionService(adapter)
 
       // 4. Emit phaseStart
-      this.emit('phaseStart', {
+      this.safeEmit('phaseStart', {
         blueprintId,
         workspaceId,
         phase: 'verify'
@@ -88,7 +109,7 @@ export class BlueprintVerifyService extends EventEmitter {
       // 5. Wire streaming — named handlers for cleanup
       onChunk = (chunk: StreamChunk): void => {
         if (chunk.type === 'text' && chunk.content) {
-          this.emit('phaseProgress', {
+          this.safeEmit('phaseProgress', {
             blueprintId,
             workspaceId,
             phase: 'verify',
@@ -97,7 +118,7 @@ export class BlueprintVerifyService extends EventEmitter {
         }
       }
       onStatus = (status: AgentStatus): void => {
-        this.emit('status', { workspaceId, status })
+        this.safeEmit('status', { workspaceId, status })
       }
       session.on('chunk', onChunk)
       session.on('statusUpdate', onStatus)
@@ -177,7 +198,7 @@ export class BlueprintVerifyService extends EventEmitter {
       }
 
       // 10. Emit phaseComplete
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'verify',
@@ -186,7 +207,7 @@ export class BlueprintVerifyService extends EventEmitter {
       } satisfies BlueprintPhaseCompletePayload)
 
       if (verifyPhase) {
-        this.emit('phaseArtifact', {
+        this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'verify',
@@ -213,7 +234,7 @@ export class BlueprintVerifyService extends EventEmitter {
         })
       }
 
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'verify',

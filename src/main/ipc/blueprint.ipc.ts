@@ -10,6 +10,7 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString, optionalString, optionalNumber } from './validate-args'
 import { createTimedCleanupMap } from './listener-cleanup'
 import { blueprintService } from '../services/blueprint.service'
 import { blueprintSpecService } from '../services/blueprint-spec.service'
@@ -49,24 +50,17 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_CREATE,
-    (
-      event,
-      args: {
-        workspaceId: string
-        title: string
-        description?: string
-        priority?: BlueprintPriority
-        settingsJson?: Record<string, unknown>
-      }
-    ) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      return blueprintService.create({
-        workspaceId: args.workspaceId,
-        title: args.title,
-        description: args.description,
-        priority: args.priority,
-        settingsJson: args.settingsJson
-      })
+      // BP-IPC-NO-VALIDATION-01: Runtime validation matching grill/chat pattern.
+      const ch = IPC_CHANNELS.BLUEPRINT_CREATE
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const title = requireString(args, 'title', ch)
+      const description = optionalString(args, 'description', ch)
+      const priority = optionalString(args, 'priority', ch) as BlueprintPriority | undefined
+      const settingsJson = args.settingsJson as Record<string, unknown> | undefined
+      return blueprintService.create({ workspaceId, title, description, priority, settingsJson })
     }
   )
 
@@ -74,54 +68,70 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA,
-    (event, args: { ideaId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      return blueprintService.createFromIdea(args.ideaId, args.workspaceId)
+      const ch = IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA
+      const args = requireObject(rawArgs, ch)
+      const ideaId = requireString(args, 'ideaId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      return blueprintService.createFromIdea(ideaId, workspaceId)
     }
   )
 
   // ── blueprint:get — Get a blueprint with phases ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET, (event, rawArgs: unknown) => {
     validateSender(event)
-    return blueprintService.getBlueprint(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_GET)
+    const id = requireString(args, 'id', IPC_CHANNELS.BLUEPRINT_GET)
+    return blueprintService.getBlueprint(id)
   })
 
   // ── blueprint:getDetails — Get a blueprint with phases + tasks ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_DETAILS, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_DETAILS, (event, rawArgs: unknown) => {
     validateSender(event)
-    return blueprintService.getBlueprintWithDetails(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_GET_DETAILS)
+    const id = requireString(args, 'id', IPC_CHANNELS.BLUEPRINT_GET_DETAILS)
+    return blueprintService.getBlueprintWithDetails(id)
   })
 
   // ── blueprint:list — List blueprints for a workspace ──
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_LIST,
-    (event, args: { workspaceId: string; limit?: number }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      return blueprintService.listBlueprints(args.workspaceId, args.limit)
+      const ch = IPC_CHANNELS.BLUEPRINT_LIST
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const limit = optionalNumber(args, 'limit', ch)
+      return blueprintService.listBlueprints(workspaceId, limit)
     }
   )
 
   // ── blueprint:delete — Delete a blueprint ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_DELETE, (event, args: { id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_DELETE, (event, rawArgs: unknown) => {
     validateSender(event)
-    blueprintService.delete(args.id)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_DELETE)
+    const id = requireString(args, 'id', IPC_CHANNELS.BLUEPRINT_DELETE)
+    blueprintService.delete(id)
     return { deleted: true }
   })
 
   // ── blueprint:cancel — Cancel an active blueprint pipeline ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_CANCEL, async (event, args: { workspaceId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_CANCEL, async (event, rawArgs: unknown) => {
     validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_CANCEL)
+    const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.BLUEPRINT_CANCEL)
 
     // BP-CANCEL-LOCK-01: Wrap in try/finally to guarantee blueprintService.cancel()
     // always runs — even if a phase cancel throws. Without this, a single phase
     // cancel failure orphans the startLock and permanently blocks new blueprints.
     try {
-      const activeBlueprintId = blueprintService.getActiveBlueprintId(args.workspaceId)
+      const activeBlueprintId = blueprintService.getActiveBlueprintId(workspaceId)
       if (activeBlueprintId) {
         // Best-effort cancel each phase service — don't let one failure block others
         const phaseServices = [
@@ -135,25 +145,31 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       }
     } finally {
       // ALWAYS release the lock, even if phase cancels threw
-      blueprintService.cancel(args.workspaceId)
+      blueprintService.cancel(workspaceId)
     }
     return { cancelled: true }
   })
 
   // ── blueprint:advancePhase — Advance to next phase ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_ADVANCE_PHASE, (event, args: { blueprintId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_ADVANCE_PHASE, (event, rawArgs: unknown) => {
     validateSender(event)
-    return blueprintService.advancePhase(args.blueprintId)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_ADVANCE_PHASE)
+    const blueprintId = requireString(args, 'blueprintId', IPC_CHANNELS.BLUEPRINT_ADVANCE_PHASE)
+    return blueprintService.advancePhase(blueprintId)
   })
 
   // ── blueprint:skipPhase — Skip a phase ──
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_SKIP_PHASE,
-    (event, args: { blueprintId: string; phase: BlueprintPhaseType }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      blueprintService.skipPhase(args.blueprintId, args.phase)
+      const ch = IPC_CHANNELS.BLUEPRINT_SKIP_PHASE
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
+      blueprintService.skipPhase(blueprintId, phase)
       return { skipped: true }
     }
   )
@@ -162,9 +178,13 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_REWIND_PHASE,
-    (event, args: { blueprintId: string; phase: BlueprintPhaseType }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      blueprintService.rewindToPhase(args.blueprintId, args.phase)
+      const ch = IPC_CHANNELS.BLUEPRINT_REWIND_PHASE
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
+      blueprintService.rewindToPhase(blueprintId, phase)
       return { rewound: true }
     }
   )
@@ -173,9 +193,13 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_BUILD_PROMPT,
-    (event, args: { blueprintId: string; phase: BlueprintPhaseType }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      return { prompt: blueprintService.buildSystemPrompt(args.blueprintId, args.phase) }
+      const ch = IPC_CHANNELS.BLUEPRINT_BUILD_PROMPT
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
+      return { prompt: blueprintService.buildSystemPrompt(blueprintId, phase) }
     }
   )
 
@@ -183,58 +207,57 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_SAVE_ARTIFACT,
-    (
-      event,
-      args: { blueprintId: string; phase: BlueprintPhaseType; artifact: BlueprintArtifact }
-    ) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      blueprintService.savePhaseArtifact(args.blueprintId, args.phase, args.artifact)
+      const ch = IPC_CHANNELS.BLUEPRINT_SAVE_ARTIFACT
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
+      if (!args.artifact || typeof args.artifact !== 'object') {
+        throw new Error(`${ch}: field 'artifact' must be an object`)
+      }
+      blueprintService.savePhaseArtifact(blueprintId, phase, args.artifact as BlueprintArtifact)
       return { saved: true }
     }
   )
 
   // ── blueprint:getArtifacts — Get all artifacts for a blueprint ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_ARTIFACTS, (event, args: { blueprintId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_ARTIFACTS, (event, rawArgs: unknown) => {
     validateSender(event)
-    return blueprintService.getAllArtifacts(args.blueprintId)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_GET_ARTIFACTS)
+    const blueprintId = requireString(args, 'blueprintId', IPC_CHANNELS.BLUEPRINT_GET_ARTIFACTS)
+    return blueprintService.getAllArtifacts(blueprintId)
   })
 
   // ── blueprint:populateTasks — Parse and store tasks from blueprint-tasks JSON ──
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_POPULATE_TASKS,
-    (
-      event,
-      args: {
-        blueprintId: string
-        tasks: Array<{
-          taskId: string
-          wave: number
-          description: string
-          userStory?: string
-          files?: string[]
-          isParallel?: boolean
-          dependsOn?: string[]
-        }>
-      }
-    ) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_POPULATE_TASKS
+      // BP-IPC-NO-VALIDATION-01: Use requireObject/requireString pattern.
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
 
       // TASK-02: Validate input bounds before passing to service
-      if (!args.blueprintId || typeof args.blueprintId !== 'string') {
-        throw new Error('BLUEPRINT_POPULATE_TASKS: blueprintId is required')
-      }
       if (!Array.isArray(args.tasks)) {
-        throw new Error('BLUEPRINT_POPULATE_TASKS: tasks must be an array')
+        throw new Error(`${ch}: tasks must be an array`)
       }
       if (args.tasks.length > 500) {
-        throw new Error(
-          `BLUEPRINT_POPULATE_TASKS: tasks array too large (${args.tasks.length}, max 500)`
-        )
+        throw new Error(`${ch}: tasks array too large (${args.tasks.length}, max 500)`)
       }
 
-      return blueprintService.populateTasks(args.blueprintId, args.tasks)
+      return blueprintService.populateTasks(blueprintId, args.tasks as Array<{
+        taskId: string
+        wave: number
+        description: string
+        userStory?: string
+        files?: string[]
+        isParallel?: boolean
+        dependsOn?: string[]
+      }>)
     }
   )
 
@@ -244,7 +267,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     IPC_CHANNELS.BLUEPRINT_GET_PIPELINE_STATUS,
     (event, args: { workspaceId: string }) => {
       validateSender(event)
-      return blueprintService.getPipelineStatus(args.workspaceId)
+      return blueprintService.getPipelineStatus(workspaceId)
     }
   )
 
@@ -252,17 +275,24 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND,
-    (event, args: { blueprintId: string; approved: boolean; feedback?: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      if (typeof args.approved !== 'boolean') {
+        throw new Error(`${ch}: field 'approved' must be a boolean`)
+      }
+      const approved = args.approved
 
-      if (args.approved) {
+      if (approved) {
         // Advance to BUILD phase — DB state is set by blueprintBuildService.startBuildPhase()
         bpLog.info(
-          `[blueprint:approvalRespond] Blueprint ${args.blueprintId} — approved, triggering BUILD`
+          `[blueprint:approvalRespond] Blueprint ${blueprintId} — approved, triggering BUILD`
         )
 
         // Look up workspace for the repo path
-        const blueprint = blueprintService.getBlueprint(args.blueprintId)
+        const blueprint = blueprintService.getBlueprint(blueprintId)
         if (blueprint) {
           const workspace = workspaceRepository.findById(blueprint.workspaceId)
           if (workspace) {
@@ -272,7 +302,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
             // Start the BUILD phase (non-blocking)
             blueprintBuildService
               .startBuildPhase({
-                blueprintId: args.blueprintId,
+                blueprintId,
                 workspaceId: blueprint.workspaceId,
                 workspacePath: workspace.repoPath
               })
@@ -281,17 +311,17 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
               })
           } else {
             bpLog.error(
-              `[blueprint:approvalRespond] Workspace not found for blueprint ${args.blueprintId}`
+              `[blueprint:approvalRespond] Workspace not found for blueprint ${blueprintId}`
             )
           }
         } else {
-          bpLog.error(`[blueprint:approvalRespond] Blueprint not found: ${args.blueprintId}`)
+          bpLog.error(`[blueprint:approvalRespond] Blueprint not found: ${blueprintId}`)
         }
       } else {
         // Not approved — rewind to plan phase for iteration
-        blueprintService.rewindToPhase(args.blueprintId, 'plan')
+        blueprintService.rewindToPhase(blueprintId, 'plan')
         bpLog.info(
-          `[blueprint:approvalRespond] Blueprint ${args.blueprintId} — rejected, rewound to plan`
+          `[blueprint:approvalRespond] Blueprint ${blueprintId} — rejected, rewound to plan`
         )
       }
 
@@ -303,9 +333,11 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_GET_CONSTITUTION,
-    (event, args: { workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_GET_CONSTITUTION)
+      const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.BLUEPRINT_GET_CONSTITUTION)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) return null
       return {
         constitutionMd: workspace.constitutionMd ?? null,
@@ -318,12 +350,17 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION,
-    (event, args: { workspaceId: string; constitutionMd: string; version?: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_SAVE_CONSTITUTION
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const constitutionMd = requireString(args, 'constitutionMd', ch)
+      const version = optionalString(args, 'version', ch)
       workspaceRepository.updateConstitution(
-        args.workspaceId,
-        args.constitutionMd,
-        args.version ?? '1.0.0'
+        workspaceId,
+        constitutionMd,
+        version ?? '1.0.0'
       )
       return { saved: true }
     }
@@ -337,17 +374,21 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_SPECIFY,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_SPECIFY
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
-      const blueprint = blueprintService.getBlueprint(args.blueprintId)
+      const blueprint = blueprintService.getBlueprint(blueprintId)
       if (!blueprint) {
-        throw new Error(`Blueprint not found: ${args.blueprintId}`)
+        throw new Error(`Blueprint not found: ${blueprintId}`)
       }
 
       // Extract grill decisions from settings if available
@@ -356,13 +397,13 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         | undefined
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the SPECIFY phase (non-blocking)
       blueprintSpecService
         .startSpecifyPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath,
           description: blueprint.description,
           grillDecisions
@@ -379,22 +420,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_CLARIFY,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_CLARIFY
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the CLARIFY phase (non-blocking)
       blueprintSpecService
         .startClarifyPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath
         })
         .catch((err) => {
@@ -409,13 +454,18 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_CLARIFY_ANSWER,
-    async (event, args: { blueprintId: string; workspaceId: string; message: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_CLARIFY_ANSWER
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const message = requireString(args, 'message', ch)
 
       await blueprintSpecService.sendClarifyAnswer({
-        blueprintId: args.blueprintId,
-        workspaceId: args.workspaceId,
-        message: args.message
+        blueprintId,
+        workspaceId,
+        message
       })
 
       return { sent: true }
@@ -426,9 +476,11 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY,
-    async (event, args: { blueprintId: string }) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
-      await blueprintSpecService.skipClarifyPhase(args.blueprintId)
+      const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY)
+      const blueprintId = requireString(args, 'blueprintId', IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY)
+      await blueprintSpecService.skipClarifyPhase(blueprintId)
       return { skipped: true }
     }
   )
@@ -441,22 +493,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_PLAN,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_PLAN
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the PLAN phase (non-blocking)
       blueprintPlanService
         .startPlanPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath
         })
         .catch((err) => {
@@ -475,22 +531,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_TASKS,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_TASKS
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the TASKS phase (non-blocking)
       blueprintTasksService
         .startTasksPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath
         })
         .catch((err) => {
@@ -509,22 +569,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_REVIEW,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_REVIEW
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the REVIEW phase (non-blocking)
       blueprintReviewService
         .startReviewPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath
         })
         .catch((err) => {
@@ -543,22 +607,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_BUILD,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_BUILD
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the BUILD phase (non-blocking)
       blueprintBuildService
         .startBuildPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath
         })
         .catch((err) => {
@@ -577,22 +645,26 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_START_VERIFY,
-    (event, args: { blueprintId: string; workspaceId: string }) => {
+    (event, rawArgs: unknown) => {
       validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_START_VERIFY
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
 
-      const workspace = workspaceRepository.findById(args.workspaceId)
+      const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
-        throw new Error(`Workspace not found: ${args.workspaceId}`)
+        throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
       // Wire event forwarding for this workspace
-      wireBlueprintEvents(args.workspaceId)
+      wireBlueprintEvents(workspaceId)
 
       // Start the VERIFY phase (non-blocking)
       blueprintVerifyService
         .startVerifyPhase({
-          blueprintId: args.blueprintId,
-          workspaceId: args.workspaceId,
+          blueprintId,
+          workspaceId,
           workspacePath: workspace.repoPath
         })
         .catch((err) => {

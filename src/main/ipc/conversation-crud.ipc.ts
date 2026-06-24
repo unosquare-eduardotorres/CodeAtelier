@@ -16,10 +16,12 @@ import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../shared/types'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
+import { completeStreamMetrics } from './chunk-router'
 import {
   requireObject,
   requireString,
   optionalString,
+  optionalNullableString,
   requireStringArray,
   requirePlainObject
 } from './validate-args'
@@ -206,7 +208,7 @@ export function registerConversationCrudIpc(): void {
       mode: optionalString(args, 'mode', ch) as ConversationMode | undefined,
       personaSpecialistId: optionalString(args, 'personaSpecialistId', ch),
       llmProvider: optionalString(args, 'llmProvider', ch) as LLMProvider | undefined,
-      presetId: optionalString(args, 'presetId', ch),
+      presetId: optionalNullableString(args, 'presetId', ch) ?? undefined,
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
       communicationTone: args.communicationTone as CommunicationTone | null | undefined
     })
@@ -230,6 +232,8 @@ export function registerConversationCrudIpc(): void {
     // CONV-DEL-RACE-01: Abort active stream before cascade-delete to prevent
     // FK violations when finalizeStreamMessage() races with conversation deletion.
     if (conversationLifecycle.conversationId === conversationId) {
+      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+      completeStreamMetrics(conversationId, 'aborted')
       conversationLifecycle.abort('conversation-deleted')
     }
 

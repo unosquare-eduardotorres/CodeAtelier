@@ -1,6 +1,6 @@
 /**
  * Unit tests for context-window-resolver.ts — the resolution chain
- * (user override → backend API → known model table → 32768 fallback) plus
+ * (user override → backend API → known model table → 131072 fallback) plus
  * the oMLX / Ollama field mapping.
  *
  * `globalThis.fetch` is stubbed for the backend-query tests. Because the harness
@@ -190,7 +190,7 @@ describe('context-window-resolver › resolve chain ordering', () => {
       }
     }))
 
-  test('4. hardcoded 32768 fallback for an unknown model with no backend data', () =>
+  test('4. hardcoded 131072 fallback for an unknown model with no backend data', () =>
     runExclusive(async () => {
       const original = globalThis.fetch
       try {
@@ -198,7 +198,7 @@ describe('context-window-resolver › resolve chain ordering', () => {
           throw new Error('down')
         }) as FetchFn
         const value = await resolver.resolve(cfg({ localModel: 'mystery-model:1t' }))
-        assert.equal(value, 32768)
+        assert.equal(value, 131072)
       } finally {
         globalThis.fetch = original
       }

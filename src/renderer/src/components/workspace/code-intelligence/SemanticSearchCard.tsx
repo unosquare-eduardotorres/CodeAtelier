@@ -16,7 +16,7 @@ interface SemanticSearchCardProps {
   onToggle: (enabled: boolean) => Promise<void>
   onSettingToggle: (key: string, value: boolean) => Promise<void>
   onStartIndex: () => Promise<void>
-  onShowEmbeddingSetup: () => void
+  onNavigateToModels: () => void
 }
 
 export default function SemanticSearchCard({
@@ -30,7 +30,7 @@ export default function SemanticSearchCard({
   onToggle,
   onSettingToggle,
   onStartIndex,
-  onShowEmbeddingSetup
+  onNavigateToModels
 }: SemanticSearchCardProps): React.JSX.Element {
   const [showWhyInfo, setShowWhyInfo] = useState(false)
   const [showAiDescInfo, setShowAiDescInfo] = useState(false)
@@ -122,11 +122,11 @@ export default function SemanticSearchCard({
                 </span>
               ) : (
                 <button
-                  onClick={onShowEmbeddingSetup}
+                  onClick={onNavigateToModels}
                   className="text-xs text-primary hover:text-primary-hover flex items-center gap-1"
                 >
                   <Info size={10} />
-                  oMLX not running — click to set up
+                  oMLX not configured — go to Models →
                 </button>
               )}
             </div>

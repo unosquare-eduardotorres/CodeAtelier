@@ -400,7 +400,7 @@ Use the \`task\` tool to spawn subagents when beneficial.
       join(commandDir, 'audit.md'),
       `---
 description: Run a workspace health audit scanning code quality, test coverage, security, and dependencies.
-agent: DaVinci
+agent: davinci
 ---
 
 Perform a comprehensive workspace health audit for scope: $ARGUMENTS
@@ -424,7 +424,7 @@ If no scope is specified, audit the entire workspace.
       join(commandDir, 'plan.md'),
       `---
 description: Create a structured implementation plan for a feature or change.
-agent: DaVinci
+agent: davinci
 ---
 
 Create a structured implementation plan for: $ARGUMENTS
@@ -446,7 +446,7 @@ Read CLAUDE.md and relevant source files before planning.
       join(commandDir, 'review.md'),
       `---
 description: Perform a thorough code review of a file or directory.
-agent: DaVinci
+agent: davinci
 subtask: true
 ---
 
@@ -471,7 +471,7 @@ Use CodeGraph tools (find_callers, find_references) to understand impact.
       join(commandDir, 'test.md'),
       `---
 description: Run tests and analyze results, fixing failures if found.
-agent: DaVinci
+agent: davinci
 ---
 
 Run and analyze tests for: $ARGUMENTS
@@ -491,7 +491,7 @@ Run and analyze tests for: $ARGUMENTS
       join(commandDir, 'grill.md'),
       `---
 description: Challenge assumptions and find hidden issues in a file or component.
-agent: DaVinci
+agent: davinci
 subtask: true
 ---
 

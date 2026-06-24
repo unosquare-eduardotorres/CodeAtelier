@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWorkspaceStore, useToastStore } from '@renderer/store'
 import {
   OLLAMA_DEFAULT_HOST,
@@ -46,8 +46,10 @@ export interface ModelConfigState {
 export interface ModelConfigActions {
   handleProviderChange: (newProvider: LLMProvider) => Promise<void>
   handleBackendChange: (newBackend: LocalLLMBackend) => Promise<void>
+  handleUnifiedProviderChange: (newProvider: LLMProvider, newBackend?: LocalLLMBackend) => Promise<void>
   handleLocalModelSelect: (modelId: string) => Promise<void>
   handleLoadOmlxModel: (modelId: string) => Promise<void>
+  handleUnloadOmlxModel: (modelId: string) => Promise<void>
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
   handleFastModeToggle: () => Promise<void>
   handleBudgetCapChange: (value: string) => Promise<void>
@@ -57,6 +59,7 @@ export interface ModelConfigActions {
     host?: string,
     port?: number
   ) => Promise<OllamaStatus | null>
+  scheduleAutoTest: () => void
   saveProviderSettings: (
     newProvider: LLMProvider,
     opts?: {
@@ -117,6 +120,7 @@ function useConnectionTest(opts: {
     host?: string,
     port?: number
   ) => Promise<OllamaStatus | null>
+  scheduleAutoTest: () => void
 } {
   const addToast = useToastStore((s) => s.addToast)
   const [localStatus, setLocalStatus] = useState<OmlxExtendedStatus | OllamaStatus | null>(null)
@@ -190,7 +194,24 @@ function useConnectionTest(opts: {
     }
   }, [opts.provider, opts.backend, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
 
-  return { localStatus, connectionTesting, testConnection }
+  // Debounced auto-test for blur-then-persist-then-test pattern
+  const debouncedTestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const scheduleAutoTest = useCallback(() => {
+    if (debouncedTestRef.current) clearTimeout(debouncedTestRef.current)
+    debouncedTestRef.current = setTimeout(() => {
+      testConnection()
+    }, 600) // 600ms debounce — enough for tab-between-fields
+  }, [testConnection])
+
+  // Clean up debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedTestRef.current) clearTimeout(debouncedTestRef.current)
+    }
+  }, [])
+
+  return { localStatus, connectionTesting, testConnection, scheduleAutoTest }
 }
 
 // ─── Workspace Setting Actions Hook ───────────────────────
@@ -289,7 +310,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
 
   // ── Sub-hooks ──
   const wsSettings = useWorkspaceSettingActions(activeWorkspace)
-  const { localStatus, connectionTesting, testConnection } = useConnectionTest({
+  const { localStatus, connectionTesting, testConnection, scheduleAutoTest } = useConnectionTest({
     provider,
     backend,
     localHost,
@@ -379,6 +400,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         })
       } catch (err) {
         console.error('Failed to save provider settings:', err)
+        throw err
       }
     },
     [activeWorkspace, backend, localModel, localHost, localPort, localApiKey]
@@ -419,6 +441,50 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     [provider, localHost, localModel, saveProviderSettings, testConnection, addToast]
   )
 
+  /** Handle unified provider change — single-step Claude / Ollama / oMLX switch */
+  const handleUnifiedProviderChange = useCallback(
+    async (newProvider: LLMProvider, newBackend?: LocalLLMBackend) => {
+      setProvider(newProvider)
+
+      if (newProvider === 'local-llm' && newBackend) {
+        const oldBackend = backend
+        setBackend(newBackend)
+        // Reset port to default when backend changes
+        if (newBackend !== oldBackend) {
+          const newPort = newBackend === 'omlx' ? OMLX_DEFAULT_PORT : OLLAMA_DEFAULT_PORT
+          setLocalPort(newPort)
+          await saveProviderSettings(newProvider, { backend: newBackend, port: newPort })
+        } else {
+          await saveProviderSettings(newProvider, { backend: newBackend })
+        }
+      } else {
+        await saveProviderSettings(newProvider)
+      }
+
+      addToast({
+        message:
+          newProvider === 'claude'
+            ? 'Provider switched to Claude'
+            : `Provider switched to ${newBackend === 'omlx' ? 'oMLX' : 'Ollama'}`,
+        type: 'success'
+      })
+
+      if (newProvider === 'local-llm') {
+        const port =
+          newBackend !== backend
+            ? newBackend === 'omlx'
+              ? OMLX_DEFAULT_PORT
+              : OLLAMA_DEFAULT_PORT
+            : localPort
+        const status = await testConnection(newBackend ?? backend, localHost, port)
+        if (newBackend === 'ollama' && shouldShowOllamaSetup(status, localModel)) {
+          setShowOllamaSetup(true)
+        }
+      }
+    },
+    [backend, localHost, localPort, localModel, saveProviderSettings, testConnection, addToast]
+  )
+
   /** Handle local model selection */
   const handleLocalModelSelect = useCallback(
     async (modelId: string) => {
@@ -445,6 +511,31 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
       } catch (err) {
         addToast({
           message: `Failed to load model: ${err instanceof Error ? err.message : String(err)}`,
+          type: 'error'
+        })
+      } finally {
+        setModelLoading(null)
+      }
+    },
+    [localHost, localPort, localApiKey, testConnection, addToast]
+  )
+
+  /** Unload a model from memory via admin API, then refresh */
+  const handleUnloadOmlxModel = useCallback(
+    async (modelId: string) => {
+      setModelLoading(modelId)
+      const baseUrl = `http://${localHost}:${localPort}`
+      try {
+        await window.api.omlxUnloadModel({
+          modelId,
+          baseUrl,
+          apiKey: localApiKey || undefined
+        })
+        addToast({ message: `Model "${modelId}" unloaded`, type: 'info' })
+        await testConnection()
+      } catch (err) {
+        addToast({
+          message: `Failed to unload model: ${err instanceof Error ? err.message : String(err)}`,
           type: 'error'
         })
       } finally {
@@ -482,13 +573,16 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     // Actions
     handleProviderChange,
     handleBackendChange,
+    handleUnifiedProviderChange,
     handleLocalModelSelect,
     handleLoadOmlxModel,
+    handleUnloadOmlxModel,
     handleCostPreferenceChange: wsSettings.handleCostPreferenceChange,
     handleFastModeToggle: wsSettings.handleFastModeToggle,
     handleBudgetCapChange: wsSettings.handleBudgetCapChange,
     handleToneChange: wsSettings.handleToneChange,
     testConnection,
+    scheduleAutoTest,
     saveProviderSettings,
     setLocalHost,
     setLocalPort,

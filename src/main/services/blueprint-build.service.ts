@@ -65,35 +65,6 @@ export class BlueprintBuildService extends EventEmitter {
 
     bpLog.info(`[startBuildPhase] Blueprint ${blueprintId} — starting BUILD`)
 
-    // 1. Pipeline + DB state
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'build')
-    this.activeBlueprintIds.set(workspaceId, blueprintId)
-
-    const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-    if (buildPhase) {
-      blueprintPhaseRepository.updateStatus(buildPhase.id, 'active')
-    }
-
-    blueprintRepository.updateStatus(blueprintId, 'building')
-    blueprintRepository.update(blueprintId, { currentPhase: 'build' })
-
-    // 2. Assemble phase context (includes spec + clarify + plan + tasks + review artifacts)
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'build')
-
-    // 3. Get tasks by wave
-    const waveMap = blueprintService.getTasksByWave(blueprintId)
-    const sortedWaves = [...waveMap.keys()].sort((a, b) => a - b)
-    const totalTasks = [...waveMap.values()].reduce((sum, tasks) => sum + tasks.length, 0)
-
-    bpLog.info(`[startBuildPhase] ${sortedWaves.length} waves, ${totalTasks} tasks total`)
-
-    // 4. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'build'
-    } satisfies BlueprintPhaseStartPayload)
-
     const result: BuildResult = {
       tasksCompleted: 0,
       filesCreated: [],
@@ -101,8 +72,45 @@ export class BlueprintBuildService extends EventEmitter {
       failed: false
     }
     let verifyTriggered = false
+    let buildPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let sortedWaves: number[] = []
+    let waveMap: ReturnType<typeof blueprintService.getTasksByWave> = new Map()
+    let totalTasks = 0
 
     try {
+      // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
+      // finally's markPipelineStopped() is guaranteed to run.
+
+      // 1. Pipeline + DB state
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'build')
+      this.activeBlueprintIds.set(workspaceId, blueprintId)
+
+      buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase) {
+        blueprintPhaseRepository.updateStatus(buildPhase.id, 'active')
+      }
+
+      blueprintRepository.updateStatus(blueprintId, 'building')
+      blueprintRepository.update(blueprintId, { currentPhase: 'build' })
+
+      // 2. Assemble phase context (includes spec + clarify + plan + tasks + review artifacts)
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'build')
+
+      // 3. Get tasks by wave
+      waveMap = blueprintService.getTasksByWave(blueprintId)
+      sortedWaves = [...waveMap.keys()].sort((a, b) => a - b)
+      totalTasks = [...waveMap.values()].reduce((sum, tasks) => sum + tasks.length, 0)
+
+      bpLog.info(`[startBuildPhase] ${sortedWaves.length} waves, ${totalTasks} tasks total`)
+
+      // 4. Emit phaseStart
+      // BP-BUILD-TASK-RAW-EMIT-01: Use safeEmit to prevent listener throws
+      // from aborting build initialization.
+      this.safeEmit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'build'
+      } satisfies BlueprintPhaseStartPayload)
       // 5. Execute waves sequentially
       for (const waveNum of sortedWaves) {
         const waveTasks = waveMap.get(waveNum) ?? []
@@ -482,7 +490,9 @@ export class BlueprintBuildService extends EventEmitter {
     // Wire streaming — forward progress events
     const onChunk = (chunk: StreamChunk): void => {
       if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
+        // BP-BUILD-TASK-RAW-EMIT-01: Use safeEmit to prevent listener throws
+        // from crashing the streaming loop during task execution.
+        this.safeEmit('phaseProgress', {
           blueprintId,
           workspaceId,
           phase: 'build',
@@ -491,7 +501,7 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
     const onStatus = (status: AgentStatus): void => {
-      this.emit('status', { workspaceId, status })
+      this.safeEmit('status', { workspaceId, status })
     }
     session.on('chunk', onChunk)
     session.on('statusUpdate', onStatus)

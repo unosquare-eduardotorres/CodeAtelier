@@ -602,6 +602,249 @@ describe('normalizeOpenCodeEvent — child session re-tagging', () => {
   })
 })
 
+// ── message.part.delta (V2 streaming) ──
+
+describe('normalizeOpenCodeEvent — message.part.delta', () => {
+  test('text delta emits a text chunk', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: 'hello world' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'text')
+    assert.equal(out[0].content, 'hello world')
+  })
+
+  test('reasoning delta emits a thinking chunk', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'reasoning', delta: 'let me think' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'thinking')
+    assert.equal(out[0].content, 'let me think')
+  })
+
+  test('thinking field also maps to thinking chunk', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'thinking', delta: 'pondering' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out[0].type, 'thinking')
+  })
+
+  test('thinking→text delta emits turn_boundary then text', () => {
+    const state = freshState({ lastPartType: 'thinking', hasPriorText: true })
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: 'answer' } },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out.length, 2)
+    assert.equal(out[0].type, 'turn_boundary')
+    assert.equal(out[1].type, 'text')
+    assert.equal(out[1].content, 'answer')
+  })
+
+  test('empty delta returns []', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: '' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('missing delta returns []', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('unknown field returns [] (no crash)', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'image', delta: 'data...' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('text delta sets lastPartType and hasPriorText', () => {
+    const state = freshState()
+    normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: 'hi' } },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(state.lastPartType, 'text')
+    assert.equal(state.hasPriorText, true)
+  })
+
+  test('reasoning delta sets lastPartType to thinking', () => {
+    const state = freshState()
+    normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'reasoning', delta: 'hmm' } },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(state.lastPartType, 'thinking')
+  })
+})
+
+// ── session.next.* V2 event bus ──
+
+describe('normalizeOpenCodeEvent — session.next.* handlers', () => {
+  test('session.next.agent.switched emits status chunk', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.agent.switched', properties: { agent: 'coder' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'status')
+    assert.equal(out[0].content, 'agent_switched:coder')
+  })
+
+  test('session.next.agent.switched uses name fallback', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.agent.switched', properties: { name: 'reviewer' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out[0].content, 'agent_switched:reviewer')
+  })
+
+  test('session.next.model.switched emits status chunk', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.model.switched', properties: { model: 'claude-sonnet-4' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'status')
+    assert.equal(out[0].content, 'model_switched:claude-sonnet-4')
+  })
+
+  test('session.next.agent.switched handles object agent property', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.agent.switched', properties: { agent: { name: 'DaVinci', id: 'dav-1' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out[0].content, 'agent_switched:DaVinci')
+  })
+
+  test('session.next.model.switched handles object model property', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.model.switched', properties: { model: { id: 'claude-sonnet-4', provider: 'anthropic' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out[0].content, 'model_switched:claude-sonnet-4')
+  })
+
+  test('session.diff emits session_state, not text', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.diff', properties: { diff: '--- a/file.ts\n+++ b/file.ts' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out[0].type, 'session_state')
+    assert.ok(out[0].content!.startsWith('session_diff:'))
+  })
+
+  test('session.next.step.ended updates token usage', () => {
+    const usage = freshUsage()
+    normalizeOpenCodeEvent(
+      {
+        type: 'session.next.step.ended',
+        properties: {
+          usage: { inputTokens: 500, outputTokens: 100 }
+        }
+      },
+      SID,
+      usage,
+      freshState()
+    )
+    assert.equal(usage.input, 500)
+    assert.equal(usage.output, 100)
+  })
+
+  test('session.next.step.ended without usage is a no-op', () => {
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.step.ended', properties: {} },
+      SID,
+      usage,
+      freshState()
+    )
+    assert.deepEqual(out, [])
+    assert.equal(usage.input, 0)
+  })
+
+  test('session.next.text.delta is a no-op (covered by message.part.delta)', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.text.delta', properties: { delta: 'text' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('session.next.tool.called is a no-op', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.tool.called', properties: { tool: 'Bash' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('session.next.compaction.started is a no-op', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.compaction.started', properties: {} },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('session.next.moved is a no-op', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.next.moved', properties: {} },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

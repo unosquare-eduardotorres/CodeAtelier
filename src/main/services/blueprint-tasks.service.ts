@@ -30,6 +30,17 @@ const bpLog = log.scope('blueprint-tasks')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintTasksService extends EventEmitter {
+  // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
+  // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
+    }
+  }
+
   async startTasksPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -39,52 +50,56 @@ export class BlueprintTasksService extends EventEmitter {
 
     bpLog.info(`[startTasksPhase] Blueprint ${blueprintId} — starting TASKS`)
 
-    // 1. Pipeline + DB state
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'tasks')
-
-    const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
-    if (tasksPhase) {
-      blueprintPhaseRepository.updateStatus(tasksPhase.id, 'active')
-    }
-
-    blueprintRepository.updateStatus(blueprintId, 'tasking')
-    blueprintRepository.update(blueprintId, { currentPhase: 'tasks' })
-
-    // 2. Assemble context (includes spec + clarify + plan artifacts)
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'tasks')
-
-    // 3. Create adapter + session
-    const adapter = new BlueprintTasksAdapter({ workspaceId, blueprintId, phaseContext })
-
-    const blueprint = blueprintService.getBlueprint(blueprintId)
-    adapter.setGoalCondition(buildTasksGoalCondition(blueprint?.title ?? 'Unknown'))
-
-    const session = new AgentSessionService(adapter)
-
-    // 4. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'tasks'
-    } satisfies BlueprintPhaseStartPayload)
-
-    // 5. Wire streaming
-    session.on('chunk', (chunk: StreamChunk) => {
-      if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'tasks',
-          text: chunk.content
-        } satisfies BlueprintPhaseProgressPayload)
-      }
-    })
-
-    session.on('statusUpdate', (status: AgentStatus) => {
-      this.emit('status', { workspaceId, status })
-    })
+    // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
+    // finally's markPipelineStopped() is guaranteed to run.
+    let tasksPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let session: AgentSessionService | null = null
 
     try {
+      // 1. Pipeline + DB state
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'tasks')
+
+      tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
+      if (tasksPhase) {
+        blueprintPhaseRepository.updateStatus(tasksPhase.id, 'active')
+      }
+
+      blueprintRepository.updateStatus(blueprintId, 'tasking')
+      blueprintRepository.update(blueprintId, { currentPhase: 'tasks' })
+
+      // 2. Assemble context (includes spec + clarify + plan artifacts)
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'tasks')
+
+      // 3. Create adapter + session
+      const adapter = new BlueprintTasksAdapter({ workspaceId, blueprintId, phaseContext })
+
+      const blueprint = blueprintService.getBlueprint(blueprintId)
+      adapter.setGoalCondition(buildTasksGoalCondition(blueprint?.title ?? 'Unknown'))
+
+      session = new AgentSessionService(adapter)
+
+      // 4. Emit phaseStart
+      this.safeEmit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'tasks'
+      } satisfies BlueprintPhaseStartPayload)
+
+      // 5. Wire streaming
+      session.on('chunk', (chunk: StreamChunk) => {
+        if (chunk.type === 'text' && chunk.content) {
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'tasks',
+            text: chunk.content
+          } satisfies BlueprintPhaseProgressPayload)
+        }
+      })
+
+      session.on('statusUpdate', (status: AgentStatus) => {
+        this.safeEmit('status', { workspaceId, status })
+      })
       // 6. Start session + send with timeout + abort race
       await session.start(workspacePath, 'plan')
 
@@ -147,7 +162,7 @@ export class BlueprintTasksService extends EventEmitter {
       bpLog.info(`[startTasksPhase] Blueprint ${blueprintId} — tasks complete, advancing to REVIEW`)
 
       // 11. Emit events
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'tasks',
@@ -156,7 +171,7 @@ export class BlueprintTasksService extends EventEmitter {
       } satisfies BlueprintPhaseCompletePayload)
 
       if (tasksPhase) {
-        this.emit('phaseArtifact', {
+        this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'tasks',
@@ -175,7 +190,7 @@ export class BlueprintTasksService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session.getStreamedContent()
+      const partialText = session?.getStreamedContent()
       if (partialText && tasksPhase) {
         blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
           type: 'tasks-partial',
@@ -183,14 +198,16 @@ export class BlueprintTasksService extends EventEmitter {
         })
       }
 
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'tasks',
         status: 'failed'
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
-      await session.stop()
+      if (session) {
+        await session.stop()
+      }
       blueprintService.markPipelineStopped(workspaceId)
     }
   }

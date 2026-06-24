@@ -38,9 +38,57 @@ import { fileWatcherService } from './services/file-watcher.service'
 import { omlxEmbeddingProvider } from './services/omlx-embedding.service'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 
+// Augment PATH to include Homebrew and npm global bin directories
+// CRITICAL: Ensures child_process.spawn() can locate binaries like 'opencode',
+// which the @opencode-ai/sdk needs to start its server locally
+import { 
+  augmentOpenCodeCliPath, 
+  locateOpenCodeCli,
+  resolveOpencodePath,
+  ensureOpencodePathInEnv 
+} from '../shared/opencode-cli-path'
+
+// Augment PATH before any services or child processes are initialized
+augmentOpenCodeCliPath()
+
+// Synchronously resolve and inject the OpenCode CLI binary path into PATH
+// This MUST happen before any async code or services that might spawn processes
+try {
+  // Use npm-based resolution (more robust than hardcoded paths)
+  const opencodePath = resolveOpencodePath()
+  
+  if (opencodePath) {
+    ensureOpencodePathInEnv()
+    log.info(
+      `[OpenCode CLI] Resolved: ${opencodePath}. PATH updated.`,
+    )
+  } else {
+    log.warn(
+      `[OpenCode CLI] WARNING: Could not find 'opencode' binary. Install with: npm install -g @opencode-ai/cli`
+    )
+  }
+} catch (err: unknown) {
+  log.error('[OpenCode CLI] Path resolution failed:', err)
+}
+
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
 log.initialize()
+
+// Asynchronously verify OpenCode CLI is available (for diagnostics)
+locateOpenCodeCli()
+  .then((result: any) => {
+    if (result.available) {
+      log.info(
+        `[OpenCode CLI] Verified at ${result.path} (${result.source}), version: ${result.version || 'unknown'}`
+      )
+    } else {
+      log.warn(`[OpenCode CLI] ${result.error}`)
+    }
+  })
+  .catch((err: unknown) => {
+    log.error('[OpenCode CLI] Location check failed:', err)
+  })
 
 // Fix dock tooltip: Electron defaults to "Electron" in dev mode.
 // Must be set before app.whenReady().
@@ -399,6 +447,47 @@ app.whenReady().then(() => {
 
   // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
   cleanupStalePromptFiles()
+
+  // ── OpenCode CLI: Verify resolution at startup and log to BUGS section if failed ──
+  try {
+    const reResolved = resolveOpencodePath()
+    if (!reResolved) {
+      // Resolution failed - log to bug tracker
+      const { bugRepository } = require('./db/repositories/bug.repository')
+      bugRepository.upsertBug({
+        process: 'main' as const,
+        severity: 'error',
+        errorMessage: 'Failed to resolve OpenCode CLI path at startup',
+        stackTrace: new Error('OpenCode CLI resolution failed').stack,
+        sourceFile: __filename,
+        sourceLine: -1,
+        sourceColumn: -1,
+        appVersion: app.getVersion(),
+        osInfo: `${process.platform} ${os.release()}`
+      })
+    } else {
+      log.info(`[OpenCode CLI] Startup verification: Resolved at ${reResolved}`)
+      ensureOpencodePathInEnv()
+    }
+  } catch (error) {
+    // Log resolution failure to bug tracker
+    try {
+      const { bugRepository } = require('./db/repositories/bug.repository')
+      bugRepository.upsertBug({
+        process: 'main' as const,
+        severity: 'error',
+        errorMessage: `OpenCode CLI resolution failed: ${(error as Error).message}`,
+        stackTrace: (error as Error).stack,
+        sourceFile: __filename,
+        sourceLine: -1,
+        sourceColumn: -1,
+        appVersion: app.getVersion(),
+        osInfo: `${process.platform} ${os.release()}`
+      })
+    } catch {
+      // Silent fail - don't crash the crash handler
+    }
+  }
 
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {

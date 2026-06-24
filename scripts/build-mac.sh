@@ -18,6 +18,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# ── Augment PATH for @opencode-ai/cli installation
+# The OpenCode CLI is installed globally and needs to be in PATH for the app to spawn it.
+# Add Homebrew bin directories and npm global bin to PATH before running npm commands.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.npm-global/bin:$PATH"
+
+# ── Verify OpenCode CLI is available before build
+echo "▸ Verify OpenCode CLI installation:"
+if command -v opencode &>/dev/null; then
+  which opencode
+  opencode --version || true
+  echo "OpenCode CLI found and available"
+else
+  echo "WARNING: OpenCode CLI not found. Install with: npm install -g @opencode-ai/cli"
+  echo "This may cause spawn errors when building the app."
+fi
+
 # ── macOS Notarization credentials ──────────────────────────────────────────
 # electron-builder checks three credential methods in order:
 #   1. APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID  (app-specific pwd)

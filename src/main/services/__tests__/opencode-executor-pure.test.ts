@@ -100,7 +100,10 @@ function buildPromptBody(
 }
 
 /**
- * Replicated from OpenCodeExecutor.isSessionComplete (opencode-executor.ts:1190-1221).
+ * Replicated from OpenCodeExecutor.isSessionComplete (opencode-executor.ts).
+ * NOTE: retriesAvailable should only be true when a retry was actually initiated
+ * for the current event (retryInitiatedThisEvent), NOT simply when the retry
+ * budget hasn't been exhausted. See processEventStream deadlock fix.
  */
 function isSessionComplete(event: Record<string, unknown>, sessionId: string, retriesAvailable = false): boolean {
   const type = event.type as string | undefined
@@ -304,8 +307,16 @@ describe('isSessionComplete', () => {
   })
 
   test('session_error_with_retries_returns_false', () => {
+    // retriesAvailable=true means a retry was actually initiated this event
     const event = { type: 'session.error', properties: { sessionID: 'sess-1', error: 'boom' } }
     assert.ok(!isSessionComplete(event, 'sess-1', true))
+  })
+
+  test('session_error_no_retry_initiated_returns_true', () => {
+    // Key deadlock fix: when no retry fires (retryInitiatedThisEvent=false),
+    // session.error MUST terminate the loop even if retry budget remains
+    const event = { type: 'session.error', properties: { sessionID: 'sess-1', error: 'model not found' } }
+    assert.ok(isSessionComplete(event, 'sess-1', false), 'Should terminate when no retry was initiated')
   })
 
   test('session_status_idle_returns_true', () => {

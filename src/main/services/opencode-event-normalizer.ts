@@ -174,6 +174,42 @@ function handleStructuredOutputPart(part: Record<string, unknown>): StreamChunk[
 
 // ── Per-event-type handler functions ──
 
+/**
+ * Handle message.part.delta — lightweight text/reasoning streaming deltas.
+ * Replaces full message.part.updated snapshots for incremental text in OpenCode ≥1.17.
+ */
+function handleMessagePartDelta(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const field = properties.field as string | undefined
+  const delta = properties.delta as string | undefined
+  if (!delta) return []
+
+  if (field === 'text') {
+    // Same boundary detection as handleTextPart (F16)
+    const chunks: StreamChunk[] = []
+    if (state.lastPartType === 'thinking' && state.hasPriorText) {
+      chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+    }
+    chunks.push({ type: 'text', content: delta })
+    state.lastPartType = 'text'
+    state.hasPriorText = true
+    return chunks
+  }
+
+  if (field === 'reasoning' || field === 'thinking') {
+    state.lastPartType = 'thinking'
+    return [{ type: 'thinking', content: delta }]
+  }
+
+  // Unknown field — log but don't drop
+  openCodeLog.info(`[opencode] message.part.delta field="${field}" (not text/reasoning)`)
+  return []
+}
+
 /** Dispatcher for message.part.updated — delegates to per-part-type sub-handlers. */
 function handleMessagePartUpdated(
   properties: EventProperties,
@@ -260,8 +296,17 @@ function handleSessionUpdated(
 }
 
 function handleSessionError(properties: EventProperties): StreamChunk[] {
-  const error = properties.error as string | undefined
-  if (!error) return []
+  const rawError = properties.error
+  if (!rawError) return []
+
+  // The SDK sends error as an object: { name: string, data: { message: string, ... } }.
+  // Coerce to a string for downstream consumers that pattern-match on error messages.
+  const error: string =
+    typeof rawError === 'string'
+      ? rawError
+      : (rawError as any)?.data?.message ??
+        (rawError as any)?.message ??
+        JSON.stringify(rawError)
 
   // GAP-11: Classify transient vs permanent errors. Transient errors emit
   // api_retry instead of error, giving the UI a more accurate status indicator.
@@ -375,12 +420,15 @@ function handleFileEdited(properties: EventProperties): StreamChunk[] {
 function handleSessionDiff(properties: EventProperties): StreamChunk[] {
   const diff = properties.diff as string | undefined
   if (!diff) return []
-  return [{ type: 'text', content: `\n\n**Session Revert Diff:**\n\`\`\`diff\n${diff}\n\`\`\`\n` }]
+  // Session diffs are internal recovery metadata — route to session_state,
+  // not text, to prevent rendering in the chat bubble.
+  return [{ type: 'session_state', content: `session_diff:${diff.slice(0, 500)}` }]
 }
 
 function handleSessionStatus(properties: EventProperties): StreamChunk[] {
-  const status = properties.status as string | undefined
-  if (!status) return []
+  const rawStatus = properties.status
+  if (!rawStatus) return []
+  const status = typeof rawStatus === 'string' ? rawStatus : String(rawStatus)
   const statusMap: Record<string, string> = {
     thinking: 'thinking',
     tool_use: 'reviewing',
@@ -612,10 +660,50 @@ function handleServerConnected(
   return []
 }
 
+// ── session.next.* V2 event bus handlers ──
+
+/** No-op handler — suppresses "Unhandled event type" log for known V2 events. */
+function noopHandler(): StreamChunk[] {
+  return []
+}
+
+/** session.next.agent.switched — emits status chunk with agent name. */
+function handleAgentSwitched(properties: EventProperties): StreamChunk[] {
+  const raw = properties.agent ?? properties.name ?? 'unknown'
+  const name = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.name ?? (raw as Record<string, unknown>)?.id ?? String(raw)
+  return [{ type: 'status', content: `agent_switched:${name}` }]
+}
+
+/** session.next.model.switched — emits status chunk with model id. */
+function handleModelSwitched(properties: EventProperties): StreamChunk[] {
+  const raw = properties.model ?? properties.modelID ?? properties.id ?? 'unknown'
+  const modelId = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.id ?? (raw as Record<string, unknown>)?.modelID ?? String(raw)
+  return [{ type: 'status', content: `model_switched:${modelId}` }]
+}
+
+/** session.next.step.ended — extracts per-step token usage when available. */
+function handleStepEnded(
+  properties: EventProperties,
+  _sessionId: string,
+  tokenUsage: ExecutorTokenUsage
+): StreamChunk[] {
+  const usage = properties.usage as Record<string, number> | undefined
+  if (usage) {
+    tokenUsage.input = usage.inputTokens ?? usage.input ?? tokenUsage.input
+    tokenUsage.output = usage.outputTokens ?? usage.output ?? tokenUsage.output
+    tokenUsage.cacheReadInputTokens =
+      usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
+    tokenUsage.cacheCreationInputTokens =
+      usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
+  }
+  return []
+}
+
 // ── Dispatch table ──
 
 const EVENT_HANDLERS: Record<string, EventHandler> = {
   'message.part.updated': handleMessagePartUpdated,
+  'message.part.delta': handleMessagePartDelta,
   'session.updated': handleSessionUpdated,
   'session.error': handleSessionError as EventHandler,
   'session.compacted': handleSessionCompacted as EventHandler, // 6C-4: now emits context_usage_update
@@ -636,7 +724,49 @@ const EVENT_HANDLERS: Record<string, EventHandler> = {
   'session.deleted': handleSessionDeleted,
   'file.watcher.updated': handleFileWatcherUpdated as EventHandler,
   'lsp.updated': handleLspUpdated as EventHandler,
-  'server.connected': handleServerConnected
+  'server.connected': handleServerConnected,
+
+  // session.next.* — V2 event bus. Currently fires alongside V1 events.
+  // Registered to suppress "Unhandled event type" log spam.
+  'session.next.agent.switched': handleAgentSwitched as EventHandler,
+  'session.next.model.switched': handleModelSwitched as EventHandler,
+  'session.next.text.started': noopHandler as EventHandler,
+  'session.next.text.delta': noopHandler as EventHandler,
+  'session.next.text.ended': noopHandler as EventHandler,
+  'session.next.reasoning.started': noopHandler as EventHandler,
+  'session.next.reasoning.delta': noopHandler as EventHandler,
+  'session.next.reasoning.ended': noopHandler as EventHandler,
+  'session.next.tool.input.started': noopHandler as EventHandler,
+  'session.next.tool.input.delta': noopHandler as EventHandler,
+  'session.next.tool.input.ended': noopHandler as EventHandler,
+  'session.next.tool.called': noopHandler as EventHandler,
+  'session.next.tool.progress': noopHandler as EventHandler,
+  'session.next.tool.success': noopHandler as EventHandler,
+  'session.next.tool.failed': noopHandler as EventHandler,
+  'session.next.step.started': noopHandler as EventHandler,
+  'session.next.step.ended': handleStepEnded as EventHandler,
+  'session.next.step.failed': noopHandler as EventHandler,
+  'session.next.compaction.started': noopHandler as EventHandler,
+  'session.next.compaction.delta': noopHandler as EventHandler,
+  'session.next.compaction.ended': noopHandler as EventHandler,
+  'session.next.retried': noopHandler as EventHandler,
+  'session.next.prompted': noopHandler as EventHandler,
+  'session.next.prompt.admitted': noopHandler as EventHandler,
+  'session.next.context.updated': noopHandler as EventHandler,
+  'session.next.synthetic': noopHandler as EventHandler,
+  'session.next.shell.started': noopHandler as EventHandler,
+  'session.next.shell.ended': noopHandler as EventHandler,
+  'session.next.moved': noopHandler as EventHandler,
+
+  // Server lifecycle — suppress heartbeat noise (~6x/minute).
+  'server.heartbeat': noopHandler as EventHandler,
+
+  // Plugin/catalog/integration lifecycle — informational, no UI action needed.
+  'plugin.added': noopHandler as EventHandler,
+  'plugin.removed': noopHandler as EventHandler,
+  'catalog.updated': noopHandler as EventHandler,
+  'integration.updated': noopHandler as EventHandler,
+  'reference.updated': noopHandler as EventHandler
 }
 
 /**

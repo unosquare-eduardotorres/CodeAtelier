@@ -1242,10 +1242,11 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
   // ── Embedding Provider ──
-  embeddingCheckStatus: (): Promise<EmbeddingModelStatus> =>
-    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS),
+  embeddingCheckStatus: (args?: { baseUrl?: string; apiKey?: string }): Promise<EmbeddingModelStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS, args),
 
-  embeddingInitialize: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE),
+  embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE, args),
 
   onEmbeddingModelReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()

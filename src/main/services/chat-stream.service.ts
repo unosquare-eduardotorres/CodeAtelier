@@ -373,7 +373,14 @@ export class ChatStreamService {
       )
     }
     this.streamingLock = true
-    conversationStateMachine.transition('sendMessage', conversationId)
+    // CHAT-SM-TRANSITION-UNCHECKED-01: If state machine rejects the transition,
+    // release the lock immediately to prevent a permanent streaming block.
+    if (!conversationStateMachine.transition('sendMessage', conversationId)) {
+      this.streamingLock = false
+      throw new Error(
+        `State machine rejected sendMessage — current state: ${conversationStateMachine.currentState}`
+      )
+    }
 
     const signal = conversationLifecycle.begin(conversationId)
     const requestId = conversationLifecycle.requestId!
@@ -521,8 +528,14 @@ export class ChatStreamService {
       // F-19: Clear accumulated tool activities on lifecycle abort.
       // Without this, tool activities from an aborted stream sit in memory
       // until the next stream() call clears them. Defense-in-depth cleanup.
+      // CHAT-TOOLACTIVITY-DOUBLECLEAR-01: Only clear if stop() hasn't
+      // already cleared (isStopped means stop() handled it). The double-call
+      // resets the clearedConversations 10s timer, blocking tool activity
+      // accumulation for new streams started within that window.
       conversationLifecycle.onDispose(() => {
-        getAndClearToolActivities(streamConvId)
+        if (!this.isStopped) {
+          getAndClearToolActivities(streamConvId)
+        }
       })
     }
 
@@ -738,6 +751,16 @@ export class ChatStreamService {
       let savedMessage: { id: string }
       try {
         const { getDatabase } = await import('../db/index')
+
+        // CHAT-STOP-FINALIZE-DOUBLESAVE-01: Re-check after async gap.
+        // stop() may have run during the await, saving its own "stopped" message.
+        // Without this guard, both stop()'s message AND this finalization's message
+        // are saved — creating a duplicate in the conversation.
+        if (this.isStopped) {
+          log.info('[PIPELINE:finalize-skipped-post-await] Stopped during DB import await')
+          return
+        }
+
         const db = getDatabase()
         savedMessage = db.transaction(() => {
           const msg = messageRepository.create(
@@ -846,8 +869,8 @@ export class ChatStreamService {
   private processMemoryBlocks(ctx: StreamContext): void {
     try {
       const wpPath = chatAgentService.getWorkspacePath()
-      const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
-      const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
+      // CHAT-PROCESSMEMORY-FINDALL-01: Use findByPath() instead of findAll() + linear filter.
+      const workspace = wpPath ? workspaceRepository.findByPath(wpPath) : undefined
       if (workspace) {
         const memoriesCreated = memoryService.processMemoryBlocks(
           ctx.streamedContent,
@@ -933,6 +956,9 @@ export class ChatStreamService {
       // and delete-then-complete scenarios. isActive is false when abortController
       // is null — which happens after both abort() and complete().
       if (this.isStopped || !conversationLifecycle.isActive) {
+        // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics on abort-triggered completion.
+        // Idempotent if stop() already called completeStreamMetrics.
+        completeStreamMetrics(ctx.conversationId, 'aborted')
         cleanupListeners()
         resolveDone()
         return
@@ -1228,6 +1254,9 @@ export class ChatStreamService {
       log.warn(
         `[STREAM:force-reset] lock=${lockStuck} smState=${conversationStateMachine.currentState} — force-resetting`
       )
+      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+      const wsConvId = conversationLifecycle.conversationId
+      if (wsConvId) completeStreamMetrics(wsConvId, 'aborted')
       conversationLifecycle.abort('workspace-switch')
     }
   }

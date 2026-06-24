@@ -21,6 +21,7 @@ import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 import { resolveContextLevel } from './context-usage-level'
 import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { completeStreamMetrics } from './chunk-router'
 
 const log = chatIpcLogger
 
@@ -127,6 +128,9 @@ export function registerChatModeIpc(): void {
     // if the stream just finished but async finalization is still running,
     // this ensures it's properly cancelled before starting the specialist session.
     if (conversationLifecycle.isActive) {
+      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+      const convId = conversationLifecycle.conversationId
+      if (convId) completeStreamMetrics(convId, 'swapped')
       conversationLifecycle.abort('specialist-swap')
     }
 

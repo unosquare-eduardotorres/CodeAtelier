@@ -193,12 +193,18 @@ export class BlueprintService extends EventEmitter {
    */
   cancel(workspaceId: string): void {
     const state = this.pipelines.get(workspaceId)
-    if (!state?.running || !state.blueprintId) {
+    // BP-CANCEL-WINDOW-SILENT-01: Check blueprintId presence (identity) rather
+    // than running state (activity). During the BUILD→VERIFY transition window,
+    // running=false but blueprintId is still set — the user's cancel must still
+    // take effect and update the DB status so VERIFY aborts on startup.
+    if (!state?.blueprintId) {
       bpLog.warn('[cancel] No active blueprint pipeline to cancel')
       return
     }
 
-    state.abortController?.abort()
+    if (state.abortController) {
+      state.abortController.abort()
+    }
     state.running = false
     this.startLocks.delete(workspaceId)
 

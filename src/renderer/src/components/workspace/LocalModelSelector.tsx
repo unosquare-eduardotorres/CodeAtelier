@@ -9,7 +9,8 @@ import {
   Copy,
   ChevronRight,
   Loader2,
-  Power
+  Power,
+  PowerOff
 } from 'lucide-react'
 import { RECOMMENDED_LOCAL_MODELS, resolveModelId } from '../../../../shared/constants'
 import type {
@@ -29,6 +30,8 @@ interface LocalModelSelectorProps {
   onPull: (modelId: string) => void
   /** Load a downloaded model into memory (oMLX admin API) */
   onLoadModel?: (modelId: string) => void | Promise<void>
+  /** Unload a loaded model from memory (oMLX admin API) */
+  onUnloadModel?: (modelId: string) => void | Promise<void>
   /** For oMLX: copy model name to clipboard + open downloader tab */
   onCopyAndOpenDownloader?: (modelName: string) => void
 }
@@ -36,7 +39,7 @@ interface LocalModelSelectorProps {
 const TIER_CONFIG: { key: MemoryTier; label: string; icon: string; color: string }[] = [
   { key: '8gb', label: '8 GB RAM', icon: '🟢', color: 'text-green-400' },
   { key: '16gb', label: '16 GB RAM', icon: '🟡', color: 'text-yellow-400' },
-  { key: '32gb', label: '32 GB RAM', icon: '🔵', color: 'text-blue-400' },
+  { key: '32gb', label: '32 GB RAM', icon: '🟡', color: 'text-blue-400' },
   { key: '48gb+', label: '48+ GB RAM', icon: '🟣', color: 'text-purple-400' }
 ]
 
@@ -45,6 +48,44 @@ const TOOL_CALLING_COLORS: Record<string, string> = {
   good: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
   native: 'text-green-400 bg-green-500/10 border-green-500/20',
   excellent: 'text-purple-400 bg-purple-500/10 border-purple-500/20'
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  llm: 'LLM Models',
+  vlm: 'Vision Models',
+  embedding: 'Embedding Models',
+  reranker: 'Reranker Models'
+}
+
+const TYPE_BADGE_CLASSES: Record<string, { label: string; classes: string }> = {
+  embedding: { label: 'EMB', classes: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' },
+  vlm: { label: 'VLM', classes: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
+  reranker: { label: 'RERANK', classes: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
+  llm: { label: 'LLM', classes: 'bg-green-500/10 text-green-400 border-green-500/20' }
+}
+
+function ModelTypeBadge({ modelType }: { modelType?: string }): React.JSX.Element {
+  const config = TYPE_BADGE_CLASSES[modelType ?? 'llm'] ?? TYPE_BADGE_CLASSES.llm
+  return (
+    <span
+      className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}
+    >
+      {config.label}
+    </span>
+  )
+}
+
+/** Group models by type in a stable order */
+function groupModelsByType(models: OmlxModelDetail[]): Map<string, OmlxModelDetail[]> {
+  const groups = new Map<string, OmlxModelDetail[]>()
+  const typeOrder = ['llm', 'vlm', 'embedding', 'reranker']
+  for (const type of typeOrder) {
+    const matches = models.filter((m) => (m.modelType ?? 'llm') === type)
+    if (matches.length > 0) {
+      groups.set(type, matches)
+    }
+  }
+  return groups
 }
 
 function isModelInstalled(modelId: string, installedModels: string[]): boolean {
@@ -178,6 +219,130 @@ function ModelRow({
   )
 }
 
+// ─── Server Model Row (for the server-first display) ──────────────
+
+function ServerModelRow({
+  model,
+  selectedModel,
+  loadingModelId,
+  onSelect,
+  onLoad,
+  onUnload
+}: {
+  model: OmlxModelDetail
+  selectedModel: string
+  loadingModelId: string | null
+  onSelect: (modelId: string) => void
+  onLoad: (modelId: string) => void
+  onUnload: (modelId: string) => void
+}): React.JSX.Element {
+  const isSelected = selectedModel === model.id
+  const isLoading = model.isLoading || loadingModelId === model.id
+  const isLLMType = (model.modelType ?? 'llm') === 'llm' || (model.modelType ?? 'llm') === 'vlm'
+
+  return (
+    <div
+      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors ${
+        isSelected
+          ? 'border-primary bg-primary-muted'
+          : 'border-border-subtle hover:bg-surface-overlay'
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        {/* Selection indicator for LLM/VLM models */}
+        {model.loaded && isLLMType ? (
+          isSelected ? (
+            <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
+              <Check size={10} className="text-white" />
+            </div>
+          ) : (
+            <div className="w-4 h-4 rounded-full border-2 border-border-default shrink-0" />
+          )
+        ) : (
+          <div className="w-4 h-4 shrink-0" />
+        )}
+
+        <span className="text-sm font-medium text-text-primary truncate">{model.id}</span>
+        <ModelTypeBadge modelType={model.modelType} />
+
+        {model.estimatedSize && (
+          <span className="text-[10px] text-text-muted shrink-0">{model.estimatedSize}</span>
+        )}
+
+        {model.loaded ? (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium shrink-0">
+            loaded
+          </span>
+        ) : (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-overlay text-text-muted font-medium shrink-0">
+            on disk
+          </span>
+        )}
+
+        {model.pinned && (
+          <Star size={10} className="text-amber-400 shrink-0" />
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="ml-3 shrink-0 flex items-center gap-2">
+        {model.loaded ? (
+          <>
+            {/* Select button for LLM/VLM models */}
+            {isLLMType && !isSelected && (
+              <button
+                onClick={() => onSelect(model.id)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border-default hover:bg-surface-hover text-text-secondary transition-colors"
+              >
+                Select
+              </button>
+            )}
+            {isLLMType && isSelected && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-primary text-white">
+                <Check size={10} />
+                Active
+              </span>
+            )}
+            {/* Unload button */}
+            <button
+              onClick={() => onUnload(model.id)}
+              disabled={isLoading}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              title={`Unload ${model.id} from memory`}
+            >
+              {isLoading ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <PowerOff size={12} />
+              )}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => onLoad(model.id)}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-primary text-primary hover:bg-primary-muted transition-colors disabled:opacity-50"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 size={12} className="animate-spin" />
+                Loading…
+              </>
+            ) : (
+              <>
+                <Power size={12} />
+                Load
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Main Component ──────────────────────────────────────
+
 export default function LocalModelSelector({
   selectedModel,
   installedModels,
@@ -186,6 +351,7 @@ export default function LocalModelSelector({
   onSelect,
   onPull,
   onLoadModel,
+  onUnloadModel,
   onCopyAndOpenDownloader
 }: LocalModelSelectorProps): React.JSX.Element {
   const [customModel, setCustomModel] = useState('')
@@ -233,6 +399,17 @@ export default function LocalModelSelector({
     }
   }
 
+  /** Handle unloading a model from memory */
+  const handleUnloadModel = async (modelId: string): Promise<void> => {
+    if (!onUnloadModel) return
+    setLoadingModelId(modelId)
+    try {
+      await onUnloadModel(modelId)
+    } finally {
+      setLoadingModelId(null)
+    }
+  }
+
   /** Handle "not installed" action — oMLX copies+downloads, Ollama triggers pull */
   const handleNotInstalled = (model: RecommendedLocalModel): void => {
     const modelId = getModelId(model)
@@ -243,125 +420,121 @@ export default function LocalModelSelector({
     }
   }
 
+  // Determine if we have rich server model data (admin API connected)
+  const hasServerModels = downloadedModels && downloadedModels.length > 0
+  const modelGroups = hasServerModels ? groupModelsByType(downloadedModels) : null
+
   return (
     <div data-testid="local-model-selector" className="space-y-4">
-      {/* Section A: Installed Models (always visible, primary) */}
-      <div>
-        <label className="text-xs font-medium text-text-secondary">Model</label>
-        {installedModels.length > 0 ? (
-          <div className="space-y-1.5 mt-2">
-            {installedModels.map((modelId) => (
-              <button
-                key={modelId}
-                onClick={() => onSelect(modelId)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
-                  selectedModel === modelId
-                    ? 'border-primary bg-primary-muted'
-                    : 'border-border-subtle hover:bg-surface-overlay'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {selectedModel === modelId ? (
-                    <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
-                      <Check size={10} className="text-white" />
-                    </div>
-                  ) : (
-                    <div className="w-4 h-4 rounded-full border-2 border-border-default" />
-                  )}
-                  <span className="text-sm font-medium text-text-primary">{modelId}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">
-                    loaded
+      {/* ── Section A: Server Models (primary — when admin API data is available) ── */}
+      {modelGroups ? (
+        <div>
+          <label className="text-xs font-medium text-text-secondary">Server Models</label>
+          <p className="text-[10px] text-text-muted mt-0.5 mb-3">
+            {downloadedModels!.length} model{downloadedModels!.length !== 1 ? 's' : ''} on server
+            — {downloadedModels!.filter((m) => m.loaded).length} loaded into memory
+          </p>
+
+          <div className="space-y-4">
+            {Array.from(modelGroups.entries()).map(([type, models]) => (
+              <div key={type}>
+                <h4 className="text-xs font-medium text-text-muted mb-2 flex items-center gap-1.5">
+                  <ModelTypeBadge modelType={type} />
+                  <span>{TYPE_LABELS[type] ?? type}</span>
+                  <span className="text-[10px] text-text-muted font-normal">
+                    ({models.filter((m) => m.loaded).length}/{models.length} loaded)
                   </span>
-                  {/* Show estimated size from admin API if available */}
-                  {(() => {
-                    const detail = getDownloadedModel(modelId)
-                    return detail ? (
-                      <span className="text-[10px] text-text-muted">{detail.estimatedSize}</span>
-                    ) : null
-                  })()}
+                </h4>
+                <div className="space-y-1.5">
+                  {models.map((model) => (
+                    <ServerModelRow
+                      key={model.id}
+                      model={model}
+                      selectedModel={selectedModel}
+                      loadingModelId={loadingModelId}
+                      onSelect={onSelect}
+                      onLoad={handleLoadModel}
+                      onUnload={handleUnloadModel}
+                    />
+                  ))}
                 </div>
-              </button>
+              </div>
             ))}
           </div>
-        ) : (
-          <p className="text-xs text-text-muted mt-2">
-            No models loaded. Download one from the recommendations below, or enter a custom model
-            name.
-          </p>
-        )}
-
-        {/* Downloaded-but-not-loaded models (oMLX admin API) */}
-        {downloadedModels && downloadedModels.filter((m) => !m.loaded).length > 0 && (
-          <div className="mt-3">
-            <label className="text-xs font-medium text-text-muted">Downloaded (not loaded)</label>
-            <div className="space-y-1.5 mt-1.5">
-              {downloadedModels
-                .filter((m) => !m.loaded)
-                .map((model) => (
-                  <div
-                    key={model.id}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
+        </div>
+      ) : (
+        /* ── Fallback: Installed Models (when no admin API data) ── */
+        <div>
+          <label className="text-xs font-medium text-text-secondary">Model</label>
+          {installedModels.length > 0 ? (
+            <div className="space-y-1.5 mt-2">
+              {installedModels.map((modelId) => {
+                const detail = getDownloadedModel(modelId)
+                const modelType = detail?.modelType
+                return (
+                  <button
+                    key={modelId}
+                    onClick={() => onSelect(modelId)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
+                      selectedModel === modelId
+                        ? 'border-primary bg-primary-muted'
+                        : 'border-border-subtle hover:bg-surface-overlay'
+                    }`}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Power size={14} className="text-text-muted shrink-0" />
-                      <span className="text-sm font-medium text-text-primary truncate">
-                        {model.id}
-                      </span>
-                      <span className="text-[10px] text-text-muted shrink-0">
-                        {model.estimatedSize}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-overlay text-text-muted font-medium shrink-0">
-                        on disk
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => handleLoadModel(model.id)}
-                      disabled={model.isLoading || loadingModelId === model.id}
-                      className="ml-2 shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-primary text-primary hover:bg-primary-muted transition-colors disabled:opacity-50"
-                    >
-                      {model.isLoading || loadingModelId === model.id ? (
-                        <>
-                          <Loader2 size={12} className="animate-spin" />
-                          Loading…
-                        </>
+                    <div className="flex items-center gap-2">
+                      {selectedModel === modelId ? (
+                        <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                          <Check size={10} className="text-white" />
+                        </div>
                       ) : (
-                        <>
-                          <Power size={12} />
-                          Load
-                        </>
+                        <div className="w-4 h-4 rounded-full border-2 border-border-default" />
                       )}
-                    </button>
-                  </div>
-                ))}
+                      <span className="text-sm font-medium text-text-primary">{modelId}</span>
+                      <ModelTypeBadge modelType={modelType} />
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">
+                        loaded
+                      </span>
+                      {detail ? (
+                        <span className="text-[10px] text-text-muted">{detail.estimatedSize}</span>
+                      ) : null}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-xs text-text-muted mt-2">
+              No models loaded. Download one from the recommendations below, or enter a custom model
+              name.
+            </p>
+          )}
+        </div>
+      )}
 
-        {/* Custom model input */}
-        <div className="mt-3">
-          <label className="text-xs font-medium text-text-muted">Custom model</label>
-          <div className="flex gap-2 mt-1">
-            <input
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleCustomModelSelect()}
-              placeholder={
-                backend === 'omlx' ? 'e.g. mlx-community/Qwen3-30B-A3B-4bit' : 'e.g. mistral:latest'
-              }
-              className="flex-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-            <button
-              onClick={handleCustomModelSelect}
-              disabled={!customModel.trim()}
-              className="px-3 py-1.5 text-xs font-medium bg-surface-hover hover:bg-surface-base text-text-body rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Use
-            </button>
-          </div>
+      {/* ── Custom model input (always visible) ── */}
+      <div>
+        <label className="text-xs font-medium text-text-muted">Custom model</label>
+        <div className="flex gap-2 mt-1">
+          <input
+            value={customModel}
+            onChange={(e) => setCustomModel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCustomModelSelect()}
+            placeholder={
+              backend === 'omlx' ? 'e.g. mlx-community/Qwen3-30B-A3B-4bit' : 'e.g. mistral:latest'
+            }
+            className="flex-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          <button
+            onClick={handleCustomModelSelect}
+            disabled={!customModel.trim()}
+            className="px-3 py-1.5 text-xs font-medium bg-surface-hover hover:bg-surface-base text-text-body rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Use
+          </button>
         </div>
       </div>
 
-      {/* Section B: Recommended Models (collapsed by default) */}
+      {/* ── Recommended Models (collapsed by default) ── */}
       <details
         open={recommendationsOpen}
         onToggle={(e) => setRecommendationsOpen((e.target as HTMLDetailsElement).open)}
