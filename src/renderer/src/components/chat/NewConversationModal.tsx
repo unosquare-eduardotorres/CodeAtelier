@@ -12,11 +12,13 @@ import {
   Bone
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { CommunicationTone, ConversationMode } from '../../../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
 import { COMMUNICATION_TONES } from '../../../../shared/constants'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import { PresetSelector } from './PresetSelector'
+import { ModelPicker } from './ModelPicker'
+import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
+import { usePresetStore } from '@renderer/store/preset.store'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -31,6 +33,7 @@ interface NewConversationModalProps {
     communicationTone?: CommunicationTone | null
     attachments?: string[]
     useIsolatedBranch?: boolean
+    llmProvider?: LLMProvider
     presetId?: string | null
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
@@ -169,9 +172,22 @@ export default function NewConversationModal({
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
-  const [presetId, setPresetId] = useState<string | null>(null)
+  const defaultPresetId = usePresetStore((s) => s.defaultPresetId)
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(defaultPresetId)
   const titleInputRef = useRef<HTMLInputElement>(null)
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const {
+    llmProvider,
+    setLlmProvider,
+    defaultLlmProvider,
+    localModelInfo,
+    platformInfo
+  } = useWorkspaceModelInfo(activeWorkspace?.id)
+
+  const handleModelChange = useCallback((provider: LLMProvider, presetId: string | null) => {
+    setLlmProvider(provider)
+    setSelectedPresetId(presetId)
+  }, [setLlmProvider])
 
   // Auto-focus title input when opened
   useEffect(() => {
@@ -192,8 +208,19 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setUseIsolatedBranch(false)
-      setPresetId(null)
+      setSelectedPresetId(defaultPresetId)
+      // Derive provider from default preset; fall back to workspace default
+      const presets = usePresetStore.getState().presets
+      const defaultPreset = defaultPresetId
+        ? presets.find((p) => p.id === defaultPresetId)
+        : null
+      const presetProvider = defaultPreset
+        ? (Object.values(defaultPreset.actionConfig)[0]?.provider as LLMProvider | undefined)
+        : undefined
+      setLlmProvider(presetProvider ?? defaultLlmProvider)
     }
+  // Only reset on open — not when defaultPresetId/defaultLlmProvider change mid-modal
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   const handleSubmit = useCallback((): void => {
@@ -207,7 +234,8 @@ export default function NewConversationModal({
       communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
-      presetId
+      llmProvider,
+      presetId: selectedPresetId
     })
   }, [
     title,
@@ -216,7 +244,8 @@ export default function NewConversationModal({
     conversationTone,
     attachments,
     useIsolatedBranch,
-    presetId,
+    llmProvider,
+    selectedPresetId,
     onSubmit
   ])
 
@@ -294,12 +323,16 @@ export default function NewConversationModal({
           {/* Mode Toggle */}
           <ModeToggle mode={mode} onModeChange={setMode} />
 
-          {/* LLM Preset Selector */}
+          {/* Model Picker */}
           {activeWorkspace && (
-            <PresetSelector
+            <ModelPicker
               workspaceId={activeWorkspace.id}
-              presetId={presetId}
-              onChange={setPresetId}
+              provider={llmProvider}
+              presetId={selectedPresetId}
+              localModelInfo={localModelInfo}
+              platformInfo={platformInfo}
+              onChange={handleModelChange}
+              compact
             />
           )}
 

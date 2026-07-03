@@ -9,6 +9,10 @@
 import { BaseRepository } from '../base-repository'
 import { safeParseJSON } from '../json-utils'
 import type { ActionModelConfig, LLMPreset, ModelAction } from '../../../shared/types'
+import {
+  buildClaudeModelConfig,
+  BUILTIN_CLAUDE_MODEL_PRESETS
+} from '../../../shared/constants'
 
 // ── Row shape (snake_case from DB) ──
 
@@ -120,6 +124,16 @@ export class PresetRepository extends BaseRepository<PresetRow, LLMPreset> {
     `)
     insert.run(`${workspaceId}_full-claude`, workspaceId, 'Full Claude', '{}')
     insert.run(`${workspaceId}_full-local`, workspaceId, 'Full Local', '{}')
+
+    // Seed per-model Claude presets (chat-group actions only)
+    for (const preset of BUILTIN_CLAUDE_MODEL_PRESETS) {
+      insert.run(
+        `${workspaceId}_${preset.suffix}`,
+        workspaceId,
+        preset.name,
+        JSON.stringify(buildClaudeModelConfig(preset.modelId))
+      )
+    }
   }
 }
 

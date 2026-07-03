@@ -530,6 +530,19 @@ describe('normalizeOpenCodeEvent — handleSessionStatus edge cases', () => {
     )
     assert.deepEqual(out, [])
   })
+
+  test('object status is JSON-stringified, not [object Object]', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.status', properties: { status: { state: 'thinking' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    // JSON string doesn't match statusMap keys, passes through as-is
+    assert.ok(out[0].content!.includes('"state"'))
+    assert.ok(!out[0].content!.includes('[object Object]'))
+  })
 })
 
 describe('normalizeOpenCodeEvent — handleSessionCreated edge cases', () => {
@@ -842,6 +855,130 @@ describe('normalizeOpenCodeEvent — session.next.* handlers', () => {
       freshState()
     )
     assert.deepEqual(out, [])
+  })
+})
+
+// ── Control signal filtering (CONTROL-SIGNAL-FILTER-02) ──
+
+describe('normalizeOpenCodeEvent — control signal filtering in text deltas', () => {
+  test('message.part.delta with {"type":"busy"} text is dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: '{"type":"busy"}' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('message.part.delta with {"type":"idle"} text is dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: '{"type":"idle"}' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('message.part.delta with {"type":"ready"} text is dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: '{"type":"ready"}' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('message.part.delta with {"type":"processing"} text is dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: '{"type":"processing"}' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('control signal with whitespace padding is still dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: '  { "type" : "busy" }  ' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('legitimate text containing "busy" is NOT dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'text', delta: 'The server is busy.' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'text')
+  })
+
+  test('reasoning delta with control signal content is NOT dropped (only text field filtered)', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.delta', properties: { field: 'reasoning', delta: '{"type":"busy"}' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'thinking')
+  })
+})
+
+describe('normalizeOpenCodeEvent — control signal filtering in text parts', () => {
+  test('message.part.updated text with {"type":"busy"} is dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.updated', properties: { part: { type: 'text', content: '{"type":"busy"}' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('message.part.updated text with {"type":"idle"} is dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.updated', properties: { part: { type: 'text', content: '{"type":"idle"}' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('legitimate text in part.updated is NOT dropped', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'message.part.updated', properties: { part: { type: 'text', content: 'Hello, how can I help?' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'text')
+    assert.equal(out[0].content, 'Hello, how can I help?')
+  })
+})
+
+describe('normalizeOpenCodeEvent — busy status mapping', () => {
+  test('session.status busy maps to thinking', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.status', properties: { status: 'busy' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'status')
+    assert.equal(out[0].content, 'thinking')
   })
 })
 

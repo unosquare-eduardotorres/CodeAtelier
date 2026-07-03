@@ -769,6 +769,37 @@ export function buildFullLocalConfig(
   return config
 }
 
+/** Chat-group actions that the model selection controls */
+const CHAT_ACTIONS: import('./types').ModelAction[] = [
+  'da-vinci',
+  'da-vinci:plan',
+  'da-vinci:build',
+  'project-specialist',
+  'project-specialist:plan',
+  'project-specialist:build'
+]
+
+/**
+ * Build a Claude model preset config — overrides only chat-group actions
+ * to the given model. All other actions fall through to DEFAULT_MODEL_CONFIG.
+ */
+export function buildClaudeModelConfig(
+  modelId: string
+): Partial<Record<import('./types').ModelAction, ActionModelConfig>> {
+  const config: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
+  for (const action of CHAT_ACTIONS) {
+    config[action] = { provider: 'claude', modelId }
+  }
+  return config
+}
+
+/** Built-in Claude model preset definitions for seeding */
+export const BUILTIN_CLAUDE_MODEL_PRESETS = [
+  { suffix: 'claude-opus', name: 'Claude Opus', modelId: 'claude-opus-4-8' },
+  { suffix: 'claude-sonnet', name: 'Claude Sonnet', modelId: 'claude-sonnet-4-6' },
+  { suffix: 'claude-haiku', name: 'Claude Haiku', modelId: 'claude-haiku-4-5-20251001' }
+] as const
+
 // ── Prompt Verbosity ─────────────────────────────────────────────────
 
 /**

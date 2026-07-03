@@ -101,6 +101,8 @@ interface ExecuteStreamOptions {
   localContextWindow?: number
   /** F3: Pre-resolved context tier — avoids re-resolving per tool_use chunk. */
   contextTier?: ContextWindowTier
+  /** Whether the local LLM context window was reliably detected (vs. heuristic fallback). */
+  contextWindowConfident?: boolean
   /** LLM preset ID for per-action model resolution */
   presetId?: string | null
 }
@@ -593,6 +595,7 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider: conversationProvider,
       localContextWindow,
       contextTier,
+      contextWindowConfident,
       presetId: conversationPresetId
     })
 
@@ -724,8 +727,14 @@ export class AgentSessionService extends AgentBaseService {
       )
       try {
         if (this.workspacePath) {
-          const providerConfig = this.resolveOpenCodeProviderConfig()
+          // Read per-conversation provider to avoid workspace-default cross-contamination
+          const switchConv = this.currentConversationId
+            ? conversationRepository.findById(this.currentConversationId)
+            : null
+          const switchProvider = (switchConv?.llmProvider as LLMProvider) ?? this.llmProvider
+          const providerConfig = this.resolveOpenCodeProviderConfig(switchProvider)
           const featureFlags = this.resolveWorkspaceMcpFlags()
+          const isLocal = switchProvider === 'local-llm'
           openCodeConfigWriter.writeConfig({
             workspacePath: this.workspacePath,
             workspaceId: this.workspaceId,
@@ -733,7 +742,8 @@ export class AgentSessionService extends AgentBaseService {
             mode,
             provider: providerConfig,
             featureFlags,
-            ipcSocketPath: this.ipcBridge?.getSocketPath() ?? undefined
+            ipcSocketPath: this.ipcBridge?.getSocketPath() ?? undefined,
+            isLocalProvider: isLocal
           })
         }
       } catch (err) {
@@ -749,7 +759,12 @@ export class AgentSessionService extends AgentBaseService {
 
     // Local LLMs: compaction is not available (no session resume).
     // Signal the UI to suggest a new conversation instead.
-    if (this.llmProvider === 'local-llm' && this.executorBackend !== 'opencode') {
+    // Read provider from conversation DB to avoid workspace-default cross-contamination.
+    const compactConv = this.currentConversationId
+      ? conversationRepository.findById(this.currentConversationId)
+      : null
+    const compactProvider = (compactConv?.llmProvider as LLMProvider) ?? this.llmProvider
+    if (compactProvider === 'local-llm' && this.executorBackend !== 'opencode') {
       this.log.info('[compaction] Local LLM — compaction unavailable, suggesting new conversation')
       this.emit('compactNeeded', {
         level: 'local-unsupported',
@@ -1305,7 +1320,7 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     // Generate opencode.json config + agent definitions
-    await this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt })
+    await this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt, llmProvider: params.llmProvider })
 
     // Start OpenCode server if not running
     if (!openCodeExecutor.isRunning()) {
@@ -1323,7 +1338,7 @@ export class AgentSessionService extends AgentBaseService {
 
         await openCodeExecutor.start(this.workspacePath!, {
           configPath: this._openCodeConfigPath,
-          isLocal: this.llmProvider === 'local-llm'
+          isLocal: (params.llmProvider ?? this.llmProvider) === 'local-llm'
         })
       } catch (error) {
         const err = error as Error
@@ -1506,13 +1521,14 @@ export class AgentSessionService extends AgentBaseService {
   private async writeOpenCodeConfigFiles(params: {
     providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     systemPrompt: string
+    llmProvider?: LLMProvider
   }): Promise<void> {
     try {
       const featureFlags = this.resolveWorkspaceMcpFlags()
       const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
 
       // Resolve context tier for tier-aware config (compaction, timeouts)
-      const isLocal = this.llmProvider === 'local-llm'
+      const isLocal = (params.llmProvider ?? this.llmProvider) === 'local-llm'
       let contextTier: ContextWindowTier | undefined
       let contextWindowConfident = false
       if (isLocal) {

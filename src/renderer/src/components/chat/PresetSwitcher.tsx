@@ -10,6 +10,30 @@ import { Layers, ChevronDown, Check, AlertTriangle } from 'lucide-react'
 import { usePresetStore } from '@renderer/store/preset.store'
 import type { Conversation, LLMPreset } from '../../../../shared/types'
 
+// ── Helpers ──
+
+/** Derive a concrete model label from conversation state + preset */
+function resolveModelLabel(
+  conversation: Conversation,
+  currentPreset: LLMPreset | undefined
+): string {
+  // For Claude presets with a recognizable name, show it directly
+  if (currentPreset?.name?.startsWith('Claude ')) return currentPreset.name
+
+  // For local-llm provider, show provider badge
+  if (conversation.llmProvider === 'local-llm') {
+    return currentPreset?.name === 'Full Local' ? 'Local LLM' : (currentPreset?.name ?? 'Local LLM')
+  }
+
+  // Fallback for legacy "Full Claude" or null preset
+  return currentPreset?.name ?? 'Claude'
+}
+
+/** Show concrete labels in the dropdown menu */
+function resolvePresetMenuLabel(preset: LLMPreset): string {
+  return preset.name
+}
+
 interface PresetSwitcherProps {
   conversation: Conversation | null
   disabled?: boolean
@@ -46,7 +70,7 @@ export function PresetSwitcher({
   if (!conversation || presets.length === 0) return null
 
   const currentPreset = presets.find((p) => p.id === conversation.presetId)
-  const label = currentPreset?.name ?? 'Default'
+  const label = resolveModelLabel(conversation, currentPreset)
 
   const handleSelect = async (preset: LLMPreset): Promise<void> => {
     if (preset.id === conversation.presetId) {
@@ -80,7 +104,7 @@ export function PresetSwitcher({
                      disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Layers size={12} />
-          {label}
+          <span className="max-w-[150px] truncate">{label}</span>
           <ChevronDown size={12} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
 
@@ -101,7 +125,9 @@ export function PresetSwitcher({
                     }`}
                 >
                   {isActive && <Check size={12} />}
-                  <span className={isActive ? '' : 'ml-5'}>{preset.name}</span>
+                  <span className={isActive ? '' : 'ml-5'}>
+                    {resolvePresetMenuLabel(preset)}
+                  </span>
                   {preset.isBuiltIn && (
                     <span className="text-[9px] text-text-muted ml-auto">built-in</span>
                   )}

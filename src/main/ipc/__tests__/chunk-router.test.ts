@@ -214,6 +214,24 @@ describe('chunk-router › handleStatus suppression', () => {
   })
 })
 
+describe('chunk-router › handleSessionState size guard', () => {
+  test('normal-sized session_state → forwarded', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-state', window), { type: 'session_state', content: 'session_diff:small' } as StreamChunk)
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.SDK_SESSION_STATE)
+  })
+
+  test('oversized session_state → truncated and still forwarded', () => {
+    const { window, send } = mockWindow()
+    const huge = 'x'.repeat(1_100_000)
+    routeChunk(ctx('c-big-state', window), { type: 'session_state', content: huge } as StreamChunk)
+    assert.equal(send.callCount, 1)
+    const payload = send.lastCall?.[1] as { state: string }
+    assert.equal(payload.state.length, 1_000_000)
+  })
+})
+
 describe('chunk-router › handleFilesPersisted', () => {
   test('sends SDK_FILES_PERSISTED with files payload', () => {
     const { window, send } = mockWindow()
@@ -313,6 +331,64 @@ describe('chunk-router › handleSubagentComplete', () => {
       toolId: 'sub-4'
     } as unknown as StreamChunk)
     assert.ok(send.callCount >= 1)
+  })
+})
+
+// ── Control signal filtering (CONTROL-SIGNAL-FILTER-01) ──
+
+describe('chunk-router › handleText control signal filtering', () => {
+  test('{"type":"busy"} text chunk is dropped (no accumulation, no send)', () => {
+    const { window, send } = mockWindow()
+    const c = ctx('c-busy', window)
+    routeChunk(c, { type: 'text', content: '{"type":"busy"}' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+    // No IPC send (text batcher may not flush immediately, but accumulator is untouched)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('{"type":"idle"} text chunk is dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-idle-text', window)
+    routeChunk(c, { type: 'text', content: '{"type":"idle"}' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('{"type":"ready"} and {"type":"processing"} are also dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-ready-proc', window)
+    routeChunk(c, { type: 'text', content: '{"type":"ready"}' } as StreamChunk)
+    routeChunk(c, { type: 'text', content: '{"type":"processing"}' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('control signal with whitespace padding is still dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-ws', window)
+    routeChunk(c, { type: 'text', content: '  { "type" : "busy" }  ' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('legitimate text containing "busy" is NOT dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-legit', window)
+    routeChunk(c, { type: 'text', content: 'The server is busy processing your request.' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, 'The server is busy processing your request.')
+  })
+
+  test('JSON embedded in larger text is NOT dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-embed', window)
+    const content = 'Here is the status: {"type":"busy"} and more text'
+    routeChunk(c, { type: 'text', content } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, content)
+  })
+})
+
+describe('chunk-router › handleStatus busy suppression', () => {
+  test('busy status → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-busy-status', window), { type: 'status', content: 'busy' } as StreamChunk)
+    assert.equal(send.callCount, 0)
   })
 })
 

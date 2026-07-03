@@ -59,7 +59,7 @@ class ModelConfigService {
     action: ModelAction,
     presetId?: string | null
   ): string {
-    // Preset-first resolution: if a preset is active, use its config
+    // 1. Conversation-level preset (highest priority)
     if (presetId) {
       const actionConfig = this.resolveActionConfig(action, presetId)
       if (actionConfig) return actionConfig.modelId
@@ -68,6 +68,14 @@ class ModelConfigService {
     if (!workspacePath) return DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
 
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
+
+    // 2. Workspace default preset (only when conversation has no explicit preset)
+    if (!presetId && settings?.defaultPresetId) {
+      const actionConfig = this.resolveActionConfig(action, settings.defaultPresetId as string)
+      if (actionConfig) return actionConfig.modelId
+    }
+
+    // 3. Workspace model overrides (legacy per-action overrides)
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
     return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
   }
@@ -76,6 +84,11 @@ class ModelConfigService {
    * Resolves the model ID for a given action using workspace ID.
    * Uses workspace override if set, otherwise returns the default.
    * Sub-actions (e.g. 'generalist:plan') fall back to their base action ('generalist').
+   *
+   * NOTE: Intentionally skips preset resolution (both conversation-level and workspace
+   * default). This method is used by system-level services (audit, grill, goal-decomposer)
+   * that operate outside the chat preset system. Use `getModel()` for conversation-scoped
+   * model resolution that respects presets.
    *
    * @param workspaceId - The workspace ID (or undefined for default)
    * @param action - The model action to resolve
@@ -96,7 +109,7 @@ class ModelConfigService {
     action?: ModelAction,
     presetId?: string | null
   ): LLMProvider {
-    // Preset per-action provider resolution
+    // 1. Conversation preset per-action provider
     if (presetId && action) {
       const actionConfig = this.resolveActionConfig(action, presetId)
       if (actionConfig) return actionConfig.provider
@@ -104,6 +117,13 @@ class ModelConfigService {
 
     if (!workspacePath) return 'claude'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
+
+    // 2. Workspace default preset provider (only when conversation has no explicit preset)
+    if (!presetId && action && settings?.defaultPresetId) {
+      const actionConfig = this.resolveActionConfig(action, settings.defaultPresetId as string)
+      if (actionConfig) return actionConfig.provider
+    }
+
     return (settings?.llmProvider as LLMProvider) ?? 'claude'
   }
 
@@ -228,6 +248,16 @@ class ModelConfigService {
       const actionConfig = this.resolveActionConfig(action, presetId)
       if (actionConfig?.provider === 'local-llm') return 'opencode'
     }
+
+    // Check workspace default preset (only when conversation has no explicit preset)
+    if (!presetId && workspacePath) {
+      const settings = workspaceRepository.getSettingsByPath(workspacePath)
+      if (settings?.defaultPresetId) {
+        const actionConfig = this.resolveActionConfig(action, settings.defaultPresetId as string)
+        if (actionConfig?.provider === 'local-llm') return 'opencode'
+      }
+    }
+
     return this.getExecutorBackend(workspacePath)
   }
 

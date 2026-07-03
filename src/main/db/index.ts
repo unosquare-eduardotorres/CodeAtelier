@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 107
+const CURRENT_SCHEMA_VERSION = 108
 
 export interface Migration {
   version: number
@@ -2648,6 +2648,43 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);
       `)
       dbLogger.info('[migration-107] ✓ Added skipped to blueprint_tasks CHECK constraint')
+    }
+  },
+
+  // ── Migration 108: Seed Claude model presets (Opus, Sonnet, Haiku) ──
+  {
+    version: 108,
+    name: 'seed-claude-model-presets',
+    up: (db) => {
+      const workspaces = db.prepare('SELECT id FROM workspaces').all() as { id: string }[]
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json)
+        VALUES (?, ?, ?, 1, ?)
+      `)
+
+      // Chat-group actions overridden by model presets
+      const chatActions = [
+        'da-vinci', 'da-vinci:plan', 'da-vinci:build',
+        'project-specialist', 'project-specialist:plan', 'project-specialist:build'
+      ]
+      function buildCfg(modelId: string): string {
+        const cfg: Record<string, { provider: string; modelId: string }> = {}
+        for (const a of chatActions) cfg[a] = { provider: 'claude', modelId }
+        return JSON.stringify(cfg)
+      }
+
+      const presets = [
+        { suffix: 'claude-opus', name: 'Claude Opus', modelId: 'claude-opus-4-8' },
+        { suffix: 'claude-sonnet', name: 'Claude Sonnet', modelId: 'claude-sonnet-4-6' },
+        { suffix: 'claude-haiku', name: 'Claude Haiku', modelId: 'claude-haiku-4-5-20251001' }
+      ]
+
+      for (const ws of workspaces) {
+        for (const p of presets) {
+          insert.run(`${ws.id}_${p.suffix}`, ws.id, p.name, buildCfg(p.modelId))
+        }
+      }
+      dbLogger.info(`[migration-108] ✓ Seeded Claude model presets for ${workspaces.length} workspace(s)`)
     }
   }
 ]

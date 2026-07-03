@@ -4,8 +4,6 @@ import {
   Hammer,
   Lightbulb,
   GitBranch,
-  Cloud,
-  Monitor,
   Puzzle,
   Smartphone,
   Network,
@@ -31,7 +29,9 @@ import {
 import type { ExternalMcpDefinition, LocalMcpDefinition } from '../../../../shared/constants'
 import ToggleButtonGroup from './ToggleButtonGroup'
 import McpToolsSection from './McpToolsSection'
-import { PresetSelector } from './PresetSelector'
+import { ModelPicker } from './ModelPicker'
+import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
+import { usePresetStore } from '@renderer/store/preset.store'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -75,11 +75,7 @@ function buildMcpPayload(
 
 // ── useWorkspaceSettings — loads provider + MCP config ───────────────────
 
-function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
-  const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
-  const [localModelInfo, setLocalModelInfo] = useState<{ backend: string; model: string } | null>(
-    null
-  )
+function useMcpSettings(activeWorkspace: { id: string } | null) {
   const [mcpOverrides, setMcpOverrides] = useState<Record<string, boolean>>({})
   const [showMcpTools, setShowMcpTools] = useState(false)
   const [availableIntegrations, setAvailableIntegrations] = useState<ExternalMcpDefinition[]>([])
@@ -90,11 +86,6 @@ function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
     window.api
       .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
       .then((s) => {
-        setLlmProvider((s.llmProvider as LLMProvider) ?? 'claude')
-        setLocalModelInfo({
-          backend: (s.localLlmBackend as string) ?? 'ollama',
-          model: (s.localModel as string) ?? (s.ollamaModel as string) ?? 'unknown'
-        })
         const available = EXTERNAL_MCP_INTEGRATIONS.filter((i) => !!s[`${i.id}Available`])
         setAvailableIntegrations(available)
         setShowMcpTools(available.length > 0)
@@ -115,9 +106,6 @@ function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
   }, [activeWorkspace])
 
   return {
-    llmProvider,
-    setLlmProvider,
-    localModelInfo,
     availableIntegrations,
     availableLocalMcps,
     showMcpTools,
@@ -197,14 +185,23 @@ export default function NewChatPage({
     llmProvider,
     setLlmProvider,
     localModelInfo,
+    platformInfo
+  } = useWorkspaceModelInfo(activeWorkspace?.id)
+  const {
     availableIntegrations,
     availableLocalMcps,
     showMcpTools,
     setShowMcpTools,
     mcpOverrides,
     setMcpOverrides
-  } = useWorkspaceSettings(activeWorkspace)
-  const [presetId, setPresetId] = useState<string | null>(null)
+  } = useMcpSettings(activeWorkspace)
+  const defaultPresetId = usePresetStore((s) => s.defaultPresetId)
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(defaultPresetId)
+
+  const handleModelChange = useCallback((provider: LLMProvider, presetId: string | null) => {
+    setLlmProvider(provider)
+    setSelectedPresetId(presetId)
+  }, [setLlmProvider])
   const [mcpSubTab, setMcpSubTab] = useState<McpSubTab>('external')
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -246,7 +243,7 @@ export default function NewChatPage({
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
       llmProvider,
       mcpOverrides: mcpOverridesPayload,
-      presetId
+      presetId: selectedPresetId
     })
   }, [
     title,
@@ -259,7 +256,7 @@ export default function NewChatPage({
     mcpOverrides,
     availableLocalMcps,
     availableIntegrations,
-    presetId,
+    selectedPresetId,
     onCreateChat
   ])
 
@@ -357,15 +354,16 @@ export default function NewChatPage({
           }
         />
 
-        {/* LLM Preset */}
+        {/* Model Picker */}
         {activeWorkspace && (
-          <div className="w-full mb-5">
-            <PresetSelector
-              workspaceId={activeWorkspace.id}
-              presetId={presetId}
-              onChange={setPresetId}
-            />
-          </div>
+          <ModelPicker
+            workspaceId={activeWorkspace.id}
+            provider={llmProvider}
+            presetId={selectedPresetId}
+            localModelInfo={localModelInfo}
+            platformInfo={platformInfo}
+            onChange={handleModelChange}
+          />
         )}
 
         {/* Communication Tone */}
@@ -438,33 +436,6 @@ export default function NewChatPage({
             </label>
           </div>
         )}
-
-        {/* LLM Provider */}
-        <ToggleButtonGroup
-          data-testid="new-chat-provider-toggle"
-          label="Provider"
-          value={llmProvider}
-          onChange={setLlmProvider}
-          options={[
-            {
-              value: 'claude',
-              label: 'Claude',
-              icon: Cloud,
-              activeClass: 'bg-primary-muted text-primary-text border border-primary/30'
-            },
-            {
-              value: 'local-llm',
-              label: 'Local LLM',
-              icon: Monitor,
-              activeClass: 'bg-primary-muted text-primary-text border border-primary/30'
-            }
-          ]}
-          description={
-            llmProvider === 'local-llm' && localModelInfo
-              ? `Using ${localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} — ${localModelInfo.model}`
-              : undefined
-          }
-        />
 
         {/* MCP Tools — system + external integrations */}
         {(availableLocalMcps.length > 0 || availableIntegrations.length > 0) && (

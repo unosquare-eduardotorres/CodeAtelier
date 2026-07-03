@@ -38,7 +38,7 @@ async function handleCreateConversation(args: {
   mode?: ConversationMode
   personaSpecialistId?: string
   llmProvider?: LLMProvider
-  presetId?: string
+  presetId?: string | null
   mcpOverrides?: Record<string, boolean>
   communicationTone?: CommunicationTone | null
 }): Promise<ReturnType<typeof conversationRepository.create>> {
@@ -83,6 +83,15 @@ async function handleCreateConversation(args: {
   const resolvedProvider: LLMProvider =
     llmProvider ?? (settings.llmProvider as LLMProvider) ?? 'claude'
 
+  // Apply same fallback chain for presetId: explicit → workspace default → null.
+  // The frontend (NewConversationModal, NewChatPage) also initializes from the
+  // workspace default via usePresetStore — this backend fallback is a safety net
+  // for old clients or edge cases where the frontend sends undefined (omitted).
+  // Explicit null is preserved — it means "no preset" (distinct from "use default").
+  const resolvedPresetId: string | null = presetId === undefined
+    ? (settings.defaultPresetId as string | null) ?? null
+    : presetId
+
   const conversation = conversationRepository.create(
     workspaceId,
     title,
@@ -91,7 +100,7 @@ async function handleCreateConversation(args: {
     resolvedProvider,
     mcpOverrides,
     communicationTone,
-    presetId
+    resolvedPresetId
   )
   conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
@@ -208,7 +217,7 @@ export function registerConversationCrudIpc(): void {
       mode: optionalString(args, 'mode', ch) as ConversationMode | undefined,
       personaSpecialistId: optionalString(args, 'personaSpecialistId', ch),
       llmProvider: optionalString(args, 'llmProvider', ch) as LLMProvider | undefined,
-      presetId: optionalNullableString(args, 'presetId', ch) ?? undefined,
+      presetId: optionalNullableString(args, 'presetId', ch),
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
       communicationTone: args.communicationTone as CommunicationTone | null | undefined
     })

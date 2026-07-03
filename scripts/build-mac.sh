@@ -15,6 +15,11 @@
 # (common in CI and some shells) causes npm 11+ to default `omit=dev`.
 set -euo pipefail
 
+# ── Warn if NODE_ENV=production could affect the restore
+if [ "${NODE_ENV:-}" = "production" ]; then
+  echo "⚠️  NODE_ENV=production detected — restore step will use --include=dev to override"
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 

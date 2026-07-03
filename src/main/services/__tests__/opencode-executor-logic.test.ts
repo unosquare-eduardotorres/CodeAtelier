@@ -548,8 +548,7 @@ describe('OC-02: Config file read + inline pass', () => {
     // When configContent is undefined, config key should be absent
     const optsNoConfig = {
       port: 4096,
-      timeout: 10000,
-      ...(undefined ? { config: undefined } : {})
+      timeout: 10000
     }
     assert.equal(optsNoConfig.port, 4096)
     assert.equal('config' in optsNoConfig, false, 'config key should not exist when undefined')

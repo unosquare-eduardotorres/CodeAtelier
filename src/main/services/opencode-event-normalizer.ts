@@ -12,6 +12,12 @@ import log from 'electron-log/main'
 
 const openCodeLog = log.scope('OpenCode')
 
+/**
+ * Matches raw JSON control signals from local LLM backends that leak
+ * into text deltas. These should never reach the chunk-router as text.
+ */
+const LOCAL_CONTROL_SIGNAL_RE = /^\s*\{\s*"type"\s*:\s*"(?:busy|idle|ready|processing)"\s*\}\s*$/
+
 /** GAP-11: Transient error patterns — mirrors TRANSIENT_ERROR_PATTERNS from executor */
 const TRANSIENT_PATTERNS = [
   /rate.?limit/i,
@@ -65,6 +71,12 @@ type EventHandler = (
 function handleTextPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
   const text = part.content as string | undefined
   if (!text) return []
+
+  // CONTROL-SIGNAL-FILTER-02: Drop raw JSON control signals from local backends
+  if (LOCAL_CONTROL_SIGNAL_RE.test(text)) {
+    openCodeLog.debug('[opencode] Filtered control signal in text part: %s', text.slice(0, 60))
+    return []
+  }
 
   const chunks: StreamChunk[] = []
   // F16: Emit turn_boundary when transitioning from thinking→text
@@ -189,6 +201,11 @@ function handleMessagePartDelta(
   if (!delta) return []
 
   if (field === 'text') {
+    // CONTROL-SIGNAL-FILTER-02: Drop raw JSON control signals from local backends
+    if (LOCAL_CONTROL_SIGNAL_RE.test(delta)) {
+      openCodeLog.debug('[opencode] Filtered control signal in text delta: %s', delta.slice(0, 60))
+      return []
+    }
     // Same boundary detection as handleTextPart (F16)
     const chunks: StreamChunk[] = []
     if (state.lastPartType === 'thinking' && state.hasPriorText) {
@@ -384,7 +401,8 @@ function handleSessionIdle(
 ): StreamChunk[] {
   const chunks: StreamChunk[] = [{ type: 'status', content: 'idle' }]
 
-  // 6C-2: Include finishReason in the idle status for the executor
+  // Note: 'idle' status is suppressed by SUPPRESSED_STATUS_VALUES in chunk-router.ts.
+  // The 'finishReason:' prefix is suppressed by SUPPRESSED_STATUS_PREFIXES.
   if (state.lastFinishReason) {
     const reasonMap: Record<string, string> = {
       stop: 'completed',
@@ -417,22 +435,37 @@ function handleFileEdited(properties: EventProperties): StreamChunk[] {
   ]
 }
 
+// Cap diff content before allocating a chunk string. The chunk-router has a
+// separate 1MB guard, but capping here avoids a transient multi-MB allocation
+// in the main process when OpenCode emits very large diffs.
+const MAX_SESSION_DIFF_CHARS = 2_000_000 // 2MB — generous for recovery metadata
+
 function handleSessionDiff(properties: EventProperties): StreamChunk[] {
   const diff = properties.diff as string | undefined
   if (!diff) return []
   // Session diffs are internal recovery metadata — route to session_state,
   // not text, to prevent rendering in the chat bubble.
-  return [{ type: 'session_state', content: `session_diff:${diff.slice(0, 500)}` }]
+  const safeDiff = diff.length > MAX_SESSION_DIFF_CHARS
+    ? diff.slice(0, MAX_SESSION_DIFF_CHARS)
+    : diff
+  return [{ type: 'session_state', content: `session_diff:${safeDiff}` }]
 }
 
+/**
+ * session.status — maps OpenCode session statuses to internal status labels.
+ * These labels are suppressed from chat rendering by SUPPRESSED_STATUS_VALUES
+ * in src/main/ipc/chunk-router.ts. If you add a new mapping here, update
+ * the suppression list there.
+ */
 function handleSessionStatus(properties: EventProperties): StreamChunk[] {
   const rawStatus = properties.status
   if (!rawStatus) return []
-  const status = typeof rawStatus === 'string' ? rawStatus : String(rawStatus)
+  const status = typeof rawStatus === 'string' ? rawStatus : JSON.stringify(rawStatus)
   const statusMap: Record<string, string> = {
     thinking: 'thinking',
     tool_use: 'reviewing',
     idle: 'idle',
+    busy: 'thinking',  // local LLM backend status → map to 'thinking' (already suppressed)
     error: 'failed',
     compacting: 'thinking',
     generating: 'writing'
@@ -667,17 +700,25 @@ function noopHandler(): StreamChunk[] {
   return []
 }
 
-/** session.next.agent.switched — emits status chunk with agent name. */
+/**
+ * session.next.agent.switched — emits status chunk with agent name.
+ * The 'agent_switched:' prefix is suppressed from chat rendering by
+ * SUPPRESSED_STATUS_PREFIXES in src/main/ipc/chunk-router.ts.
+ */
 function handleAgentSwitched(properties: EventProperties): StreamChunk[] {
   const raw = properties.agent ?? properties.name ?? 'unknown'
-  const name = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.name ?? (raw as Record<string, unknown>)?.id ?? String(raw)
+  const name = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.name ?? (raw as Record<string, unknown>)?.id ?? JSON.stringify(raw)
   return [{ type: 'status', content: `agent_switched:${name}` }]
 }
 
-/** session.next.model.switched — emits status chunk with model id. */
+/**
+ * session.next.model.switched — emits status chunk with model id.
+ * The 'model_switched:' prefix is suppressed from chat rendering by
+ * SUPPRESSED_STATUS_PREFIXES in src/main/ipc/chunk-router.ts.
+ */
 function handleModelSwitched(properties: EventProperties): StreamChunk[] {
   const raw = properties.model ?? properties.modelID ?? properties.id ?? 'unknown'
-  const modelId = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.id ?? (raw as Record<string, unknown>)?.modelID ?? String(raw)
+  const modelId = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.id ?? (raw as Record<string, unknown>)?.modelID ?? JSON.stringify(raw)
   return [{ type: 'status', content: `model_switched:${modelId}` }]
 }
 

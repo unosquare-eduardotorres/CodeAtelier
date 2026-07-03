@@ -267,7 +267,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     IPC_CHANNELS.BLUEPRINT_GET_PIPELINE_STATUS,
     (event, args: { workspaceId: string }) => {
       validateSender(event)
-      return blueprintService.getPipelineStatus(workspaceId)
+      return blueprintService.getPipelineStatus(args.workspaceId)
     }
   )
 
