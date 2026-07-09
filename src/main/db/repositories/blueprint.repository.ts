@@ -5,6 +5,7 @@
  * to prevent corrupted rows from crashing features.
  */
 
+import log from 'electron-log'
 import { BaseRepository } from '../base-repository'
 import { safeParseJSON } from '../json-utils'
 import type {
@@ -396,6 +397,19 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
   }
 
   setConversation(id: string, conversationId: string): BlueprintPhase | undefined {
+    // FK guard: conversation_id REFERENCES conversations(id). If the conversation
+    // was never persisted (e.g. CLI exited before streaming any messages), the
+    // UPDATE would throw SqliteError: FOREIGN KEY constraint failed. Skip instead.
+    const conversationExists = this.db()
+      .prepare(`SELECT 1 FROM conversations WHERE id = ?`)
+      .get(conversationId)
+    if (!conversationExists) {
+      log.warn(
+        `[blueprint-repo:setConversation] Conversation ${conversationId} not found — skipping FK link for phase ${id}`
+      )
+      return this.findById(id)
+    }
+
     const row = this.db()
       .prepare(`UPDATE blueprint_phases SET conversation_id = ? WHERE id = ? RETURNING *`)
       .get(conversationId, id) as BlueprintPhaseRow | undefined

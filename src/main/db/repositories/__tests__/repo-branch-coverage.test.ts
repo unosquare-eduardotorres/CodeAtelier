@@ -369,43 +369,7 @@ if (!env) {
     })
   })
 
-  // ── §8: LLM Presets deeper branches ──────────────────────────────────
-
-  describe('LLM Presets — deeper branches', () => {
-    test('create_custom_preset', () => {
-      const db = createTestDb()
-      try {
-        const config = JSON.stringify({ 'da-vinci:plan': 'claude-opus-4-20250514' })
-        db.prepare(`INSERT INTO llm_presets (id, name, is_builtin, config_json)
-          VALUES ('custom-1', 'My Opus Preset', 0, ?)`).run(config)
-
-        const preset = db.prepare('SELECT * FROM llm_presets WHERE id = ?').get('custom-1') as Record<string, unknown>
-        assert.equal(preset.name, 'My Opus Preset')
-        assert.equal(preset.is_builtin, 0)
-        const parsed = JSON.parse(preset.config_json as string)
-        assert.equal(parsed['da-vinci:plan'], 'claude-opus-4-20250514')
-      } finally {
-        db.close()
-      }
-    })
-
-    test('list_presets_includes_builtin', () => {
-      const db = createTestDb()
-      try {
-        db.prepare(`INSERT INTO llm_presets (id, name, is_builtin, config_json)
-          VALUES ('builtin-1', 'Default', 1, '{}')`).run()
-        db.prepare(`INSERT INTO llm_presets (id, name, is_builtin, config_json)
-          VALUES ('custom-1', 'Custom', 0, '{}')`).run()
-
-        const all = db.prepare('SELECT * FROM llm_presets ORDER BY is_builtin DESC').all() as unknown[]
-        assert.ok(all.length >= 2)
-      } finally {
-        db.close()
-      }
-    })
-  })
-
-  // ── §9: Memory deeper branches ──────────────────────────────────────
+  // ── §8: Memory deeper branches ──────────────────────────────────────
 
   describe('Memory Repository — deeper branches', () => {
     test('memory_with_workspace_scope', () => {

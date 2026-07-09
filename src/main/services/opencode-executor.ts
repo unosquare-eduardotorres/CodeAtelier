@@ -19,6 +19,7 @@
 import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult, ExecutorTokenUsage } from './executor-types'
 import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
+import type { ImageAttachment } from '../../shared/types'
 import { normalizeOpenCodeEvent } from './opencode-event-normalizer'
 import { ensureOpencodePathInEnv, getOpencodePath } from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
@@ -63,6 +64,8 @@ export interface OpenCodeMcpConfig {
  */
 export interface OpenCodeExecuteOptions {
   prompt: string
+  /** Image attachments to include with the prompt (vision) */
+  images?: ImageAttachment[]
   systemPrompt: string
   provider: OpenCodeProviderConfig
   /** MCP servers to connect */
@@ -550,7 +553,7 @@ export class OpenCodeExecutor {
       return
     }
 
-    const { prompt, systemPrompt, provider, abortController, outputSchema } = options
+    const { prompt, images, systemPrompt, provider, abortController, outputSchema } = options
 
     const tokenUsage: ExecutorTokenUsage = {
       input: 0,
@@ -579,7 +582,7 @@ export class OpenCodeExecutor {
       const events = await this.client.event.subscribe()
 
       // Build the prompt body (parts + model config + output schema)
-      const promptBody = this.buildPromptBody(prompt, systemPrompt, provider, outputSchema)
+      const promptBody = this.buildPromptBody(prompt, systemPrompt, provider, outputSchema, images)
 
       // ENH-13: Update session title with meaningful content from the user's prompt
       const titleText = prompt.slice(0, 80).replace(/\n/g, ' ').trim()
@@ -1425,11 +1428,21 @@ Troubleshooting:
     prompt: string,
     systemPrompt: string,
     provider: OpenCodeProviderConfig,
-    outputSchema?: Record<string, unknown>
+    outputSchema?: Record<string, unknown>,
+    images?: ImageAttachment[]
   ): SessionPromptData['body'] {
     const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
     const body: Record<string, unknown> = {
-      parts: [{ type: 'text', text: prompt }],
+      parts: [
+        { type: 'text', text: prompt },
+        // Vision: include image attachments as file parts with data URLs
+        ...(images ?? []).map((img) => ({
+          type: 'file',
+          mime: img.mimeType,
+          filename: img.fileName,
+          url: `data:${img.mimeType};base64,${img.base64}`
+        }))
+      ],
       model: {
         providerID: provider.providerId,
         modelID: provider.modelId

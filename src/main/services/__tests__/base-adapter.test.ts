@@ -303,7 +303,7 @@ describe('BaseRoleAdapter — lifecycle defaults', () => {
 // ── buildControlCallbacks ───────────────────────────────────────────
 
 describe('BaseRoleAdapter — buildControlCallbacks', () => {
-  test('returns object with onPlan, onAskUser, onMemory functions', () => {
+  test('returns object with onPlan, onAskUser functions', () => {
     const adapter = new TestAdapter()
     const callbacks = adapter.buildControlCallbacks({
       conversationId: 'c-1',
@@ -312,7 +312,6 @@ describe('BaseRoleAdapter — buildControlCallbacks', () => {
     })
     assert.equal(typeof callbacks.onPlan, 'function')
     assert.equal(typeof callbacks.onAskUser, 'function')
-    assert.equal(typeof callbacks.onMemory, 'function')
   })
 
   test('onPlan callback can be called without error', () => {
@@ -346,7 +345,7 @@ describe('BaseRoleAdapter — emitDetectedIntents', () => {
     const emitted: Array<{ evt: string; payload: unknown }> = []
     const ctx: AdapterIntentContext = {
       accumulatedText: 'Hello world',
-      controlToolState: { plan: false, askUser: false, memory: false } as any,
+      controlToolState: { plan: false, askUser: false } as any,
       mode: 'plan',
       conversationId: 'c1',
       emit: (evt, payload) => emitted.push({ evt, payload })

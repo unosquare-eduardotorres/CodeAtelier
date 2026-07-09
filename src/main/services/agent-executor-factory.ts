@@ -13,17 +13,19 @@ import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
 import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 
-import type { ConversationMode, ModelAction } from '../../shared/types'
+import type { ConversationMode } from '../../shared/types'
 import {
   BUDGET_CAP_MODE_MULTIPLIERS,
   CLAUDE_1M_CONTEXT_WINDOW,
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   EXTERNAL_MCP_INTEGRATIONS,
   RECOMMENDED_LOCAL_MODELS,
+  resolveModelAction,
   supportsContext1M
 } from '../../shared/constants'
 
 import { modelConfigService } from './model-config.service'
+import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { contextWindowResolver } from './context-window-resolver'
 import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
@@ -263,18 +265,19 @@ export class AgentExecutorFactory {
     // referenced. Context window is resolved internally from the model config.
     /** Completion goal — Claude works autonomously until this condition is met */
     goal?: string
-    /** LLM preset ID for per-action model resolution */
-    presetId?: string | null
+    /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
+    goalMode?: 'advisory' | 'enforce'
   }): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
     const { allowedTools, disallowedTools } = mcpResult
 
-    const modelAction = `${this.s.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = modelConfigService.getModel(
+    const modelAction = resolveModelAction(this.s.adapter.role, isBuildMode)
+    const resolvedModel = resolveModelFromSnapshot(
+      this.s.currentConversationId,
       this.s.workspacePath!,
       modelAction,
-      params.presetId
+      isBuildMode
     )
 
     const supports1M = supportsContext1M(resolvedModel)
@@ -329,7 +332,8 @@ export class AgentExecutorFactory {
         thinkingBudget: this.resolveThinkingBudget(),
         // F2: goal must persist so MPA autonomous completion conditions
         // are evaluated on every turn, not just the initial spawn.
-        goal: params.goal
+        goal: params.goal,
+        goalMode: params.goalMode
       }
     }
 
@@ -384,6 +388,7 @@ export class AgentExecutorFactory {
       continueSession: false,
       mcpConfigPath,
       goal: params.goal,
+      goalMode: params.goalMode,
       thinkingBudget: this.resolveThinkingBudget()
     }
   }

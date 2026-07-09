@@ -58,7 +58,6 @@ describe('DaVinciRoleAdapter', () => {
 
     assert.equal(typeof callbacks.onPlan, 'function')
     assert.equal(typeof callbacks.onAskUser, 'function')
-    assert.equal(typeof callbacks.onMemory, 'function')
   })
 
   test('emitDetectedIntents_emits_response_when_no_control_tools_fired', () => {
@@ -68,8 +67,7 @@ describe('DaVinciRoleAdapter', () => {
       accumulatedText: 'Hello world',
       controlToolState: {
         plan: false,
-        askUser: false,
-        memory: false
+        askUser: false
       } as ControlToolState,
       mode: 'plan',
       conversationId: 'c1',
@@ -99,7 +97,6 @@ describe('DaVinciRoleAdapter', () => {
       controlToolState: {
         plan: true,
         askUser: false,
-        memory: false,
         planIntent: { type: 'plan', plan: planEvent as never }
       } as ControlToolState,
       mode: 'plan',

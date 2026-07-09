@@ -83,12 +83,24 @@ function formatArtifacts(artifacts: BlueprintArtifact[]): string {
 
   return artifacts
     .map((a) => {
+      // BP-DISC-03: Render discoveries artifacts as compact bullet lists
+      if (a.type === 'discoveries' && a.contentJson) {
+        const { phase, entries } = a.contentJson as { phase?: string; entries?: string[] }
+        if (Array.isArray(entries) && entries.length > 0) {
+          const heading = `### Discoveries (${phase ?? 'unknown'})`
+          const bullets = entries.map((e) => `- ${e}`).join('\n')
+          return `${heading}\n${bullets}`
+        }
+        return '' // empty discoveries — skip
+      }
+
       const parts: string[] = [`### Artifact: ${a.type}`]
       if (a.filePath) parts.push(`**Path**: ${a.filePath}`)
       if (a.contentMd) parts.push(a.contentMd)
       if (a.contentJson) parts.push('```json\n' + JSON.stringify(a.contentJson, null, 2) + '\n```')
       return parts.join('\n')
     })
+    .filter((s) => s.length > 0)
     .join('\n\n---\n\n')
 }
 

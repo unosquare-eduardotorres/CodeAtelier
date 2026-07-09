@@ -12,20 +12,31 @@ import { EventEmitter } from 'node:events'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
+import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintSpecifyAdapter } from './role-adapters/blueprint/blueprint-specify.adapter'
 import { BlueprintClarifyAdapter } from './role-adapters/blueprint/blueprint-clarify.adapter'
 import { buildSpecifyGoalCondition, buildClarifyGoalCondition } from './blueprint-goal-conditions'
-import { parsePhaseCompletionBlock } from './blueprint-artifact-parsers'
+import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
+import { blueprintPlanService } from './blueprint-plan.service'
+import { codeGraphService } from './code-graph.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository
 } from '../db/repositories/blueprint.repository'
+import { workspaceRepository } from '../db/repositories'
+import {
+  parseClarifyFindings,
+  parseClarifyQuestions,
+  parseClarifyCompletion,
+  deduplicateClarifyQuestions
+} from '../../shared/blueprint-clarify-parsers'
+import type { ClarifyFindingsBlock, ClarifyQuestionsBlock, ClarifyQuestion } from '../../shared/blueprint-clarify-parsers'
 import type {
   BlueprintPhaseCompletion,
   BlueprintPhaseStartPayload,
-  BlueprintPhaseProgressPayload,
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload,
   GrillDecisionForBlueprint
@@ -42,13 +53,42 @@ interface BlueprintSessionState {
   conversationId: string
   blueprintId: string
   workspaceId: string
+  /** Mutable stall watchdog — set before each send, cleared after. */
+  activeWatchdog: PhaseActivityWatchdog | null
 }
 
 // ── Service ──
 
+/** Pending gate state: completion + findings stored when clarify completes, pending user "proceed" action. */
+interface ClarifyGateState {
+  completion: BlueprintPhaseCompletion
+  findings: ClarifyFindingsBlock | null
+  workspaceId: string
+  text: string
+}
+
 export class BlueprintSpecService extends EventEmitter {
   /** Active CLARIFY sessions keyed by blueprintId — needed for follow-up sends. */
   private clarifySessions = new Map<string, BlueprintSessionState>()
+  /** Gate states: completion arrived but user hasn't clicked "Continue to Plan" yet. */
+  private pendingGates = new Map<string, ClarifyGateState>()
+  /**
+   * B1-FIX: Cache the latest findings per blueprint so the completion turn
+   * (which may omit the findings block) can still populate the gate payload.
+   */
+  private latestFindingsByBlueprint = new Map<string, ClarifyFindingsBlock>()
+  /**
+   * B2-FIX: Track the last-emitted clarify UI state per blueprint so
+   * getPipelineStatus can hydrate the renderer after reload.
+   */
+  private clarifyUiState = new Map<string, {
+    questions: ClarifyQuestionsBlock | null
+    awaitingInput: boolean
+  }>()
+  /** Track all previously asked questions per blueprint for dedupe. */
+  private previouslyAskedQuestions = new Map<string, ClarifyQuestion[]>()
+  /** M4: Track whether a corrective nudge has been attempted for the current turn. */
+  private correctionAttempted = new Map<string, boolean>()
 
   // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
   // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
@@ -59,6 +99,17 @@ export class BlueprintSpecService extends EventEmitter {
       bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
       return false
     }
+  }
+
+  /**
+   * M9: Push clarify UI state to blueprintService for snapshot assembly.
+   * Eliminates the require() hack in getSnapshot().
+   */
+  private pushClarifyState(blueprintId: string, workspaceId: string): void {
+    const uiState = this.clarifyUiState.get(blueprintId)
+    const findings = this.latestFindingsByBlueprint.get(blueprintId) ?? null
+    const questions = uiState?.questions ?? null
+    blueprintService.setClarifyState(workspaceId, { findings, questions })
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -91,6 +142,8 @@ export class BlueprintSpecService extends EventEmitter {
     // finally's markPipelineStopped() is guaranteed to run.
     let specifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
     let session: AgentSessionService | null = null
+    // BP-CHAIN-SPECIFY-CLARIFY: Method-local (not instance field) to avoid race across concurrent workspaces.
+    let pendingClarifyDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
 
     try {
       // Update pipeline state
@@ -108,6 +161,25 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 3. Assemble phase context
       const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'specify')
+
+      // 3b. Surface code-graph index status — warn when repomap is enabled
+      // but no persisted index exists. The agent will still start, but its
+      // code-graph tool calls will return empty results and it will fall back
+      // to Glob/Read for codebase exploration.
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
+      const repomapEnabled = wsSettings.repomapEnabled !== false
+      if (repomapEnabled && !codeGraphService.hasPersistedIndex(workspaceId)) {
+        bpLog.warn(
+          `[startSpecifyPhase] Blueprint ${blueprintId} — code-graph index not built for workspace ${workspaceId}. ` +
+          `Agent will fall back to file reads. Build the index in Code Intelligence.`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'specify',
+          text: '⚠️ Code graph index not built — agent will fall back to file reads. Build it in Code Intelligence for better results.'
+        })
+      }
 
       // 4. Create adapter
       const adapter = new BlueprintSpecifyAdapter({
@@ -128,19 +200,20 @@ export class BlueprintSpecService extends EventEmitter {
       this.safeEmit('phaseStart', {
         blueprintId,
         workspaceId,
-        phase: 'specify'
+        phase: 'specify',
+        goal: buildSpecifyGoalCondition(blueprint.title)
       } satisfies BlueprintPhaseStartPayload)
 
-      // 8. Wire streaming events
+      // 8. Wire streaming events + stall watchdog
+      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'SPECIFY')
+
       session.on('chunk', (chunk: StreamChunk) => {
-        if (chunk.type === 'text' && chunk.content) {
-          this.safeEmit('phaseProgress', {
-            blueprintId,
-            workspaceId,
-            phase: 'specify',
-            text: chunk.content
-          } satisfies BlueprintPhaseProgressPayload)
-        }
+        stallWatchdog.touch()
+        forwardBlueprintChunk(
+          (event, payload) => this.safeEmit(event, payload),
+          chunk,
+          { blueprintId, workspaceId, phase: 'specify', workspacePath, mode: 'plan' }
+        )
       })
 
       session.on('statusUpdate', (status: AgentStatus) => {
@@ -153,7 +226,7 @@ export class BlueprintSpecService extends EventEmitter {
       // 10. Create synthetic conversation ID and send
       const syntheticConvId = `blueprint-specify-${blueprintId}-${Date.now()}`
 
-      // Timeout + abort race
+      // Timeout + stall watchdog + abort race
       let timeoutId: NodeJS.Timeout | undefined
       const timeoutPromise = new Promise<void>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error('SPECIFY phase timeout')), PHASE_TIMEOUT_MS)
@@ -173,9 +246,10 @@ export class BlueprintSpecService extends EventEmitter {
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
 
       try {
-        await Promise.race([sendPromise, timeoutPromise, abortPromise])
+        await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        stallWatchdog.dispose()
       }
 
       // 11. Get accumulated text and parse completion
@@ -191,6 +265,15 @@ export class BlueprintSpecService extends EventEmitter {
         })
 
         blueprintPhaseRepository.setConversation(specifyPhase.id, syntheticConvId)
+
+        // 12b. Save discoveries artifact (if emitted)
+        const discoveries = parseDiscoveriesBlock(text)
+        if (discoveries?.length) {
+          blueprintPhaseRepository.appendArtifact(specifyPhase.id, {
+            type: 'discoveries',
+            contentJson: { phase: 'specify', entries: discoveries }
+          })
+        }
       }
 
       // 13. Advance to CLARIFY phase (both needs_clarification and complete go here)
@@ -231,6 +314,15 @@ export class BlueprintSpecService extends EventEmitter {
           }
         } satisfies BlueprintPhaseArtifactPayload)
       }
+
+      // BP-CHAIN-SPECIFY-CLARIFY: Auto-dispatch CLARIFY after SPECIFY completes.
+      // Release pipeline lock first (in finally), then dispatch non-blocking.
+      // Guard: skip dispatch if blueprint was cancelled during the phase.
+      pendingClarifyDispatch = {
+        blueprintId,
+        workspaceId,
+        workspacePath
+      }
     } catch (err) {
       bpLog.error(`[startSpecifyPhase] SPECIFY phase failed:`, err)
 
@@ -252,11 +344,21 @@ export class BlueprintSpecService extends EventEmitter {
         })
       }
 
+      // M5: Use failPipeline to properly transition machine to 'failed' state
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      blueprintService.failPipeline(workspaceId, errorMsg)
+
+      const autoRetrying = blueprintService.scheduleAutoRetry({
+        blueprintId, workspaceId, workspacePath, phase: 'specify', error: errorMsg
+      })
+
       this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'specify',
-        status: 'failed'
+        status: 'failed',
+        error: errorMsg,
+        ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       if (session) {
@@ -265,6 +367,22 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Clean up pipeline state
       blueprintService.markPipelineStopped(workspaceId)
+
+      // BP-CHAIN-SPECIFY-CLARIFY: Dispatch clarify AFTER releasing the pipeline lock
+      // so markPipelineRunning() in startClarifyPhase doesn't throw.
+      if (pendingClarifyDispatch) {
+        const pendingClarify = pendingClarifyDispatch
+        const currentStatus = blueprintRepository.findById(pendingClarify.blueprintId)?.status
+        if (currentStatus !== 'cancelled') {
+          try {
+            this.startClarifyPhase(pendingClarify).catch((err) => {
+              bpLog.error('[specify→clarify] Clarify phase failed:', err)
+            })
+          } catch (syncErr) {
+            bpLog.error('[specify→clarify] Clarify startup failed (sync):', syncErr)
+          }
+        }
+      }
     }
   }
 
@@ -325,19 +443,19 @@ export class BlueprintSpecService extends EventEmitter {
         session,
         conversationId: syntheticConvId,
         blueprintId,
-        workspaceId
+        workspaceId,
+        activeWatchdog: null
       })
 
-      // 7. Wire streaming events
+      // 7. Wire streaming events — chunk handler touches active watchdog
       session.on('chunk', (chunk: StreamChunk) => {
-        if (chunk.type === 'text' && chunk.content) {
-          this.safeEmit('phaseProgress', {
-            blueprintId,
-            workspaceId,
-            phase: 'clarify',
-            text: chunk.content
-          } satisfies BlueprintPhaseProgressPayload)
-        }
+        const state = this.clarifySessions.get(blueprintId)
+        state?.activeWatchdog?.touch()
+        forwardBlueprintChunk(
+          (event, payload) => this.safeEmit(event, payload),
+          chunk,
+          { blueprintId, workspaceId, phase: 'clarify', workspacePath, mode: 'plan' }
+        )
       })
 
       session.on('statusUpdate', (status: AgentStatus) => {
@@ -348,37 +466,60 @@ export class BlueprintSpecService extends EventEmitter {
       this.safeEmit('phaseStart', {
         blueprintId,
         workspaceId,
-        phase: 'clarify'
+        phase: 'clarify',
+        goal: buildClarifyGoalCondition()
       } satisfies BlueprintPhaseStartPayload)
 
       // 9. Start session and send first message (triggers gap analysis)
       await session.start(workspacePath, 'plan')
-      await session.send(adapter.getPhaseMessage(), syntheticConvId)
 
-      // Check if the first turn already produced a completion block
-      const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      const clarifyWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CLARIFY')
+      const clarifyState = this.clarifySessions.get(blueprintId)
+      if (clarifyState) clarifyState.activeWatchdog = clarifyWatchdog
 
-      if (completion) {
-        // Clarify completed in first turn (no gaps found)
-        await this.finalizeClarifyPhase(blueprintId, workspaceId, text, completion)
+      try {
+        const abortSignal = blueprintService.getAbortSignal(workspaceId)
+        const abortPromise = new Promise<void>((_, reject) => {
+          const onAbort = (): void => reject(new Error('Phase cancelled'))
+          abortSignal?.addEventListener('abort', onAbort, { once: true })
+          if (abortSignal?.aborted) onAbort()
+        })
+        await Promise.race([
+          session.send(adapter.getPhaseMessage(), syntheticConvId),
+          clarifyWatchdog.promise,
+          abortPromise
+        ])
+      } finally {
+        clarifyWatchdog.dispose()
+        if (clarifyState) clarifyState.activeWatchdog = null
       }
-      // Otherwise, session stays alive waiting for sendClarifyAnswer()
+
+      // Parse structured blocks from the response
+      const text = session.getStreamedContent()
+      await this.handleClarifyTurnEnd(blueprintId, workspaceId, text)
     } catch (err) {
       bpLog.error(`[startClarifyPhase] CLARIFY phase failed:`, err)
       this.clarifySessions.delete(blueprintId)
 
-      if (clarifyPhase) {
-        blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'failed')
+      // Guard: don't overwrite 'cancelled' status set by blueprintService.cancel()
+      const currentStatus = blueprintRepository.findById(blueprintId)?.status
+      if (currentStatus !== 'cancelled') {
+        if (clarifyPhase) {
+          blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'failed')
+        }
+        blueprintRepository.updateStatus(blueprintId, 'failed')
       }
-      blueprintRepository.updateStatus(blueprintId, 'failed')
-      blueprintService.markPipelineStopped(workspaceId)
+
+      // M5: Use failPipeline to properly transition machine to 'failed' state
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      blueprintService.failPipeline(workspaceId, errorMsg)
 
       this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'clarify',
-        status: 'failed'
+        status: 'failed',
+        error: errorMsg
       } satisfies BlueprintPhaseCompletePayload)
 
       if (session) {
@@ -405,22 +546,50 @@ export class BlueprintSpecService extends EventEmitter {
 
     bpLog.info(`[sendClarifyAnswer] Blueprint ${blueprintId} — sending user answer`)
 
+    // Drive state machine: awaiting-clarify-questions/input → phase-running
+    const machine = blueprintService.getMachine(workspaceId)
+    if (!machine.transition('answerReceived')) {
+      bpLog.warn(
+        `[sendClarifyAnswer] Machine rejected answerReceived (state=${machine.currentState}) — proceeding anyway`
+      )
+    }
+
+    const answerWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CLARIFY')
+    sessionState.activeWatchdog = answerWatchdog
+
     try {
-      // Send user answer to the existing session
-      await sessionState.session.send(message, sessionState.conversationId)
+      // M9: Race send against abort signal + stall watchdog
+      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortPromise = new Promise<void>((_, reject) => {
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        if (abortSignal?.aborted) onAbort()
+      })
 
-      // Check accumulated text for completion block
+      const sendPromise = sessionState.session.send(message, sessionState.conversationId)
+      await Promise.race([sendPromise, abortPromise, answerWatchdog.promise])
+
+      // Parse structured blocks from the response
       const text = sessionState.session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
-
-      if (completion) {
-        // Clarify phase complete — agent is satisfied
-        await this.finalizeClarifyPhase(blueprintId, workspaceId, text, completion)
-      }
-      // Otherwise, session stays alive for more Q&A
+      await this.handleClarifyTurnEnd(blueprintId, workspaceId, text)
     } catch (err) {
       bpLog.error(`[sendClarifyAnswer] Failed to send answer:`, err)
+
+      // M5: Recover machine state before rethrowing.
+      // If session is dead, fail the pipeline. Otherwise restore to an awaiting state.
+      const machine = blueprintService.getMachine(workspaceId)
+      if (!this.clarifySessions.has(blueprintId) || !sessionState.session) {
+        // Session is dead — fail pipeline
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        blueprintService.failPipeline(workspaceId, errorMsg)
+      } else if (machine.currentState === 'phase-running') {
+        // Machine stuck in phase-running after send failure — restore to awaiting
+        machine.transition('awaitingInput')
+      }
       throw err
+    } finally {
+      answerWatchdog.dispose()
+      sessionState.activeWatchdog = null
     }
   }
 
@@ -440,12 +609,278 @@ export class BlueprintSpecService extends EventEmitter {
     }
     blueprintService.skipPhase(blueprintId, 'clarify')
 
+    const skipWorkspaceId = sessionState?.workspaceId ?? ''
     this.safeEmit('phaseComplete', {
       blueprintId,
-      workspaceId: sessionState?.workspaceId ?? '',
+      workspaceId: skipWorkspaceId,
       phase: 'clarify',
       status: 'skipped'
     } satisfies BlueprintPhaseCompletePayload)
+
+    // BP-CHAIN-CLARIFY-PLAN: Auto-dispatch PLAN after CLARIFY is skipped.
+    const resolvedWorkspaceId = skipWorkspaceId || blueprintRepository.findById(blueprintId)?.workspaceId
+    if (resolvedWorkspaceId) {
+      this.dispatchPlanPhase(blueprintId, resolvedWorkspaceId)
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  Gate Logic — User-Driven Clarify → Plan Transition
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Handle the end of a CLARIFY turn (first turn or answer turn).
+   * Parses findings/questions/completion blocks, drives machine transitions,
+   * and emits appropriate events.
+   */
+  private async handleClarifyTurnEnd(blueprintId: string, workspaceId: string, text: string): Promise<void> {
+    const machine = blueprintService.getMachine(workspaceId)
+
+    // 1. Parse & emit findings (always emitted if present)
+    const findings = parseClarifyFindings(text)
+    if (findings) {
+      // B1-FIX: Cache findings so completion turns that omit findings still have them
+      this.latestFindingsByBlueprint.set(blueprintId, findings)
+      this.safeEmit('clarifyFindings', { blueprintId, workspaceId, findings })
+    }
+
+    // 2. Parse questions (with dedupe against previously asked)
+    let questions = parseClarifyQuestions(text)
+    if (questions && questions.questions.length > 0) {
+      const prevAsked = this.previouslyAskedQuestions.get(blueprintId) ?? []
+      const deduped = deduplicateClarifyQuestions(questions.questions, prevAsked)
+      if (deduped.length < questions.questions.length) {
+        bpLog.warn(
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — dropped ${questions.questions.length - deduped.length} duplicate question(s)`
+        )
+      }
+      if (deduped.length === 0) {
+        bpLog.warn(
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — all questions were duplicates; treating as awaitingInput`
+        )
+        questions = null
+      } else {
+        questions = { questions: deduped }
+        // Track the new questions as "asked"
+        this.previouslyAskedQuestions.set(blueprintId, [...prevAsked, ...deduped])
+      }
+    }
+
+    // 3. Check for completion
+    const completionRaw = parseClarifyCompletion(text)
+    const completion = completionRaw
+      ? (parsePhaseCompletionBlock(text) ?? (completionRaw as unknown as BlueprintPhaseCompletion))
+      : null
+
+    // M5 (nudge restructure): Hoist zero-block check ABOVE the emit cascade.
+    // Nudge while still in 'phase-running' — no state transition needed.
+    // Only emit awaitingInput after the 1-retry cap is exhausted.
+    if (!findings && !questions && !completion) {
+      const alreadyAttempted = this.correctionAttempted.get(blueprintId) ?? false
+      if (!alreadyAttempted) {
+        bpLog.warn(
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — zero parsed blocks, sending corrective nudge`
+        )
+        this.correctionAttempted.set(blueprintId, true)
+
+        const sessionState = this.clarifySessions.get(blueprintId)
+        if (sessionState) {
+          try {
+            // Machine is still in 'phase-running' — no reverse-dance needed
+            const correctionMsg =
+              'Your last turn contained none of the required fenced blocks. ' +
+              'Re-emit the findings block (```clarify-findings) and either a questions block ' +
+              '(```clarify-questions) or the completion block (```clarify-complete).'
+
+            await sessionState.session.send(correctionMsg, sessionState.conversationId)
+            const retryText = sessionState.session.getStreamedContent()
+
+            // Parse the retry response (recursive but capped by correctionAttempted flag)
+            return this.handleClarifyTurnEnd(blueprintId, workspaceId, retryText)
+          } catch (err) {
+            bpLog.error(`[handleClarifyTurnEnd] Corrective nudge failed:`, err)
+            // Fall through to awaitingInput below
+          }
+        }
+      } else {
+        bpLog.warn(
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — zero parsed blocks after correction; falling back to awaitingInput`
+        )
+      }
+      // Reset correction flag for next turn
+      this.correctionAttempted.delete(blueprintId)
+
+      // Nudge exhausted — fall through to awaitingInput emit
+      machine.transition('awaitingInput')
+      this.clarifyUiState.set(blueprintId, { questions: null, awaitingInput: true })
+      this.pushClarifyState(blueprintId, workspaceId)
+      this.safeEmit('clarifyAwaitingInput', { blueprintId, workspaceId })
+      return
+    }
+
+    // Successful parse — reset correction flag
+    this.correctionAttempted.delete(blueprintId)
+
+    // 4. Drive state machine + emit events based on parsed content
+    if (completion) {
+      // Drive state machine: phase-running → awaiting-clarify-gate
+      machine.transition('gateParsed')
+
+      // B1-FIX: Use cached findings when completion turn omits findings block
+      const gateFindings = findings ?? this.latestFindingsByBlueprint.get(blueprintId) ?? null
+      // Gate: store completion but DON'T finalize — wait for user "proceed"
+      this.pendingGates.set(blueprintId, { completion, findings: gateFindings, workspaceId, text })
+      // B2-FIX: Clear UI state — gate supersedes questions/awaitingInput
+      this.clarifyUiState.set(blueprintId, { questions: null, awaitingInput: false })
+      this.pushClarifyState(blueprintId, workspaceId)
+      this.safeEmit('clarifyGateReady', {
+        blueprintId,
+        workspaceId,
+        findings: gateFindings,
+        questions: null // Completion supersedes pending questions
+      })
+    } else if (questions && questions.questions.length > 0) {
+      // Drive state machine: phase-running → awaiting-clarify-questions
+      machine.transition('questionsParsed')
+
+      // Questions block parsed — emit questions (this is the primary input signal)
+      // B2-FIX: Track for reload hydration
+      this.clarifyUiState.set(blueprintId, { questions, awaitingInput: false })
+      this.pushClarifyState(blueprintId, workspaceId)
+      this.safeEmit('clarifyQuestions', { blueprintId, workspaceId, questions })
+    } else {
+      // Drive state machine: phase-running → awaiting-clarify-input
+      machine.transition('awaitingInput')
+
+      // Fallback: no structured block parsed — awaiting free-text input
+      // B2-FIX: Track for reload hydration
+      this.clarifyUiState.set(blueprintId, { questions: null, awaitingInput: true })
+      this.pushClarifyState(blueprintId, workspaceId)
+      this.safeEmit('clarifyAwaitingInput', { blueprintId, workspaceId })
+    }
+  }
+
+  /**
+   * User clicked "Continue to Plan" — proceed through the gate.
+   * Pops gate state → finalizeClarifyPhase → dispatchPlanPhase.
+   */
+  async proceedClarifyGate(blueprintId: string): Promise<void> {
+    const gate = this.pendingGates.get(blueprintId)
+    if (!gate) {
+      throw new Error(`No pending clarify gate for blueprint ${blueprintId}`)
+    }
+
+    // Drive state machine: awaiting-clarify-gate → idle (clarify done)
+    const machine = blueprintService.getMachine(gate.workspaceId)
+    machine.transition('proceedGate')
+
+    bpLog.info(`[proceedClarifyGate] Blueprint ${blueprintId} — user proceeding to plan`)
+    this.pendingGates.delete(blueprintId)
+    // M9: Clean up all map lifecycle entries on gate proceed
+    this.correctionAttempted.delete(blueprintId)
+    this.previouslyAskedQuestions.delete(blueprintId)
+
+    await this.finalizeClarifyPhase(blueprintId, gate.workspaceId, gate.text, gate.completion)
+  }
+
+  /**
+   * User clicked "Ask more questions" — iterate another round of clarification.
+   * Sends an iteration message on the live session.
+   */
+  async iterateClarify(blueprintId: string): Promise<void> {
+    const sessionState = this.clarifySessions.get(blueprintId)
+    if (!sessionState) {
+      throw new Error(`No active CLARIFY session for blueprint ${blueprintId} — cannot iterate`)
+    }
+
+    // Drive state machine: awaiting-clarify-gate → phase-running
+    const machine = blueprintService.getMachine(sessionState.workspaceId)
+    if (!machine.transition('iterate')) {
+      bpLog.warn(
+        `[iterateClarify] Machine rejected iterate (state=${machine.currentState}) — proceeding anyway`
+      )
+    }
+
+    bpLog.info(`[iterateClarify] Blueprint ${blueprintId} — user requesting more rounds`)
+
+    // Clear any pending gate (user chose to continue asking)
+    this.pendingGates.delete(blueprintId)
+
+    const iterationMessage =
+      'Continue with up to 3 more rounds of clarification. Re-emit the findings block with updated statuses and ask new questions for any remaining outstanding gaps.'
+
+    try {
+      // M9: Race send against abort signal
+      const abortSignal = blueprintService.getAbortSignal(sessionState.workspaceId)
+      const abortPromise = new Promise<void>((_, reject) => {
+        const onAbort = (): void => reject(new Error('Phase cancelled'))
+        abortSignal?.addEventListener('abort', onAbort, { once: true })
+        if (abortSignal?.aborted) onAbort()
+      })
+
+      const sendPromise = sessionState.session.send(iterationMessage, sessionState.conversationId)
+      await Promise.race([sendPromise, abortPromise])
+
+      const text = sessionState.session.getStreamedContent()
+      await this.handleClarifyTurnEnd(blueprintId, sessionState.workspaceId, text)
+    } catch (err) {
+      bpLog.error(`[iterateClarify] Failed:`, err)
+
+      // M5: Recover machine state before rethrowing.
+      const machine = blueprintService.getMachine(sessionState.workspaceId)
+      if (!this.clarifySessions.has(blueprintId)) {
+        // Session is dead — fail pipeline
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        blueprintService.failPipeline(sessionState.workspaceId, errorMsg)
+      } else if (machine.currentState === 'phase-running') {
+        // Restore to gate state since iterate came from there
+        machine.transition('gateParsed')
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Get the pending gate state for a blueprint (used by getPipelineStatus for D4).
+   */
+  getPendingGate(blueprintId: string): ClarifyGateState | undefined {
+    return this.pendingGates.get(blueprintId)
+  }
+
+  /**
+   * Get the latest findings for a blueprint (B1-FIX: uses cached map first).
+   */
+  getLatestFindings(blueprintId: string): ClarifyFindingsBlock | null {
+    // B1-FIX: Check cached findings first (survives across turns)
+    const cached = this.latestFindingsByBlueprint.get(blueprintId)
+    if (cached) return cached
+
+    const gate = this.pendingGates.get(blueprintId)
+    if (gate?.findings) return gate.findings
+
+    const sessionState = this.clarifySessions.get(blueprintId)
+    if (!sessionState) return null
+
+    const text = sessionState.session.getStreamedContent()
+    return parseClarifyFindings(text)
+  }
+
+  /**
+   * B2-FIX: Get the clarify UI state for reload hydration.
+   */
+  getClarifyUiState(blueprintId: string): {
+    awaitingGate: boolean
+    latestFindings: ClarifyFindingsBlock | null
+    pendingQuestions: ClarifyQuestionsBlock | null
+    awaitingInput: boolean
+  } {
+    const uiState = this.clarifyUiState.get(blueprintId)
+    return {
+      awaitingGate: this.pendingGates.has(blueprintId),
+      latestFindings: this.getLatestFindings(blueprintId),
+      pendingQuestions: uiState?.questions ?? null,
+      awaitingInput: uiState?.awaitingInput ?? false
+    }
   }
 
   // ── Internal Helpers ──
@@ -460,6 +895,11 @@ export class BlueprintSpecService extends EventEmitter {
     completion: BlueprintPhaseCompletion
   ): Promise<void> {
     bpLog.info(`[finalizeClarifyPhase] Blueprint ${blueprintId} — CLARIFY complete`)
+
+    // B1/B2-FIX: Clean up cached state for this blueprint
+    this.latestFindingsByBlueprint.delete(blueprintId)
+    this.clarifyUiState.delete(blueprintId)
+    blueprintService.setClarifyState(workspaceId, null)
 
     // Save clarify artifacts
     const clarifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
@@ -505,6 +945,40 @@ export class BlueprintSpecService extends EventEmitter {
         contentMd: text
       }
     } satisfies BlueprintPhaseArtifactPayload)
+
+    // BP-CHAIN-CLARIFY-PLAN: Auto-dispatch PLAN after CLARIFY completes.
+    this.dispatchPlanPhase(blueprintId, workspaceId)
+  }
+
+  // ── Chain Dispatch Helpers ──
+
+  /**
+   * BP-CHAIN-CLARIFY-PLAN: Dispatch PLAN phase after CLARIFY completes or is skipped.
+   * Non-blocking — errors are logged, not thrown. Guards against cancelled status.
+   */
+  private dispatchPlanPhase(blueprintId: string, workspaceId: string): void {
+    const currentStatus = blueprintRepository.findById(blueprintId)?.status
+    if (currentStatus === 'cancelled') return
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) {
+      bpLog.error(`[clarify→plan] Workspace not found: ${workspaceId}`)
+      return
+    }
+
+    try {
+      blueprintPlanService
+        .startPlanPhase({
+          blueprintId,
+          workspaceId,
+          workspacePath: workspace.repoPath
+        })
+        .catch((err) => {
+          bpLog.error('[clarify→plan] Plan phase failed:', err)
+        })
+    } catch (syncErr) {
+      bpLog.error('[clarify→plan] Plan startup failed (sync):', syncErr)
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -522,7 +996,16 @@ export class BlueprintSpecService extends EventEmitter {
    * Cancel any active sessions for a blueprint.
    */
   async cancelBlueprint(blueprintId: string): Promise<void> {
+    this.pendingGates.delete(blueprintId)
+    // B1/B2-FIX: Clean up cached state
+    this.latestFindingsByBlueprint.delete(blueprintId)
+    this.clarifyUiState.delete(blueprintId)
+    this.correctionAttempted.delete(blueprintId)
+
     const sessionState = this.clarifySessions.get(blueprintId)
+    if (sessionState) {
+      blueprintService.setClarifyState(sessionState.workspaceId, null)
+    }
     if (!sessionState) return
 
     const { workspaceId } = sessionState
@@ -547,6 +1030,11 @@ export class BlueprintSpecService extends EventEmitter {
       await state.session.stop()
     }
     this.clarifySessions.clear()
+    this.pendingGates.clear()
+    // B1/B2-FIX: Clean up all cached state
+    this.latestFindingsByBlueprint.clear()
+    this.clarifyUiState.clear()
+    this.correctionAttempted.clear()
   }
 }
 

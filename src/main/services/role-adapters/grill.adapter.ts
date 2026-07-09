@@ -77,7 +77,7 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     const track = GRILL_TRACKS[this.trackId]
 
     // Pattern 1: Centralized model resolution
-    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill', ctx.presetId)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill')
 
     this.systemPrompt = this.buildSystemPrompt(track, resolvedModel)
 
@@ -114,10 +114,6 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     return this.llmProvider !== 'local-llm'
   }
 
-  /** No-op memory persistence for evaluation adapters. */
-  protected override persistMemory(): void {
-    /* no-op */
-  }
 
   override onSessionStop(): void {
     this.systemPrompt = null

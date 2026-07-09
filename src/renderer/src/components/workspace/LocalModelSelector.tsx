@@ -10,7 +10,8 @@ import {
   ChevronRight,
   Loader2,
   Power,
-  PowerOff
+  PowerOff,
+  Eye
 } from 'lucide-react'
 import { RECOMMENDED_LOCAL_MODELS, resolveModelId } from '../../../../shared/constants'
 import type {
@@ -68,7 +69,7 @@ function ModelTypeBadge({ modelType }: { modelType?: string }): React.JSX.Elemen
   const config = TYPE_BADGE_CLASSES[modelType ?? 'llm'] ?? TYPE_BADGE_CLASSES.llm
   return (
     <span
-      className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}
+      className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}
     >
       {config.label}
     </span>
@@ -131,26 +132,32 @@ function ModelRow({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium text-text-primary truncate">{model.label}</span>
           {model.recommended && (
-            <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-primary-muted text-primary-text font-medium">
+            <span className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-primary-muted text-primary-text font-medium">
               <Star size={8} />
               Recommended
             </span>
           )}
           {model.mlxOptimized && (
-            <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium">
+            <span className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium">
               <Sparkles size={8} />
               MLX
             </span>
           )}
           <span
-            className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${TOOL_CALLING_COLORS[model.toolCalling]}`}
+            className={`inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full border font-medium ${TOOL_CALLING_COLORS[model.toolCalling]}`}
           >
             <Cpu size={8} />
             Tools: {model.toolCalling}
           </span>
+          {model.supportsVision && (
+            <span className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">
+              <Eye size={8} />
+              Vision
+            </span>
+          )}
         </div>
         <p className="text-xs text-text-secondary mt-0.5">{model.description}</p>
-        <div className="flex items-center gap-3 mt-1 text-[11px] text-text-muted">
+        <div className="flex items-center gap-3 mt-1 text-xs text-text-muted">
           <span>{model.parameterSize}</span>
           {model.activeParams && <span>Active: {model.activeParams}</span>}
           <span>{(model.contextWindow / 1024).toFixed(0)}K ctx</span>
@@ -266,21 +273,26 @@ function ServerModelRow({
         <ModelTypeBadge modelType={model.modelType} />
 
         {model.estimatedSize && (
-          <span className="text-[10px] text-text-muted shrink-0">{model.estimatedSize}</span>
+          <span className="text-xs text-text-muted shrink-0">{model.estimatedSize}</span>
         )}
 
         {model.loaded ? (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium shrink-0">
+          <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium shrink-0">
             loaded
           </span>
         ) : (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-overlay text-text-muted font-medium shrink-0">
+          <span className="text-xs px-1.5 py-0.5 rounded-full bg-surface-overlay text-text-muted font-medium shrink-0">
             on disk
           </span>
         )}
 
         {model.pinned && (
           <Star size={10} className="text-amber-400 shrink-0" />
+        )}
+        {(model.modelType ?? 'llm') === 'embedding' && model.loaded && (
+          <span className="text-xs px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium shrink-0">
+            Used for Semantic Search
+          </span>
         )}
       </div>
 
@@ -410,10 +422,10 @@ export default function LocalModelSelector({
     }
   }
 
-  /** Handle "not installed" action — oMLX copies+downloads, Ollama triggers pull */
+  /** Handle "not installed" action — copy model name + open oMLX downloader */
   const handleNotInstalled = (model: RecommendedLocalModel): void => {
     const modelId = getModelId(model)
-    if (backend === 'omlx' && onCopyAndOpenDownloader) {
+    if (onCopyAndOpenDownloader) {
       onCopyAndOpenDownloader(modelId)
     } else {
       onPull(modelId)
@@ -430,7 +442,7 @@ export default function LocalModelSelector({
       {modelGroups ? (
         <div>
           <label className="text-xs font-medium text-text-secondary">Server Models</label>
-          <p className="text-[10px] text-text-muted mt-0.5 mb-3">
+          <p className="text-xs text-text-muted mt-0.5 mb-3">
             {downloadedModels!.length} model{downloadedModels!.length !== 1 ? 's' : ''} on server
             — {downloadedModels!.filter((m) => m.loaded).length} loaded into memory
           </p>
@@ -441,7 +453,7 @@ export default function LocalModelSelector({
                 <h4 className="text-xs font-medium text-text-muted mb-2 flex items-center gap-1.5">
                   <ModelTypeBadge modelType={type} />
                   <span>{TYPE_LABELS[type] ?? type}</span>
-                  <span className="text-[10px] text-text-muted font-normal">
+                  <span className="text-xs text-text-muted font-normal">
                     ({models.filter((m) => m.loaded).length}/{models.length} loaded)
                   </span>
                 </h4>
@@ -491,11 +503,11 @@ export default function LocalModelSelector({
                       )}
                       <span className="text-sm font-medium text-text-primary">{modelId}</span>
                       <ModelTypeBadge modelType={modelType} />
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">
                         loaded
                       </span>
                       {detail ? (
-                        <span className="text-[10px] text-text-muted">{detail.estimatedSize}</span>
+                        <span className="text-xs text-text-muted">{detail.estimatedSize}</span>
                       ) : null}
                     </div>
                   </button>
@@ -545,7 +557,7 @@ export default function LocalModelSelector({
             size={16}
             className={`transition-transform duration-200 ${recommendationsOpen ? 'rotate-90' : ''}`}
           />
-          <span>Recommended Models</span>
+          <span>Get more models (download to server)</span>
           <span className="text-xs text-text-muted font-normal ml-1">— browse by RAM tier</span>
         </summary>
         <div className="mt-3 space-y-4">

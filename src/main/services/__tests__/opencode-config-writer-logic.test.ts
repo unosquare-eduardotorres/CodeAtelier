@@ -9,75 +9,28 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 
-// ── Stub Electron app before importing ──
+// Use the shared electron stub (ipcMain, app, BrowserWindow, electron-log).
+// Safe to call multiple times — idempotent.
+setupElectronStub()
 
-const electronMock = {
-  app: {
-    get isPackaged() { return false },
-    getAppPath() { return '/mock/app' },
-    getPath(name: string) {
-      if (name === 'userData') return '/mock/userData'
-      return `/mock/${name}`
-    }
-  }
-}
-
-try {
-  const Module = require('module')
-  const origResolve = Module._resolveFilename
-  Module._resolveFilename = function (request: string, ...args: unknown[]) {
-    if (request === 'electron') return 'electron'
-    return origResolve.call(this, request, ...args)
-  }
-  require.cache[require.resolve('electron')] = {
-    id: 'electron',
-    filename: 'electron',
-    loaded: true,
-    exports: electronMock,
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub electron-log/main
-try {
-  const logMock = {
-    scope: () => ({ info: () => {}, warn: () => {}, error: () => {} }),
-    info: () => {},
-    warn: () => {},
-    error: () => {}
-  }
-  require.cache[require.resolve('electron-log/main')] = {
-    id: 'electron-log/main',
-    filename: 'electron-log/main',
-    loaded: true,
-    exports: { default: logMock, ...logMock },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub appPreferenceRepository to avoid DB dependency
+// Stub appPreferenceRepository — patch instance methods in place for pre-loaded modules.
 try {
   const appPrefRepoPath = require.resolve('../../db/repositories/app-preference.repository')
-  require.cache[appPrefRepoPath] = {
-    id: appPrefRepoPath,
-    filename: appPrefRepoPath,
-    loaded: true,
-    exports: {
-      appPreferenceRepository: { get: (_key: string) => null }
-    },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
+  const cached = require.cache[appPrefRepoPath]
+  if (cached?.exports?.appPreferenceRepository) {
+    const repo = cached.exports.appPreferenceRepository
+    repo.get = (_key: string) => null
+    repo.set = (_key: string, _val: string) => {}
+    repo.getBool = (_key: string, _def?: boolean) => _def ?? false
+  } else {
+    require.cache[appPrefRepoPath] = {
+      id: appPrefRepoPath, filename: appPrefRepoPath, loaded: true,
+      exports: { appPreferenceRepository: { get: () => null, set: () => {}, getBool: (_k: string, d?: boolean) => d ?? false } },
+      children: [], paths: [], path: ''
+    } as unknown as NodeModule
+  }
 } catch {
   // skip
 }
@@ -226,63 +179,67 @@ describe('OpenCodeConfigWriter private methods', () => {
   // ── buildProviderConfig ──
 
   describe('buildProviderConfig', () => {
+    // Note: buildProviderConfig returns { [providerId]: { options, models?, npm? } }
+    // Timeout/setCacheKey/baseURL/apiKey live inside `options`.
+    // Context limits live inside `models[modelId].limit` (requires contextWindowConfident=true).
+
     test('local_true_timeout_600000', () => {
       const provider = { providerId: 'ollama', modelId: 'llama3', baseUrl: 'http://localhost:11434' }
       const config = w.buildProviderConfig(provider, true)
       const entry = config[provider.providerId]
-      assert.equal(entry.timeout, 600_000)
-      assert.equal(entry.chunkTimeout, 30_000)
+      assert.equal(entry.options.timeout, 600_000)
+      assert.equal(entry.options.chunkTimeout, 30_000)
     })
 
     test('local_false_timeout_300000', () => {
       const provider = { providerId: 'anthropic', modelId: 'claude-3', apiKey: 'sk-test' }
       const config = w.buildProviderConfig(provider, false)
       const entry = config[provider.providerId]
-      assert.equal(entry.timeout, 300_000)
-      assert.equal(entry.chunkTimeout, 15_000)
+      assert.equal(entry.options.timeout, 300_000)
+      assert.equal(entry.options.chunkTimeout, 15_000)
     })
 
     test('anthropic_provider_has_setCacheKey_true', () => {
       const provider = { providerId: 'anthropic', modelId: 'claude-3' }
       const config = w.buildProviderConfig(provider, false)
       const entry = config['anthropic']
-      assert.equal(entry.setCacheKey, true)
+      assert.equal(entry.options.setCacheKey, true)
     })
 
     test('with_baseUrl_and_apiKey_includes_them', () => {
       const provider = { providerId: 'openai', modelId: 'gpt-4', baseUrl: 'https://api.openai.com', apiKey: 'sk-abc' }
       const config = w.buildProviderConfig(provider, false)
       const entry = config['openai']
-      assert.equal(entry.baseUrl, 'https://api.openai.com')
-      assert.equal(entry.apiKey, 'sk-abc')
+      assert.equal(entry.options.baseURL, 'https://api.openai.com')
+      assert.equal(entry.options.apiKey, 'sk-abc')
     })
 
     test('without_baseUrl_excludes_it', () => {
       const provider = { providerId: 'anthropic', modelId: 'claude-3', apiKey: 'sk-test' }
       const config = w.buildProviderConfig(provider, false)
       const entry = config['anthropic']
-      assert.equal(entry.baseUrl, undefined)
+      assert.equal(entry.options.baseURL, undefined)
     })
 
     test('local_small_tier_context_limit_8192', () => {
       const provider = { providerId: 'ollama', modelId: 'phi', baseUrl: 'http://localhost:11434' }
-      const config = w.buildProviderConfig(provider, true, 'small')
+      const config = w.buildProviderConfig(provider, true, 'small', true)
       const entry = config['ollama']
-      assert.equal(entry.limit?.context, 8192)
+      assert.equal(entry.models?.phi?.limit?.context, 8192)
     })
 
     test('local_medium_tier_context_limit_32768', () => {
       const provider = { providerId: 'ollama', modelId: 'phi', baseUrl: 'http://localhost:11434' }
-      const config = w.buildProviderConfig(provider, true, 'medium')
+      const config = w.buildProviderConfig(provider, true, 'medium', true)
       const entry = config['ollama']
-      assert.equal(entry.limit?.context, 32768)
+      assert.equal(entry.models?.phi?.limit?.context, 32768)
     })
 
     test('cloud_no_context_limit', () => {
       const provider = { providerId: 'anthropic', modelId: 'claude-3', apiKey: 'sk-test' }
       const config = w.buildProviderConfig(provider, false)
       const entry = config['anthropic']
-      assert.equal(entry.limit, undefined)
+      assert.equal(entry.models, undefined)
     })
   })
 

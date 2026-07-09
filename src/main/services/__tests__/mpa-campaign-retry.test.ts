@@ -283,4 +283,4 @@ console.log(`\n${'─'.repeat(40)}`)
 console.log(
   `mpa-campaign-retry: ${passed} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`
 )
-if (failed > 0) process.exit(1)
+if (failed > 0) process.exitCode = 1

@@ -54,6 +54,22 @@ function accumulateToolActivity(
 }
 
 /**
+ * Record an externally-created tool activity (e.g. Prompt Optimizer) into the
+ * accumulator so it persists with the assistant message via the existing
+ * getAndClearToolActivities → DB finalize path.
+ *
+ * Clears the conversation from `clearedConversations` first so the synthetic
+ * activity is not silently dropped by the 10s tombstone guard.
+ */
+export function recordExternalToolActivity(
+  conversationId: string,
+  activity: Partial<ToolActivity> & { id: string; toolName: string }
+): void {
+  clearedConversations.delete(conversationId)
+  accumulateToolActivity(conversationId, activity)
+}
+
+/**
  * Retrieve and clear accumulated tool activities for a conversation.
  * Called during finalize to persist tool activities to the DB.
  * Returns all activities including 'running' ones (e.g. subagents interrupted mid-execution).
@@ -458,7 +474,8 @@ function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // not conversational content. They come from the OpenCode event normalizer.
   if (
     SUPPRESSED_STATUS_VALUES.has(chunk.content) ||
-    SUPPRESSED_STATUS_PREFIXES.some((p) => chunk.content!.startsWith(p))
+    SUPPRESSED_STATUS_PREFIXES.some((p) => chunk.content!.startsWith(p)) ||
+    LOCAL_CONTROL_SIGNAL_RE.test(chunk.content)
   ) {
     chatIpcLogger.debug('[chunk-router] Suppressed metadata status: %s', chunk.content)
     return

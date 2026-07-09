@@ -51,7 +51,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/council-test',
     workspaceId: 'ws-1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }

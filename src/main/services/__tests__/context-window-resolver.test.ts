@@ -41,6 +41,18 @@ describe('context-window-resolver › fromKnownModels', () => {
     assert.equal(resolver.fromKnownModels('mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'), 32768)
   })
 
+  test('hits on Qwen3.6-35B-A3B-8bit omlxId → 262144', () => {
+    assert.equal(resolver.fromKnownModels('unsloth/Qwen3.6-35B-A3B-MLX-8bit'), 262144)
+  })
+
+  test('hits on Qwen3.6-35B-A3B-8bit ollamaId → 262144', () => {
+    assert.equal(resolver.fromKnownModels('qwen3.6:35b-a3b-q8'), 262144)
+  })
+
+  test('hits on Qwen3.6-27B-6bit omlxId → 262144', () => {
+    assert.equal(resolver.fromKnownModels('mlx-community/Qwen3.6-27B-6bit'), 262144)
+  })
+
   test('misses on an unknown model → null', () => {
     assert.equal(resolver.fromKnownModels('totally-unknown-model:99b'), null)
   })

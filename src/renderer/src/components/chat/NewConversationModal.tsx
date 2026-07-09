@@ -18,7 +18,6 @@ import { AttachmentDropzone } from '@renderer/components/chat'
 import { ModelPicker } from './ModelPicker'
 import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
-import { usePresetStore } from '@renderer/store/preset.store'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -34,7 +33,6 @@ interface NewConversationModalProps {
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
-    presetId?: string | null
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -172,8 +170,7 @@ export default function NewConversationModal({
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
-  const defaultPresetId = usePresetStore((s) => s.defaultPresetId)
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(defaultPresetId)
+  const [selectedModelId, setSelectedModelId] = useState<string | null>('claude-opus-4-8')
   const titleInputRef = useRef<HTMLInputElement>(null)
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const {
@@ -184,9 +181,9 @@ export default function NewConversationModal({
     platformInfo
   } = useWorkspaceModelInfo(activeWorkspace?.id)
 
-  const handleModelChange = useCallback((provider: LLMProvider, presetId: string | null) => {
+  const handleModelChange = useCallback((provider: LLMProvider, modelId: string | null) => {
     setLlmProvider(provider)
-    setSelectedPresetId(presetId)
+    setSelectedModelId(modelId)
   }, [setLlmProvider])
 
   // Auto-focus title input when opened
@@ -208,24 +205,19 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setUseIsolatedBranch(false)
-      setSelectedPresetId(defaultPresetId)
-      // Derive provider from default preset; fall back to workspace default
-      const presets = usePresetStore.getState().presets
-      const defaultPreset = defaultPresetId
-        ? presets.find((p) => p.id === defaultPresetId)
-        : null
-      const presetProvider = defaultPreset
-        ? (Object.values(defaultPreset.actionConfig)[0]?.provider as LLMProvider | undefined)
-        : undefined
-      setLlmProvider(presetProvider ?? defaultLlmProvider)
+      setSelectedModelId('claude-opus-4-8')
+      setLlmProvider(defaultLlmProvider)
     }
-  // Only reset on open — not when defaultPresetId/defaultLlmProvider change mid-modal
+  // Only reset on open — not when defaultLlmProvider changes mid-modal
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
-  const handleSubmit = useCallback((): void => {
+  const handleSubmit = useCallback(async (): Promise<void> => {
     const trimmedTitle = title.trim()
     if (!trimmedTitle) return
+
+    // Model defaults are now configured exclusively in Settings → Models tab.
+    // Chat creation should not silently rewrite workspace-wide settings.
 
     onSubmit({
       title: trimmedTitle,
@@ -234,8 +226,7 @@ export default function NewConversationModal({
       communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
-      llmProvider,
-      presetId: selectedPresetId
+      llmProvider
     })
   }, [
     title,
@@ -245,7 +236,6 @@ export default function NewConversationModal({
     attachments,
     useIsolatedBranch,
     llmProvider,
-    selectedPresetId,
     onSubmit
   ])
 
@@ -326,9 +316,8 @@ export default function NewConversationModal({
           {/* Model Picker */}
           {activeWorkspace && (
             <ModelPicker
-              workspaceId={activeWorkspace.id}
               provider={llmProvider}
-              presetId={selectedPresetId}
+              selectedModelId={selectedModelId}
               localModelInfo={localModelInfo}
               platformInfo={platformInfo}
               onChange={handleModelChange}

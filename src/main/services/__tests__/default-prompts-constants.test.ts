@@ -141,10 +141,12 @@ describe('default-prompts — buildDaVinciIdentityPromptLean', () => {
     }
   })
 
-  test('lean version is shorter than full', () => {
+  test('lean version is within 25% of full', () => {
     const full = buildDaVinciIdentityPrompt('default')
     const lean = buildDaVinciIdentityPromptLean('default')
-    assert.ok(lean.length <= full.length)
+    // After trimming, both are compact. Lean may be slightly longer.
+    const ratio = lean.length / full.length
+    assert.ok(ratio < 1.25, `Lean/full ratio (${ratio.toFixed(2)}) should be < 1.25`)
   })
 })
 

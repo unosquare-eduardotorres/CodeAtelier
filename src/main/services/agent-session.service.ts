@@ -32,7 +32,7 @@ import type {
   PlanDetectedEvent
 } from '../../shared/types'
 import type { AgentPromptInput } from './executor-types'
-import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
+import { EXTERNAL_MCP_INTEGRATIONS, resolveModelAction } from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
@@ -46,7 +46,6 @@ import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
-import type { ModelAction } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
 import type { ControlActionCallbacks } from './control-actions.tool'
 import { evaluateAskUserGuard } from './ask-user-guard'
@@ -103,8 +102,6 @@ interface ExecuteStreamOptions {
   contextTier?: ContextWindowTier
   /** Whether the local LLM context window was reliably detected (vs. heuristic fallback). */
   contextWindowConfident?: boolean
-  /** LLM preset ID for per-action model resolution */
-  presetId?: string | null
 }
 
 /**
@@ -129,6 +126,33 @@ function parsePlanPayload(payload: unknown, beforePlan: string): PlanDetectedEve
   }
 }
 
+// ── Helpers ──
+
+/**
+ * Split SDK content-block arrays (from buildSdkPrompt) into separate text
+ * and image components for the OpenCode executor.
+ * Pure function — extracted for testability.
+ */
+export function splitContentBlocks(
+  input: string | Iterable<{ type: string; [k: string]: unknown }>
+): { text: string; images: ImageAttachment[] | undefined } {
+  if (typeof input === 'string') {
+    return { text: input, images: undefined }
+  }
+  const blocks = Array.from(input)
+  const text = blocks
+    .filter((b) => b.type === 'text')
+    .map((b) => (b as { text: string }).text)
+    .join('\n')
+  const images = blocks
+    .filter((b) => b.type === 'image')
+    .map((b) => {
+      const src = (b as { source: { media_type: string; data: string } }).source
+      return { base64: src.data, mimeType: src.media_type, fileName: 'pasted-image' }
+    })
+  return { text, images: images.length > 0 ? images : undefined }
+}
+
 /**
  * Generic session runtime. Accepts an AgentRoleAdapter that supplies the
  * role-specific pieces (prompt, MCP, control callbacks, intent detection).
@@ -151,6 +175,10 @@ export class AgentSessionService extends AgentBaseService {
   private workspaceId: string | null = null
   private currentConversationId: string | null = null
   private accumulatedText = ''
+  /** HEAD sha captured at session start — for memory extraction git delta. */
+  private currentStartSha: string | undefined
+  /** Per-session set of fact IDs already injected — prevents re-injection on subsequent turns. */
+  private injectedFactIds = new Set<string>()
   private currentMode: ConversationMode = 'plan'
   private costPreference: CostPreference = 'balanced'
   private llmProvider: LLMProvider = 'claude'
@@ -219,8 +247,7 @@ export class AgentSessionService extends AgentBaseService {
 
   private controlToolState: ControlToolState = {
     plan: false,
-    askUser: false,
-    memory: false
+    askUser: false
   }
 
   constructor(private readonly adapter: AgentRoleAdapter) {
@@ -391,6 +418,15 @@ export class AgentSessionService extends AgentBaseService {
     this.turnsSinceCompactSuggestion = 0
     this.tokenTracker.resetSession()
 
+    // Capture HEAD sha for memory extraction
+    this.currentStartSha = undefined
+    try {
+      const { execSync } = require('node:child_process')
+      this.currentStartSha = (execSync('git rev-parse HEAD 2>/dev/null || true', {
+        cwd: workspacePath, encoding: 'utf-8', timeout: 2000
+      }) as string).trim() || undefined
+    } catch { /* no git — fine */ }
+
     // Resolve workspace id + cost preference + executor backend
     try {
       const workspaces = workspaceRepository.findAll()
@@ -438,9 +474,12 @@ export class AgentSessionService extends AgentBaseService {
       workspaceId: this.workspaceId ?? undefined
     })
 
+    // G7: Uses live model resolution intentionally — at session start no conversation
+    // exists yet, so there's no snapshot to read. This is log-only; the actual model
+    // for API calls is resolved via resolveModelFromSnapshot() once a conversation ID exists.
     eventLoggerService.logSessionStarted({
       agentId: this.adapter.agentId,
-      model: modelConfigService.getModel(workspacePath, `${this.adapter.role}:plan` as ModelAction)
+      model: modelConfigService.getModel(workspacePath, resolveModelAction(this.adapter.role, false))
     })
 
     this.log.info(`${this.adapter.role} SDK session initialized for workspace:`, workspacePath)
@@ -487,16 +526,13 @@ export class AgentSessionService extends AgentBaseService {
     // Track turn count locally so we can supply it to the adapter.
     const turnCount = this.incrementTurnCount(conversationId, sessionId !== undefined)
 
-    // Resolve per-conversation LLM provider and preset BEFORE building prompts/MCP config
-    // so adapters can use preset-aware model resolution for prompt verbosity gating.
+    // Resolve per-conversation LLM provider BEFORE building prompts/MCP config
     let conversationProvider: LLMProvider = this.llmProvider
-    let conversationPresetId: string | null = null
     try {
       const conv = conversationRepository.findById(conversationId)
       if (conv?.llmProvider) {
         conversationProvider = conv.llmProvider as LLMProvider
       }
-      conversationPresetId = conv?.presetId ?? null
     } catch {
       /* non-fatal — keep session default */
     }
@@ -510,8 +546,7 @@ export class AgentSessionService extends AgentBaseService {
       mode: this.currentMode,
       workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
-      costPreference: this.costPreference,
-      presetId: conversationPresetId
+      costPreference: this.costPreference
     })
 
     // Resolve context tier for local LLMs — gates tool selection in MCP config.
@@ -538,6 +573,24 @@ export class AgentSessionService extends AgentBaseService {
         localContextWindow: ctxWindow,
         contextTier: contextTier ?? resolveContextTier(ctxWindow)
       })
+    }
+
+    // Per-turn memory injection: prepend relevant facts
+    try {
+      if (this.workspaceId) {
+        const { memoryRetrievalService } = await import('./memory-retrieval.service')
+        const memoryContext = await memoryRetrievalService.getContextForTurn(
+          this.workspaceId,
+          enrichedMessage,
+          contextTier ?? 'medium',
+          this.injectedFactIds
+        )
+        if (memoryContext) {
+          enrichedMessage = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${enrichedMessage}`
+        }
+      }
+    } catch (memErr) {
+      this.log.debug('[_doSend] Per-turn memory retrieval failed (non-fatal):', memErr)
     }
 
     const sdkPrompt = this.buildSdkPrompt(enrichedMessage, images)
@@ -595,8 +648,7 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider: conversationProvider,
       localContextWindow,
       contextTier,
-      contextWindowConfident,
-      presetId: conversationPresetId
+      contextWindowConfident
     })
 
     // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
@@ -630,38 +682,59 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   async stop(): Promise<void> {
-    if (this.sdkAbortController) {
-      this.sdkAbortController.abort()
-      this.sdkAbortController = null
-    }
-    // Kill CLI process if active
-    if (this.executorBackend === 'cli') {
-      await this.cliExecutor.killProcess()
-    }
-
-    // Clean up CLI MCP config
-    if (this.workspacePath) {
-      this.mcpConfigWriter.dispose(this.workspacePath)
-    }
-
-    // Stop OpenCode server
-    if (this.executorBackend === 'opencode') {
-      await openCodeExecutor.stop()
-      if (this.workspacePath) {
-        openCodeConfigWriter.dispose(this.workspacePath)
+    // DEADLOCK-GUARD: wrap the entire stop body in a 10s hard timeout.
+    // If any sub-step (killProcess, opencode stop, IPC teardown) wedges,
+    // the pipeline still advances and markPipelineStopped() can fire.
+    const stopBody = async (): Promise<void> => {
+      if (this.sdkAbortController) {
+        this.sdkAbortController.abort()
+        this.sdkAbortController = null
       }
-    }
-    // Stop IPC bridge
-    if (this.ipcBridge) {
-      await this.ipcBridge.stop()
-      this.ipcBridge = null
+      // Kill CLI process if active
+      if (this.executorBackend === 'cli') {
+        await this.cliExecutor.killProcess()
+      }
+
+      // Clean up CLI MCP config
+      if (this.workspacePath) {
+        this.mcpConfigWriter.dispose(this.workspacePath)
+      }
+
+      // Stop OpenCode server
+      if (this.executorBackend === 'opencode') {
+        await openCodeExecutor.stop()
+        if (this.workspacePath) {
+          openCodeConfigWriter.dispose(this.workspacePath)
+        }
+      }
+      // Stop IPC bridge
+      if (this.ipcBridge) {
+        await this.ipcBridge.stop()
+        this.ipcBridge = null
+      }
+
+      if (this.workspaceId) {
+        await vectorSearchService.dispose(this.workspaceId)
+      }
+      // ELICIT-NOCLEANUP-01: Cancel any pending elicitations so their promises don't hang forever
+      elicitationService.resolveAll()
     }
 
-    if (this.workspaceId) {
-      await vectorSearchService.dispose(this.workspaceId)
+    const STOP_TIMEOUT_MS = 10_000
+    try {
+      await Promise.race([
+        stopBody(),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('stop() timed out after 10s')), STOP_TIMEOUT_MS)
+        )
+      ])
+    } catch (err) {
+      chatAgentLogger.warn(
+        `[stop] hard timeout — forcing cleanup: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
-    // ELICIT-NOCLEANUP-01: Cancel any pending elicitations so their promises don't hang forever
-    elicitationService.resolveAll()
+
+    // Cleanup that MUST run even if stopBody timed out
     this.adapter.onSessionStop()
     this.completeDbSession('terminated')
     this.currentStatus = 'idle'
@@ -933,7 +1006,7 @@ export class AgentSessionService extends AgentBaseService {
     // start of each stream, and the recovery manager reads it on error. The send
     // lock ensures no concurrent access within the same conversation.
     this.lastStreamOpts = null
-    this.controlToolState = { plan: false, askUser: false, memory: false }
+    this.controlToolState = { plan: false, askUser: false }
     this.emit('statusUpdate', this.getStatus())
   }
 
@@ -1029,11 +1102,7 @@ export class AgentSessionService extends AgentBaseService {
       origAsk(questions, action, requestId)
     }
 
-    const origMemory = cb.onMemory
-    cb.onMemory = (memory) => {
-      this.controlToolState.memory = true
-      origMemory(memory)
-    }
+    // onMemory removed — memory tools now on dedicated memory MCP server
   }
 
   private emitAdapterEvent(evt: AgentSessionEventName, payload: unknown): void {
@@ -1104,7 +1173,6 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider,
       localContextWindow,
       contextTier: passedContextTier,
-      presetId: streamPresetId
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -1139,12 +1207,11 @@ export class AgentSessionService extends AgentBaseService {
 
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
-        case 'opencode':
+        case 'opencode': {
+          const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput)
           executorStream = this.executeOpenCodeStream({
-            prompt:
-              typeof cliPromptInput === 'string'
-                ? cliPromptInput
-                : '[image attachments not supported in opencode mode]',
+            prompt: ocPrompt,
+            images: ocImages,
             systemPrompt,
             isBuildMode,
             abortController,
@@ -1152,14 +1219,19 @@ export class AgentSessionService extends AgentBaseService {
             llmProvider
           })
           break
+        }
         case 'cli':
         default:
           {
-            // Thread goal condition from MPA adapters (if set)
+            // Thread goal condition + mode from MPA/Blueprint adapters (if set)
             const adapterGoal =
               'getGoalCondition' in this.adapter
                 ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
                 : null
+            const adapterGoalMode =
+              'getGoalMode' in this.adapter
+                ? (this.adapter as { getGoalMode(): 'advisory' | 'enforce' }).getGoalMode()
+                : ('advisory' as const)
             executorStream = this.executeCLIStream({
               prompt: cliPromptInput,
               systemPrompt,
@@ -1171,7 +1243,7 @@ export class AgentSessionService extends AgentBaseService {
               mcpResult,
               localContextWindow,
               goal: adapterGoal ?? undefined,
-              presetId: streamPresetId
+              goalMode: adapterGoalMode,
             })
           }
           break
@@ -1226,6 +1298,26 @@ export class AgentSessionService extends AgentBaseService {
         mcpResult,
         llmProvider
       })
+
+      // Enqueue memory extraction from session transcript + git delta
+      try {
+        if (this.workspaceId && this.accumulatedText.length > 200) {
+          // Gate on sessionCapture setting
+          const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<string, unknown>
+          if (wSettings.memorySessionCapture !== false) {
+            const { memoryExtractionService } = await import('./memory-extraction.service')
+            memoryExtractionService.enqueueSessionExtraction({
+              workspaceId: this.workspaceId,
+              workspacePath: this.workspacePath,
+              transcript: this.accumulatedText,
+              startSha: this.currentStartSha ?? null,
+              conversationId
+            })
+          }
+        }
+      } catch (memErr) {
+        this.log.debug('[executeStream] Memory extraction enqueue failed (non-fatal):', memErr)
+      }
     } catch (error) {
       clearTimeout(interactionTimer)
       await this.handleStreamError(error as Error, this._lastTimedOut, recoveryDepth, timeoutMs)
@@ -1283,7 +1375,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
-    presetId?: string | null
+    goalMode?: 'advisory' | 'enforce'
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
     const cliOptions = this.buildCLIExecuteOptions(params)
     return this.cliExecutor.execute(cliOptions)
@@ -1297,13 +1389,14 @@ export class AgentSessionService extends AgentBaseService {
    */
   private async *executeOpenCodeStream(params: {
     prompt: string
+    images?: ImageAttachment[]
     systemPrompt: string
     isBuildMode: boolean
     abortController: AbortController
     mcpResult: AdapterMcpResult
     llmProvider?: LLMProvider
   }): AsyncGenerator<StreamChunk> {
-    const { prompt, isBuildMode, abortController } = params
+    const { prompt, images, isBuildMode, abortController } = params
 
     // Resolve provider config from workspace settings (shared helper)
     let providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
@@ -1389,6 +1482,7 @@ export class AgentSessionService extends AgentBaseService {
     // Execute through OpenCode — pass conversationId for multi-turn session reuse
     for await (const chunk of openCodeExecutor.execute({
       prompt,
+      images,
       systemPrompt: params.systemPrompt,
       provider: providerConfig,
       cwd: this.workspacePath!,
@@ -1600,7 +1694,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
-    presetId?: string | null
+    goalMode?: 'advisory' | 'enforce'
   }): CLIExecuteOptions {
     return this.executorFactory.buildCLIExecuteOptions(params)
   }
@@ -1685,10 +1779,7 @@ export class AgentSessionService extends AgentBaseService {
       )
     })
 
-    bridge.on('memory', (_payload: unknown) => {
-      this.controlToolState.memory = true
-      this.log.info(`[ipc-bridge] Memory event received for ${this.currentConversationId}`)
-    })
+    // memory bridge listener removed — memory tools now on dedicated memory MCP server
 
     const socketPath = bridge.getSocketPath()
     this.log.info(

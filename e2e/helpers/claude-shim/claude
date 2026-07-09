@@ -1,0 +1,352 @@
+#!/usr/bin/env node
+/**
+ * Fake `claude` CLI shim for E2E tests — speaks the NDJSON stream-json protocol.
+ *
+ * Conditional oracle: detects the phase from the first stdin user message and
+ * emits the appropriate structured blocks.
+ *
+ * Specify session  → minimal spec + blueprint-phase-complete (specify)
+ * Clarify turn 1   → findings + questions (q1–q3 with options)
+ * Clarify turn 2   → reads answer, emits resolved findings + blueprint-phase-complete (clarify)
+ *
+ * Designed to be placed on PATH ahead of the real `claude` CLI.
+ *
+ * Protocol reference: src/main/services/cli-executor/ndjson-parser.ts
+ *                     src/main/services/executor-utils/stream-normalizer.ts
+ */
+
+'use strict'
+
+const fs = require('fs')
+const path = require('path')
+const readline = require('readline')
+
+// ── Marker file (test can assert shim was used, not real CLI) ──
+
+const markerDir = process.env.CLAUDE_SHIM_MARKER_DIR || path.join(__dirname, '.markers')
+try { fs.mkdirSync(markerDir, { recursive: true }) } catch { /* ignore */ }
+const spawnId = `shim-${Date.now()}-${process.pid}`
+fs.writeFileSync(path.join(markerDir, spawnId), JSON.stringify({
+  pid: process.pid,
+  args: process.argv.slice(2),
+  timestamp: new Date().toISOString()
+}))
+
+// ── NDJSON helpers ──
+
+function emit(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n')
+}
+
+function emitInit() {
+  emit({
+    type: 'system',
+    subtype: 'init',
+    session_id: `e2e-shim-${Date.now()}`,
+    mcp_servers: []
+  })
+}
+
+function emitTextDelta(text) {
+  emit({
+    type: 'stream_event',
+    event: {
+      type: 'content_block_start',
+      content_block: { type: 'text' }
+    }
+  })
+  // Emit in one chunk for simplicity
+  emit({
+    type: 'stream_event',
+    event: {
+      type: 'content_block_delta',
+      delta: { type: 'text_delta', text }
+    }
+  })
+}
+
+function emitMessageStart() {
+  emit({
+    type: 'stream_event',
+    event: {
+      type: 'message_start',
+      message: {
+        usage: {
+          input_tokens: 100,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0
+        }
+      }
+    }
+  })
+}
+
+function emitResult(resultText) {
+  emit({
+    type: 'result',
+    subtype: 'success',
+    result: resultText || '',
+    terminal_reason: 'end_turn',
+    session_title: 'E2E Shim Session',
+    usage: {
+      input_tokens: 200,
+      output_tokens: 100,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0
+    }
+  })
+}
+
+// ── Response payloads ──
+
+const SPECIFY_RESPONSE = `I've analyzed the project description and generated a detailed specification.
+
+## Specification
+
+This project involves creating a simple endpoint service. The requirements are straightforward and can be implemented in a single iteration.
+
+### Requirements
+1. Create an HTTP endpoint
+2. Return a greeting response
+3. Handle basic error cases
+
+\`\`\`blueprint-phase-complete
+{"phase":"specify","status":"needs_clarification"}
+\`\`\``
+
+const CLARIFY_FINDINGS = {
+  findings: [
+    {
+      id: 'f1',
+      category: 'missing_requirements',
+      severity: 'high',
+      status: 'outstanding',
+      title: 'Response format unspecified',
+      description: 'The spec does not define whether the greeting endpoint should return plain text or JSON.',
+      specRefs: ['section 1.1'],
+      recommendation: 'Define the response content type and structure.'
+    },
+    {
+      id: 'f2',
+      category: 'ambiguous_language',
+      severity: 'medium',
+      status: 'outstanding',
+      title: 'Greeting personalization unclear',
+      description: 'It is unclear whether the greeting should include the user name or be generic.',
+      specRefs: [],
+      recommendation: 'Clarify personalization requirements.'
+    },
+    {
+      id: 'f3',
+      category: 'missing_edge_cases',
+      severity: 'low',
+      status: 'outstanding',
+      title: 'Rate limiting not addressed',
+      description: 'No mention of rate limiting or throttling for the endpoint.',
+      specRefs: [],
+      recommendation: 'Consider adding rate limits.'
+    }
+  ],
+  summary: '3 gaps identified: 1 high severity, 1 medium, 1 low.'
+}
+
+const CLARIFY_QUESTIONS = {
+  questions: [
+    {
+      id: 'q1',
+      header: 'Response Format',
+      question: 'Should the greeting endpoint return JSON or plain text?',
+      multiSelect: false,
+      options: [
+        { label: 'JSON', recommended: true, recommendedReason: 'Consistent with REST APIs' },
+        { label: 'Plain text', recommended: false },
+        { label: 'Other', recommended: false }
+      ]
+    },
+    {
+      id: 'q2',
+      header: 'Personalization',
+      question: 'Should the greeting be personalized with the user name?',
+      multiSelect: false,
+      options: [
+        { label: 'Yes, require name parameter', recommended: true, recommendedReason: 'Better UX' },
+        { label: 'No, generic greeting', recommended: false },
+        { label: 'Other', recommended: false }
+      ]
+    },
+    {
+      id: 'q3',
+      header: 'Rate Limiting',
+      question: 'Should the endpoint have rate limiting?',
+      multiSelect: false,
+      options: [
+        { label: '100 req/min', recommended: true, recommendedReason: 'Standard protection' },
+        { label: 'No rate limiting', recommended: false },
+        { label: 'Other', recommended: false }
+      ]
+    }
+  ]
+}
+
+function buildClarifyTurn1Response() {
+  const findingsJson = JSON.stringify(CLARIFY_FINDINGS)
+  const questionsJson = JSON.stringify(CLARIFY_QUESTIONS)
+
+  return `I've analyzed the specification and found several gaps that need to be addressed before we can proceed to planning.
+
+Here are the findings from my analysis:
+
+\`\`\`blueprint-clarify-findings
+${findingsJson}
+\`\`\`
+
+Based on these findings, I have the following questions:
+
+\`\`\`blueprint-clarify-questions
+${questionsJson}
+\`\`\``
+}
+
+function buildClarifyTurn2Response() {
+  const resolvedFindings = {
+    findings: CLARIFY_FINDINGS.findings.map(f => ({
+      ...f,
+      status: 'resolved'
+    })),
+    summary: 'All 3 gaps have been resolved based on the provided answers.'
+  }
+  const findingsJson = JSON.stringify(resolvedFindings)
+
+  return `Thank you for your answers. I've resolved all the outstanding findings.
+
+\`\`\`blueprint-clarify-findings
+${findingsJson}
+\`\`\`
+
+All gaps have been addressed. The specification is now complete and ready for planning.
+
+\`\`\`blueprint-phase-complete
+{"phase":"clarify","status":"complete","questionsAsked":3,"questionsAnswered":3}
+\`\`\``
+}
+
+// ── State machine ──
+
+let turnCount = 0
+let isSpecify = false
+let isClarify = false
+
+// ── Main loop ──
+
+async function main() {
+  // 1. Emit system/init immediately
+  emitInit()
+
+  // 2. Read stdin line-by-line (NDJSON protocol)
+  const rl = readline.createInterface({
+    input: process.stdin,
+    terminal: false,
+    crlfDelay: Infinity
+  })
+
+  for await (const line of rl) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    let msg
+    try {
+      msg = JSON.parse(trimmed)
+    } catch {
+      // Not JSON — might be a slash command (ignore)
+      continue
+    }
+
+    // Only process user messages
+    if (msg.type !== 'user') continue
+
+    const content = extractUserText(msg)
+    turnCount++
+
+    // Phase detection on first user message
+    if (turnCount === 1) {
+      if (content.includes('Generate a detailed specification') ||
+          content.includes('specification') && content.includes('description')) {
+        isSpecify = true
+      } else if (content.includes('Analyze the specification') ||
+                 content.includes('gap analysis')) {
+        isClarify = true
+      } else {
+        // Default: treat as specify for robustness
+        isSpecify = true
+      }
+    }
+
+    // Route to the appropriate handler
+    if (isSpecify) {
+      handleSpecifyTurn(content)
+      break // Specify is one-shot
+    } else if (isClarify) {
+      handleClarifyTurn(content, turnCount)
+      if (turnCount >= 2) break // Second turn completes clarify
+    }
+  }
+
+  // Give a moment for stdout to flush, then exit cleanly
+  await new Promise(r => setTimeout(r, 100))
+  process.exit(0)
+}
+
+function extractUserText(msg) {
+  const message = msg.message
+  if (!message || !message.content) return ''
+  if (typeof message.content === 'string') return message.content
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n')
+  }
+  return ''
+}
+
+function handleSpecifyTurn(_content) {
+  emitMessageStart()
+  const response = SPECIFY_RESPONSE
+  emitTextDelta(response)
+  emitResult(response)
+}
+
+function handleClarifyTurn(content, turn) {
+  emitMessageStart()
+
+  if (turn === 1) {
+    // First turn: emit findings + questions
+    const response = buildClarifyTurn1Response()
+    emitTextDelta(response)
+    emitResult(response)
+  } else {
+    // Second turn: user answered → check for sentinel or regression
+    //
+    // Bug 1 regression detection: if the incoming message is the phase kickoff
+    // message again (contains "Analyze the specification") instead of actual answers,
+    // the original bug is reintroduced. Re-emit identical questions so the test's
+    // "zero duplicate clarifyQuestions events" assertion catches it.
+    if (content.includes('Analyze the specification')) {
+      // Regression! Re-emit questions (loop signature)
+      const response = buildClarifyTurn1Response()
+      emitTextDelta(response)
+      emitResult(response)
+    } else {
+      // Normal answer flow — emit resolved findings + completion
+      const response = buildClarifyTurn2Response()
+      emitTextDelta(response)
+      emitResult(response)
+    }
+  }
+}
+
+main().catch(err => {
+  process.stderr.write(`[claude-shim] Fatal error: ${err.message}\n`)
+  process.exit(1)
+})

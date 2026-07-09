@@ -11,7 +11,8 @@ let counter = 0
 export function blueprintAgentToMessage(
   content: string,
   toolActivities: ToolActivity[],
-  index?: number | string
+  index?: number | string,
+  timestamp?: number
 ): Message {
   return {
     id: `blueprint-msg-${index ?? counter++}`,
@@ -19,7 +20,7 @@ export function blueprintAgentToMessage(
     role: 'da-vinci',
     contentMd: content,
     attachmentsJson: '[]',
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(timestamp ?? Date.now()).toISOString(),
     toolActivities
   }
 }

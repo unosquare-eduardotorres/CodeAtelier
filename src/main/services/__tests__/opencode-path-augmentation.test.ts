@@ -39,16 +39,17 @@ describe('OpenCode CLI PATH augmentation', () => {
     const originalPath = process.env.PATH
 
     try {
-      // Add a path twice
-      augmentOpenCodeCliPath()
-      augmentOpenCodeCliPath()
+      // Start with a clean PATH that has no homebrew paths
+      process.env.PATH = '/usr/bin:/bin'
 
-      const optHomebrewCount = (process.env.PATH?.match(/\/opt\/homebrew\/bin/g) || []).length
-      const homebrewPathCount = (process.env.PATH?.match(/\/usr\/local\/bin/g) || []).length
+      // Add paths twice
+      augmentOpenCodeCliPath()
+      const pathAfterFirst = process.env.PATH
+      augmentOpenCodeCliPath()
+      const pathAfterSecond = process.env.PATH
 
-      // Should not have duplicates
-      assert.ok(optHomebrewCount <= 1, 'Should not duplicate /opt/homebrew/bin')
-      assert.ok(homebrewPathCount <= 1, 'Should not duplicate /usr/local/bin')
+      // Second call should not change PATH (deduplication)
+      assert.equal(pathAfterSecond, pathAfterFirst, 'Second call should not add duplicate paths')
     } finally {
       process.env.PATH = originalPath
     }

@@ -17,7 +17,7 @@ describe('appendMcpToolGuidance', () => {
     }, 'claude-haiku-4-5-20251001')
     assert.ok(out.includes('Tool Priority'), 'Should include compact tool priority reminder')
     assert.ok(out.includes('search_identifiers'), 'Should mention search_identifiers')
-    assert.ok(out.includes('emit_plan'), 'Should include lean plan output guidance')
+    // emit_plan guidance removed — mode-context already carries the full emit_plan workflow
     // Should NOT include the full guidance blocks
     assert.ok(!out.includes('## Code Graph'), 'Should NOT include full Code Graph guidance')
     assert.ok(

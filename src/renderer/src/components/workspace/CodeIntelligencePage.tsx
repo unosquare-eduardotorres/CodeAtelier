@@ -7,7 +7,8 @@ import {
   SemanticSearchCard,
   EmbeddingModelCard,
   SearchPlayground,
-  LibraryDocsCard
+  LibraryDocsCard,
+  PromptOptimizerCard
 } from './code-intelligence'
 
 interface CodeIntelligencePageProps {
@@ -48,7 +49,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       // Check embedding model status if semantic search is enabled
       if (s.semanticSearchEnabled) {
         window.api
-          .embeddingCheckStatus()
+          .embeddingCheckStatus({ workspaceId: activeWorkspace.id })
           .then(setEmbeddingStatus)
           .catch((err) =>
             console.warn('[CodeIntelligence] Non-fatal: embedding status check failed:', err)
@@ -83,7 +84,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
 
     // Also check embedding status unconditionally for the model card
     window.api
-      .embeddingCheckStatus()
+      .embeddingCheckStatus({ workspaceId: activeWorkspace.id })
       .then(setEmbeddingStatus)
       .catch((err) =>
         console.warn('[CodeIntelligence] Non-fatal: embedding status check failed:', err)
@@ -143,7 +144,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       await handleToggleSetting('semanticSearchEnabled', v)
       if (v) {
         try {
-          const status = await window.api.embeddingCheckStatus()
+          const status = await window.api.embeddingCheckStatus({ workspaceId: activeWorkspace?.id })
           setEmbeddingStatus(status)
           if (!status.ready && !status.omlxEmbeddingModelLoaded) {
             onNavigateToModels?.()
@@ -208,6 +209,12 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       <EmbeddingModelCard
         embeddingStatus={embeddingStatus}
         isAppleSilicon={platformInfo?.isAppleSilicon ?? null}
+        onNavigateToModels={() => onNavigateToModels?.()}
+      />
+
+      <PromptOptimizerCard
+        enabled={settings.promptOptimizationEnabled !== false}
+        onToggle={(v) => handleToggleSetting('promptOptimizationEnabled', v)}
         onNavigateToModels={() => onNavigateToModels?.()}
       />
 

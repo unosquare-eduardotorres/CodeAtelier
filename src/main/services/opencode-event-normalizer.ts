@@ -54,6 +54,10 @@ export interface NormalizerState {
   lastPartType?: 'text' | 'thinking' | 'tool'
   /** F16: Whether we've seen text content before (for thinking→text boundary) */
   hasPriorText?: boolean
+  /** R5: Dedupe — callIDs for which we already emitted tool_use */
+  emittedToolUse?: Set<string>
+  /** R5: Dedupe — callIDs for which we already emitted tool_result */
+  emittedToolResult?: Set<string>
 }
 
 type EventProperties = Record<string, unknown>
@@ -168,6 +172,86 @@ function handleThinkingPart(part: Record<string, unknown>, state: NormalizerStat
   return [{ type: 'thinking', content }]
 }
 
+/**
+ * R5: Handle modern SDK ToolPart shape:
+ *   { type: 'tool', tool: string, callID: string, state: { status, input, output, error } }
+ *
+ * message.part.updated fires a full snapshot on every status transition
+ * (pending → running → completed). We dedupe via emittedToolUse / emittedToolResult
+ * sets so each callID emits exactly one tool_use and one tool_result.
+ */
+function handleToolPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
+  const toolName = part.tool as string | undefined
+  const callID = part.callID as string | undefined
+  const toolState = part.state as Record<string, unknown> | undefined
+  if (!toolName || !callID || !toolState) return []
+
+  const status = (toolState.status ?? toolState) as string
+  const chunks: StreamChunk[] = []
+
+  // Lazily initialise dedupe sets
+  if (!state.emittedToolUse) state.emittedToolUse = new Set()
+  if (!state.emittedToolResult) state.emittedToolResult = new Set()
+
+  // ── tool_use (first sighting with input) ──
+  // Emit on 'running', 'completed', or 'error' (or 'pending' when input is present).
+  if (!state.emittedToolUse.has(callID)) {
+    const input = toolState.input as Record<string, unknown> | string | undefined
+    const hasInput = input !== undefined && input !== null
+    if (status !== 'pending' || hasInput) {
+      state.emittedToolUse.add(callID)
+      state.lastPartType = 'tool'
+      chunks.push({
+        type: 'tool_use',
+        toolName,
+        toolId: callID,
+        toolInput: hasInput
+          ? (typeof input === 'string' ? input : JSON.stringify(input))
+          : undefined
+      })
+    }
+  }
+
+  // ── tool_result (on completed / error) ──
+  if ((status === 'completed' || status === 'error') && !state.emittedToolResult.has(callID)) {
+    state.emittedToolResult.add(callID)
+
+    const output = (status === 'error' ? toolState.error : toolState.output) as string | undefined
+    const resultStr = typeof output === 'string' ? output : JSON.stringify(output ?? '')
+
+    chunks.push({
+      type: 'tool_result',
+      toolName,
+      toolId: callID,
+      content: resultStr
+    })
+
+    // Generate a human-readable tool_use_summary (mirrors legacy tool-invocation logic)
+    const resultSummaryObj = extractResultSummary(toolName, resultStr)
+    let inputSummary: string | undefined
+    const rawInput = toolState.input as Record<string, unknown> | undefined
+    if (rawInput && typeof rawInput === 'object') {
+      inputSummary = summarizeToolInput(toolName, rawInput)
+    }
+
+    if (resultSummaryObj?.result || inputSummary) {
+      chunks.push({
+        type: 'tool_use_summary',
+        toolName,
+        toolId: callID,
+        content: [
+          inputSummary ? `Input: ${inputSummary}` : '',
+          resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
+        ]
+          .filter(Boolean)
+          .join(' — ')
+      })
+    }
+  }
+
+  return chunks
+}
+
 /** GAP-9: Handle structured_output / structured-output part. */
 function handleStructuredOutputPart(part: Record<string, unknown>): StreamChunk[] {
   const data = part.content ?? part.data ?? part.result
@@ -242,6 +326,8 @@ function handleMessagePartUpdated(
       return handleTextPart(part, state)
     case 'tool-invocation':
       return handleToolInvocationPart(part, state)
+    case 'tool':
+      return handleToolPart(part, state)
     case 'thinking':
     case 'reasoning':
     case 'reasoning-delta':
@@ -460,7 +546,18 @@ function handleSessionDiff(properties: EventProperties): StreamChunk[] {
 function handleSessionStatus(properties: EventProperties): StreamChunk[] {
   const rawStatus = properties.status
   if (!rawStatus) return []
-  const status = typeof rawStatus === 'string' ? rawStatus : JSON.stringify(rawStatus)
+  let status: string
+  if (typeof rawStatus === 'string') {
+    status = rawStatus
+  } else if (
+    typeof rawStatus === 'object' &&
+    typeof (rawStatus as Record<string, unknown>).type === 'string'
+  ) {
+    // OpenCode local backends emit object statuses like {type:'busy'}
+    status = (rawStatus as { type: string }).type
+  } else {
+    status = JSON.stringify(rawStatus)
+  }
   const statusMap: Record<string, string> = {
     thinking: 'thinking',
     tool_use: 'reviewing',

@@ -518,22 +518,6 @@ describe('IPC handler bodies — low-coverage files', () => {
     )
   })
 
-  test('preset handlers execute', async () => {
-    await testHandlersForModule(
-      'preset',
-      '../preset.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          presetId: 'preset-1',
-          id: 'preset-1',
-          name: 'Test Preset',
-          prompt: 'Test prompt',
-        },
-      }
-    )
-  })
 
   test('plan handlers execute', async () => {
     await testHandlersForModule(

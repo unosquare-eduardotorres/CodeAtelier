@@ -13,7 +13,8 @@ import {
   BudgetWarningBanner,
   ErrorBoundary,
   ToastContainer,
-  TokenDetailsModal
+  TokenDetailsModal,
+  UnsavedChangesDialog
 } from '@renderer/components/common'
 import { NotificationStack } from '@renderer/components/notifications'
 import { useBackgroundSessionListeners } from '@renderer/hooks/useBackgroundSessionListeners'
@@ -30,6 +31,7 @@ import {
   useIndexingStore,
   useMpaStore
 } from '@renderer/store'
+import { useSettingsStore } from '@renderer/store/settings.store'
 import { useCouncilStore } from '@renderer/store/council.store'
 
 import StatusBar from './StatusBar'
@@ -159,6 +161,61 @@ export default function AppLayout(): React.JSX.Element {
   // Multi-workspace: listen for background session status + permission events
   useBackgroundSessionListeners()
 
+  // ── Unsaved-changes navigation guard ──
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null)
+
+  const guardNavigation = useCallback(
+    (action: () => void) => {
+      const guard = useSettingsStore.getState().unsavedGuard
+      if (guard?.isDirty()) {
+        setPendingNav(() => action)
+      } else {
+        action()
+      }
+    },
+    []
+  )
+
+  const guardedSetView = useCallback(
+    (v: 'chat' | 'app-settings' | 'help' | 'bugs') => guardNavigation(() => setView(v)),
+    [guardNavigation]
+  )
+  const guardedSetSidebarView = useCallback(
+    (v: 'chat' | 'settings') => {
+      // Only guard transitions AWAY from settings
+      if (v !== 'settings') {
+        guardNavigation(() => setSidebarView(v))
+      } else {
+        setSidebarView(v)
+      }
+    },
+    [guardNavigation]
+  )
+  const guardedSetTab = useCallback(
+    (t: SettingsTab) => guardNavigation(() => setWorkspaceSettingsTab(t)),
+    [guardNavigation]
+  )
+
+  const handleUnsavedSave = useCallback(async () => {
+    const guard = useSettingsStore.getState().unsavedGuard
+    if (guard) await guard.save()
+    const action = pendingNav
+    setPendingNav(null)
+    action?.()
+  }, [pendingNav])
+
+  const handleUnsavedDiscard = useCallback(() => {
+    const guard = useSettingsStore.getState().unsavedGuard
+    if (guard) guard.discard()
+    const action = pendingNav
+    setPendingNav(null)
+    action?.()
+  }, [pendingNav])
+
+  const handleUnsavedCancel = useCallback(() => {
+    setPendingNav(null)
+  }, [])
+
   // ── Extracted hooks ──
   const zoomFactor = useAppZoom()
   const { currentBranch, isGitRepo } = useBranchIndicator(
@@ -167,7 +224,7 @@ export default function AppLayout(): React.JSX.Element {
     repoInfo
   )
   const grillStatus = useGrillStatus(activeWorkspace?.id)
-  useWorkspaceListeners(activeWorkspace, setWorkspaceSettingsTab, setSidebarView)
+  useWorkspaceListeners(activeWorkspace, guardedSetTab, guardedSetSidebarView)
   const {
     handleGoHome,
     handleNavigateToChat,
@@ -179,9 +236,9 @@ export default function AppLayout(): React.JSX.Element {
   } = useNavigationHandlers(
     activeWorkspace,
     activeConversation,
-    setView,
-    setSidebarView,
-    setWorkspaceSettingsTab,
+    guardedSetView,
+    guardedSetSidebarView,
+    guardedSetTab,
     setShowNewChat,
     setPendingGrill
   )
@@ -237,21 +294,22 @@ export default function AppLayout(): React.JSX.Element {
   // Toggle a view — if already active, go to chat; otherwise switch to it
   const toggleView = useCallback(
     (target: 'app-settings' | 'help' | 'bugs') => {
-      setView((current) => (current === target ? 'chat' : target))
+      // Can't use the updater form with guardNavigation, so read current view
+      guardNavigation(() => setView((current) => (current === target ? 'chat' : target)))
     },
-    []
+    [guardNavigation]
   )
 
   // Navigate back — Esc key handler priority
   const navigateBack = useCallback(() => {
     if (view === 'help' || view === 'app-settings') {
-      setView('chat')
+      guardedSetView('chat')
       return
     }
     if (sidebarView === 'settings') {
-      setSidebarView('chat')
+      guardedSetSidebarView('chat')
     }
-  }, [view, sidebarView])
+  }, [view, sidebarView, guardedSetView, guardedSetSidebarView])
 
   // Keyboard shortcuts — extracted to dedicated hook
   useAppKeyboardShortcuts({
@@ -261,19 +319,19 @@ export default function AppLayout(): React.JSX.Element {
     updateMode,
     navigateBack,
     setSidebarCollapsed,
-    setView,
+    setView: guardedSetView,
     setShowNewChat
   })
 
   const renderMainContent = (): React.JSX.Element => {
     if (view === 'bugs') {
-      return <BugTrackerPage onBack={() => setView('chat')} />
+      return <BugTrackerPage onBack={() => guardedSetView('chat')} />
     }
     if (view === 'help') {
-      return <HelpView onBack={() => setView('chat')} />
+      return <HelpView onBack={() => guardedSetView('chat')} />
     }
     if (view === 'app-settings') {
-      return <SettingsPage onBack={() => setView('chat')} />
+      return <SettingsPage onBack={() => guardedSetView('chat')} />
     }
     if (!activeWorkspace) {
       return <WelcomeScreen />
@@ -284,7 +342,7 @@ export default function AppLayout(): React.JSX.Element {
           tab={workspaceSettingsTab}
           onNavigateToChat={handleNavigateToChat}
           onFixInNewChat={handleFixInNewChat}
-          onSettingsTabChange={(t) => setWorkspaceSettingsTab(t)}
+          onSettingsTabChange={(t) => guardedSetTab(t)}
           onSendPlanToGrill={handleSendPlanToGrill}
           pendingGrill={pendingGrill}
           onPendingGrillConsumed={() => setPendingGrill(null)}
@@ -298,8 +356,8 @@ export default function AppLayout(): React.JSX.Element {
         showNewChat={showNewChat}
         onNewChatDismiss={() => setShowNewChat(false)}
         onNavigateToSettings={() => {
-          setWorkspaceSettingsTab('repository')
-          setSidebarView('settings')
+          guardedSetTab('repository')
+          guardedSetSidebarView('settings')
         }}
       />
     )
@@ -341,8 +399,8 @@ export default function AppLayout(): React.JSX.Element {
               onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
               onCreateIdea={handleCreateIdea}
               activeSettingsTab={workspaceSettingsTab}
-              onSettingsTabChange={setWorkspaceSettingsTab}
-              onViewChange={setSidebarView}
+              onSettingsTabChange={guardedSetTab}
+              onViewChange={guardedSetSidebarView}
               onNewChat={() => setShowNewChat(true)}
             />
           </Sidebar>
@@ -351,7 +409,7 @@ export default function AppLayout(): React.JSX.Element {
         <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
       </div>
 
-      <ToastContainer onNavigate={(target) => setView(target as typeof view)} />
+      <ToastContainer onNavigate={(target) => guardedSetView(target as typeof view)} />
       <NotificationStack />
 
       <TokenDetailsModal
@@ -382,8 +440,8 @@ export default function AppLayout(): React.JSX.Element {
         indexingState={indexingState}
         sidebarView={sidebarView}
         onNavigateToSettings={(tab) => {
-          setWorkspaceSettingsTab(tab as SettingsTab)
-          setSidebarView('settings')
+          guardedSetTab(tab as SettingsTab)
+          guardedSetSidebarView('settings')
         }}
         onOpenContextModal={() => {
           if (contextUsage) {
@@ -400,6 +458,13 @@ export default function AppLayout(): React.JSX.Element {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomReset={handleZoomReset}
+      />
+
+      <UnsavedChangesDialog
+        isOpen={pendingNav !== null}
+        onSave={handleUnsavedSave}
+        onDiscard={handleUnsavedDiscard}
+        onCancel={handleUnsavedCancel}
       />
     </div>
   )

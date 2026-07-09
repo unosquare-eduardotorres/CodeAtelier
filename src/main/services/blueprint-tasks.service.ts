@@ -9,18 +9,20 @@ import { EventEmitter } from 'node:events'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
+import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintTasksAdapter } from './role-adapters/blueprint/blueprint-tasks.adapter'
 import { buildTasksGoalCondition } from './blueprint-goal-conditions'
-import { parsePhaseCompletionBlock, parseBlueprintTasks } from './blueprint-artifact-parsers'
+import { parsePhaseCompletionBlock, parseBlueprintTasks, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
+import { blueprintReviewService } from './blueprint-review.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository
 } from '../db/repositories/blueprint.repository'
 import type {
   BlueprintPhaseStartPayload,
-  BlueprintPhaseProgressPayload,
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload
 } from '../../shared/blueprint-types'
@@ -30,6 +32,7 @@ const bpLog = log.scope('blueprint-tasks')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintTasksService extends EventEmitter {
+
   // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
   // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
   private safeEmit(event: string, payload: unknown): boolean {
@@ -54,6 +57,8 @@ export class BlueprintTasksService extends EventEmitter {
     // finally's markPipelineStopped() is guaranteed to run.
     let tasksPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
     let session: AgentSessionService | null = null
+    // BP-CHAIN-TASKS-REVIEW: Method-local (not instance field) to avoid race across concurrent workspaces.
+    let pendingReviewDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
 
     try {
       // 1. Pipeline + DB state
@@ -74,7 +79,7 @@ export class BlueprintTasksService extends EventEmitter {
       const adapter = new BlueprintTasksAdapter({ workspaceId, blueprintId, phaseContext })
 
       const blueprint = blueprintService.getBlueprint(blueprintId)
-      adapter.setGoalCondition(buildTasksGoalCondition(blueprint?.title ?? 'Unknown'))
+      adapter.setGoalCondition(buildTasksGoalCondition(blueprint?.title ?? 'Unknown'), 'enforce')
 
       session = new AgentSessionService(adapter)
 
@@ -82,25 +87,26 @@ export class BlueprintTasksService extends EventEmitter {
       this.safeEmit('phaseStart', {
         blueprintId,
         workspaceId,
-        phase: 'tasks'
+        phase: 'tasks',
+        goal: buildTasksGoalCondition(blueprint?.title ?? 'Unknown')
       } satisfies BlueprintPhaseStartPayload)
 
-      // 5. Wire streaming
+      // 5. Wire streaming + stall watchdog
+      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'TASKS')
+
       session.on('chunk', (chunk: StreamChunk) => {
-        if (chunk.type === 'text' && chunk.content) {
-          this.safeEmit('phaseProgress', {
-            blueprintId,
-            workspaceId,
-            phase: 'tasks',
-            text: chunk.content
-          } satisfies BlueprintPhaseProgressPayload)
-        }
+        stallWatchdog.touch()
+        forwardBlueprintChunk(
+          (event, payload) => this.safeEmit(event, payload),
+          chunk,
+          { blueprintId, workspaceId, phase: 'tasks', workspacePath, mode: 'plan' }
+        )
       })
 
       session.on('statusUpdate', (status: AgentStatus) => {
         this.safeEmit('status', { workspaceId, status })
       })
-      // 6. Start session + send with timeout + abort race
+      // 6. Start session + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
       const syntheticConvId = `blueprint-tasks-${blueprintId}-${Date.now()}`
@@ -124,9 +130,10 @@ export class BlueprintTasksService extends EventEmitter {
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
 
       try {
-        await Promise.race([sendPromise, timeoutPromise, abortPromise])
+        await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        stallWatchdog.dispose()
       }
 
       // 7. Parse output
@@ -142,6 +149,16 @@ export class BlueprintTasksService extends EventEmitter {
           contentJson: tasksJson ?? undefined
         })
         blueprintPhaseRepository.setConversation(tasksPhase.id, syntheticConvId)
+
+        // 8b. Save discoveries artifact (if emitted)
+        const discoveries = parseDiscoveriesBlock(text)
+        if (discoveries?.length) {
+          blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+            type: 'discoveries',
+            contentJson: { phase: 'tasks', entries: discoveries }
+          })
+        }
+
         blueprintPhaseRepository.updateStatus(tasksPhase.id, 'complete')
       }
 
@@ -178,6 +195,9 @@ export class BlueprintTasksService extends EventEmitter {
           artifact: { type: 'tasks', contentMd: text }
         } satisfies BlueprintPhaseArtifactPayload)
       }
+
+      // BP-CHAIN-TASKS-REVIEW: Auto-dispatch REVIEW after TASKS completes.
+      pendingReviewDispatch = { blueprintId, workspaceId, workspacePath }
     } catch (err) {
       bpLog.error(`[startTasksPhase] TASKS phase failed:`, err)
 
@@ -198,17 +218,44 @@ export class BlueprintTasksService extends EventEmitter {
         })
       }
 
+      // M5: Use failPipeline to properly transition machine to 'failed' state
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      blueprintService.failPipeline(workspaceId, errorMsg)
+
+      const autoRetrying = blueprintService.scheduleAutoRetry({
+        blueprintId, workspaceId, workspacePath, phase: 'tasks', error: errorMsg
+      })
+
       this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'tasks',
-        status: 'failed'
+        status: 'failed',
+        error: errorMsg,
+        ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       if (session) {
         await session.stop()
       }
       blueprintService.markPipelineStopped(workspaceId)
+
+      // BP-CHAIN-TASKS-REVIEW: Dispatch review AFTER releasing the pipeline lock.
+      if (pendingReviewDispatch) {
+        const pendingReview = pendingReviewDispatch
+        const currentStatus = blueprintRepository.findById(pendingReview.blueprintId)?.status
+        if (currentStatus !== 'cancelled') {
+          try {
+            blueprintReviewService
+              .startReviewPhase(pendingReview)
+              .catch((err) => {
+                bpLog.error('[tasks→review] Review phase failed:', err)
+              })
+          } catch (syncErr) {
+            bpLog.error('[tasks→review] Review startup failed (sync):', syncErr)
+          }
+        }
+      }
     }
   }
 

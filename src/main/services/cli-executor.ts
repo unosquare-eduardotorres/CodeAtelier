@@ -104,15 +104,27 @@ export interface CLIExecuteOptions {
   continueSession?: boolean
   /** Effort level — Claude Code 2.1+ supports all 5 levels natively: low, medium, high, xhigh, max */
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-  /** Completion goal — Claude works autonomously until this condition is met (Claude Code 2.1.139+) */
+  /** Completion goal — Claude works autonomously until this condition is met.
+   *  Dual delivery: (1) appended to system prompt as ## Completion Goal for persistent
+   *  visibility, and (2) queued as a `/goal` slash command via stdin for native enforcement
+   *  (Haiku-based stop-hook evaluator). */
   goal?: string
+  /**
+   * Goal delivery mode:
+   * - `'advisory'` (default): goal only in system prompt (## Completion Goal section).
+   * - `'enforce'`: additionally queues `/goal <condition>` via stdin for native
+   *   stop-hook enforcement (Haiku evaluator). Use for phases where structured
+   *   output MUST be produced (plan, tasks, review, build, verify).
+   */
+  goalMode?: 'advisory' | 'enforce'
   /** Enable 1M context beta */
   betas?: string[]
   /** Fallback model when primary unavailable */
   fallbackModel?: string
   /** Resume at a specific message point (undo support) */
   resumeSessionAt?: string
-  /** Max thinking tokens per turn — caps thinking token spend (Claude Code 2.1.139+) */
+  /** Max thinking tokens per turn — advisory only.
+   *  Dropped silently (no CLI equivalent; effort level caps reasoning). */
   thinkingBudget?: number
 }
 
@@ -150,6 +162,12 @@ const MESSAGE_TIMEOUT_MS = 5 * 60_000 // 5 minutes
  */
 const TOOL_RESULT_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
+/** Maximum character length for a /goal condition sent to the CLI. */
+const GOAL_MAX_CHARS = 4_000
+
+/** Words that, when a goal condition starts with them, collide with /goal subcommands. */
+const GOAL_CLEAR_ALIASES = /^(clear|stop|off|reset|none|cancel)\b/i
+
 /** Regex for stderr patterns that indicate real errors (not progress info). */
 const STDERR_ERROR_PATTERN = /error|fatal|panic|ENOENT|EACCES|permission denied|segfault|SIGABRT/i
 
@@ -173,6 +191,8 @@ export class CLIExecutor {
   private lastStderrError: string | null = null
   /** Exit code from the most recent process exit — checked after stream exhausts */
   private lastExitCode: number | null = null
+  /** Whether a /goal command was queued for the current turn — enables trailing-result drain */
+  private goalQueuedForTurn = false
 
   /** Get the captured session ID */
   getSessionId(): string | undefined {
@@ -220,6 +240,18 @@ export class CLIExecutor {
         }
         executorLog.info('[CLI:send] Continuing existing session — writing message to stdin')
         await this.writeToStdin(buildUserMessage(options.prompt))
+
+        // Queue /goal as a second stdin message (continue-session path) — enforce mode only
+        const effectiveGoalMode = options.goalMode ?? 'advisory'
+        const goalCmd =
+          options.goal && effectiveGoalMode === 'enforce' ? buildGoalCommand(options.goal) : null
+        if (goalCmd && this.cliProcess?.stdin) {
+          await this.writeToStdin(buildUserMessage(goalCmd))
+          this.goalQueuedForTurn = true
+          executorLog.info(`[CLI:goal] queued condition (${goalCmd.length} chars)`)
+        } else {
+          this.goalQueuedForTurn = false
+        }
       } else {
         await this.spawnCLIProcess(options)
       }
@@ -240,6 +272,8 @@ export class CLIExecutor {
       // directly we can stop consuming on a `result` event without destroying
       // the iterator, so multi-turn stdin/stdout works.
       let msgCount = 0
+      let lastLoggedPendingTools = 0 // throttle: only log on transitions (0→N or N→0)
+      const goalWasQueued = this.goalQueuedForTurn
       try {
         while (true) {
           // Per-message timeout prevents indefinite hangs when CLI stalls
@@ -253,15 +287,23 @@ export class CLIExecutor {
             // human input (ask_user / elicitation), which has no timeout.
             if (tools.hasAskUserPending()) {
               // Human input has no meaningful timeout — user decides when to respond
-              executorLog.debug(
-                `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending) — timeout suspended`
-              )
+              // Log only on 0→N transition (not per message)
+              if (lastLoggedPendingTools === 0) {
+                executorLog.debug(
+                  `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending) — timeout suspended`
+                )
+              }
+              lastLoggedPendingTools = tools.pendingToolCount
               iterResult = await this.ndjsonIterator.next()
             } else {
               // MCP tool execution: generous timeout prevents indefinite hangs
-              executorLog.debug(
-                `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
-              )
+              // Log only on 0→N transition (not per message)
+              if (lastLoggedPendingTools === 0) {
+                executorLog.debug(
+                  `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
+                )
+              }
+              lastLoggedPendingTools = tools.pendingToolCount
               let toolTimeoutHandle: ReturnType<typeof setTimeout> | undefined
               iterResult = await Promise.race([
                 this.ndjsonIterator.next(),
@@ -279,6 +321,13 @@ export class CLIExecutor {
               ]).finally(() => clearTimeout(toolTimeoutHandle))
             }
           } else {
+            // Log tool-complete transition (N→0) once
+            if (lastLoggedPendingTools > 0) {
+              executorLog.debug(
+                `[CLI:await] Tool calls resolved (was ${lastLoggedPendingTools} pending)`
+              )
+              lastLoggedPendingTools = 0
+            }
             // No tools pending — use normal timeout to detect CLI stalls
             let timeoutHandle: ReturnType<typeof setTimeout> | undefined
             iterResult = await Promise.race([
@@ -328,13 +377,47 @@ export class CLIExecutor {
           yield* normalizeMessage(msg, tools, tokens, state, options.cwd)
 
           // In interactive mode (no -p), the CLI stays alive after responding.
-          // Stop consuming on the result event (end-of-turn) so the caller can
-          // finalize. The iterator stays alive for the next turn.
+          // Finalize on the FIRST result event — always. When a /goal was queued,
+          // the CLI may emit a trailing second result for the /goal command.
+          // We drain it defensively (1.5s race) so it can't poison the next turn.
           if (msg.type === 'result') {
             this.cliReadyForInput = true
+            this.goalQueuedForTurn = false
+            // Stop heartbeat immediately — the stream is pausing between turns
+            // and no more activity is expected until the next send().  Without
+            // this, the timer keeps firing stall warnings during the idle gap.
+            heartbeat.stop()
             executorLog.info(
               '[CLI:result-received] Turn complete — pausing stream read (ready for input)'
             )
+
+            // Defensive drain: when a /goal was queued, race iterator.next() vs
+            // 1.5s timer. If a trailing result arrives, consume + discard it.
+            // If the timer wins, the pending .next() resolves on the next turn's
+            // first message and is handled by the existing loop.
+            if (goalWasQueued && this.ndjsonIterator) {
+              const drainIterator = this.ndjsonIterator
+              const drainTimer = new Promise<'timeout'>((resolve) =>
+                setTimeout(() => resolve('timeout'), 1500)
+              )
+              const drainNext = drainIterator.next().then((r) => ({ ...r, _source: 'iter' as const }))
+              const drainResult = await Promise.race([drainNext, drainTimer])
+              if (drainResult !== 'timeout' && !drainResult.done) {
+                const trailingMsg = drainResult.value as Record<string, unknown>
+                if (trailingMsg.type === 'result') {
+                  executorLog.info('[CLI:goal] drained trailing goal result')
+                } else {
+                  // Not a result — unexpected. Log but don't re-process.
+                  executorLog.warn(
+                    `[CLI:goal] drained non-result message (type=${trailingMsg.type}) — discarded`
+                  )
+                }
+              } else if (drainResult === 'timeout') {
+                executorLog.debug(
+                  '[CLI:goal] drain timer expired — no trailing result (will resolve on next turn)'
+                )
+              }
+            }
             break
           }
         }
@@ -354,10 +437,9 @@ export class CLIExecutor {
         executorLog.error(
           `[CLI:crash-detected] CLI exited with code ${this.lastExitCode} before producing any output${stderrHint}`
         )
-        yield {
-          type: 'error',
-          error: `CLI failed to start (exit code ${this.lastExitCode})${stderrHint}`
-        }
+        const errorMsg = `CLI failed to start (exit code ${this.lastExitCode})${stderrHint}`
+        telemetry.recordFailure(new Error(errorMsg))
+        yield { type: 'error', error: errorMsg }
       }
     } catch (error) {
       executorLog.error('CLI execution error:', error)
@@ -370,7 +452,8 @@ export class CLIExecutor {
       heartbeat.stop()
     }
 
-    // Telemetry: record success
+    // Telemetry: finalize() is a no-op when recordFailure() was already called
+    // (finalize only transitions from 'started' → 'succeeded').
     const tokenSummary = tokens.getSummary()
     telemetry.finalize(tokenSummary)
 
@@ -485,8 +568,15 @@ export class CLIExecutor {
   }
 
   /**
-   * Kill the active CLI process. SIGTERM → 5s → SIGKILL.
-   * Matches the existing process termination pattern in the codebase.
+   * Kill the active CLI process. SIGTERM first (closes stdout so any pending
+   * iterator `.next()` settles), then close the async generator, then wait for
+   * exit with a 5s SIGKILL escalation.
+   *
+   * DEADLOCK-FIX: Previously `iter.return()` was called BEFORE `proc.kill()`.
+   * Async-generator semantics queue `.return()` behind a pending `.next()`,
+   * which only settles when stdout closes — but `proc.kill()` (the thing that
+   * closes stdout) was sequenced AFTER the await. This caused a permanent
+   * deadlock when the CLI was idle after emitting a result.
    */
   async killProcess(): Promise<void> {
     if (!this.cliProcess) return
@@ -497,15 +587,26 @@ export class CLIExecutor {
     this.ndjsonIterator = null
     this.cliReadyForInput = false
 
-    // Properly close the async generator to release stream references
+    // Step 1: Send SIGTERM first — this closes stdout, which lets any pending
+    // iterator .next() settle so .return() can proceed.
+    try {
+      proc.kill('SIGTERM')
+    } catch {
+      // Already dead — fall through to cleanup
+    }
+
+    // Step 2: Close the async generator with a 2s timeout race.
+    // After SIGTERM, stdout should close promptly letting .return() complete.
     if (iter) {
       try {
-        await iter.return?.(undefined)
+        const iterTimeout = new Promise<void>((r) => setTimeout(r, 2000))
+        await Promise.race([iter.return?.(undefined), iterTimeout])
       } catch {
         /* ignore — process is dying */
       }
     }
 
+    // Step 3: Wait for process exit with 5s SIGKILL escalation.
     return new Promise<void>((resolve) => {
       const forceKillTimer = setTimeout(() => {
         try {
@@ -523,13 +624,8 @@ export class CLIExecutor {
         resolve()
       })
 
-      try {
-        proc.kill('SIGTERM')
-      } catch {
-        clearTimeout(forceKillTimer)
-        this.cleanupSystemPromptFile()
-        resolve()
-      }
+      // If process already exited from SIGTERM, 'exit' fires immediately.
+      // If not, forceKillTimer will escalate.
     })
   }
 
@@ -627,6 +723,18 @@ export class CLIExecutor {
     // Write the initial user message to stdin
     if (this.cliProcess.stdin) {
       await this.writeToStdin(buildUserMessage(options.prompt))
+
+      // Queue /goal as a second stdin message (spawn path) — enforce mode only
+      const spawnGoalMode = options.goalMode ?? 'advisory'
+      const goalCmd =
+        options.goal && spawnGoalMode === 'enforce' ? buildGoalCommand(options.goal) : null
+      if (goalCmd) {
+        await this.writeToStdin(buildUserMessage(goalCmd))
+        this.goalQueuedForTurn = true
+        executorLog.info(`[CLI:goal] queued condition (${goalCmd.length} chars)`)
+      } else {
+        this.goalQueuedForTurn = false
+      }
     }
   }
 
@@ -696,7 +804,15 @@ export class CLIExecutor {
     // System prompt — written to a temp file to avoid shell escaping issues
     // and OS arg-length limits (system prompts can be 15K-25K chars).
     if (options.systemPrompt) {
-      const promptFilePath = this.writeSystemPromptFile(options.systemPrompt)
+      let fullPrompt = options.systemPrompt
+
+      // Goal — delivered via system prompt since the CLI has no --goal flag.
+      // (/goal is a session-only slash command, not a CLI argument.)
+      if (options.goal) {
+        fullPrompt += `\n\n## Completion Goal\n\nWork autonomously until the following condition is met, then emit the completion block:\n\n${options.goal}`
+      }
+
+      const promptFilePath = this.writeSystemPromptFile(fullPrompt)
       args.push('--system-prompt-file', promptFilePath)
     }
 
@@ -760,15 +876,9 @@ export class CLIExecutor {
       args.push('--fallback-model', options.fallbackModel)
     }
 
-    // Goal — autonomous completion condition (Claude Code 2.1.139+)
-    if (options.goal) {
-      args.push('--goal', options.goal)
-    }
-
-    // Thinking budget — caps thinking tokens per turn (Claude Code 2.1.139+)
-    if (options.thinkingBudget != null && options.thinkingBudget > 0) {
-      args.push('--thinking-budget', String(options.thinkingBudget))
-    }
+    // Goal is delivered via system prompt (see above) for persistent visibility.
+    // The /goal slash command is queued separately via stdin in spawnCLIProcess().
+    // thinkingBudget is dropped silently (no CLI equivalent).
 
     return args
   }
@@ -830,6 +940,43 @@ export class CLIExecutor {
       CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${app.getVersion()}`
     }
   }
+}
+
+// ── Goal command builder ──
+
+/**
+ * Build a sanitized `/goal` slash command string from a raw condition.
+ *
+ * - Collapses newlines/whitespace to single spaces, trims.
+ * - Returns `null` for empty/whitespace-only input.
+ * - Prefix-guards against clear-alias words that the CLI interprets as
+ *   subcommands (`/goal clear`, `/goal stop`, etc.) by wrapping with
+ *   "Condition: " prefix.
+ * - Caps at `GOAL_MAX_CHARS` (4,000) — truncates with a log warning.
+ *
+ * Exported for testing.
+ */
+export function buildGoalCommand(goal: string): string | null {
+  // Collapse newlines and whitespace to single spaces
+  const sanitized = goal.replace(/\s+/g, ' ').trim()
+  if (!sanitized) return null
+
+  // Prefix-guard: if the condition text starts with a word the CLI would
+  // interpret as a clear/cancel subcommand, wrap it so it's unambiguous.
+  let conditionText = sanitized
+  if (GOAL_CLEAR_ALIASES.test(conditionText)) {
+    conditionText = `Condition: ${conditionText}`
+  }
+
+  // Truncate if over the cap
+  if (conditionText.length > GOAL_MAX_CHARS) {
+    executorLog.warn(
+      `[CLI:goal] condition truncated from ${conditionText.length} to ${GOAL_MAX_CHARS} chars`
+    )
+    conditionText = conditionText.slice(0, GOAL_MAX_CHARS)
+  }
+
+  return `/goal ${conditionText}`
 }
 
 /**

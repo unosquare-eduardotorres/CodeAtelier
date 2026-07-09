@@ -40,7 +40,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/test',
     workspaceId: 'ws-1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -75,7 +75,7 @@ describe('BaseRoleAdapter — strategy dispatch', () => {
 
   // ── buildControlCallbacks ──
 
-  test('buildControlCallbacks_returns_onPlan_onAskUser_onMemory', () => {
+  test('buildControlCallbacks_returns_onPlan_onAskUser', () => {
     const a = new TestAdapter()
     const cbs = a.buildControlCallbacks({
       conversationId: 'conv-1',
@@ -84,7 +84,6 @@ describe('BaseRoleAdapter — strategy dispatch', () => {
     })
     assert.equal(typeof cbs.onPlan, 'function')
     assert.equal(typeof cbs.onAskUser, 'function')
-    assert.equal(typeof cbs.onMemory, 'function')
   })
 
   test('buildControlCallbacks_onPlan_callable', () => {
@@ -196,7 +195,7 @@ describe('BaseRoleAdapter — strategy dispatch', () => {
 
   test('onSessionStart_is_no_op_by_default', async () => {
     const a = new TestAdapter()
-    await a.onSessionStart({ workspacePath: '/tmp', workspaceId: null, conversationId: null, presetId: null })
+    await a.onSessionStart({ workspacePath: '/tmp', workspaceId: null, conversationId: null })
   })
 
   test('onSessionStop_is_no_op_by_default', () => {

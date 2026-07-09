@@ -60,7 +60,6 @@ export default function ChatSidebar({
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
-    presetId?: string | null
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -70,8 +69,7 @@ export default function ChatSidebar({
       data.personaSpecialistId,
       data.llmProvider,
       undefined,
-      data.communicationTone,
-      data.presetId
+      data.communicationTone
     )
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {

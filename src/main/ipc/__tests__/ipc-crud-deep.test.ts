@@ -6,7 +6,7 @@
  * that each handler uses, covering the validate-args code paths.
  *
  * Covers:
- *   conversation-crud, preset, chat-completion, checkpoint, chat-mode,
+ *   conversation-crud, chat-completion, checkpoint, chat-mode,
  *   sdk-control, project-specialist, session, project, council, idea,
  *   agent-lifecycle, plan, chat-message, permission
  */
@@ -80,47 +80,7 @@ describe('Conversation CRUD IPC — validation', () => {
   })
 })
 
-// ── §2: Preset IPC patterns ─────────────────────────────────────────────
-
-describe('Preset IPC — validation', () => {
-  test('PRESET_GET_ALL_channel', () => {
-    assert.ok(IPC_CHANNELS.PRESET_GET_ALL)
-  })
-
-  test('PRESET_CREATE_validation', () => {
-    const ch = IPC_CHANNELS.PRESET_CREATE
-    const args = requireObject({
-      name: 'My Preset',
-      actionConfig: { 'da-vinci:plan': 'claude-sonnet-4' }
-    }, ch)
-    requireString(args, 'name', ch)
-    assert.ok(typeof args.actionConfig === 'object')
-  })
-
-  test('PRESET_UPDATE_validation', () => {
-    const ch = IPC_CHANNELS.PRESET_UPDATE
-    const args = requireObject({ presetId: 'p-1', name: 'Updated' }, ch)
-    requireString(args, 'presetId', ch)
-    assert.ok(true)
-  })
-
-  test('PRESET_DELETE_validation', () => {
-    const ch = IPC_CHANNELS.PRESET_DELETE
-    const args = requireObject({ presetId: 'p-1' }, ch)
-    requireString(args, 'presetId', ch)
-    assert.ok(true)
-  })
-
-  test('PRESET_SET_DEFAULT_validation', () => {
-    const ch = IPC_CHANNELS.PRESET_SET_DEFAULT
-    const args = requireObject({ presetId: 'p-1', workspaceId: 'ws-1' }, ch)
-    requireString(args, 'presetId', ch)
-    requireString(args, 'workspaceId', ch)
-    assert.ok(true)
-  })
-})
-
-// ── §3: Chat-mode IPC patterns ──────────────────────────────────────────
+// ── §2: Chat-mode IPC patterns ──────────────────────────────────────────
 
 describe('Chat-mode IPC — validation', () => {
   test('CHAT_UPDATE_MODE_validation', () => {

@@ -5,7 +5,6 @@ import { resolve, basename } from 'node:path'
 import simpleGit from 'simple-git'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { workspaceRepository } from '../db/repositories'
-import { presetRepository } from '../db/repositories/preset.repository'
 import { repoService } from '../services/repo.service'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, requirePlainObject, optionalString } from './validate-args'
@@ -65,11 +64,7 @@ async function handleWorkspaceCreate(
     isGitRepo
   )
 
-  try {
-    presetRepository.ensureBuiltIns(workspace.id)
-  } catch (err) {
-    dbLogger.warn('Failed to seed built-in presets (non-fatal):', err)
-  }
+
 
   try {
     const db = getDatabase()

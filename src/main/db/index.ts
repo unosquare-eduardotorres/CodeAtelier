@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 108
+const CURRENT_SCHEMA_VERSION = 113
 
 export interface Migration {
   version: number
@@ -2685,6 +2685,155 @@ export const migrations: Migration[] = [
         }
       }
       dbLogger.info(`[migration-108] ✓ Seeded Claude model presets for ${workspaces.length} workspace(s)`)
+    }
+  },
+  {
+    version: 109,
+    name: 'add-conversation-type-column',
+    up: (db) => {
+      db.exec(`ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint'))`)
+      dbLogger.info('[migration-109] ✓ Added type column to conversations')
+    }
+  },
+  {
+    version: 110,
+    name: 'blueprint-events-journal',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS blueprint_events (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+          seq INTEGER NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('system','agent','user','findings','qa','plan','tasks')),
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_bp_events_blueprint ON blueprint_events(blueprint_id, seq);
+      `)
+      dbLogger.info('[migration-110] ✓ Created blueprint_events table + index')
+    }
+  },
+  {
+    version: 111,
+    name: 'conversation-model-config-snapshot',
+    up: (db) => {
+      // Stores frozen model configuration at conversation creation time.
+      // NULL → legacy live-resolution (permanent backward compat).
+      // JSON contains resolved plan/build/background models + source provenance.
+      db.exec(`ALTER TABLE conversations ADD COLUMN model_config_json TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-111] ✓ Added model_config_json column to conversations')
+    }
+  },
+  {
+    version: 112,
+    name: 'knowledge-aware-memory-engine',
+    up: (db) => {
+      // ── memory_facts: core fact storage with embeddings + tiers ──
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_facts (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+          category TEXT NOT NULL CHECK (category IN ('decision','convention','gotcha','preference','reference')),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+          scope_paths TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scope_paths)),
+          tier INTEGER NOT NULL DEFAULT 0 CHECK (tier BETWEEN 0 AND 3),
+          confidence REAL NOT NULL DEFAULT 0.5,
+          confirmation_count INTEGER NOT NULL DEFAULT 0,
+          last_confirmed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','archived')),
+          superseded_by TEXT,
+          source_type TEXT NOT NULL CHECK (source_type IN ('session','commit','document','tool','manual')),
+          source_ref TEXT,
+          embedding BLOB,
+          embedding_pending INTEGER NOT NULL DEFAULT 1,
+          last_accessed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_workspace ON memory_facts(workspace_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref)`)
+
+      // ── memory_contradictions: audit trail for conflicting facts ──
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_contradictions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          old_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          new_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('auto_resolved','pending','user_resolved')),
+          resolution TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          resolved_at TEXT
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status)`)
+
+      // ── memory_doc_state: content-hash gate for doc watcher ──
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_doc_state (
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          file_path TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          last_extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (workspace_id, file_path)
+        )
+      `)
+
+      // ── Drop legacy memories table (fresh start — decision #3) ──
+      db.exec(`DROP TABLE IF EXISTS memories`)
+
+      dbLogger.info('[migration-112] ✓ Created memory_facts, memory_contradictions, memory_doc_state; dropped memories')
+    }
+  },
+
+  // ── v113: E2E testing tables ──
+  {
+    version: 113,
+    name: 'e2e-testing-tables',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS e2e_test_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'cancelled')),
+          model_id TEXT,
+          backend TEXT,
+          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          finished_at TEXT,
+          total_passed INTEGER NOT NULL DEFAULT 0,
+          total_failed INTEGER NOT NULL DEFAULT 0,
+          total_skipped INTEGER NOT NULL DEFAULT 0,
+          total_error INTEGER NOT NULL DEFAULT 0
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_workspace ON e2e_test_runs(workspace_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_status ON e2e_test_runs(status)`)
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS e2e_test_results (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          run_id TEXT NOT NULL REFERENCES e2e_test_runs(id) ON DELETE CASCADE,
+          scenario_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'passed', 'failed', 'skipped', 'error')),
+          duration_ms INTEGER,
+          failure_reason TEXT,
+          assertion_results TEXT DEFAULT '[]',
+          transcript_json TEXT DEFAULT '[]',
+          conversation_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_run ON e2e_test_results(run_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_scenario ON e2e_test_results(scenario_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_status ON e2e_test_results(status)`)
+
+      dbLogger.info('[migration-113] ✓ Created e2e_test_runs, e2e_test_results tables')
     }
   }
 ]

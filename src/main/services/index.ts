@@ -9,8 +9,10 @@ export { SkillService, skillService } from './skill.service'
 export { PromptBuilder, promptBuilder } from './prompt-builder'
 
 export { WorkspaceDeployService, workspaceDeployService } from './workspace-deploy.service'
-export { memoryService } from './memory.service'
-export { memoryFeedService } from './memory-feed.service'
+// Memory engine services (Phase 1-4 replacement)
+export { memoryEngineService } from './memory-engine.service'
+export { memoryRetrievalService } from './memory-retrieval.service'
+export { memoryExtractionService } from './memory-extraction.service'
 export { GitHubService, githubService } from './github.service'
 export { RepoService, repoService } from './repo.service'
 

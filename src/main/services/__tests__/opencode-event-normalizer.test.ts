@@ -347,6 +347,281 @@ describe('normalizeOpenCodeEvent — handleToolInvocationPart edge cases', () =>
   })
 })
 
+// ── R5: Modern SDK ToolPart (type: 'tool') ──
+
+describe('normalizeOpenCodeEvent — handleToolPart (modern SDK)', () => {
+  test('pending→running→completed emits exactly 1 tool_use + 1 tool_result', () => {
+    const state = freshState()
+
+    // pending (no input yet) → nothing emitted
+    const out1 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-1',
+            state: { status: 'pending' }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out1, [], 'pending without input should emit nothing')
+
+    // running (input present) → tool_use
+    const out2 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-1',
+            state: { status: 'running', input: { command: 'ls -la' } }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out2.length, 1)
+    assert.equal(out2[0].type, 'tool_use')
+    assert.equal(out2[0].toolName, 'bash')
+    assert.equal(out2[0].toolId, 'call-1')
+    assert.ok(out2[0].toolInput!.includes('ls -la'))
+
+    // completed → tool_result + tool_use_summary (no second tool_use)
+    const out3 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-1',
+            state: {
+              status: 'completed',
+              input: { command: 'ls -la' },
+              output: 'hello.ts\nindex.ts'
+            }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const types3 = out3.map((c) => c.type)
+    assert.ok(types3.includes('tool_result'), 'completed should emit tool_result')
+    assert.ok(!types3.includes('tool_use'), 'completed should NOT emit second tool_use')
+    const result = out3.find((c) => c.type === 'tool_result')!
+    assert.equal(result.toolName, 'bash')
+    assert.equal(result.content, 'hello.ts\nindex.ts')
+  })
+
+  test('error status emits tool_use + tool_result with error content', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'read',
+            callID: 'call-err',
+            state: {
+              status: 'error',
+              input: { file_path: '/nonexistent' },
+              error: 'ENOENT: no such file'
+            }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const toolUse = out.find((c) => c.type === 'tool_use')!
+    assert.ok(toolUse, 'error state should still emit tool_use')
+    assert.equal(toolUse.toolName, 'read')
+
+    const toolResult = out.find((c) => c.type === 'tool_result')!
+    assert.ok(toolResult, 'error state should emit tool_result')
+    assert.ok(toolResult.content!.includes('ENOENT'))
+  })
+
+  test('pending with input emits tool_use immediately', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'write',
+            callID: 'call-p',
+            state: { status: 'pending', input: { file_path: 'test.ts', content: 'hi' } }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'tool_use')
+  })
+
+  test('missing tool/callID/state returns []', () => {
+    const state = freshState()
+    // Missing tool
+    const out1 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'tool', callID: 'c', state: { status: 'running' } } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out1, [])
+
+    // Missing callID
+    const out2 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'tool', tool: 'bash', state: { status: 'running' } } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out2, [])
+
+    // Missing state
+    const out3 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'tool', tool: 'bash', callID: 'c' } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out3, [])
+  })
+
+  test('completed with no output emits tool_result with empty string', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-empty',
+            state: { status: 'completed', input: { command: 'true' } }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const result = out.find((c) => c.type === 'tool_result')!
+    assert.ok(result)
+    assert.equal(result.content, '""')
+  })
+
+  test('sets lastPartType to tool on first tool_use emission', () => {
+    const state = freshState()
+    normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-lpt',
+            state: { status: 'running', input: { command: 'echo' } }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(state.lastPartType, 'tool')
+  })
+
+  test('string input is passed through as-is (not double-stringified)', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-str',
+            state: { status: 'running', input: 'ls -la' }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out[0].toolInput, 'ls -la')
+  })
+})
+
+describe('normalizeOpenCodeEvent — legacy tool-invocation still works', () => {
+  test('tool-invocation call still emits tool_use (backward compat)', () => {
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: { type: 'tool-invocation', state: 'call', toolName: 'Bash', toolCallId: 'legacy-1' }
+        }
+      },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out[0].type, 'tool_use')
+    assert.equal(out[0].toolName, 'Bash')
+  })
+
+  test('tool-invocation result still emits tool_result (backward compat)', () => {
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool-invocation',
+            state: 'result',
+            toolName: 'Bash',
+            toolCallId: 'legacy-2',
+            result: 'output',
+            args: { command: 'echo hi' }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.ok(out.some((c) => c.type === 'tool_result'))
+  })
+})
+
 describe('normalizeOpenCodeEvent — handleThinkingPart edge cases', () => {
   test('empty thinking content returns []', () => {
     const out = normalizeOpenCodeEvent(
@@ -979,6 +1254,45 @@ describe('normalizeOpenCodeEvent — busy status mapping', () => {
     assert.equal(out.length, 1)
     assert.equal(out[0].type, 'status')
     assert.equal(out[0].content, 'thinking')
+  })
+})
+
+describe('normalizeOpenCodeEvent — object status extraction', () => {
+  test('session.status with {type:"busy"} object → maps to thinking', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.status', properties: { status: { type: 'busy' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'status')
+    assert.equal(out[0].content, 'thinking')
+  })
+
+  test('session.status with {type:"idle"} object → maps to idle', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.status', properties: { status: { type: 'idle' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'status')
+    assert.equal(out[0].content, 'idle')
+  })
+
+  test('session.status with object without type field → JSON-stringified', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.status', properties: { status: { code: 42 } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'status')
+    // Falls through to JSON.stringify since there's no .type string field
+    assert.equal(out[0].content, '{"code":42}')
   })
 })
 

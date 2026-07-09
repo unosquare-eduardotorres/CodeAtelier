@@ -5,17 +5,19 @@ import {
   OMLX_DEFAULT_PORT
 } from '../../shared/constants'
 import type {
-  ActionModelConfig,
+  ConversationModelSnapshot,
   ExecutorBackend,
   LLMProvider,
   LocalLLMBackend,
   LocalLLMConfig,
   LocalLLMStrategy,
   ModelAction,
-  ModelOverrides
+  ModelOverrides,
+  ModelRoleAssignment,
+  ModelRoleMap,
+  ResolvedAssignment
 } from '../../shared/types'
-import { workspaceRepository } from '../db/repositories'
-import { presetService } from './preset.service'
+import { workspaceRepository, specialistRepository } from '../db/repositories'
 import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 
 /**
@@ -54,41 +56,19 @@ class ModelConfigService {
    * @param workspacePath - The workspace repo path (or undefined for default)
    * @param action - The model action to resolve
    */
-  getModel(
-    workspacePath: string | undefined,
-    action: ModelAction,
-    presetId?: string | null
-  ): string {
-    // 1. Conversation-level preset (highest priority)
-    if (presetId) {
-      const actionConfig = this.resolveActionConfig(action, presetId)
-      if (actionConfig) return actionConfig.modelId
-    }
-
+  getModel(workspacePath: string | undefined, action: ModelAction): string {
     if (!workspacePath) return DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
 
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
-
-    // 2. Workspace default preset (only when conversation has no explicit preset)
-    if (!presetId && settings?.defaultPresetId) {
-      const actionConfig = this.resolveActionConfig(action, settings.defaultPresetId as string)
-      if (actionConfig) return actionConfig.modelId
-    }
-
-    // 3. Workspace model overrides (legacy per-action overrides)
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
-    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
+    const wsId = settings?.id as string | undefined
+    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action, wsId)
   }
 
   /**
    * Resolves the model ID for a given action using workspace ID.
    * Uses workspace override if set, otherwise returns the default.
    * Sub-actions (e.g. 'generalist:plan') fall back to their base action ('generalist').
-   *
-   * NOTE: Intentionally skips preset resolution (both conversation-level and workspace
-   * default). This method is used by system-level services (audit, grill, goal-decomposer)
-   * that operate outside the chat preset system. Use `getModel()` for conversation-scoped
-   * model resolution that respects presets.
    *
    * @param workspaceId - The workspace ID (or undefined for default)
    * @param action - The model action to resolve
@@ -98,32 +78,15 @@ class ModelConfigService {
 
     const settings = workspaceRepository.getSettings(workspaceId)
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
-    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
+    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action, workspaceId)
   }
 
   // ── Provider awareness ──
 
-  /** Get the LLM provider for a workspace (or per-action via preset) */
-  getProvider(
-    workspacePath: string | undefined,
-    action?: ModelAction,
-    presetId?: string | null
-  ): LLMProvider {
-    // 1. Conversation preset per-action provider
-    if (presetId && action) {
-      const actionConfig = this.resolveActionConfig(action, presetId)
-      if (actionConfig) return actionConfig.provider
-    }
-
+  /** Get the LLM provider for a workspace */
+  getProvider(workspacePath: string | undefined): LLMProvider {
     if (!workspacePath) return 'claude'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
-
-    // 2. Workspace default preset provider (only when conversation has no explicit preset)
-    if (!presetId && action && settings?.defaultPresetId) {
-      const actionConfig = this.resolveActionConfig(action, settings.defaultPresetId as string)
-      if (actionConfig) return actionConfig.provider
-    }
-
     return (settings?.llmProvider as LLMProvider) ?? 'claude'
   }
 
@@ -236,43 +199,27 @@ class ModelConfigService {
   }
 
   /**
-   * Resolve the executor backend for a specific action via preset.
-   * Falls back to workspace-level getExecutorBackend when no preset is active.
+   * Fallback: 'da-vinci:plan' → 'da-vinci' → DEFAULT_MODEL_CONFIG.
+   * When a workspace has a specialist ready, prefer 'project-specialist:*'
+   * defaults over 'da-vinci:*' for chat-tier actions.
    */
-  getExecutorBackendForAction(
-    workspacePath: string | undefined,
-    action: ModelAction,
-    presetId?: string | null
-  ): ExecutorBackend {
-    if (presetId) {
-      const actionConfig = this.resolveActionConfig(action, presetId)
-      if (actionConfig?.provider === 'local-llm') return 'opencode'
-    }
-
-    // Check workspace default preset (only when conversation has no explicit preset)
-    if (!presetId && workspacePath) {
-      const settings = workspaceRepository.getSettingsByPath(workspacePath)
-      if (settings?.defaultPresetId) {
-        const actionConfig = this.resolveActionConfig(action, settings.defaultPresetId as string)
-        if (actionConfig?.provider === 'local-llm') return 'opencode'
+  private fallbackAction(action: ModelAction, workspaceId?: string): string {
+    // For da-vinci chat actions, prefer project-specialist if one is ready
+    if (workspaceId && (action.startsWith('da-vinci') || action.startsWith('project-specialist'))) {
+      try {
+        const specialist = specialistRepository.findReadyByWorkspace(workspaceId)
+        if (specialist) {
+          // Map da-vinci:* → project-specialist:* for specialist-aware defaults
+          const specialistAction = action.replace(/^da-vinci/, 'project-specialist') as ModelAction
+          if (specialistAction in DEFAULT_MODEL_CONFIG) {
+            return DEFAULT_MODEL_CONFIG[specialistAction]
+          }
+        }
+      } catch {
+        // Non-fatal — fall through to standard fallback
       }
     }
 
-    return this.getExecutorBackend(workspacePath)
-  }
-
-  /**
-   * Resolve the ActionModelConfig for a given action from a preset.
-   * Returns undefined if the preset doesn't override this action.
-   */
-  resolveActionConfig(action: ModelAction, presetId: string): ActionModelConfig | undefined {
-    const preset = presetService.getPreset(presetId)
-    if (!preset) return undefined
-    return preset.actionConfig[action]
-  }
-
-  /** Fallback: 'da-vinci:plan' → 'da-vinci' */
-  private fallbackAction(action: ModelAction): string {
     // SVC-06: Validate that the base portion is a known ModelAction key
     const base = action.split(':')[0]
     if (base && base in DEFAULT_MODEL_CONFIG) {
@@ -283,3 +230,154 @@ class ModelConfigService {
 }
 
 export const modelConfigService = new ModelConfigService()
+
+// ── Pure resolution function ────────────────────────────────────────
+
+/**
+ * Resolve the model assignment for a given action using the full fallback chain:
+ *
+ *   1. modelRoles[action]           → source: 'roles'
+ *   2. modelOverrides[action] as Claude  → source: 'override'
+ *   3. specialist-ready? project-specialist:* defaults
+ *   4. DEFAULT_MODEL_CONFIG[action]  → source: 'default'
+ *   5. DEFAULT_MODEL_CONFIG[base]    → source: 'fallback'
+ *   6. DEFAULT_MODEL_CONFIG['da-vinci'] → source: 'fallback'
+ *
+ * Pure function — all inputs are explicit. No side effects.
+ */
+export function resolveAssignment(opts: {
+  action: ModelAction
+  /** modelRoles from workspace settings_json (new structured path) */
+  modelRoles?: ModelRoleMap
+  /** Legacy modelOverrides from workspace settings_json */
+  modelOverrides?: ModelOverrides
+  /** Workspace-level provider (for legacy override interpretation) */
+  workspaceProvider?: LLMProvider
+  /** Workspace-level local backend */
+  workspaceBackend?: LocalLLMBackend
+  /** Whether a project specialist is ready for this workspace */
+  hasReadySpecialist?: boolean
+}): ResolvedAssignment {
+  const {
+    action,
+    modelRoles,
+    modelOverrides,
+    workspaceProvider = 'claude',
+    workspaceBackend,
+    hasReadySpecialist = false
+  } = opts
+
+  // 1. New structured model roles (highest priority)
+  if (modelRoles?.[action]) {
+    const role = modelRoles[action] as ModelRoleAssignment
+    return {
+      provider: role.provider,
+      modelId: role.modelId,
+      localBackend: role.localBackend,
+      source: 'roles'
+    }
+  }
+
+  // 2. Legacy per-action overrides (interpreted as the workspace's active provider)
+  if (modelOverrides?.[action]) {
+    return {
+      provider: workspaceProvider,
+      modelId: modelOverrides[action],
+      localBackend: workspaceProvider === 'local-llm' ? workspaceBackend : undefined,
+      source: 'override'
+    }
+  }
+
+  // 3. Specialist-aware default for chat-tier actions
+  if (
+    hasReadySpecialist &&
+    (action.startsWith('da-vinci') || action.startsWith('project-specialist'))
+  ) {
+    const specialistAction = action.replace(/^da-vinci/, 'project-specialist') as ModelAction
+    if (specialistAction in DEFAULT_MODEL_CONFIG) {
+      return {
+        provider: 'claude',
+        modelId: DEFAULT_MODEL_CONFIG[specialistAction],
+        source: 'default'
+      }
+    }
+  }
+
+  // 4. Direct default
+  if (action in DEFAULT_MODEL_CONFIG) {
+    return {
+      provider: 'claude',
+      modelId: DEFAULT_MODEL_CONFIG[action],
+      source: 'default'
+    }
+  }
+
+  // 5. Base action fallback (e.g. 'da-vinci:plan' → 'da-vinci')
+  const base = action.split(':')[0]
+  if (base && base in DEFAULT_MODEL_CONFIG) {
+    return {
+      provider: 'claude',
+      modelId: DEFAULT_MODEL_CONFIG[base as ModelAction],
+      source: 'fallback'
+    }
+  }
+
+  // 6. Ultimate fallback
+  return {
+    provider: 'claude',
+    modelId: DEFAULT_MODEL_CONFIG['da-vinci'],
+    source: 'fallback'
+  }
+}
+
+/**
+ * Build the resolve-options object from workspace settings.
+ * Shared between buildConversationModelSnapshot and blueprint snapshot creation.
+ */
+export function buildResolveOpts(workspaceId: string): {
+  modelRoles: ModelRoleMap | undefined
+  modelOverrides: ModelOverrides | undefined
+  workspaceProvider: LLMProvider
+  workspaceBackend: LocalLLMBackend | undefined
+  hasReadySpecialist: boolean
+} {
+  const settings = workspaceRepository.getSettings(workspaceId)
+  let hasReadySpecialist = false
+  try {
+    hasReadySpecialist = !!specialistRepository.findReadyByWorkspace(workspaceId)
+  } catch { /* non-fatal */ }
+
+  return {
+    modelRoles: (settings.modelRoles ?? undefined) as ModelRoleMap | undefined,
+    modelOverrides: (settings.modelOverrides ?? undefined) as ModelOverrides | undefined,
+    workspaceProvider: (settings.llmProvider as LLMProvider) ?? 'claude',
+    workspaceBackend: (settings.localLlmBackend as LocalLLMBackend) ?? undefined,
+    hasReadySpecialist
+  }
+}
+
+/**
+ * Build a frozen model config snapshot for a conversation.
+ * Captures the current workspace model assignments at creation time.
+ *
+ * @param workspaceId - Workspace to snapshot settings from
+ * @param explicitProvider - If provided, overrides the workspace-level provider
+ */
+export function buildConversationModelSnapshot(
+  workspaceId: string,
+  explicitProvider?: LLMProvider
+): ConversationModelSnapshot {
+  const resolveOpts = buildResolveOpts(workspaceId)
+
+  // If caller specified a provider override, use it
+  if (explicitProvider) {
+    resolveOpts.workspaceProvider = explicitProvider
+  }
+
+  return {
+    plan: resolveAssignment({ action: 'da-vinci:plan', ...resolveOpts }),
+    build: resolveAssignment({ action: 'da-vinci:build', ...resolveOpts }),
+    background: resolveAssignment({ action: 'haiku', ...resolveOpts }),
+    snapshotAt: new Date().toISOString()
+  }
+}

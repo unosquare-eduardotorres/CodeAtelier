@@ -35,8 +35,6 @@ import {
   VALID_COMMUNICATION_TONES,
   DEFAULT_MODEL_CONFIG,
   ACTION_GROUPS,
-  BUILTIN_FULL_CLAUDE_CONFIG,
-  buildFullLocalConfig,
   CONTEXT_1M_SUPPORTED_MODELS,
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   CLAUDE_1M_CONTEXT_WINDOW,
@@ -207,10 +205,6 @@ describe('Constants — arrays and objects', () => {
     }
   })
 
-  test('BUILTIN_FULL_CLAUDE_CONFIG_is_object', () => {
-    assert.equal(typeof BUILTIN_FULL_CLAUDE_CONFIG, 'object')
-  })
-
   test('CONTEXT_1M_SUPPORTED_MODELS_is_array', () => {
     assert.ok(Array.isArray(CONTEXT_1M_SUPPORTED_MODELS))
     assert.ok(CONTEXT_1M_SUPPORTED_MODELS.length >= 1)
@@ -317,12 +311,6 @@ describe('Constants — MCP definitions', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('Constants — functions', () => {
-  test('buildFullLocalConfig_is_callable', () => {
-    assert.equal(typeof buildFullLocalConfig, 'function')
-    // Call with a minimal local LLM config
-    const result = buildFullLocalConfig({} as Parameters<typeof buildFullLocalConfig>[0])
-    assert.equal(typeof result, 'object')
-  })
 
   test('supportsContext1M_returns_boolean', () => {
     assert.equal(typeof supportsContext1M, 'function')

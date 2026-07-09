@@ -1,7 +1,7 @@
 /**
  * Blueprint Specify Adapter — read-only architect that produces feature specifications.
  *
- * CLI config: --permission-mode plan, --effort xhigh, --goal "condition"
+ * CLI config: --permission-mode plan, --effort xhigh, goalMode: enforce (/goal via stdin)
  *
  * Following the MpaPlannerAdapter pattern: extends base, injects phase-specific
  * prompt via buildPhaseSystemPrompt(), and provides the initial phase message.

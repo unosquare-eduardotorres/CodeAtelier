@@ -1,3 +1,4 @@
+import log from 'electron-log'
 import { BaseRepository } from '../base-repository'
 
 interface AgentSessionRow {
@@ -159,6 +160,18 @@ export class AgentSessionRepository extends BaseRepository<AgentSessionRow, Agen
 
   /** Link a session to a conversation after the conversation ID becomes known */
   updateConversationId(id: string, conversationId: string): void {
+    // FK guard: conversation_id REFERENCES conversations(id). If the conversation
+    // was never persisted (e.g. CLI exited immediately), skip to avoid FK error.
+    const conversationExists = this.db()
+      .prepare(`SELECT 1 FROM conversations WHERE id = ?`)
+      .get(conversationId)
+    if (!conversationExists) {
+      log.warn(
+        `[agent-session-repo:updateConversationId] Conversation ${conversationId} not found — skipping FK link for session ${id}`
+      )
+      return
+    }
+
     this.db()
       .prepare(`UPDATE agent_sessions SET conversation_id = ? WHERE id = ?`)
       .run(conversationId, id)

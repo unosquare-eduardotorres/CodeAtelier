@@ -41,7 +41,7 @@ export function registerAutofixPrIpc(mainWindow: BrowserWindow): void {
 
         // 3. Send the fix prompt as a regular message to the current agent session.
         //    This reuses the existing agent (with its tools, MCP servers, code context).
-        await chatStreamService.stream(args.conversationId, prompt, [])
+        await chatStreamService.stream(args.conversationId, prompt, [], { optimizePrompt: false })
       } catch (err) {
         autofixLog.error('[autofix-pr] Failed:', err)
         throw err // Re-throw so the renderer catch block handles it

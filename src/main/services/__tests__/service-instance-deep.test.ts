@@ -83,15 +83,14 @@ describe('GrillAgentService — instance tests', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// §3: MemoryService — CRUD delegation + dedup
+// §3: MemoryEngineService — dedup + contradiction pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('MemoryService — instance tests', () => {
+describe('MemoryEngineService — instance tests', () => {
   test('singleton export exists and has expected methods', async () => {
-    const mod = await import('../memory.service')
-    assert.ok(mod.memoryService, 'singleton exported')
-    // Check common service method patterns
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.memoryService))
+    const mod = await import('../memory-engine.service')
+    assert.ok(mod.memoryEngineService, 'singleton exported')
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.memoryEngineService))
       .filter((m) => m !== 'constructor')
     assert.ok(methods.length > 0, `has ${methods.length} methods: ${methods.join(', ')}`)
   })

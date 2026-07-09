@@ -12,75 +12,34 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 
-// ── Stub Electron app before importing (same pattern as opencode-config-writer-logic.test.ts) ──
+// Use the shared electron stub (ipcMain, app, BrowserWindow, electron-log).
+// Safe to call multiple times — idempotent.
+setupElectronStub()
 
-const electronMock = {
-  app: {
-    get isPackaged() { return false },
-    getAppPath() { return '/mock/app' },
-    getPath(name: string) {
-      if (name === 'userData') return '/mock/userData'
-      return `/mock/${name}`
-    }
-  }
-}
-
-try {
-  const Module = require('module')
-  const origResolve = Module._resolveFilename
-  Module._resolveFilename = function (request: string, ...args: unknown[]) {
-    if (request === 'electron') return 'electron'
-    return origResolve.call(this, request, ...args)
-  }
-  require.cache[require.resolve('electron')] = {
-    id: 'electron',
-    filename: 'electron',
-    loaded: true,
-    exports: electronMock,
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub electron-log/main
-try {
-  const logMock = {
-    scope: () => ({ info: () => {}, warn: () => {}, error: () => {} }),
-    info: () => {},
-    warn: () => {},
-    error: () => {}
-  }
-  require.cache[require.resolve('electron-log/main')] = {
-    id: 'electron-log/main',
-    filename: 'electron-log/main',
-    loaded: true,
-    exports: { default: logMock, ...logMock },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub appPreferenceRepository to avoid DB dependency
+// Stub appPreferenceRepository to avoid DB dependency (better-sqlite3 ABI mismatch).
+// ESBuild destructures `import { appPreferenceRepository }` eagerly, so modules that
+// already loaded hold a direct reference to the AppPreferenceRepository INSTANCE.
+// Replacing exports.appPreferenceRepository doesn't help — we must patch the instance's
+// `get` method in place so ALL holders (including already-loaded opencode-config-writer)
+// see the stub.
 try {
   const appPrefRepoPath = require.resolve('../../db/repositories/app-preference.repository')
-  require.cache[appPrefRepoPath] = {
-    id: appPrefRepoPath,
-    filename: appPrefRepoPath,
-    loaded: true,
-    exports: {
-      appPreferenceRepository: { get: (_key: string) => null }
-    },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
+  const cached = require.cache[appPrefRepoPath]
+  if (cached?.exports?.appPreferenceRepository) {
+    const repo = cached.exports.appPreferenceRepository
+    repo.get = (_key: string) => null
+    repo.set = (_key: string, _val: string) => {}
+    repo.getBool = (_key: string, _def?: boolean) => _def ?? false
+  } else {
+    // Not yet loaded — plant a fresh cache entry
+    require.cache[appPrefRepoPath] = {
+      id: appPrefRepoPath, filename: appPrefRepoPath, loaded: true,
+      exports: { appPreferenceRepository: { get: () => null, set: () => {}, getBool: (_k: string, d?: boolean) => d ?? false } },
+      children: [], paths: [], path: ''
+    } as unknown as NodeModule
+  }
 } catch {
   // skip
 }
@@ -140,10 +99,25 @@ describe('OpenCode config schema compliance', () => {
 
   const w = writer as any
 
+  // buildConfig() mutates process.env (injects NODE_OPTIONS, WORKSPACE_PATH, etc.).
+  // Wrap every call to snapshot/restore env so downstream tests aren't polluted.
+  function safeBuildConfig(opts: Record<string, unknown>) {
+    const envSnapshot = { ...process.env }
+    try {
+      return w.buildConfig(opts)
+    } finally {
+      // Restore: delete new keys, restore overwritten ones
+      for (const key of Object.keys(process.env)) {
+        if (!(key in envSnapshot)) delete process.env[key]
+      }
+      Object.assign(process.env, envSnapshot)
+    }
+  }
+
   // ── Core schema constraints (regression for ConfigInvalidError) ──
 
   test('tools.skill is a boolean, not an object', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(
       typeof config.tools.skill,
       'boolean',
@@ -152,12 +126,12 @@ describe('OpenCode config schema compliance', () => {
   })
 
   test('tools.question is a boolean', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(typeof config.tools.question, 'boolean')
   })
 
   test('shell is a string, not an object', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(
       typeof config.shell,
       'string',
@@ -166,7 +140,7 @@ describe('OpenCode config schema compliance', () => {
   })
 
   test('shell is a valid shell path', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.ok(
       config.shell === '/bin/bash' || config.shell === 'pwsh',
       `Expected /bin/bash or pwsh, got: ${config.shell}`
@@ -174,7 +148,7 @@ describe('OpenCode config schema compliance', () => {
   })
 
   test('no unrecognized top-level keys', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     const knownKeys = new Set([
       '$schema', 'model', 'small_model', 'default_agent', 'autoupdate',
       'provider', 'disabled_providers', 'enabled_providers',
@@ -194,25 +168,25 @@ describe('OpenCode config schema compliance', () => {
   // ── Required fields ──
 
   test('has $schema pointing to opencode.ai', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(config.$schema, 'https://opencode.ai/config.json')
   })
 
   test('has model string', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(typeof config.model, 'string')
     assert.ok(config.model.length > 0)
   })
 
   test('has provider, mcp, permission objects', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(typeof config.provider, 'object')
     assert.equal(typeof config.mcp, 'object')
     assert.equal(typeof config.permission, 'object')
   })
 
   test('has compaction with enabled, auto, prune, reserved', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(typeof config.compaction, 'object')
     assert.equal(config.compaction.enabled, true)
     assert.equal(typeof config.compaction.auto, 'boolean')
@@ -221,7 +195,7 @@ describe('OpenCode config schema compliance', () => {
   })
 
   test('snapshot=true, autoupdate=false, default_agent=davinci', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(config.snapshot, true)
     assert.equal(config.autoupdate, false)
     assert.equal(config.default_agent, 'davinci')
@@ -230,7 +204,7 @@ describe('OpenCode config schema compliance', () => {
   // ── Local vs cloud provider ──
 
   test('local provider disables cloud providers', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.ok(Array.isArray(config.disabled_providers))
     assert.ok(config.disabled_providers.includes('anthropic'))
     assert.ok(config.disabled_providers.includes('openai'))
@@ -244,7 +218,7 @@ describe('OpenCode config schema compliance', () => {
       isLocalProvider: false,
       contextTier: undefined,
     }
-    const config = w.buildConfig(cloudOpts)
+    const config = safeBuildConfig(cloudOpts)
     assert.ok(Array.isArray(config.enabled_providers))
     assert.ok(config.enabled_providers.includes('anthropic'))
     assert.equal(config.disabled_providers, undefined)
@@ -253,13 +227,13 @@ describe('OpenCode config schema compliance', () => {
   // ── Web search toggle ──
 
   test('webSearchEnabled=false omits websearch/webfetch', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     assert.equal(config.tools.websearch, undefined)
     assert.equal(config.tools.webfetch, undefined)
   })
 
   test('webSearchEnabled=true includes websearch/webfetch', () => {
-    const config = w.buildConfig({ ...baseOpts, webSearchEnabled: true })
+    const config = safeBuildConfig({ ...baseOpts, webSearchEnabled: true })
     assert.equal(config.tools.websearch, true)
     assert.equal(config.tools.webfetch, true)
   })
@@ -273,7 +247,7 @@ describe('OpenCode config schema compliance', () => {
       IPC_SOCKET_PATH: process.env.IPC_SOCKET_PATH,
     }
     try {
-      w.buildConfig(baseOpts)
+      w.buildConfig(baseOpts)  // raw call — this test verifies env mutation
       assert.equal(process.env.WORKSPACE_PATH, '/tmp/test-workspace')
       assert.equal(process.env.GIT_TERMINAL_PROMPT, '0')
       assert.equal(process.env.IPC_SOCKET_PATH, '/tmp/test.sock')
@@ -288,7 +262,7 @@ describe('OpenCode config schema compliance', () => {
   // ── JSON roundtrip ──
 
   test('config serializes to valid JSON with no functions', () => {
-    const config = w.buildConfig(baseOpts)
+    const config = safeBuildConfig(baseOpts)
     const json = JSON.stringify(config)
     assert.ok(json.length > 0)
     const parsed = JSON.parse(json)

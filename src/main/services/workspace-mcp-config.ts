@@ -334,7 +334,8 @@ function buildLocalProviderMcpConfig(opts: {
     // Control actions — always on
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
-    MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
+    // Memory tools — always on (all tiers, ~1-2K tokens of schemas)
+    ...MCP_TOOLS.MEMORY._ALL_NAMES
   ]
   const localAllowed = resolveToolAllowlist(baseAllowed, conditionalTools)
 
@@ -462,10 +463,11 @@ function buildClaudeProviderMcpConfig(opts: {
     ...(isLocalMcpEnabled('code-analysis', localActive)
       ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
       : []),
-    // Control actions — always on (plan + ask + memory)
+    // Control actions — always on (plan + ask)
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
-    MCP_TOOLS.CONTROL_ACTIONS.EMIT_MEMORY.name
+    // Memory tools — always on (all tiers)
+    ...MCP_TOOLS.MEMORY._ALL_NAMES
   ]
   const allowedTools = resolveToolAllowlist(baseAllowed, conditionalTools)
 

@@ -31,7 +31,6 @@ import ToggleButtonGroup from './ToggleButtonGroup'
 import McpToolsSection from './McpToolsSection'
 import { ModelPicker } from './ModelPicker'
 import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
-import { usePresetStore } from '@renderer/store/preset.store'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -46,7 +45,6 @@ interface NewChatPageProps {
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
-    presetId?: string | null
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -195,12 +193,11 @@ export default function NewChatPage({
     mcpOverrides,
     setMcpOverrides
   } = useMcpSettings(activeWorkspace)
-  const defaultPresetId = usePresetStore((s) => s.defaultPresetId)
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(defaultPresetId)
+  const [selectedModelId, setSelectedModelId] = useState<string | null>('claude-opus-4-8')
 
-  const handleModelChange = useCallback((provider: LLMProvider, presetId: string | null) => {
+  const handleModelChange = useCallback((provider: LLMProvider, modelId: string | null) => {
     setLlmProvider(provider)
-    setSelectedPresetId(presetId)
+    setSelectedModelId(modelId)
   }, [setLlmProvider])
   const [mcpSubTab, setMcpSubTab] = useState<McpSubTab>('external')
   const titleInputRef = useRef<HTMLInputElement>(null)
@@ -228,9 +225,12 @@ export default function NewChatPage({
   const activeLocalMcps = availableLocalMcps.filter((lm) => mcpOverrides[lm.id] !== false)
   const activeExternalMcps = availableIntegrations.filter((i) => !!mcpOverrides[i.id])
 
-  const handleSubmit = useCallback((): void => {
+  const handleSubmit = useCallback(async (): Promise<void> => {
     const trimmedTitle = title.trim()
     if (!trimmedTitle) return
+
+    // Model defaults are now configured exclusively in Settings → Models tab.
+    // Chat creation should not silently rewrite workspace-wide settings.
 
     const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
 
@@ -243,7 +243,6 @@ export default function NewChatPage({
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
       llmProvider,
       mcpOverrides: mcpOverridesPayload,
-      presetId: selectedPresetId
     })
   }, [
     title,
@@ -256,7 +255,6 @@ export default function NewChatPage({
     mcpOverrides,
     availableLocalMcps,
     availableIntegrations,
-    selectedPresetId,
     onCreateChat
   ])
 
@@ -357,9 +355,8 @@ export default function NewChatPage({
         {/* Model Picker */}
         {activeWorkspace && (
           <ModelPicker
-            workspaceId={activeWorkspace.id}
             provider={llmProvider}
-            presetId={selectedPresetId}
+            selectedModelId={selectedModelId}
             localModelInfo={localModelInfo}
             platformInfo={platformInfo}
             onChange={handleModelChange}

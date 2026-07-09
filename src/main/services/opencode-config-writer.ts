@@ -62,12 +62,16 @@ interface OpenCodeConfig {
         /** C-1: Ensure prompt cache keys are always set (Anthropic) — up to 90% cost reduction */
         setCacheKey?: boolean
       }
-      /** C-5: Per-model overrides — context/output limits */
+      /** C-5: Per-model overrides — context/output limits + capabilities */
       models?: Record<
         string,
         {
           name?: string
           limit?: { context: number; output: number }
+          /** Capability flags — required for custom models not in models.dev */
+          tool_call?: boolean
+          attachment?: boolean
+          reasoning?: boolean
         }
       >
     }
@@ -587,6 +591,11 @@ export class OpenCodeConfigWriter {
         isLocal && needsNpm
           ? {
               [provider.modelId]: {
+                // Custom models aren't in models.dev — declare capabilities explicitly
+                // so OpenCode advertises tools and accepts image attachments.
+                tool_call: true,
+                attachment: true,
+                reasoning: true,
                 limit:
                   contextTier && contextWindowConfident
                     ? {

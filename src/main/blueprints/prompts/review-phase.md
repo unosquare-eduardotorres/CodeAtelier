@@ -80,6 +80,14 @@ service handles the routing.
 
 Structured report with: Coverage Summary (requirements with tasks X/Y, user story traceability, unmapped tasks, constitution violations), then findings grouped by severity (Critical → High → Medium/Low), each with description and recommended fix. End with overall recommendation: proceed / fix critical / re-specify.
 
+## Discoveries
+
+Before your completion block, emit a `blueprint-discoveries` block: a JSON array of up to 10 short strings (≤250 chars each) recording non-obvious things you learned about this codebase that later phases need — real entry points, gotchas, dead-ends tried, key file relationships. Skip obvious facts. Example:
+
+```blueprint-discoveries
+["Auth flows through src/middleware/session.ts — NOT auth.ts", "db/index.ts re-exports all repositories"]
+```
+
 ## Completion
 
 ```blueprint-phase-complete

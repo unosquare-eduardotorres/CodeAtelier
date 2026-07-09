@@ -24,7 +24,8 @@ import {
 } from './db/repositories'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
-import { memoryFeedService } from './services/memory-feed.service'
+import { memoryExtractionService } from './services/memory-extraction.service'
+import { memoryEngineService } from './services/memory-engine.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
 import { grillAgentService } from './services/grill-agent.service'
@@ -419,6 +420,13 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.code-atelier')
 
+  // ── Memory Engine: decay sweep at app launch (throttled to max 1/24h) ──
+  try {
+    memoryEngineService.runDecaySweepIfDue()
+  } catch (e) {
+    log.debug('Memory decay sweep error (non-fatal):', e)
+  }
+
   // ── Code Atelier: Force dark mode always ──
   nativeTheme.themeSource = 'dark'
 
@@ -587,7 +595,7 @@ app.on('before-quit', async (event) => {
 
   // Cleanup memory feed (cancel in-progress claude -p summarizer)
   try {
-    memoryFeedService.shutdown()
+    memoryExtractionService.shutdown()
   } catch (e) {
     log.debug('Memory feed shutdown error (expected during quit):', e)
   }

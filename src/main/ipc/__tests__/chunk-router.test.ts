@@ -390,6 +390,24 @@ describe('chunk-router › handleStatus busy suppression', () => {
     routeChunk(ctx('c-busy-status', window), { type: 'status', content: 'busy' } as StreamChunk)
     assert.equal(send.callCount, 0)
   })
+
+  test('status chunk with JSON content {"type":"busy"} → suppressed via regex', () => {
+    const { window, send } = mockWindow()
+    routeChunk(
+      ctx('c-json-busy-status', window),
+      { type: 'status', content: '{"type":"busy"}' } as StreamChunk
+    )
+    assert.equal(send.callCount, 0)
+  })
+
+  test('status chunk with JSON content {"type":"idle"} → suppressed via regex', () => {
+    const { window, send } = mockWindow()
+    routeChunk(
+      ctx('c-json-idle-status', window),
+      { type: 'status', content: '{"type":"idle"}' } as StreamChunk
+    )
+    assert.equal(send.callCount, 0)
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

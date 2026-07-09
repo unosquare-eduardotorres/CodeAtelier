@@ -154,21 +154,36 @@ export const IPC_CHANNELS = {
   SYNC_COMPUTE_DIFF: 'sync:computeDiff',
   SYNC_APPLY: 'sync:apply',
 
-  // Memory (auto memory system)
-  MEMORY_LIST: 'memory:list',
-  MEMORY_SEARCH: 'memory:search',
-  MEMORY_CREATE: 'memory:create',
-  MEMORY_UPDATE: 'memory:update',
-  MEMORY_DELETE: 'memory:delete',
-  MEMORY_UPDATE_SETTING: 'memory:updateSetting',
+  // Memory Engine (knowledge-aware facts)
+  MEMORY_FACTS_LIST: 'memory:facts:list',
+  MEMORY_FACTS_SEARCH: 'memory:facts:search',
+  MEMORY_FACTS_GET: 'memory:facts:get',
+  MEMORY_FACTS_UPDATE: 'memory:facts:update',
+  MEMORY_FACTS_ARCHIVE: 'memory:facts:archive',
+  MEMORY_FACTS_CONFIRM: 'memory:facts:confirm',
+  MEMORY_FACTS_PROMOTE: 'memory:facts:promote',
+  MEMORY_FACTS_SCOPE_TOGGLE: 'memory:facts:scopeToggle',
+  MEMORY_FACTS_DELETE: 'memory:facts:delete',
 
-  // Memory feed (ingest sources into memories)
+  // Memory contradictions
+  MEMORY_CONTRADICTIONS_LIST: 'memory:contradictions:list',
+  MEMORY_CONTRADICTIONS_RESOLVE: 'memory:contradictions:resolve',
+
+  // Memory capture settings
+  MEMORY_CAPTURE_SETTINGS_GET: 'memory:capture:settingsGet',
+  MEMORY_CAPTURE_SETTINGS_SET: 'memory:capture:settingsSet',
+
+  // Memory embedding status
+  MEMORY_EMBEDDING_STATUS: 'memory:embedding:status',
+  MEMORY_EMBEDDING_BACKFILL: 'memory:embedding:backfill',
+
+  // Memory feed (retained: doc feed + CLAUDE.md regeneration)
   MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
   MEMORY_FEED_PROGRESS: 'memory:feedProgress',
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
-  MEMORY_GET_FEED_TIMESTAMPS: 'memory:getFeedTimestamps',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
+  MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
 
   // Tokens
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
@@ -522,6 +537,12 @@ export const IPC_CHANNELS = {
   BLUEPRINT_START_CLARIFY: 'blueprint:startClarify',
   BLUEPRINT_CLARIFY_ANSWER: 'blueprint:clarifyAnswer',
   BLUEPRINT_SKIP_CLARIFY: 'blueprint:skipClarify',
+  BLUEPRINT_CLARIFY_AWAITING_INPUT: 'blueprint:clarifyAwaitingInput',
+  BLUEPRINT_CLARIFY_FINDINGS: 'blueprint:clarifyFindings',
+  BLUEPRINT_CLARIFY_QUESTIONS: 'blueprint:clarifyQuestions',
+  BLUEPRINT_CLARIFY_GATE: 'blueprint:clarifyGate',
+  BLUEPRINT_CLARIFY_PROCEED: 'blueprint:clarifyProceed',
+  BLUEPRINT_CLARIFY_ITERATE: 'blueprint:clarifyIterate',
 
   // Blueprint phase execution (Phase 3 — Plan)
   BLUEPRINT_START_PLAN: 'blueprint:startPlan',
@@ -555,15 +576,28 @@ export const IPC_CHANNELS = {
   // Constitution
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
   BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution',
+  BLUEPRINT_RETRY_PHASE: 'blueprint:retryPhase',
 
-  // LLM Presets
-  PRESET_GET_ALL: 'preset:get-all',
-  PRESET_GET_BY_ID: 'preset:get-by-id',
-  PRESET_CREATE: 'preset:create',
-  PRESET_UPDATE: 'preset:update',
-  PRESET_DELETE: 'preset:delete',
-  PRESET_SET_DEFAULT: 'preset:set-default',
-  PRESET_SWITCH: 'preset:switch-conversation'
+  // Blueprint snapshot sync (M2 — whole-state snapshot)
+  BLUEPRINT_STATE_SYNC: 'blueprint:stateSync',
+
+  // Blueprint transcript (M3 — persist + rehydrate)
+  BLUEPRINT_GET_TRANSCRIPT: 'blueprint:getTranscript',
+
+  // Blueprint snapshot (M7 — pull-based seed on mount/workspace switch)
+  BLUEPRINT_GET_SNAPSHOT: 'blueprint:getSnapshot',
+
+  // E2E Testing
+  TESTING_LIST_SCENARIOS: 'testing:listScenarios',
+  TESTING_PREFLIGHT: 'testing:preflight',
+  TESTING_RUN: 'testing:run',
+  TESTING_REQUEUE_FAILED: 'testing:requeueFailed',
+  TESTING_CANCEL: 'testing:cancel',
+  TESTING_GET_RUNS: 'testing:getRuns',
+  TESTING_GET_RUN_RESULTS: 'testing:getRunResults',
+  TESTING_GET_RESULT_DETAIL: 'testing:getResultDetail',
+  TESTING_PROGRESS: 'testing:progress'
+
 } as const
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
@@ -667,17 +701,19 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'blueprint:tasks': 'claude-opus-4-8',
   'blueprint:review': 'claude-opus-4-8',
   'blueprint:build': 'claude-sonnet-4-6',
-  'blueprint:verify': 'claude-opus-4-8'
+  'blueprint:verify': 'claude-opus-4-8',
+
+  // Prompt optimization
+  'prompt:optimize': 'claude-haiku-4-5-20251001'
 } as const
 
-// ── Preset System ──
+// ── Role Groups (retained for Phase 2 role assignments) ──
 
-import type { ActionGroup, ActionModelConfig, LocalLLMBackend } from './types'
+import type { ActionGroup } from './types'
 
 /**
- * Logical groupings of ModelActions for the preset editor UI.
- * Each group can be configured independently; the Chat group enforces
- * provider parity (all actions must use the same provider).
+ * Logical groupings of ModelActions for model role assignment UI.
+ * Each group can be configured independently in the future role matrix.
  */
 export const ACTION_GROUPS: ActionGroup[] = [
   {
@@ -738,67 +774,59 @@ export const ACTION_GROUPS: ActionGroup[] = [
     icon: '⚙️',
     description: 'Memory feeds, activation, and lightweight tasks',
     advanced: true,
-    actions: ['memoryFeed', 'activation', 'haiku', 'mpa:decompose']
+    actions: ['memoryFeed', 'activation', 'haiku', 'mpa:decompose', 'prompt:optimize']
   }
 ] as const
 
-/**
- * Built-in "Full Claude" preset config — empty object means every action
- * falls through to DEFAULT_MODEL_CONFIG (all Claude models).
- */
-export const BUILTIN_FULL_CLAUDE_CONFIG: Partial<
-  Record<import('./types').ModelAction, ActionModelConfig>
-> = {}
+// ── Role → ModelAction Mapping ──────────────────────────────────────
 
 /**
- * Build a "Full Local" preset config — every action routes to the given
- * local model + backend.
+ * Maps AgentRoles whose ModelAction doesn't follow the `${role}:${mode}` convention.
+ * Blueprint phases map to `blueprint:*` actions (mode is irrelevant — each phase IS its action).
+ * MPA phases ride on da-vinci plan/build tiers.
  */
-export function buildFullLocalConfig(
-  modelId: string,
-  backend: LocalLLMBackend = 'ollama'
-): Partial<Record<import('./types').ModelAction, ActionModelConfig>> {
-  const config: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
-  for (const [action] of Object.entries(DEFAULT_MODEL_CONFIG)) {
-    config[action as import('./types').ModelAction] = {
-      provider: 'local-llm',
-      modelId,
-      localBackend: backend
-    }
-  }
-  return config
+const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./types').ModelAction>> = {
+  'blueprint-specify': 'blueprint:specify',
+  'blueprint-clarify': 'blueprint:clarify',
+  'blueprint-plan': 'blueprint:plan',
+  'blueprint-tasks': 'blueprint:tasks',
+  'blueprint-review': 'blueprint:review',
+  'blueprint-build': 'blueprint:build',
+  'blueprint-verify': 'blueprint:verify',
 }
 
-/** Chat-group actions that the model selection controls */
-const CHAT_ACTIONS: import('./types').ModelAction[] = [
-  'da-vinci',
-  'da-vinci:plan',
-  'da-vinci:build',
-  'project-specialist',
-  'project-specialist:plan',
-  'project-specialist:build'
-]
-
 /**
- * Build a Claude model preset config — overrides only chat-group actions
- * to the given model. All other actions fall through to DEFAULT_MODEL_CONFIG.
+ * MPA roles use da-vinci tiers for model resolution.
+ * Planner/verifier share plan-tier; builder uses build-tier.
  */
-export function buildClaudeModelConfig(
-  modelId: string
-): Partial<Record<import('./types').ModelAction, ActionModelConfig>> {
-  const config: Partial<Record<import('./types').ModelAction, ActionModelConfig>> = {}
-  for (const action of CHAT_ACTIONS) {
-    config[action] = { provider: 'claude', modelId }
-  }
-  return config
+const MPA_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, { plan: import('./types').ModelAction; build: import('./types').ModelAction }>> = {
+  'mpa-planner': { plan: 'da-vinci:plan', build: 'da-vinci:plan' },
+  'mpa-builder': { plan: 'da-vinci:build', build: 'da-vinci:build' },
+  'mpa-verifier': { plan: 'da-vinci:plan', build: 'da-vinci:plan' },
 }
 
-/** Built-in Claude model preset definitions for seeding */
-export const BUILTIN_CLAUDE_MODEL_PRESETS = [
-  { suffix: 'claude-opus', name: 'Claude Opus', modelId: 'claude-opus-4-8' },
-  { suffix: 'claude-sonnet', name: 'Claude Sonnet', modelId: 'claude-sonnet-4-6' },
-  { suffix: 'claude-haiku', name: 'Claude Haiku', modelId: 'claude-haiku-4-5-20251001' }
-] as const
+/**
+ * Resolve the correct ModelAction for a given AgentRole and execution mode.
+ *
+ * - Blueprint phases → fixed `blueprint:*` action (mode-independent)
+ * - MPA phases → da-vinci plan/build tiers
+ * - Standard roles (da-vinci, project-specialist, etc.) → `${role}:${mode}`
+ */
+export function resolveModelAction(
+  role: import('./types').AgentRole,
+  isBuildMode: boolean
+): import('./types').ModelAction {
+  // Blueprint phases have their own ModelAction — mode is irrelevant
+  const fixed = FIXED_ROLE_ACTIONS[role]
+  if (fixed) return fixed
+
+  // MPA phases map to da-vinci tiers
+  const mpa = MPA_ROLE_ACTIONS[role]
+  if (mpa) return mpa[isBuildMode ? 'build' : 'plan']
+
+  // Standard roles: ${role}:${plan|build}
+  return `${role}:${isBuildMode ? 'build' : 'plan'}` as import('./types').ModelAction
+}
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────
 
@@ -1008,6 +1036,12 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Blueprint Verify',
     description: 'Adversarial verification of build output against spec',
     icon: '✅',
+    section: 'background'
+  },
+  'prompt:optimize': {
+    label: 'Prompt Optimizer',
+    description: 'Rewrites chat prompts for clarity before sending',
+    icon: '✨',
     section: 'background'
   }
 } as const
@@ -1762,8 +1796,12 @@ export const MCP_TOOLS = {
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
-    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
-    EMIT_MEMORY: mcpTool('control-actions', 'emit_memory', 'Control · emit_memory')
+    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user')
+  }),
+  MEMORY: mcpServer('memory', {
+    MEMORY_SEARCH: mcpTool('memory', 'memory_search', 'Memory · memory_search'),
+    MEMORY_RECORD: mcpTool('memory', 'memory_record', 'Memory · memory_record'),
+    MEMORY_FLAG: mcpTool('memory', 'memory_flag', 'Memory · memory_flag')
   })
 } as const
 
@@ -1923,7 +1961,7 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
   {
     ollamaId: 'qwen3.6:35b-a3b-coding-nvfp4',
     omlxId: 'mlx-community/Qwen3.6-35B-A3B-Coding-NVFP4',
-    label: 'Qwen 3.6 Coding (MLX)',
+    label: 'Qwen 3.6 Coding (MLX, NVFP4)',
     parameterSize: '35B MoE',
     activeParams: 'A3B',
     contextWindow: 262144, // Native 262K (was 131K — incorrect; see HF model card)
@@ -1932,11 +1970,11 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     memoryTier: '32gb',
     toolCalling: 'native',
     mlxOptimized: true,
-    description: 'Top pick — MLX + NVFP4, coding-tuned',
-    recommended: true,
+    description: '32GB pick — MLX + NVFP4, coding-tuned',
     toolCallingNotes: 'Native tool calling with excellent format compliance',
     supportsParallelTools: true,
-    supportsThinking: true
+    supportsThinking: true,
+    supportsVision: true
   },
   {
     ollamaId: 'qwen3-coder:30b',
@@ -1992,9 +2030,46 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     description: 'No tool calling; analysis and chat only',
     toolCallingNotes: 'No tool calling support — use in analysis-only mode with manual RAG',
     supportsParallelTools: false,
-    supportsThinking: false
+    supportsThinking: false,
+    supportsVision: true
   },
   // 48GB+ tier
+  {
+    ollamaId: 'qwen3.6:35b-a3b-q8',
+    omlxId: 'unsloth/Qwen3.6-35B-A3B-MLX-8bit',
+    label: 'Qwen 3.6 35B (MLX 8-bit, Unsloth)',
+    parameterSize: '35B MoE',
+    activeParams: 'A3B',
+    contextWindow: 262144,
+    quantization: '8bit',
+    minMemoryGB: 48,
+    memoryTier: '48gb+',
+    toolCalling: 'native',
+    mlxOptimized: true,
+    recommended: true,
+    supportsVision: true,
+    description: 'Top pick for 64GB+ Macs — native vision, near-lossless 8-bit. Unsloth chat-template fixes for OpenCode tool calls',
+    toolCallingNotes: 'Native tool calling, parallel support, thinking preservation',
+    supportsParallelTools: true,
+    supportsThinking: true
+  },
+  {
+    ollamaId: 'qwen3.6:27b-6bit',
+    omlxId: 'mlx-community/Qwen3.6-27B-6bit',
+    label: 'Qwen 3.6 27B Dense (MLX, 6-bit)',
+    parameterSize: '27B',
+    contextWindow: 262144,
+    quantization: '6bit',
+    minMemoryGB: 32,
+    memoryTier: '48gb+',
+    toolCalling: 'native',
+    mlxOptimized: true,
+    supportsVision: true,
+    description: 'Best raw coding quality — dense 27B, slower tok/s',
+    toolCallingNotes: 'Native tool calling with excellent format compliance',
+    supportsParallelTools: true,
+    supportsThinking: true
+  },
   {
     ollamaId: 'qwen3-coder-next:q4_K_M',
     // No MLX variant available yet — omit omlxId

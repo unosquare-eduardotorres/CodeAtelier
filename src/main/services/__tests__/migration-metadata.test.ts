@@ -7,7 +7,7 @@
  *
  * Under Node.js (without Electron ABI), better-sqlite3 cannot load its native
  * module. So we test everything that doesn't require a Database instance:
- *   - Migration array structure (107 entries)
+ *   - Migration array structure (113+ entries)
  *   - Sequential version numbering
  *   - Each migration has name + up() function
  *   - Exported function signatures
@@ -155,8 +155,14 @@ describe('db/index.ts — migration array structure', () => {
     await modulePromise
     if (importError) return
     const lastVersion = migrations[migrations.length - 1].version
-    // CURRENT_SCHEMA_VERSION should equal the last migration version
-    assert.equal(lastVersion, 107, 'last migration is version 107')
+    // CURRENT_SCHEMA_VERSION is not exported, but migrations should form a
+    // complete sequential chain from 1..N. Verify the last entry is ≥ 107
+    // (the previous known schema version) and that versions are sequential.
+    assert.ok(lastVersion >= 107, `last migration (v${lastVersion}) should be >= 107`)
+    // Also verify no gaps in the sequence
+    for (let i = 0; i < migrations.length; i++) {
+      assert.equal(migrations[i].version, i + 1, `migration[${i}] should be v${i + 1}`)
+    }
   })
 
   test('first 10 migration names are descriptive', async () => {

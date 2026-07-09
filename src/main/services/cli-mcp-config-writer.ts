@@ -156,6 +156,15 @@ export class CliMcpConfigWriter {
       }
     }
 
+    // ── Memory ──
+    if (workspaceId) {
+      servers['memory'] = {
+        command: 'node',
+        args: [join(serverBasePath, 'memory-server.js')],
+        env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
+      }
+    }
+
     // ── Git Context ──
     servers['git-context'] = {
       command: 'node',

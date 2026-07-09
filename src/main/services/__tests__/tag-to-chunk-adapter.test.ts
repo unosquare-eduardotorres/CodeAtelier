@@ -280,4 +280,4 @@ describe('convertTagsToChunks', () => {
 
 console.log(`\n${'─'.repeat(40)}`)
 console.log(`tag-to-chunk-adapter: ${passed} passed, ${failed} failed`)
-if (failed > 0) process.exit(1)
+if (failed > 0) process.exitCode = 1

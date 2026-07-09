@@ -31,7 +31,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/mpa-test',
     workspaceId: 'ws-mpa-1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -175,7 +175,7 @@ describe('MpaBaseAdapter', () => {
     const emitted: unknown[] = []
     adapter.emitDetectedIntents({
       accumulatedText: 'some text',
-      controlToolState: { plan: false, askUser: false, memory: false },
+      controlToolState: { plan: false, askUser: false },
       mode: 'plan',
       conversationId: 'c1',
       emit: (_evt, payload) => emitted.push(payload)

@@ -1,5 +1,6 @@
 // ── Data Models ──
 export type ConversationMode = 'plan' | 'build' | 'danger'
+export type ConversationType = 'chat' | 'blueprint'
 
 /** Thinking effort level — controls reasoning depth (thinking budget + temperature) */
 export type ThinkingEffort = 'low' | 'medium' | 'high'
@@ -85,6 +86,8 @@ export interface Conversation {
   workspaceId: string
   title: string
   mode: ConversationMode
+  /** Conversation type: 'chat' for normal conversations, 'blueprint' for blueprint phase conversations */
+  type: ConversationType
   createdAt: string
   status: 'active' | 'archived'
   summary?: string
@@ -110,10 +113,26 @@ export interface Conversation {
   effort?: ThinkingEffort
   /** Per-conversation thinking budget cap — max thinking tokens per turn (0 = no limit) */
   thinkingBudget?: number
-  /** LLM preset controlling model selection for each action */
-  presetId?: string | null
   /** Handoff context injected into system prompt when switching providers mid-chat */
   handoffContext?: string | null
+  /** Frozen model configuration snapshot — NULL for legacy conversations (live resolution) */
+  modelConfigSnapshot?: ConversationModelSnapshot | null
+}
+
+/**
+ * Frozen model configuration stored at conversation creation time.
+ * Immutable — consumers read this instead of re-resolving live settings.
+ * NULL on legacy conversations → fall back to live resolution.
+ */
+export interface ConversationModelSnapshot {
+  /** Resolved model for plan mode */
+  plan: ResolvedAssignment
+  /** Resolved model for build mode */
+  build: ResolvedAssignment
+  /** Resolved model for background tasks */
+  background: ResolvedAssignment
+  /** ISO 8601 timestamp when snapshot was created */
+  snapshotAt: string
 }
 
 export type ContextUsageLevel = 'green' | 'yellow' | 'red' | 'critical'
@@ -528,33 +547,47 @@ export type ModelAction =
   | 'blueprint:review'
   | 'blueprint:build'
   | 'blueprint:verify'
+  | 'prompt:optimize'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
   [key: string]: string // ModelAction → model ID string
 }
 
-// ── Preset System ──
+// ── Model Roles (cross-provider routing) ──
 
-/** Per-action model assignment within a preset */
-export interface ActionModelConfig {
+/** A single model assignment for a role — identifies both provider and model. */
+export interface ModelRoleAssignment {
   provider: LLMProvider
   modelId: string
   localBackend?: LocalLLMBackend
 }
 
-/** Named LLM configuration preset (maps actions → models) */
-export interface LLMPreset {
-  id: string
-  workspaceId: string
-  name: string
-  isBuiltIn: boolean
-  actionConfig: Partial<Record<ModelAction, ActionModelConfig>>
-  createdAt: string
-  updatedAt: string
+/**
+ * Per-action model role map. Each ModelAction can independently point at
+ * a different provider+model. Stored in workspace settings_json.modelRoles.
+ *
+ * This enables "plan with Opus, build with Sonnet, background on local" or
+ * "plan with Fable, build with GEMMA" cross-provider routing.
+ */
+export type ModelRoleMap = Partial<Record<ModelAction, ModelRoleAssignment>>
+
+/**
+ * Fully resolved model assignment — the output of resolveAssignment().
+ * Includes provenance so consumers know where the assignment came from.
+ */
+export interface ResolvedAssignment {
+  /** The LLM provider for this assignment */
+  provider: LLMProvider
+  /** The model ID within the provider */
+  modelId: string
+  /** For local providers, which backend (omlx, ollama) */
+  localBackend?: LocalLLMBackend
+  /** Where the assignment was resolved from — for debugging & UI display */
+  source: 'roles' | 'override' | 'default' | 'fallback'
 }
 
-/** Logical grouping of ModelActions for the preset editor UI */
+/** Logical grouping of ModelActions for the model role assignment UI */
 export interface ActionGroup {
   id: string
   label: string
@@ -781,7 +814,6 @@ export interface PlanDetectedEvent {
 export interface ControlToolState {
   plan: boolean
   askUser: boolean
-  memory: boolean
   /** MCP-emitted plan intent (set by onPlan callback) */
   planIntent?: AgentIntent & { type: 'plan' }
   /** MCP-emitted askUser intent (set by onAskUser callback) */
@@ -879,8 +911,96 @@ export interface WorkspaceUsageSummary {
   byFeature: FeatureUsageSummary[]
 }
 
-// ── Auto Memory System ──
+// ── Knowledge-Aware Memory Engine ──
 
+/** Category of a stored fact. */
+export type MemoryFactCategory = 'decision' | 'convention' | 'gotcha' | 'preference' | 'reference'
+
+/** Confidence/maturity tier: T0 observed → T3 wisdom. */
+export type MemoryFactTier = 0 | 1 | 2 | 3
+
+/** Lifecycle status — superseded facts are never deleted. */
+export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
+
+/** How the fact was originally captured. */
+export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md'
+
+export interface MemoryFact {
+  id: string
+  workspaceId: string | null // null = global user preference / correction
+  category: MemoryFactCategory
+  title: string
+  content: string
+  tags: string[]
+  scopePaths: string[] // file/dir paths this fact is relevant to
+  tier: MemoryFactTier
+  confidence: number // 0.0 – 1.0
+  confirmationCount: number
+  lastConfirmedAt: string | null
+  status: MemoryFactStatus
+  supersededBy: string | null // id of the fact that superseded this one
+  sourceType: MemorySourceType
+  sourceRef: string | null // conversation id / commit sha / doc path
+  embeddingPending: boolean
+  lastAccessedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** Resolution status for a contradiction between two facts. */
+export type ContradictionStatus = 'auto_resolved' | 'pending' | 'user_resolved'
+
+export interface MemoryContradiction {
+  id: string
+  oldFactId: string
+  newFactId: string
+  status: ContradictionStatus
+  resolution: string | null // human-readable explanation
+  createdAt: string
+  resolvedAt: string | null
+}
+
+/** Doc-watcher gate: tracks content hashes to avoid re-extracting unchanged docs. */
+export interface MemoryDocState {
+  workspaceId: string
+  filePath: string
+  contentHash: string
+  lastExtractedAt: string
+}
+
+/** Progress event for memory extraction (session-end, commit, doc feed). */
+export interface MemoryFeedProgress {
+  status: 'running' | 'done' | 'error'
+  message: string
+  source: MemorySourceType
+  timestamp?: number
+}
+
+/** Capture settings stored per workspace (persisted in workspace settings_json). */
+export interface MemoryCaptureSettings {
+  sessionCapture: boolean
+  commitCapture: boolean
+  docCapture: boolean
+  watcherGlobs: string[]
+}
+
+/** Result of a hybrid retrieval query. */
+export interface MemoryRetrievalResult {
+  fact: MemoryFact
+  score: number // combined relevance score
+  matchType: 'cosine' | 'keyword' | 'hybrid'
+}
+
+/** Embedding status summary for the UI banner. */
+export interface MemoryEmbeddingStatus {
+  isReady: boolean
+  pendingCount: number
+  totalCount: number
+  modelName: string | null
+}
+
+// ── Legacy types kept for backward compat during transition ──
+// TODO: Remove after Phase 6 cleanup
 export type MemoryType = 'user' | 'feedback' | 'project' | 'reference'
 
 export interface Memory {
@@ -896,13 +1016,6 @@ export interface Memory {
   lastAccessedAt: string | null
   createdAt: string
   updatedAt: string
-}
-
-export interface MemoryFeedProgress {
-  status: 'running' | 'done' | 'error'
-  message: string
-  source: 'claude-md' | 'codebase' | 'document'
-  timestamp?: number
 }
 
 export interface WorkspaceFeedTimestamps {
@@ -1195,6 +1308,7 @@ export interface WorkspaceSettings {
   contextPrimingEnabled?: boolean
 
   // ── Feature Flags ──
+  promptOptimizationEnabled?: boolean
   enableCodeGraph?: boolean
   enableSemanticSearch?: boolean
   enableGitContext?: boolean
@@ -1205,6 +1319,8 @@ export interface WorkspaceSettings {
   localMcpActive?: boolean
   gitAutoBranch?: boolean
   specialistSwapAccepted?: boolean
+  /** Show Ollama provider option in Settings (default false) */
+  showOllamaProvider?: boolean
 
   // ── Local LLM ──
   descriptionModel?: string
@@ -1224,9 +1340,6 @@ export interface WorkspaceSettings {
   // ── Misc ──
   additionalDirectories?: string[]
   modelOverrides?: Record<string, unknown>
-
-  // ── Presets ──
-  defaultPresetId?: string
 
   /** Catch-all for forward-compatibility */
   [key: string]: unknown
@@ -1465,6 +1578,12 @@ export interface RecommendedLocalModel {
    * Qwen3 and DeepSeek models typically do this.
    */
   supportsThinking?: boolean
+  /**
+   * Whether the model has a native vision encoder (VLM).
+   * When true, the model can process image_url content parts.
+   * Examples: Qwen 3.6 (native VL), Gemma 3 27B.
+   */
+  supportsVision?: boolean
 }
 
 // ── Council Types ──
@@ -1640,6 +1759,107 @@ export interface PlanFilters {
   status?: PlanStatus | PlanStatus[]
   source?: PlanSource
   search?: string
+}
+
+// ── E2E Testing Types ──────────────────────────────────────────────────────
+
+export type E2ECategory =
+  | 'chat-core'
+  | 'commands'
+  | 'tools'
+  | 'memory'
+  | 'planning'
+  | 'grill'
+  | 'council'
+  | 'blueprints'
+  | 'mpa'
+  | 'audit'
+  | 'code-intel'
+
+export type E2EScenarioStatus = 'implemented' | 'planned'
+
+export type E2EResultStatus = 'queued' | 'running' | 'passed' | 'failed' | 'skipped' | 'error'
+
+export type E2ERunStatus = 'running' | 'completed' | 'cancelled'
+
+export interface E2EAssertionResult {
+  name: string
+  passed: boolean
+  reason?: string
+}
+
+export interface E2EScenarioSummary {
+  id: string
+  category: E2ECategory
+  title: string
+  description: string
+  status: E2EScenarioStatus
+  mode: 'plan' | 'build'
+  timeoutMs: number
+  promptCount: number
+}
+
+export interface E2ERunSummary {
+  id: string
+  workspaceId: string
+  status: E2ERunStatus
+  modelId: string | null
+  backend: string | null
+  startedAt: string
+  finishedAt: string | null
+  totalPassed: number
+  totalFailed: number
+  totalSkipped: number
+  totalError: number
+}
+
+export interface E2EResultSummary {
+  id: string
+  runId: string
+  scenarioId: string
+  status: E2EResultStatus
+  durationMs: number | null
+  failureReason: string | null
+  conversationId: string | null
+  createdAt: string
+}
+
+export interface E2EResultDetail extends E2EResultSummary {
+  assertionResults: E2EAssertionResult[]
+  transcriptJson: E2ETranscriptEntry[]
+}
+
+export interface E2ETranscriptEntry {
+  role: 'user' | 'assistant' | 'system'
+  type: 'text' | 'tool_use' | 'tool_result' | 'thinking' | 'error' | 'status'
+  content?: string
+  toolName?: string
+  toolArgs?: Record<string, unknown>
+  toolResult?: string
+  timestamp: number
+}
+
+export interface E2EPreflightResult {
+  ok: boolean
+  modelId?: string
+  error?: string
+  /** Whether the model/backend actually emits structured tool_calls */
+  supportsTools?: boolean
+}
+
+export interface E2EProgressEvent {
+  runId: string
+  scenarioId: string
+  status: E2EResultStatus
+  counts: {
+    passed: number
+    failed: number
+    skipped: number
+    error: number
+    queued: number
+    running: number
+    total: number
+  }
 }
 
 /** Framed input passed to all council members */

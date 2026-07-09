@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { AgentSessionService } from '../agent-session.service'
+import { AgentSessionService, splitContentBlocks } from '../agent-session.service'
 import type { ExecutorBaseOptions } from '../executor-types'
 import type {
   AgentRoleAdapter,
@@ -56,6 +56,7 @@ function createTestAdapter(overrides: Partial<AgentRoleAdapter> = {}): {
   const adapter: AgentRoleAdapter = {
     role: 'project-specialist',
     agentId: 'workspace-specialist-test',
+    supportsEmitPlanRecovery: false,
     onSessionStart: async (ctx) => {
       calls.onSessionStart.push(ctx)
     },
@@ -75,8 +76,7 @@ function createTestAdapter(overrides: Partial<AgentRoleAdapter> = {}): {
     },
     buildControlCallbacks: (): ControlActionCallbacks => ({
       onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
+      onAskUser: () => {}
     }),
     emitDetectedIntents: (ctx) => {
       calls.emitDetectedIntents.push(ctx)
@@ -311,7 +311,7 @@ describe('AgentSessionService', () => {
       workspacePath: '/test',
       workspaceId: null,
       conversationId: null,
-      controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+      controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
       contextTier: 'small'
     })
     assert.equal(calls.buildMcpConfig.length, 1)
@@ -481,6 +481,65 @@ describe('AgentSessionService', () => {
     const { adapter } = createTestAdapter()
     const session = new AgentSessionService(adapter)
     assert.equal(session.effectiveContextWindow, undefined)
+  })
+})
+
+describe('splitContentBlocks — OpenCode content-block extraction', () => {
+  test('string input → text passthrough, no images', () => {
+    const result = splitContentBlocks('hello world')
+    assert.equal(result.text, 'hello world')
+    assert.equal(result.images, undefined)
+  })
+
+  test('text-only blocks → joined with newlines, no images', () => {
+    const blocks = [
+      { type: 'text', text: 'first line' },
+      { type: 'text', text: 'second line' }
+    ]
+    const result = splitContentBlocks(blocks)
+    assert.equal(result.text, 'first line\nsecond line')
+    assert.equal(result.images, undefined)
+  })
+
+  test('text + image blocks → text extracted, images mapped', () => {
+    const blocks = [
+      { type: 'text', text: 'describe this image' },
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/png',
+          data: 'iVBORw0KGgo='
+        }
+      }
+    ]
+    const result = splitContentBlocks(blocks)
+    assert.equal(result.text, 'describe this image')
+    assert.ok(result.images)
+    assert.equal(result.images!.length, 1)
+    assert.equal(result.images![0].base64, 'iVBORw0KGgo=')
+    assert.equal(result.images![0].mimeType, 'image/png')
+    assert.equal(result.images![0].fileName, 'pasted-image')
+  })
+
+  test('image-only blocks → empty text, images present', () => {
+    const blocks = [
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/4AAQ' }
+      }
+    ]
+    const result = splitContentBlocks(blocks)
+    assert.equal(result.text, '')
+    assert.ok(result.images)
+    assert.equal(result.images!.length, 1)
+    assert.equal(result.images![0].mimeType, 'image/jpeg')
+  })
+
+  test('no image blocks → images is undefined', () => {
+    const blocks = [{ type: 'text', text: 'just text' }]
+    const result = splitContentBlocks(blocks)
+    assert.equal(result.images, undefined)
   })
 })
 

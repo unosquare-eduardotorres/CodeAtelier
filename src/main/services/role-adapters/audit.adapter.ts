@@ -77,7 +77,7 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
     })()
 
     // Pattern 1: Centralized model resolution
-    const resolvedModel = this.resolveModel(ctx.workspacePath, 'audit', ctx.presetId)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'audit')
 
     this.systemPrompt = renderAuditPrompt({
       trackId: this.trackId,
@@ -113,9 +113,6 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
   }
   protected override getIncludeGitContext(): boolean {
     return this.llmProvider !== 'local-llm'
-  }
-  protected override persistMemory(): void {
-    /* no-op */
   }
 
   /** No-op — auditors don't emit intents. */

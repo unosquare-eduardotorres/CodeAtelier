@@ -25,6 +25,7 @@ import type { CacheEfficiencyReport } from './agent-token-tracker'
 import { workspaceRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
 import { modelConfigService } from './model-config.service'
+import { memoryDocWatcherService } from './memory-doc-watcher.service'
 
 /** Events forwarded session → this facade. */
 const FORWARDED_EVENTS = [
@@ -111,6 +112,23 @@ export class ChatAgentService extends EventEmitter {
         // Fall through to create a new session below
       } else {
         this._activeWorkspaceId = workspaceId
+        // C2-FIX: Ensure the doc watcher follows the active workspace.
+        // Without this, switching back to a previously-started workspace
+        // leaves the watcher pointed at the last-started workspace.
+        if (memoryDocWatcherService.activeWorkspace !== workspaceId) {
+          try {
+            const settings = workspaceRepository.getSettings(workspaceId) as Record<string, unknown>
+            if (settings.memoryDocCapture !== false) {
+              memoryDocWatcherService.start(workspaceId, workspacePath)
+            } else {
+              // N3-FIX: Target workspace has docCapture off — stop the old watcher
+              // so it doesn't keep watching the previous workspace.
+              memoryDocWatcherService.stop()
+            }
+          } catch (err) {
+            this.log.debug('[doc-watcher] Failed to restart doc watcher on switch-back:', err)
+          }
+        }
         return // Session already running with correct adapter
       }
     }
@@ -136,6 +154,20 @@ export class ChatAgentService extends EventEmitter {
     // Only add to map and set active AFTER successful start
     this.sessions.set(workspaceId, entry)
     this._activeWorkspaceId = workspaceId
+
+    // Start doc watcher if capture is enabled
+    try {
+      const settings = workspaceRepository.getSettings(workspaceId) as Record<string, unknown>
+      if (settings.memoryDocCapture !== false) {
+        memoryDocWatcherService.start(workspaceId, workspacePath)
+      } else {
+        // N3-FIX: New session's workspace has docCapture off — stop any
+        // watcher left over from the previous workspace.
+        memoryDocWatcherService.stop()
+      }
+    } catch (err) {
+      this.log.debug('[doc-watcher] Failed to start doc watcher:', err)
+    }
   }
 
   /**
@@ -146,6 +178,11 @@ export class ChatAgentService extends EventEmitter {
     if (!entry) return
 
     this.log.info(`[multi-session] Stopping session for workspace ${workspaceId}`)
+    // C1-FIX: Only stop the doc watcher if it belongs to THIS workspace —
+    // stopping a background session must not kill the active workspace's watcher.
+    if (memoryDocWatcherService.activeWorkspace === workspaceId) {
+      memoryDocWatcherService.stop()
+    }
     this.teardownSessionForwarders(entry)
 
     try {

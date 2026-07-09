@@ -2,7 +2,7 @@
 /**
  * Control Actions MCP Server — externalized for CLI interactive mode.
  *
- * Exposes three tools: emit_plan, ask_user, emit_memory.
+ * Exposes two tools: emit_plan, ask_user.
  * Communicates events back to the Electron main process via a Unix domain
  * socket (IPC bridge). The main process creates the socket server before
  * spawning the Claude CLI; this server connects to it on startup.
@@ -226,11 +226,7 @@ const askUserSchema = z.object({
   action: z.string().optional()
 })
 
-const emitMemorySchema = z.object({
-  type: z.enum(['user', 'feedback', 'project', 'reference']),
-  title: z.string().min(1),
-  content: z.string().min(1)
-})
+// emitMemorySchema removed — memory tools now on dedicated memory MCP server
 
 // ── MCP Server ──
 
@@ -283,19 +279,7 @@ server.tool(
   }
 )
 
-// emit_memory tool
-server.tool(
-  'emit_memory',
-  'Persist a memory for future sessions.',
-  emitMemorySchema.shape,
-  async (args) => {
-    const memory = emitMemorySchema.parse(args)
-    emitEvent('memory', memory)
-    return {
-      content: [{ type: 'text' as const, text: `Memory saved: [${memory.type}] ${memory.title}` }]
-    }
-  }
-)
+// emit_memory removed — memory tools now live on the dedicated memory MCP server
 
 // ── Bootstrap ──
 
@@ -303,7 +287,7 @@ async function main(): Promise<void> {
   connectIpc()
   setupResponseListener()
 
-  console.error('[control-actions-server] Tools registered: emit_plan, ask_user, emit_memory')
+  console.error('[control-actions-server] Tools registered: emit_plan, ask_user')
 
   const transport = new StdioServerTransport()
   await server.connect(transport)

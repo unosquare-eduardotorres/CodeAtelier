@@ -5,6 +5,7 @@ import simpleGit from 'simple-git'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
 import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { chatStreamService } from '../services/chat-stream.service'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
@@ -40,6 +41,8 @@ async function handleChatClose(conversationId: string): Promise<void> {
   }
 
   chatAgentService.clearSession(conversationId)
+  // N1-FIX: Clear per-conversation memory dedupe state
+  chatStreamService.clearConversationMemoryState(conversationId)
 
   // Clean up branches (local + remote if PR was merged)
   const workspacePath = chatAgentService.getWorkspacePath()
@@ -181,6 +184,8 @@ async function handleChatComplete(args: {
       conversationLifecycle.abort('conversation-completed')
     }
     chatAgentService.clearSession(conversationId)
+    // N1-FIX: Clear per-conversation memory dedupe state
+    chatStreamService.clearConversationMemoryState(conversationId)
     try {
       conversationRepository.delete(conversationId)
     } catch (deleteErr) {

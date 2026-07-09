@@ -8,9 +8,8 @@
  * Extracted from AgentSessionService.buildPrimingContext.
  */
 
-import { workspaceRepository, memoryRepository } from '../db/repositories'
+import { workspaceRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
-import { sanitizePromptInput } from './sanitize-prompt-input'
 
 type PrimingPart = { type: 'text'; text: string }
 
@@ -25,7 +24,7 @@ export class PrimingContextGatherer {
     conversationId: string | null
     userPrompt: string
   }): Promise<PrimingPart[]> {
-    const { workspaceId, workspacePath, conversationId, userPrompt } = opts
+    const { workspaceId, workspacePath, conversationId } = opts
 
     // Check feature flag — gate priming for independent testing
     try {
@@ -41,15 +40,15 @@ export class PrimingContextGatherer {
 
     const parts: PrimingPart[] = []
 
-    const [gitPart, planPart, memoryPart] = await Promise.all([
+    // Memory injection is now handled per-turn by the knowledge-aware memory engine
+    // in chat-stream.service.ts and agent-session.service.ts (Phase 3).
+    const [gitPart, planPart] = await Promise.all([
       this.gatherRecentGitChanges(workspacePath),
-      this.gatherActivePlanState(conversationId),
-      this.gatherWorkspaceMemories(workspaceId, userPrompt)
+      this.gatherActivePlanState(conversationId)
     ])
 
     if (gitPart) parts.push(gitPart)
     if (planPart) parts.push(planPart)
-    if (memoryPart) parts.push(memoryPart)
 
     return parts
   }
@@ -105,35 +104,7 @@ export class PrimingContextGatherer {
     return null
   }
 
-  /**
-   * 3. Top relevant workspace memories matching the user's prompt topic.
-   */
-  private async gatherWorkspaceMemories(
-    workspaceId: string | null,
-    userPrompt: string
-  ): Promise<PrimingPart | null> {
-    if (!workspaceId) return null
-    try {
-      const memories = memoryRepository.search(workspaceId, userPrompt.slice(0, 100))
-      const topMemories = memories.slice(0, 5)
-      if (topMemories.length > 0) {
-        const memoryText = topMemories
-          .map((m) => {
-            const truncated =
-              m.content.length > 500 ? m.content.slice(0, 500) + '...' : m.content
-            return `- [${m.type}] ${sanitizePromptInput(truncated)}`
-          })
-          .join('\n')
-        return {
-          type: 'text',
-          text: `[Workspace Context: Relevant Memories]\n${memoryText}`
-        }
-      }
-    } catch {
-      /* memory service not available — non-fatal */
-    }
-    return null
-  }
+  // gatherWorkspaceMemories removed — memory injection handled per-turn by memory-retrieval.service.ts
 }
 
 /** Singleton instance */

@@ -32,12 +32,16 @@ export default function EmbeddingModelCard({
     window.open(url, '_blank')
   }
 
+  // Determine operational state: covers both ready flag AND connected+loaded
+  const isOperational = embeddingStatus?.ready ||
+    (embeddingStatus?.omlxRunning && embeddingStatus?.omlxEmbeddingModelLoaded)
+
   // Determine status label and color
   let statusLabel = 'Not connected'
   let statusColor = 'text-text-muted'
   let statusDot = 'bg-surface-base'
 
-  if (embeddingStatus?.ready) {
+  if (isOperational) {
     statusLabel = 'Ready'
     statusColor = 'text-success'
     statusDot = 'bg-success'
@@ -86,14 +90,21 @@ export default function EmbeddingModelCard({
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Recommended</span>
           <span className="text-text-muted font-mono text-[10px] truncate max-w-[240px]">
-            {OMLX_EMBEDDING.recommendedModel.id}
+            {/* Match by suffix: server returns 'bge-m3-mlx-8bit', constant is 'mlx-community/bge-m3-mlx-8bit' */}
+            {embeddingStatus?.omlxEmbeddingModelId &&
+              (OMLX_EMBEDDING.recommendedModel.id.endsWith(embeddingStatus.omlxEmbeddingModelId) ||
+               embeddingStatus.omlxEmbeddingModelId.endsWith(OMLX_EMBEDDING.recommendedModel.modelName)) ? (
+              <span className="text-success">✓ Recommended model loaded</span>
+            ) : (
+              OMLX_EMBEDDING.recommendedModel.id
+            )}
           </span>
         </div>
       </div>
 
       {/* Action buttons */}
       <div className="mt-4 flex items-center gap-2">
-        {embeddingStatus?.ready ? (
+        {isOperational ? (
           <>
             <button
               onClick={handleOpenDashboard}
@@ -137,8 +148,8 @@ export default function EmbeddingModelCard({
         </div>
       )}
 
-      {/* Help text */}
-      {!embeddingStatus?.ready && isAppleSilicon !== false && (
+      {/* Help text — only when NOT operational */}
+      {!isOperational && isAppleSilicon !== false && (
         <p className="mt-3 text-xs text-text-muted leading-relaxed">
           Install an embedding model in oMLX to enable semantic search. Open the oMLX admin
           dashboard and download{' '}

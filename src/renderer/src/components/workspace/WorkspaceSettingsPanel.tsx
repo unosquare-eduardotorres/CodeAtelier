@@ -18,7 +18,8 @@ import {
   Target,
   Landmark,
   ClipboardList,
-  BookOpen
+  BookOpen,
+  FlaskConical
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -40,6 +41,7 @@ export type SettingsTab =
   | 'documents'
   | 'tokens'
   | 'events'
+  | 'testing'
 
 type SettingsMenuGroup = 'tools' | 'configuration'
 
@@ -122,6 +124,13 @@ export const SETTINGS_MENU: {
     icon: ScrollText,
     iconColor: 'text-danger',
     group: 'configuration'
+  },
+  {
+    id: 'testing',
+    label: 'Testing',
+    icon: FlaskConical,
+    iconColor: 'text-purple-400',
+    group: 'tools'
   }
 ]
 

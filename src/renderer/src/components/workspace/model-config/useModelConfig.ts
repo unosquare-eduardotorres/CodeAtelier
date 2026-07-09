@@ -1,8 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useWorkspaceStore, useToastStore } from '@renderer/store'
 import {
-  OLLAMA_DEFAULT_HOST,
-  OLLAMA_DEFAULT_PORT,
   OMLX_DEFAULT_PORT,
   COMMUNICATION_TONES
 } from '../../../../../shared/constants'
@@ -11,76 +9,91 @@ import type {
   CostPreference,
   ExecutorBackend,
   LLMProvider,
-  LocalLLMBackend,
-  OllamaStatus,
+  ModelRoleMap,
   OmlxExtendedStatus,
+  OmlxModelDetail,
   PlatformInfo,
   Workspace
 } from '../../../../../shared/types'
 
 // ─── Types ────────────────────────────────────────────────
 
-export interface ModelConfigState {
-  activeWorkspace: Workspace | null
-  costPreference: CostPreference
-  fastMode: boolean
-  budgetCapUsd: number | undefined
-  communicationTone: CommunicationTone
-  executorBackend: ExecutorBackend
-  provider: LLMProvider
-  backend: LocalLLMBackend
-  platformInfo: PlatformInfo | null
-  localModel: string
+/** Connection draft — only host/port/apiKey/contextWindow need explicit Save */
+export interface ConnectionDraft {
   localHost: string
   localPort: number
   localApiKey: string
   localContextWindow: number | undefined
-  localStatus: OmlxExtendedStatus | OllamaStatus | null
-  showOllamaSetup: boolean
+}
+
+/** Claude CLI installation status */
+export interface ClaudeCliStatus {
+  installed: boolean
+  version: string | null
+  error: string | null
+}
+
+export interface ModelConfigState {
+  activeWorkspace: Workspace | null
+  // Connection draft (explicit save)
+  connectionDraft: ConnectionDraft
+  connectionPersisted: ConnectionDraft
+  isConnectionDirty: boolean
+  // Persisted workspace settings (instant-save)
+  defaultProvider: LLMProvider
+  executorBackend: ExecutorBackend
+  localModel: string
+  modelRoles: ModelRoleMap
+  claudeModelOverrides: Record<string, string>
+  // Workspace preferences (instant-save, not part of draft)
+  costPreference: CostPreference
+  fastMode: boolean
+  budgetCapUsd: number | undefined
+  communicationTone: CommunicationTone
+  // Status
+  platformInfo: PlatformInfo | null
+  claudeCliStatus: ClaudeCliStatus | null
+  localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
   modelLoading: string | null
   localBaseUrl: string
   isRemoteServer: boolean
+  /** oMLX models from last successful connection test */
+  omlxModels: string[]
+  /** oMLX models filtered to chat-capable only (excludes embedding/reranker) */
+  omlxChatModels: string[]
 }
 
 export interface ModelConfigActions {
-  handleProviderChange: (newProvider: LLMProvider) => Promise<void>
-  handleBackendChange: (newBackend: LocalLLMBackend) => Promise<void>
-  handleUnifiedProviderChange: (newProvider: LLMProvider, newBackend?: LocalLLMBackend) => Promise<void>
-  handleLocalModelSelect: (modelId: string) => Promise<void>
-  handleLoadOmlxModel: (modelId: string) => Promise<void>
-  handleUnloadOmlxModel: (modelId: string) => Promise<void>
-  handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
-  handleFastModeToggle: () => Promise<void>
-  handleBudgetCapChange: (value: string) => Promise<void>
-  handleToneChange: (tone: CommunicationTone) => Promise<void>
-  testConnection: (
-    activeBackend?: LocalLLMBackend,
-    host?: string,
-    port?: number
-  ) => Promise<OllamaStatus | null>
-  scheduleAutoTest: () => void
-  saveProviderSettings: (
-    newProvider: LLMProvider,
-    opts?: {
-      model?: string
-      host?: string
-      port?: number
-      backend?: LocalLLMBackend
-      apiKey?: string
-    }
-  ) => Promise<void>
+  // Connection draft mutations
   setLocalHost: (host: string) => void
   setLocalPort: (port: number) => void
   setLocalApiKey: (key: string) => void
   setLocalContextWindow: (value: number | undefined) => void
-  setShowOllamaSetup: (show: boolean) => void
-  setProvider: (provider: LLMProvider) => void
-  setLocalModel: (model: string) => void
-  setExecutorBackend: (backend: ExecutorBackend) => void
+  // Connection draft save/discard
+  saveConnection: () => Promise<void>
+  discardConnection: () => void
+  // Instant-persist actions
+  handleSetDefaultProvider: (provider: LLMProvider) => Promise<void>
+  handleExecutorBackendChange: (backend: ExecutorBackend) => Promise<void>
+  handleLocalModelSelect: (modelId: string) => Promise<void>
+  handleModelRolesChange: (roles: ModelRoleMap, overrides: Record<string, string>) => Promise<void>
+  // oMLX model management
+  handleLoadOmlxModel: (modelId: string) => Promise<void>
+  handleUnloadOmlxModel: (modelId: string) => Promise<void>
+  // Connection test
+  testConnection: (host?: string, port?: number, silent?: boolean) => Promise<OmlxExtendedStatus | null>
+  scheduleAutoTest: () => void
+  // Workspace setting actions
+  handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
+  handleFastModeToggle: () => Promise<void>
+  handleBudgetCapChange: (value: string) => Promise<void>
+  handleToneChange: (tone: CommunicationTone) => Promise<void>
 }
 
 // ─── Pure Helpers ─────────────────────────────────────────
+
+const OMLX_DEFAULT_HOST = '127.0.0.1'
 
 /** Persist a setting change to the workspace via IPC (read-modify-write). */
 async function persistWorkspaceSetting(
@@ -94,105 +107,112 @@ async function persistWorkspaceSetting(
   })
 }
 
-/** Determine if the Ollama setup modal should be shown after a backend switch. */
-function shouldShowOllamaSetup(
-  status: OllamaStatus | null,
-  localModel: string
-): boolean {
-  if (!status) return false
-  if (!status.installed || !status.running) return true
-  return !status.models.some((m) => m === localModel || m.startsWith(`${localModel}:`))
+function defaultConnectionDraft(): ConnectionDraft {
+  return {
+    localHost: OMLX_DEFAULT_HOST,
+    localPort: OMLX_DEFAULT_PORT,
+    localApiKey: '',
+    localContextWindow: undefined
+  }
+}
+
+function connectionDraftsEqual(a: ConnectionDraft, b: ConnectionDraft): boolean {
+  return (
+    a.localHost === b.localHost &&
+    a.localPort === b.localPort &&
+    a.localApiKey === b.localApiKey &&
+    a.localContextWindow === b.localContextWindow
+  )
 }
 
 // ─── Connection Test Hook ─────────────────────────────────
 
 function useConnectionTest(opts: {
-  provider: LLMProvider
-  backend: LocalLLMBackend
+  defaultProvider: LLMProvider
   localHost: string
   localPort: number
   localApiKey: string
 }): {
-  localStatus: OmlxExtendedStatus | OllamaStatus | null
+  localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
-  testConnection: (
-    activeBackend?: LocalLLMBackend,
-    host?: string,
-    port?: number
-  ) => Promise<OllamaStatus | null>
+  testConnection: (host?: string, port?: number, silent?: boolean) => Promise<OmlxExtendedStatus | null>
   scheduleAutoTest: () => void
 } {
   const addToast = useToastStore((s) => s.addToast)
-  const [localStatus, setLocalStatus] = useState<OmlxExtendedStatus | OllamaStatus | null>(null)
+  const [localStatus, setLocalStatus] = useState<OmlxExtendedStatus | null>(null)
   const [connectionTesting, setConnectionTesting] = useState(false)
   const [autoTestDone, setAutoTestDone] = useState(false)
 
   const testConnection = useCallback(
-    async (
-      activeBackend?: LocalLLMBackend,
-      host?: string,
-      port?: number
-    ): Promise<OllamaStatus | null> => {
+    async (host?: string, port?: number, silent?: boolean): Promise<OmlxExtendedStatus | null> => {
       setConnectionTesting(true)
-      const b = activeBackend ?? opts.backend
       const h = host ?? opts.localHost
       const p = port ?? opts.localPort
-      const label = b === 'omlx' ? 'oMLX' : 'Ollama'
       try {
         const baseUrl = `http://${h}:${p}`
-        const status =
-          b === 'omlx'
-            ? await window.api.omlxCheckStatus({ baseUrl, apiKey: opts.localApiKey || undefined })
-            : await window.api.ollamaCheckStatus({ baseUrl })
+        const status = await window.api.omlxCheckStatus({
+          baseUrl,
+          apiKey: opts.localApiKey || undefined
+        })
         setLocalStatus(status)
 
-        if (status.running) {
-          const mc = status.models.length
-          addToast({
-            message:
-              mc > 0
-                ? `Connected to ${label} — ${mc} model${mc !== 1 ? 's' : ''} available`
-                : `Connected to ${label} — no models loaded yet`,
-            type: mc > 0 ? 'success' : 'info'
-          })
-        } else if (status.installed) {
-          addToast({
-            message: `${label} is installed but not running. Start it and try again.`,
-            type: 'error'
-          })
-        } else {
-          addToast({ message: `Could not reach ${label} at ${h}:${p}`, type: 'error' })
+        if (!silent) {
+          if (status.running) {
+            const mc = status.models.length
+            addToast({
+              message:
+                mc > 0
+                  ? `Connected to oMLX — ${mc} model${mc !== 1 ? 's' : ''} available`
+                  : 'Connected to oMLX — no models loaded yet',
+              type: mc > 0 ? 'success' : 'info'
+            })
+          } else if (status.installed) {
+            addToast({
+              message: 'oMLX is installed but not running. Start it and try again.',
+              type: 'error'
+            })
+          } else {
+            addToast({ message: `Could not reach oMLX at ${h}:${p}`, type: 'error' })
+          }
         }
 
         return status
       } catch {
-        setLocalStatus({ installed: false, running: false, models: [] })
-        addToast({ message: `Connection failed — ${label} is not reachable at ${h}:${p}`, type: 'error' })
+        const fallback = { installed: false, running: false, models: [] } as unknown as OmlxExtendedStatus
+        setLocalStatus(fallback)
+        if (!silent) {
+          addToast({ message: `Connection failed — oMLX is not reachable at ${h}:${p}`, type: 'error' })
+        }
         return null
       } finally {
         setConnectionTesting(false)
       }
     },
-    [opts.backend, opts.localHost, opts.localPort, opts.localApiKey, addToast]
+    [opts.localHost, opts.localPort, opts.localApiKey, addToast]
   )
 
-  // Auto-test connection when page loads with local-llm already selected
+  // Auto-test on mount when local-llm is already the default provider
   useEffect(() => {
-    if (opts.provider === 'local-llm' && !autoTestDone) {
+    if (!autoTestDone) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time auto-test on mount
       setAutoTestDone(true)
-      setConnectionTesting(true)
-      const baseUrl = `http://${opts.localHost}:${opts.localPort}`
-      const check =
-        opts.backend === 'omlx'
-          ? window.api.omlxCheckStatus({ baseUrl, apiKey: opts.localApiKey || undefined })
-          : window.api.ollamaCheckStatus({ baseUrl })
-      check
-        .then((status) => setLocalStatus(status))
-        .catch(() => setLocalStatus({ installed: false, running: false, models: [] }))
-        .finally(() => setConnectionTesting(false))
+      if (opts.defaultProvider === 'local-llm') {
+        setConnectionTesting(true)
+        const baseUrl = `http://${opts.localHost}:${opts.localPort}`
+        window.api
+          .omlxCheckStatus({ baseUrl, apiKey: opts.localApiKey || undefined })
+          .then((status) => setLocalStatus(status))
+          .catch(() =>
+            setLocalStatus({
+              installed: false,
+              running: false,
+              models: []
+            } as unknown as OmlxExtendedStatus)
+          )
+          .finally(() => setConnectionTesting(false))
+      }
     }
-  }, [opts.provider, opts.backend, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
+  }, [opts.defaultProvider, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
 
   // Debounced auto-test for blur-then-persist-then-test pattern
   const debouncedTestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -201,10 +221,9 @@ function useConnectionTest(opts: {
     if (debouncedTestRef.current) clearTimeout(debouncedTestRef.current)
     debouncedTestRef.current = setTimeout(() => {
       testConnection()
-    }, 600) // 600ms debounce — enough for tab-between-fields
+    }, 600)
   }, [testConnection])
 
-  // Clean up debounce timer on unmount
   useEffect(() => {
     return () => {
       if (debouncedTestRef.current) clearTimeout(debouncedTestRef.current)
@@ -293,37 +312,47 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   const { activeWorkspace } = useWorkspaceStore()
   const addToast = useToastStore((s) => s.addToast)
 
-  // ── Executor backend state ──
-  const [executorBackend, setExecutorBackend] = useState<ExecutorBackend>('cli')
+  // ── Connection draft (explicit save) ──
+  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft>(defaultConnectionDraft)
+  const [connectionPersisted, setConnectionPersisted] = useState<ConnectionDraft>(defaultConnectionDraft)
 
-  // ── Local LLM provider state ──
-  const [provider, setProvider] = useState<LLMProvider>('claude')
-  const [backend, setBackend] = useState<LocalLLMBackend>('ollama')
-  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
+  // ── Instant-persist workspace settings ──
+  const [defaultProvider, setDefaultProvider] = useState<LLMProvider>('claude')
+  const [executorBackend, setExecutorBackend] = useState<ExecutorBackend>('cli')
   const [localModel, setLocalModel] = useState('qwen3.6:35b-a3b-coding-nvfp4')
-  const [localHost, setLocalHost] = useState<string>(OLLAMA_DEFAULT_HOST)
-  const [localPort, setLocalPort] = useState<number>(OLLAMA_DEFAULT_PORT)
-  const [localApiKey, setLocalApiKey] = useState<string>('')
-  const [localContextWindow, setLocalContextWindow] = useState<number | undefined>(undefined)
-  const [showOllamaSetup, setShowOllamaSetup] = useState(false)
+  const [modelRoles, setModelRoles] = useState<ModelRoleMap>({})
+  const [claudeModelOverrides, setClaudeModelOverrides] = useState<Record<string, string>>({})
+
+  // ── Platform + Claude CLI ──
+  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
+  const [claudeCliStatus, setClaudeCliStatus] = useState<ClaudeCliStatus | null>(null)
   const [modelLoading, setModelLoading] = useState<string | null>(null)
+
+  // Derived
+  const isConnectionDirty = useMemo(
+    () => !connectionDraftsEqual(connectionDraft, connectionPersisted),
+    [connectionDraft, connectionPersisted]
+  )
 
   // ── Sub-hooks ──
   const wsSettings = useWorkspaceSettingActions(activeWorkspace)
   const { localStatus, connectionTesting, testConnection, scheduleAutoTest } = useConnectionTest({
-    provider,
-    backend,
-    localHost,
-    localPort,
-    localApiKey
+    defaultProvider,
+    localHost: connectionDraft.localHost,
+    localPort: connectionDraft.localPort,
+    localApiKey: connectionDraft.localApiKey
   })
 
-  // Load platform info on mount (for oMLX feature gating)
+  // Load platform info + Claude CLI status on mount
   useEffect(() => {
     window.api
       .getPlatformInfo()
       .then(setPlatformInfo)
       .catch((err) => console.warn('[useModelConfig] Non-fatal: platform info load failed:', err))
+    window.api
+      .checkClaudeCli()
+      .then(setClaudeCliStatus)
+      .catch((err) => console.warn('[useModelConfig] Non-fatal: Claude CLI check failed:', err))
   }, [])
 
   // Load current workspace settings
@@ -332,7 +361,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     window.api
       .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
       .then((settings) => {
-        // Workspace settings (delegated to sub-hook)
+        // Workspace preferences (delegated to sub-hook)
         wsSettings.setCostPreference((settings.costPreference as CostPreference) || 'balanced')
         wsSettings.setFastMode(settings.fastMode === true)
         wsSettings.setBudgetCapUsd(
@@ -343,168 +372,148 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         wsSettings.setCommunicationTone(
           (settings.communicationTone as CommunicationTone) ?? 'default'
         )
-        // Executor backend setting
+
+        // Instant-persist settings
+        setDefaultProvider((settings.llmProvider as LLMProvider) ?? 'claude')
         setExecutorBackend((settings.executorBackend as ExecutorBackend) ?? 'cli')
-        // Local LLM provider settings (new keys with backward-compat fallback)
-        setProvider((settings.llmProvider as LLMProvider) ?? 'claude')
-        setBackend((settings.localLlmBackend as LocalLLMBackend) ?? 'ollama')
         setLocalModel(
           (settings.localModel as string) ??
-            (settings.ollamaModel as string) ??
-            'qwen3.6:35b-a3b-coding-nvfp4'
+          (settings.ollamaModel as string) ??
+          'qwen3.6:35b-a3b-coding-nvfp4'
         )
-        setLocalHost(
-          (settings.localHost as string) ?? (settings.ollamaHost as string) ?? OLLAMA_DEFAULT_HOST
-        )
-        setLocalPort(
-          (settings.localPort as number) ?? (settings.ollamaPort as number) ?? OLLAMA_DEFAULT_PORT
-        )
-        setLocalApiKey((settings.localApiKey as string) ?? '')
-        setLocalContextWindow(
-          typeof settings.localContextWindow === 'number'
-            ? (settings.localContextWindow as number)
-            : undefined
-        )
+        setModelRoles((settings.modelRoles as ModelRoleMap) ?? {})
+        setClaudeModelOverrides((settings.modelOverrides as Record<string, string>) ?? {})
+
+        // Connection draft — if legacy backend is ollama, use oMLX defaults
+        const savedBackend = settings.localLlmBackend as string | undefined
+        const useOmlxDefaults = savedBackend === 'ollama'
+        const conn: ConnectionDraft = {
+          localHost: useOmlxDefaults
+            ? OMLX_DEFAULT_HOST
+            : ((settings.localHost as string) ?? (settings.ollamaHost as string) ?? OMLX_DEFAULT_HOST),
+          localPort: useOmlxDefaults
+            ? OMLX_DEFAULT_PORT
+            : ((settings.localPort as number) ?? (settings.ollamaPort as number) ?? OMLX_DEFAULT_PORT),
+          localApiKey: (settings.localApiKey as string) ?? '',
+          localContextWindow:
+            typeof settings.localContextWindow === 'number'
+              ? (settings.localContextWindow as number)
+              : undefined
+        }
+        setConnectionPersisted(conn)
+        setConnectionDraft(conn)
       })
       .catch(console.error)
   }, [activeWorkspace])
 
-  /** Save provider + local LLM settings to workspace */
-  const saveProviderSettings = useCallback(
-    async (
-      newProvider: LLMProvider,
-      opts?: {
-        model?: string
-        host?: string
-        port?: number
-        backend?: LocalLLMBackend
-        apiKey?: string
-      }
-    ) => {
+  // ── Connection draft setters ──
+  const setLocalHost = useCallback(
+    (host: string) => setConnectionDraft((prev) => ({ ...prev, localHost: host })),
+    []
+  )
+  const setLocalPort = useCallback(
+    (port: number) => setConnectionDraft((prev) => ({ ...prev, localPort: port })),
+    []
+  )
+  const setLocalApiKey = useCallback(
+    (key: string) => setConnectionDraft((prev) => ({ ...prev, localApiKey: key })),
+    []
+  )
+  const setLocalContextWindow = useCallback(
+    (value: number | undefined) => setConnectionDraft((prev) => ({ ...prev, localContextWindow: value })),
+    []
+  )
+
+  // ── Save connection (also migrates legacy ollama → omlx) ──
+  const saveConnection = useCallback(async () => {
+    if (!activeWorkspace) return
+    try {
+      await persistWorkspaceSetting(activeWorkspace.id, {
+        localLlmBackend: 'omlx',
+        localHost: connectionDraft.localHost,
+        localPort: connectionDraft.localPort,
+        localApiKey: connectionDraft.localApiKey,
+        localContextWindow: connectionDraft.localContextWindow ?? null
+      })
+      setConnectionPersisted({ ...connectionDraft })
+      addToast({ message: 'Connection settings saved', type: 'success' })
+    } catch (err) {
+      console.error('Failed to save connection settings:', err)
+      addToast({ message: 'Failed to save connection settings', type: 'error' })
+    }
+  }, [activeWorkspace, connectionDraft, addToast])
+
+  // ── Discard connection draft ──
+  const discardConnection = useCallback(() => {
+    setConnectionDraft({ ...connectionPersisted })
+    addToast({ message: 'Connection changes discarded', type: 'info' })
+  }, [connectionPersisted, addToast])
+
+  // ── Instant-persist: default provider ──
+  const handleSetDefaultProvider = useCallback(
+    async (provider: LLMProvider) => {
       if (!activeWorkspace) return
-      try {
-        const settings = await window.api.getWorkspaceSettings({
-          workspaceId: activeWorkspace.id
-        })
-        await window.api.updateWorkspaceSettings({
-          workspaceId: activeWorkspace.id,
-          settings: {
-            ...settings,
-            llmProvider: newProvider,
-            localLlmBackend: opts?.backend ?? backend,
-            localModel: opts?.model ?? localModel,
-            localHost: opts?.host ?? localHost,
-            localPort: opts?.port ?? localPort,
-            localApiKey: opts?.apiKey ?? localApiKey
-          }
-        })
-      } catch (err) {
-        console.error('Failed to save provider settings:', err)
-        throw err
-      }
-    },
-    [activeWorkspace, backend, localModel, localHost, localPort, localApiKey]
-  )
-
-  /** Handle provider switch */
-  const handleProviderChange = useCallback(
-    async (newProvider: LLMProvider) => {
-      setProvider(newProvider)
-      await saveProviderSettings(newProvider)
+      setDefaultProvider(provider)
+      await persistWorkspaceSetting(activeWorkspace.id, {
+        llmProvider: provider,
+        // Always persist omlx backend when switching to local
+        ...(provider === 'local-llm' ? { localLlmBackend: 'omlx' } : {})
+      })
       addToast({
-        message: `Provider switched to ${newProvider === 'claude' ? 'Claude' : 'Local LLM'}`,
+        message: `Default provider set to ${provider === 'claude' ? 'Claude' : 'oMLX'}`,
         type: 'success'
       })
-      if (newProvider === 'local-llm') {
-        testConnection()
+      if (provider === 'local-llm') {
+        testConnection(undefined, undefined, true)
       }
     },
-    [saveProviderSettings, testConnection, addToast]
+    [activeWorkspace, addToast, testConnection]
   )
 
-  /** Handle backend change (Ollama ↔ oMLX) */
-  const handleBackendChange = useCallback(
-    async (newBackend: LocalLLMBackend) => {
-      setBackend(newBackend)
-      const newPort = newBackend === 'omlx' ? OMLX_DEFAULT_PORT : OLLAMA_DEFAULT_PORT
-      setLocalPort(newPort)
-      await saveProviderSettings(provider, { backend: newBackend, port: newPort })
-      addToast({
-        message: `Backend switched to ${newBackend === 'omlx' ? 'oMLX' : 'Ollama'}`,
-        type: 'success'
-      })
-      const status = await testConnection(newBackend, localHost, newPort)
-      if (newBackend === 'ollama' && shouldShowOllamaSetup(status, localModel)) {
-        setShowOllamaSetup(true)
-      }
+  // ── Instant-persist: executor backend ──
+  const handleExecutorBackendChange = useCallback(
+    async (backend: ExecutorBackend) => {
+      if (!activeWorkspace) return
+      setExecutorBackend(backend)
+      await persistWorkspaceSetting(activeWorkspace.id, { executorBackend: backend })
     },
-    [provider, localHost, localModel, saveProviderSettings, testConnection, addToast]
+    [activeWorkspace]
   )
 
-  /** Handle unified provider change — single-step Claude / Ollama / oMLX switch */
-  const handleUnifiedProviderChange = useCallback(
-    async (newProvider: LLMProvider, newBackend?: LocalLLMBackend) => {
-      setProvider(newProvider)
-
-      if (newProvider === 'local-llm' && newBackend) {
-        const oldBackend = backend
-        setBackend(newBackend)
-        // Reset port to default when backend changes
-        if (newBackend !== oldBackend) {
-          const newPort = newBackend === 'omlx' ? OMLX_DEFAULT_PORT : OLLAMA_DEFAULT_PORT
-          setLocalPort(newPort)
-          await saveProviderSettings(newProvider, { backend: newBackend, port: newPort })
-        } else {
-          await saveProviderSettings(newProvider, { backend: newBackend })
-        }
-      } else {
-        await saveProviderSettings(newProvider)
-      }
-
-      addToast({
-        message:
-          newProvider === 'claude'
-            ? 'Provider switched to Claude'
-            : `Provider switched to ${newBackend === 'omlx' ? 'oMLX' : 'Ollama'}`,
-        type: 'success'
-      })
-
-      if (newProvider === 'local-llm') {
-        const port =
-          newBackend !== backend
-            ? newBackend === 'omlx'
-              ? OMLX_DEFAULT_PORT
-              : OLLAMA_DEFAULT_PORT
-            : localPort
-        const status = await testConnection(newBackend ?? backend, localHost, port)
-        if (newBackend === 'ollama' && shouldShowOllamaSetup(status, localModel)) {
-          setShowOllamaSetup(true)
-        }
-      }
-    },
-    [backend, localHost, localPort, localModel, saveProviderSettings, testConnection, addToast]
-  )
-
-  /** Handle local model selection */
+  // ── Instant-persist: local model selection ──
   const handleLocalModelSelect = useCallback(
     async (modelId: string) => {
+      if (!activeWorkspace) return
       setLocalModel(modelId)
-      await saveProviderSettings(provider, { model: modelId })
-      addToast({ message: `Model set to ${modelId}`, type: 'success' })
+      await persistWorkspaceSetting(activeWorkspace.id, { localModel: modelId })
     },
-    [provider, saveProviderSettings, addToast]
+    [activeWorkspace]
   )
 
-  /** Load a downloaded oMLX model into memory via admin API, then refresh */
+  // ── Instant-persist: model roles ──
+  const handleModelRolesChange = useCallback(
+    async (roles: ModelRoleMap, overrides: Record<string, string>) => {
+      if (!activeWorkspace) return
+      setModelRoles(roles)
+      setClaudeModelOverrides(overrides)
+      await persistWorkspaceSetting(activeWorkspace.id, {
+        modelRoles: roles,
+        modelOverrides: overrides
+      })
+    },
+    [activeWorkspace]
+  )
+
+  // ── oMLX model load/unload ──
   const handleLoadOmlxModel = useCallback(
     async (modelId: string) => {
       setModelLoading(modelId)
-      const baseUrl = `http://${localHost}:${localPort}`
+      const baseUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}`
       try {
         await window.api.omlxLoadModel({
           modelId,
           baseUrl,
-          apiKey: localApiKey || undefined
+          apiKey: connectionDraft.localApiKey || undefined
         })
         addToast({ message: `Model "${modelId}" loaded successfully`, type: 'success' })
         await testConnection()
@@ -517,19 +526,18 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         setModelLoading(null)
       }
     },
-    [localHost, localPort, localApiKey, testConnection, addToast]
+    [connectionDraft, testConnection, addToast]
   )
 
-  /** Unload a model from memory via admin API, then refresh */
   const handleUnloadOmlxModel = useCallback(
     async (modelId: string) => {
       setModelLoading(modelId)
-      const baseUrl = `http://${localHost}:${localPort}`
+      const baseUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}`
       try {
         await window.api.omlxUnloadModel({
           modelId,
           baseUrl,
-          apiKey: localApiKey || undefined
+          apiKey: connectionDraft.localApiKey || undefined
         })
         addToast({ message: `Model "${modelId}" unloaded`, type: 'info' })
         await testConnection()
@@ -542,39 +550,67 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         setModelLoading(null)
       }
     },
-    [localHost, localPort, localApiKey, testConnection, addToast]
+    [connectionDraft, testConnection, addToast]
   )
 
-  const isRemoteServer = localHost !== '127.0.0.1' && localHost !== 'localhost'
-  const localBaseUrl = `http://${localHost}:${localPort}`
+  // ── Chat-safe model list (excludes embedding/reranker models) ──
+  const omlxChatModels = useMemo(() => {
+    const models = localStatus?.models ?? []
+    const allModels: OmlxModelDetail[] | undefined =
+      localStatus && 'allModels' in localStatus
+        ? (localStatus as { allModels?: OmlxModelDetail[] }).allModels
+        : undefined
+    if (allModels) {
+      const nonChat = new Set(
+        allModels
+          .filter((m) => m.modelType === 'embedding' || m.modelType === 'reranker')
+          .map((m) => m.id)
+      )
+      return models.filter((m) => !nonChat.has(m))
+    }
+    // Admin API unavailable — name-based heuristic fallback
+    return models.filter((m) => !/embed|bge|rerank/i.test(m))
+  }, [localStatus])
+
+  const isRemoteServer =
+    connectionDraft.localHost !== '127.0.0.1' && connectionDraft.localHost !== 'localhost'
+  const localBaseUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}`
 
   return {
     // State
     activeWorkspace,
+    connectionDraft,
+    connectionPersisted,
+    isConnectionDirty,
+    defaultProvider,
+    executorBackend,
+    localModel,
+    modelRoles,
+    claudeModelOverrides,
     costPreference: wsSettings.costPreference,
     fastMode: wsSettings.fastMode,
     budgetCapUsd: wsSettings.budgetCapUsd,
     communicationTone: wsSettings.communicationTone,
-    executorBackend,
-    provider,
-    backend,
     platformInfo,
-    localModel,
-    localHost,
-    localPort,
-    localApiKey,
-    localContextWindow,
+    claudeCliStatus,
     localStatus,
-    showOllamaSetup,
     connectionTesting,
     modelLoading,
     localBaseUrl,
     isRemoteServer,
+    omlxModels: localStatus?.models ?? [],
+    omlxChatModels,
     // Actions
-    handleProviderChange,
-    handleBackendChange,
-    handleUnifiedProviderChange,
+    setLocalHost,
+    setLocalPort,
+    setLocalApiKey,
+    setLocalContextWindow,
+    saveConnection,
+    discardConnection,
+    handleSetDefaultProvider,
+    handleExecutorBackendChange,
     handleLocalModelSelect,
+    handleModelRolesChange,
     handleLoadOmlxModel,
     handleUnloadOmlxModel,
     handleCostPreferenceChange: wsSettings.handleCostPreferenceChange,
@@ -582,15 +618,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     handleBudgetCapChange: wsSettings.handleBudgetCapChange,
     handleToneChange: wsSettings.handleToneChange,
     testConnection,
-    scheduleAutoTest,
-    saveProviderSettings,
-    setLocalHost,
-    setLocalPort,
-    setLocalApiKey,
-    setLocalContextWindow,
-    setShowOllamaSetup,
-    setProvider,
-    setLocalModel,
-    setExecutorBackend
+    scheduleAutoTest
   }
 }

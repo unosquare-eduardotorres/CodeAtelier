@@ -194,7 +194,7 @@ export function summary(): void {
     )
   }
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`)
-  process.exit(failed > 0 ? 1 : 0)
+  process.exit(failed > 0 || process.exitCode ? 1 : 0)
 }
 
 /**
@@ -208,7 +208,7 @@ export async function summaryAsync(): Promise<void> {
     await Promise.all(batch)
   }
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`)
-  process.exit(failed > 0 ? 1 : 0)
+  process.exit(failed > 0 || process.exitCode ? 1 : 0)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

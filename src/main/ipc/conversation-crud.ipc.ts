@@ -11,9 +11,11 @@ import {
 } from '../db/repositories'
 import { chatAgentService } from '../services'
 import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { chatStreamService } from '../services/chat-stream.service'
 import { repoService } from '../services/repo.service'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../shared/types'
+import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { completeStreamMetrics } from './chunk-router'
@@ -21,7 +23,6 @@ import {
   requireObject,
   requireString,
   optionalString,
-  optionalNullableString,
   requireStringArray,
   requirePlainObject
 } from './validate-args'
@@ -38,7 +39,6 @@ async function handleCreateConversation(args: {
   mode?: ConversationMode
   personaSpecialistId?: string
   llmProvider?: LLMProvider
-  presetId?: string | null
   mcpOverrides?: Record<string, boolean>
   communicationTone?: CommunicationTone | null
 }): Promise<ReturnType<typeof conversationRepository.create>> {
@@ -49,7 +49,6 @@ async function handleCreateConversation(args: {
     mode,
     personaSpecialistId,
     llmProvider,
-    presetId,
     mcpOverrides,
     communicationTone
   } = args
@@ -83,14 +82,8 @@ async function handleCreateConversation(args: {
   const resolvedProvider: LLMProvider =
     llmProvider ?? (settings.llmProvider as LLMProvider) ?? 'claude'
 
-  // Apply same fallback chain for presetId: explicit → workspace default → null.
-  // The frontend (NewConversationModal, NewChatPage) also initializes from the
-  // workspace default via usePresetStore — this backend fallback is a safety net
-  // for old clients or edge cases where the frontend sends undefined (omitted).
-  // Explicit null is preserved — it means "no preset" (distinct from "use default").
-  const resolvedPresetId: string | null = presetId === undefined
-    ? (settings.defaultPresetId as string | null) ?? null
-    : presetId
+  // Build model config snapshot — frozen at creation time
+  const snapshot = buildConversationModelSnapshot(workspaceId, resolvedProvider)
 
   const conversation = conversationRepository.create(
     workspaceId,
@@ -100,7 +93,8 @@ async function handleCreateConversation(args: {
     resolvedProvider,
     mcpOverrides,
     communicationTone,
-    resolvedPresetId
+    undefined, // type
+    snapshot
   )
   conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
@@ -217,7 +211,6 @@ export function registerConversationCrudIpc(): void {
       mode: optionalString(args, 'mode', ch) as ConversationMode | undefined,
       personaSpecialistId: optionalString(args, 'personaSpecialistId', ch),
       llmProvider: optionalString(args, 'llmProvider', ch) as LLMProvider | undefined,
-      presetId: optionalNullableString(args, 'presetId', ch),
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
       communicationTone: args.communicationTone as CommunicationTone | null | undefined
     })
@@ -247,6 +240,9 @@ export function registerConversationCrudIpc(): void {
     }
 
     chatAgentService.clearSession(conversationId)
+    // N1-FIX: Clear per-conversation memory dedupe state so facts can be
+    // re-injected in future conversations about the same topics.
+    chatStreamService.clearConversationMemoryState(conversationId)
 
     conversationRepository.delete(conversationId)
 

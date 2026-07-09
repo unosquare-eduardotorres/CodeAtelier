@@ -85,9 +85,11 @@ describe('buildPhaseSystemPrompt — fallback paths', () => {
     assert.ok(prompt.includes('"steps"'), 'contentJson serialized')
   })
 
-  test('replaces {{SPEC_FILE_PATH}} and {{BLUEPRINT_DIR}}', () => {
+  test('tasks phase generates valid prompt with completion block', () => {
     const prompt = buildPhaseSystemPrompt('tasks', baseContext)
-    assert.ok(prompt.includes('/workspace/.blueprint/spec.md') || prompt.includes('/workspace/.blueprint'))
+    // Completion block should include phase and status fields
+    assert.ok(prompt.includes('blueprint-phase-complete'), 'completion block present')
+    assert.ok(prompt.includes('"phase": "tasks"') || prompt.includes('tasks'), 'tasks phase referenced')
   })
 })
 

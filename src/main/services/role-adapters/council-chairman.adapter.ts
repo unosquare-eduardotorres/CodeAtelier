@@ -55,7 +55,7 @@ export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
     this.applyLocalLlmTimeout(this.llmProvider, 15)
 
     // Pattern 1: Centralized model resolution
-    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-chairman', ctx.presetId)
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-chairman')
 
     this.systemPrompt = this.buildSystemPrompt()
 
@@ -77,9 +77,6 @@ export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
 
   protected override getMcpStrategy(): McpStrategy {
     return 'none'
-  }
-  protected override persistMemory(): void {
-    /* no-op */
   }
 
   override onSessionStop(): void {

@@ -46,7 +46,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/bp-build-test',
     workspaceId: 'ws-bb1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -97,7 +97,8 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build the component'
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
-    const result = adapter.buildPrompts(makePromptCtx())
+    // Pass empty message so buildPrompts falls through to getPhaseMessage()
+    const result = adapter.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('Implement the task'))
   })
 
@@ -109,7 +110,7 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build the component'
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
-    const result = adapter.buildPrompts(makePromptCtx())
+    const result = adapter.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('commit protocol'))
   })
 
@@ -121,7 +122,7 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Build the component'
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
-    const result = adapter.buildPrompts(makePromptCtx())
+    const result = adapter.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('blueprint-phase-complete'))
   })
 

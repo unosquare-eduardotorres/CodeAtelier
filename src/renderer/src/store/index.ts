@@ -42,4 +42,4 @@ export { useDiagnosticsStore } from './diagnostics.store'
 export type { LspDiagnostic } from './diagnostics.store'
 export { useHookLifecycleStore } from './hook-lifecycle.store'
 export type { HookLifecycleEvent } from './hook-lifecycle.store'
-export { usePresetStore } from './preset.store'
+

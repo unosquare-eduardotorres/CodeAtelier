@@ -17,6 +17,8 @@ import { EventEmitter } from 'node:events'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
+import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintVerifyAdapter } from './role-adapters/blueprint/blueprint-verify.adapter'
 import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
@@ -28,7 +30,6 @@ import {
 } from '../db/repositories/blueprint.repository'
 import type {
   BlueprintPhaseStartPayload,
-  BlueprintPhaseProgressPayload,
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload
 } from '../../shared/blueprint-types'
@@ -95,7 +96,7 @@ export class BlueprintVerifyService extends EventEmitter {
       const adapter = new BlueprintVerifyAdapter({ workspaceId, blueprintId, phaseContext })
 
       const blueprint = blueprintService.getBlueprint(blueprintId)
-      adapter.setGoalCondition(buildVerifyGoalCondition(blueprint?.title ?? 'Unknown'))
+      adapter.setGoalCondition(buildVerifyGoalCondition(blueprint?.title ?? 'Unknown'), 'enforce')
 
       session = new AgentSessionService(adapter)
 
@@ -103,19 +104,20 @@ export class BlueprintVerifyService extends EventEmitter {
       this.safeEmit('phaseStart', {
         blueprintId,
         workspaceId,
-        phase: 'verify'
+        phase: 'verify',
+        goal: buildVerifyGoalCondition(blueprint?.title ?? 'Unknown')
       } satisfies BlueprintPhaseStartPayload)
 
-      // 5. Wire streaming — named handlers for cleanup
+      // 5. Wire streaming — named handlers for cleanup + stall watchdog
+      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'VERIFY')
+
       onChunk = (chunk: StreamChunk): void => {
-        if (chunk.type === 'text' && chunk.content) {
-          this.safeEmit('phaseProgress', {
-            blueprintId,
-            workspaceId,
-            phase: 'verify',
-            text: chunk.content
-          } satisfies BlueprintPhaseProgressPayload)
-        }
+        stallWatchdog.touch()
+        forwardBlueprintChunk(
+          (event, payload) => this.safeEmit(event, payload),
+          chunk,
+          { blueprintId, workspaceId, phase: 'verify', workspacePath, mode: 'plan' }
+        )
       }
       onStatus = (status: AgentStatus): void => {
         this.safeEmit('status', { workspaceId, status })
@@ -123,7 +125,7 @@ export class BlueprintVerifyService extends EventEmitter {
       session.on('chunk', onChunk)
       session.on('statusUpdate', onStatus)
 
-      // 6. Start session in READ-ONLY mode + send with timeout + abort race
+      // 6. Start session in READ-ONLY mode + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
       const syntheticConvId = `blueprint-verify-${blueprintId}-${Date.now()}`
@@ -147,9 +149,9 @@ export class BlueprintVerifyService extends EventEmitter {
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
 
       try {
-        await Promise.race([sendPromise, timeoutPromise, abortPromise])
+        await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
       } catch (err) {
-        // BP-VERIFY-TIMEOUT-01: Cancel the in-flight query when timeout/abort wins the race.
+        // BP-VERIFY-TIMEOUT-01: Cancel the in-flight query when timeout/abort/stall wins the race.
         // Without this, session.send() continues streaming in the background while
         // the outer catch handler tries to clean up — causing a race between the
         // active stream and session.stop() in the finally block.
@@ -161,6 +163,7 @@ export class BlueprintVerifyService extends EventEmitter {
         throw err
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        stallWatchdog.dispose()
       }
 
       // 7. Parse output
@@ -168,6 +171,15 @@ export class BlueprintVerifyService extends EventEmitter {
       const completion = parsePhaseCompletionBlock(text) ?? undefined
 
       // 8. Save phase artifact
+      const overallStatus = (completion?.overallStatus as string) ?? 'unknown'
+      // BP-GAPS-FOUND-DEAD-END-FIX: When gaps_found and remediation is NOT
+      // triggered, mark verify phase 'failed' (not 'complete') so retryPhase()
+      // can find a retryable phase and the Retry banner renders. 'passed' and
+      // 'human_needed' are genuine completions.
+      const verifyPhaseStatus = (overallStatus === 'passed' || overallStatus === 'human_needed')
+        ? 'complete' as const
+        : 'failed' as const
+
       if (verifyPhase) {
         blueprintPhaseRepository.appendArtifact(verifyPhase.id, {
           type: 'verify',
@@ -175,36 +187,107 @@ export class BlueprintVerifyService extends EventEmitter {
           contentJson: completion ?? undefined
         })
         blueprintPhaseRepository.setConversation(verifyPhase.id, syntheticConvId)
-        blueprintPhaseRepository.updateStatus(verifyPhase.id, 'complete')
+        blueprintPhaseRepository.updateStatus(verifyPhase.id, verifyPhaseStatus)
       }
 
-      const overallStatus = (completion?.overallStatus as string) ?? 'unknown'
       bpLog.info(
-        `[startVerifyPhase] Blueprint ${blueprintId} — verify complete, overallStatus: ${overallStatus}`
+        `[startVerifyPhase] Blueprint ${blueprintId} — verify ${verifyPhaseStatus}, overallStatus: ${overallStatus}`
       )
 
-      // 9. Determine final blueprint status
-      // BP-03: Only explicit 'passed' or 'human_needed' → complete.
-      // 'unknown' (parse failure / truncation) and 'gaps_found' → failed.
-      // BP-VERIFY-CANCEL-OVERWRITE-01: Guard against overwriting 'cancelled' status.
-      // Matches the existing guard in the error path (line 186-193).
-      const currentStatus = blueprintRepository.findById(blueprintId)?.status
-      if (currentStatus !== 'cancelled') {
-        if (overallStatus === 'passed' || overallStatus === 'human_needed') {
-          blueprintRepository.updateStatus(blueprintId, 'complete')
-        } else {
-          blueprintRepository.updateStatus(blueprintId, 'failed')
-        }
-      }
+      // 9. Remediation check — when gaps_found with actionable tasks, auto-fix
+      // BP-REMEDIATION-01: Parse remediationTasks from completion block.
+      const remediationTasks = Array.isArray(completion?.remediationTasks)
+        ? (completion.remediationTasks as Array<{
+            taskId: string
+            description: string
+            files?: string[]
+            dependsOn?: string[]
+          }>)
+        : []
+      const currentBlueprint = blueprintRepository.findById(blueprintId)
+      const currentSettings = currentBlueprint?.settingsJson ?? {}
+      const remediationRound = (currentSettings.remediationRound as number) ?? 0
+      const canRemediate =
+        overallStatus === 'gaps_found' &&
+        remediationTasks.length > 0 &&
+        remediationRound < 2
 
-      // 10. Emit phaseComplete
-      this.safeEmit('phaseComplete', {
-        blueprintId,
-        workspaceId,
-        phase: 'verify',
-        status: 'complete',
-        completion
-      } satisfies BlueprintPhaseCompletePayload)
+      if (canRemediate) {
+        // 9a. Append remediation tasks as new wave(s)
+        bpLog.info(
+          `[startVerifyPhase] gaps_found with ${remediationTasks.length} remediation task(s) — ` +
+          `round ${remediationRound + 1}/2, appending tasks and re-triggering build`
+        )
+        blueprintService.appendTasks(blueprintId, remediationTasks)
+
+        // 9b. Increment remediationRound in settingsJson
+        blueprintRepository.update(blueprintId, {
+          settingsJson: { ...currentSettings, remediationRound: remediationRound + 1 }
+        })
+
+        // 9c. Reset verify phase to pending, build to active, blueprint to building
+        if (verifyPhase) {
+          blueprintPhaseRepository.updateStatus(verifyPhase.id, 'pending')
+        }
+        const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+        if (buildPhase) {
+          blueprintPhaseRepository.updateStatus(buildPhase.id, 'active')
+        }
+        blueprintRepository.update(blueprintId, {
+          status: 'building' as import('../../shared/blueprint-types').BlueprintStatus,
+          currentPhase: 'build'
+        })
+
+        // 9d. Emit system message
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          text: `Verification found gaps — adding ${remediationTasks.length} remediation task(s) (round ${remediationRound + 1}/2)`,
+          kind: 'system'
+        })
+
+        // 9e. Emit remediationNeeded event after 5s delay (mirrors scheduleAutoRetry)
+        // Lets the finally block release the pipeline lock first.
+        setTimeout(() => {
+          this.safeEmit('remediationNeeded', {
+            blueprintId,
+            workspaceId,
+            workspacePath
+          })
+        }, 5000)
+
+        // 10. Emit phaseComplete (remediation-triggered)
+        this.safeEmit('phaseComplete', {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          status: 'complete',
+          completion
+        } satisfies BlueprintPhaseCompletePayload)
+      } else {
+        // 10. Determine final blueprint status (no remediation)
+        // BP-03: Only explicit 'passed' or 'human_needed' → complete.
+        // 'unknown' (parse failure / truncation) and 'gaps_found' → failed.
+        // BP-VERIFY-CANCEL-OVERWRITE-01: Guard against overwriting 'cancelled' status.
+        const currentStatus = currentBlueprint?.status
+        if (currentStatus !== 'cancelled') {
+          if (overallStatus === 'passed' || overallStatus === 'human_needed') {
+            blueprintRepository.updateStatus(blueprintId, 'complete')
+          } else {
+            blueprintRepository.updateStatus(blueprintId, 'failed')
+          }
+        }
+
+        // Emit phaseComplete
+        this.safeEmit('phaseComplete', {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          status: verifyPhaseStatus,
+          completion
+        } satisfies BlueprintPhaseCompletePayload)
+      }
 
       if (verifyPhase) {
         this.safeEmit('phaseArtifact', {
@@ -234,17 +317,34 @@ export class BlueprintVerifyService extends EventEmitter {
         })
       }
 
+      // M5: Use failPipeline to properly transition machine to 'failed' state
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      blueprintService.failPipeline(workspaceId, errorMsg)
+
+      const autoRetrying = blueprintService.scheduleAutoRetry({
+        blueprintId, workspaceId, workspacePath, phase: 'verify', error: errorMsg
+      })
+
       this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'verify',
-        status: 'failed'
+        status: 'failed',
+        error: errorMsg,
+        ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
       if (session) {
         if (onChunk) session.removeListener('chunk', onChunk)
         if (onStatus) session.removeListener('statusUpdate', onStatus)
-        await session.stop()
+        // BP-SESSION-LEAK-01: Wrap session.stop() in its own try-catch so a
+        // stop() failure doesn't skip markPipelineStopped(), stranding the
+        // pipeline in phase-running with state.running=true permanently.
+        try {
+          await session.stop()
+        } catch (err) {
+          bpLog.error('[verify] session.stop() failed:', err)
+        }
       }
       blueprintService.markPipelineStopped(workspaceId)
     }

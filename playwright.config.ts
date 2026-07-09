@@ -13,6 +13,11 @@ export default defineConfig({
     {
       name: 'electron',
       testMatch: '**/*.e2e.ts'
+    },
+    {
+      name: 'electron-live',
+      testMatch: '**/blueprint-clarify-flow.e2e.ts',
+      timeout: 900_000 // 15 min — real LLM needs time
     }
   ]
 })

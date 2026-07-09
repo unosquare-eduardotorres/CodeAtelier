@@ -11,7 +11,7 @@ import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString, optionalNumber } from './validate-args'
-import { createTimedCleanupMap } from './listener-cleanup'
+// M6: Wire-once pattern — listeners registered once in registerBlueprintIpc, no TTL cleanup needed
 import { blueprintService } from '../services/blueprint.service'
 import { blueprintSpecService } from '../services/blueprint-spec.service'
 import { blueprintPlanService } from '../services/blueprint-plan.service'
@@ -20,28 +20,18 @@ import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
 import { workspaceRepository } from '../db/repositories'
+import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
 import { getSessionEventRouter } from '../services/session-event-router'
 import type { AgentStatus } from '../../shared/types'
 import type {
   BlueprintPhaseType,
   BlueprintArtifact,
-  BlueprintPriority,
-  BlueprintPhaseStartPayload,
-  BlueprintPhaseProgressPayload,
-  BlueprintPhaseCompletePayload,
-  BlueprintPhaseArtifactPayload,
-  BlueprintApprovalNeededPayload,
-  BlueprintWaveStartPayload,
-  BlueprintWaveTaskStartPayload,
-  BlueprintWaveTaskCompletePayload,
-  BlueprintWaveCompletePayload
+  BlueprintPriority
 } from '../../shared/blueprint-types'
 
 const bpLog = log.scope('blueprint-ipc')
 
-// ── Event Cleanup ──
-
-const blueprintCleanup = createTimedCleanupMap('blueprint')
+// M6: No per-workspace cleanup needed — listeners are registered once and route by payload.workspaceId
 
 // ── Main Registration ──
 
@@ -267,7 +257,24 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     IPC_CHANNELS.BLUEPRINT_GET_PIPELINE_STATUS,
     (event, args: { workspaceId: string }) => {
       validateSender(event)
-      return blueprintService.getPipelineStatus(args.workspaceId)
+      const status = blueprintService.getPipelineStatus(args.workspaceId)
+
+      // B2-FIX: Enrich with clarify UI state for renderer reload hydration
+      if (status.running && status.blueprintId && status.currentPhase === 'clarify') {
+        const clarifyState = blueprintSpecService.getClarifyUiState(status.blueprintId)
+        return { ...status, clarifyState }
+      }
+
+      // BP-RESUME-02: When pipeline is idle, check for crash-orphaned blueprints
+      // so the renderer can show a resume banner on startup.
+      if (!status.running) {
+        const orphan = blueprintService.findOrphanedBlueprint(args.workspaceId)
+        if (orphan) {
+          return { ...status, orphanedBlueprint: orphan }
+        }
+      }
+
+      return status
     }
   )
 
@@ -286,19 +293,25 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const approved = args.approved
 
       if (approved) {
+        // Drive state machine: awaiting-approval → idle
+        const blueprint = blueprintService.getBlueprint(blueprintId)
+        if (blueprint) {
+          // M2: Clear approval state before machine transition (snapshot publishes on transition)
+          blueprintService.setPendingApproval(blueprint.workspaceId, null)
+          const machine = blueprintService.getMachine(blueprint.workspaceId)
+          machine.transition('approvalResponded')
+        }
+
         // Advance to BUILD phase — DB state is set by blueprintBuildService.startBuildPhase()
         bpLog.info(
           `[blueprint:approvalRespond] Blueprint ${blueprintId} — approved, triggering BUILD`
         )
 
         // Look up workspace for the repo path
-        const blueprint = blueprintService.getBlueprint(blueprintId)
+        // (blueprint already fetched above for machine transition)
         if (blueprint) {
           const workspace = workspaceRepository.findById(blueprint.workspaceId)
           if (workspace) {
-            // Wire event forwarding (may already be wired — prepareCleanups is idempotent)
-            wireBlueprintEvents(blueprint.workspaceId)
-
             // Start the BUILD phase (non-blocking)
             blueprintBuildService
               .startBuildPhase({
@@ -319,6 +332,14 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         }
       } else {
         // Not approved — rewind to plan phase for iteration
+        // Drive state machine: awaiting-approval → idle (so rewind can start fresh)
+        const rejBlueprint = blueprintService.getBlueprint(blueprintId)
+        if (rejBlueprint) {
+          // M2: Clear approval state
+          blueprintService.setPendingApproval(rejBlueprint.workspaceId, null)
+          const machine = blueprintService.getMachine(rejBlueprint.workspaceId)
+          machine.transition('approvalResponded')
+        }
         blueprintService.rewindToPhase(blueprintId, 'plan')
         bpLog.info(
           `[blueprint:approvalRespond] Blueprint ${blueprintId} — rejected, rewound to plan`
@@ -396,9 +417,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         | Array<{ header: string; selectedOption: string; reason: string }>
         | undefined
 
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
-
       // Start the SPECIFY phase (non-blocking)
       blueprintSpecService
         .startSpecifyPhase({
@@ -432,9 +450,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
-
       // Start the CLARIFY phase (non-blocking)
       blueprintSpecService
         .startClarifyPhase({
@@ -462,6 +477,11 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const workspaceId = requireString(args, 'workspaceId', ch)
       const message = requireString(args, 'message', ch)
 
+      // M8: Journal user answer before sending (append is best-effort)
+      try {
+        blueprintEventRepository.append(blueprintId, 'user', { message })
+      } catch { /* best effort */ }
+
       await blueprintSpecService.sendClarifyAnswer({
         blueprintId,
         workspaceId,
@@ -480,8 +500,41 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       validateSender(event)
       const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY)
       const blueprintId = requireString(args, 'blueprintId', IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY)
+
       await blueprintSpecService.skipClarifyPhase(blueprintId)
       return { skipped: true }
+    }
+  )
+
+  // ── blueprint:clarifyProceed — User proceeds through the clarify gate ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_CLARIFY_PROCEED,
+    async (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_CLARIFY_PROCEED
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+
+      await blueprintSpecService.proceedClarifyGate(blueprintId)
+      return { proceeded: true }
+    }
+  )
+
+  // ── blueprint:clarifyIterate — User requests more clarification rounds ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE,
+    async (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+
+      await blueprintSpecService.iterateClarify(blueprintId)
+      return { iterated: true }
     }
   )
 
@@ -504,9 +557,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       if (!workspace) {
         throw new Error(`Workspace not found: ${workspaceId}`)
       }
-
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
 
       // Start the PLAN phase (non-blocking)
       blueprintPlanService
@@ -543,9 +593,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
-
       // Start the TASKS phase (non-blocking)
       blueprintTasksService
         .startTasksPhase({
@@ -580,9 +627,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       if (!workspace) {
         throw new Error(`Workspace not found: ${workspaceId}`)
       }
-
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
 
       // Start the REVIEW phase (non-blocking)
       blueprintReviewService
@@ -619,9 +663,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
-
       // Start the BUILD phase (non-blocking)
       blueprintBuildService
         .startBuildPhase({
@@ -657,9 +698,6 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         throw new Error(`Workspace not found: ${workspaceId}`)
       }
 
-      // Wire event forwarding for this workspace
-      wireBlueprintEvents(workspaceId)
-
       // Start the VERIFY phase (non-blocking)
       blueprintVerifyService
         .startVerifyPhase({
@@ -675,551 +713,363 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── blueprint:retryPhase — Retry the failed phase of a blueprint ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_RETRY_PHASE,
+    (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_RETRY_PHASE
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+
+      // retryPhase resets the failed phase → pending and returns the phase type
+      const { phase } = blueprintService.retryPhase(blueprintId)
+
+      const workspace = workspaceRepository.findById(workspaceId)
+      if (!workspace) {
+        throw new Error(`Workspace not found: ${workspaceId}`)
+      }
+
+      const blueprint = blueprintService.getBlueprint(blueprintId)
+      if (!blueprint) throw new Error(`Blueprint not found: ${blueprintId}`)
+
+      // Dispatch to the matching sub-service (non-blocking)
+      const phaseDispatch: Record<string, () => Promise<void>> = {
+        specify: () =>
+          blueprintSpecService.startSpecifyPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath,
+            description: blueprint.description
+          }),
+        clarify: () =>
+          blueprintSpecService.startClarifyPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          }),
+        plan: () =>
+          blueprintPlanService.startPlanPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          }),
+        tasks: () =>
+          blueprintTasksService.startTasksPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          }),
+        review: () =>
+          blueprintReviewService.startReviewPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          }),
+        build: () =>
+          blueprintBuildService.startBuildPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          }),
+        verify: () =>
+          blueprintVerifyService.startVerifyPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          })
+      }
+
+      const dispatch = phaseDispatch[phase]
+      if (dispatch) {
+        dispatch().catch((err) => {
+          bpLog.error(`[blueprint:retryPhase] ${phase} phase retry failed:`, err)
+        })
+      } else {
+        bpLog.error(`[blueprint:retryPhase] Unknown phase: ${phase}`)
+      }
+
+      return { retrying: true, phase }
+    }
+  )
+
+  // ── M3: blueprint:getTranscript — Retrieve journal entries for a blueprint ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_GET_TRANSCRIPT,
+    (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_GET_TRANSCRIPT
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const afterSeq = optionalNumber(args, 'afterSeq', ch)
+
+      if (afterSeq !== undefined && afterSeq !== null) {
+        return blueprintEventRepository.findByBlueprintAfterSeq(blueprintId, afterSeq)
+      }
+      return blueprintEventRepository.findByBlueprint(blueprintId)
+    }
+  )
+
+  // ── M7: blueprint:getSnapshot — Pull-based snapshot seed ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT,
+    (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      return blueprintService.getSnapshot(workspaceId)
+    }
+  )
+
   // ── Stale blueprint detection on registration ──
   blueprintService.reconcileStaleBlueprints()
+
+  // M6: Wire-once event forwarding — registered once, routes by payload.workspaceId.
+  // Eliminates 13 wireBlueprintEvents call sites + 180-min TTL cleanup.
+  wireOnceEventForwarding()
 }
 
-// ── Event Forwarding (per-workspace) ──
+// ── M6: Wire-Once Event Forwarding ──
+// Registered once during IPC registration. Routes by payload.workspaceId.
+// No TTL, no per-workspace cleanup, no re-wire dance.
 
-export function wireBlueprintEvents(workspaceId: string): void {
-  const cleanups = blueprintCleanup.prepareCleanups(workspaceId)
-  // BLUEPRINT-15: resolve router lazily inside callbacks, not at wire time
+function wireOnceEventForwarding(): void {
 
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
+  // Helper: safe event forwarding with error isolation
+  function forward<T extends { workspaceId?: string }>(emitter: EventEmitterLike, event: string, channel: string, logPrefix?: string): void {
+    emitter.on(event, (payload: T) => {
+      try {
+        const wsId = (payload as Record<string, unknown>).workspaceId as string | undefined
+        if (!wsId) return
+        if (logPrefix) bpLog.info(`[${logPrefix}] ${event}: ${(payload as Record<string, unknown>).phase ?? ''}`)
+        getSessionEventRouter().sendWorkspaceEvent(channel, wsId, payload as unknown as Record<string, unknown>)
+      } catch (err) {
+        bpLog.error(`[event-forward] '${event}' handler threw:`, err)
+      }
+    })
+  }
+
+  // Helper: forward status events (different shape: { workspaceId?, status })
+  function forwardStatus(emitter: EventEmitterLike): void {
+    emitter.on('status', (data: { workspaceId?: string; status: AgentStatus }) => {
+      try {
+        if (!data.workspaceId) return
+        getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, data.workspaceId, { ...data.status })
+      } catch (err) {
+        bpLog.error(`[event-forward] 'status' handler threw:`, err)
+      }
+    })
+  }
+
+  type EventEmitterLike = { on: (event: string, handler: (...args: unknown[]) => void) => void }
+
+  // ── BlueprintService (orchestrator) ──
+
+  // M2: Forward whole-state snapshot on every state mutation
+  blueprintService.on('stateSync', (snapshot: Record<string, unknown>) => {
+    try {
+      const wsId = snapshot.workspaceId as string | undefined
+      if (!wsId) return
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.BLUEPRINT_STATE_SYNC, wsId, snapshot)
+    } catch (err) {
+      bpLog.error('[event-forward] stateSync handler threw:', err)
     }
-  )
+  })
 
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
+  forward(blueprintService, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'event')
+  forward(blueprintService, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
 
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
+  forward(blueprintService, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'event')
+  forward(blueprintService, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'event')
 
   // ── BlueprintBuildService events (Phase 6: Build) ──
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'build-event')
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'build-event')
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'build-event')
+  forwardStatus(blueprintBuildService as unknown as EventEmitterLike)
 
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintBuildService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[build-event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintBuildService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintBuildService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[build-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintBuildService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[build-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  // Forward live token/context counters from build service
-  blueprintCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
-    cleanups,
-    blueprintBuildService,
-    'status',
-    (data) => {
-      if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
-    }
-  )
-
-  // Wave execution events (from blueprintBuildService)
-
-  blueprintCleanup.addListener<BlueprintWaveStartPayload>(
-    cleanups,
-    blueprintBuildService,
-    'waveStart',
-    (payload) => {
-      bpLog.info(`[build-event] waveStart: wave ${payload.wave} (${payload.taskCount} tasks)`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_WAVE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintWaveTaskStartPayload>(
-    cleanups,
-    blueprintBuildService,
-    'waveTaskStart',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_WAVE_TASK_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintWaveTaskCompletePayload>(
-    cleanups,
-    blueprintBuildService,
-    'waveTaskComplete',
-    (payload) => {
-      bpLog.info(`[build-event] waveTaskComplete: ${payload.taskId} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_WAVE_TASK_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintWaveCompletePayload>(
-    cleanups,
-    blueprintBuildService,
-    'waveComplete',
-    (payload) => {
-      bpLog.info(`[build-event] waveComplete: wave ${payload.wave} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
+  // Wave execution events
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'waveStart', IPC_CHANNELS.BLUEPRINT_WAVE_START, 'build-event')
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'waveTaskStart', IPC_CHANNELS.BLUEPRINT_WAVE_TASK_START)
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'waveTaskComplete', IPC_CHANNELS.BLUEPRINT_WAVE_TASK_COMPLETE, 'build-event')
+  forward(blueprintBuildService as unknown as EventEmitterLike, 'waveComplete', IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE, 'build-event')
 
   // ── BlueprintSpecService events (Phase 2: Specify + Clarify) ──
-
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintSpecService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[spec-event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintSpecService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintSpecService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[spec-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintSpecService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[spec-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  // Forward live token/context counters from spec service
-  blueprintCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
-    cleanups,
-    blueprintSpecService,
-    'status',
-    (data) => {
-      if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
-    }
-  )
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'spec-event')
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'spec-event')
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'spec-event')
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyAwaitingInput', IPC_CHANNELS.BLUEPRINT_CLARIFY_AWAITING_INPUT, 'spec-event')
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyFindings', IPC_CHANNELS.BLUEPRINT_CLARIFY_FINDINGS, 'spec-event')
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyQuestions', IPC_CHANNELS.BLUEPRINT_CLARIFY_QUESTIONS, 'spec-event')
+  forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyGateReady', IPC_CHANNELS.BLUEPRINT_CLARIFY_GATE, 'spec-event')
+  forwardStatus(blueprintSpecService as unknown as EventEmitterLike)
 
   // ── BlueprintPlanService events (Phase 3: Plan) ──
-
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintPlanService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[plan-event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintPlanService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintPlanService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[plan-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintPlanService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[plan-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  // Forward live token/context counters from plan service
-  blueprintCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
-    cleanups,
-    blueprintPlanService,
-    'status',
-    (data) => {
-      if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
-    }
-  )
+  forward(blueprintPlanService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'plan-event')
+  forward(blueprintPlanService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
+  forward(blueprintPlanService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'plan-event')
+  forward(blueprintPlanService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'plan-event')
+  forwardStatus(blueprintPlanService as unknown as EventEmitterLike)
 
   // ── BlueprintTasksService events (Phase 4: Tasks) ──
-
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintTasksService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[tasks-event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintTasksService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintTasksService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[tasks-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintTasksService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[tasks-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  // Forward live token/context counters from tasks service
-  blueprintCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
-    cleanups,
-    blueprintTasksService,
-    'status',
-    (data) => {
-      if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
-    }
-  )
+  forward(blueprintTasksService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'tasks-event')
+  forward(blueprintTasksService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
+  forward(blueprintTasksService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'tasks-event')
+  forward(blueprintTasksService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'tasks-event')
+  forwardStatus(blueprintTasksService as unknown as EventEmitterLike)
 
   // ── BlueprintReviewService events (Phase 5: Review) ──
-
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintReviewService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[review-event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintReviewService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintReviewService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[review-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintReviewService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[review-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  // Forward live token/context counters from review service
-  blueprintCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
-    cleanups,
-    blueprintReviewService,
-    'status',
-    (data) => {
-      if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
-    }
-  )
-
-  // Forward approval gate from review service
-  blueprintCleanup.addListener<BlueprintApprovalNeededPayload>(
-    cleanups,
-    blueprintReviewService,
-    'approvalNeeded',
-    (payload) => {
-      bpLog.info(`[review-event] approvalNeeded: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
+  forward(blueprintReviewService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'review-event')
+  forward(blueprintReviewService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
+  forward(blueprintReviewService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'review-event')
+  forward(blueprintReviewService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'review-event')
+  forwardStatus(blueprintReviewService as unknown as EventEmitterLike)
+  forward(blueprintReviewService as unknown as EventEmitterLike, 'approvalNeeded', IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, 'review-event')
 
   // ── BlueprintVerifyService events (Phase 7: Verify) ──
+  forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'verify-event')
+  forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
+  forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'verify-event')
+  forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'verify-event')
+  forwardStatus(blueprintVerifyService as unknown as EventEmitterLike)
 
-  blueprintCleanup.addListener<BlueprintPhaseStartPayload>(
-    cleanups,
-    blueprintVerifyService,
-    'phaseStart',
-    (payload) => {
-      bpLog.info(`[verify-event] phaseStart: ${payload.phase}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_START,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
+  // ───────────────────────────────────────────────────────────────────────
+  // M8: Journal writers — append events to blueprint_events table.
+  // Best-effort: failures are logged but don't block the pipeline.
+  // ───────────────────────────────────────────────────────────────────────
+
+  function journalAppend(blueprintId: string, type: string, payload: Record<string, unknown>): void {
+    try {
+      blueprintEventRepository.append(
+        blueprintId,
+        type as 'system' | 'agent' | 'user' | 'findings' | 'qa' | 'plan' | 'tasks',
+        payload
       )
+    } catch (err) {
+      bpLog.warn(`[journal] Failed to append ${type} event for ${blueprintId}:`, err)
     }
-  )
+  }
 
-  blueprintCleanup.addListener<BlueprintPhaseProgressPayload>(
-    cleanups,
-    blueprintVerifyService,
-    'phaseProgress',
-    (payload) => {
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
+  // Journal: phaseStart / phaseComplete → 'system' entries
+  // Listen on all phase service emitters that emit phaseStart/phaseComplete
+  const allPhaseEmitters = [
+    blueprintService, blueprintSpecService, blueprintPlanService,
+    blueprintTasksService, blueprintReviewService, blueprintBuildService,
+    blueprintVerifyService
+  ] as unknown as EventEmitterLike[]
+
+  for (const emitter of allPhaseEmitters) {
+    emitter.on('phaseStart', (payload: Record<string, unknown>) => {
+      const bpId = payload.blueprintId as string | undefined
+      if (bpId) journalAppend(bpId, 'system', { event: 'phaseStart', phase: payload.phase })
+    })
+    emitter.on('phaseComplete', (payload: Record<string, unknown>) => {
+      const bpId = payload.blueprintId as string | undefined
+      if (bpId) journalAppend(bpId, 'system', { event: 'phaseComplete', phase: payload.phase, status: payload.status, error: payload.error })
+    })
+  }
+
+  // Journal: phaseArtifact → type-specific entries (plan, tasks, agent)
+  for (const emitter of allPhaseEmitters) {
+    emitter.on('phaseArtifact', (payload: Record<string, unknown>) => {
+      const bpId = payload.blueprintId as string | undefined
+      const artifact = payload.artifact as { type?: string; contentMd?: string } | undefined
+      if (!bpId || !artifact) return
+      const journalType = artifact.type === 'plan' ? 'plan'
+        : artifact.type === 'tasks' ? 'tasks'
+        : 'agent'
+      journalAppend(bpId, journalType, { phase: payload.phase, artifactType: artifact.type, contentMd: artifact.contentMd })
+    })
+  }
+
+  // Journal: clarify findings → 'findings' entries
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyFindings', (payload: Record<string, unknown>) => {
+    const bpId = payload.blueprintId as string | undefined
+    if (bpId) journalAppend(bpId, 'findings', { findings: payload.findings })
+  })
+
+  // Journal: clarify questions → 'qa' entries
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyQuestions', (payload: Record<string, unknown>) => {
+    const bpId = payload.blueprintId as string | undefined
+    if (bpId) journalAppend(bpId, 'qa', { questions: payload.questions })
+  })
+
+  // Journal: clarify gate → 'qa' entry
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyGateReady', (payload: Record<string, unknown>) => {
+    const bpId = payload.blueprintId as string | undefined
+    if (bpId) journalAppend(bpId, 'qa', { event: 'gateReady', findings: payload.findings })
+  })
+
+  // Journal: wave markers → 'system' entries
+  ;(blueprintBuildService as unknown as EventEmitterLike).on('waveStart', (payload: Record<string, unknown>) => {
+    const bpId = payload.blueprintId as string | undefined
+    if (bpId) journalAppend(bpId, 'system', { event: 'waveStart', wave: payload.wave, taskCount: payload.taskCount })
+  })
+  ;(blueprintBuildService as unknown as EventEmitterLike).on('waveComplete', (payload: Record<string, unknown>) => {
+    const bpId = payload.blueprintId as string | undefined
+    if (bpId) journalAppend(bpId, 'system', { event: 'waveComplete', wave: payload.wave, status: payload.status })
+  })
+
+  // ── Auto-retry dispatch for transient phase failures ──
+  // blueprintService.scheduleAutoRetry() emits 'autoRetry' after a 5s delay.
+  // The IPC layer dispatches the phase start — same logic as the manual retry handler.
+  blueprintService.on('autoRetry', (payload: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    phase: BlueprintPhaseType
+  }) => {
+    const { blueprintId, workspaceId, workspacePath, phase } = payload
+    bpLog.info(`[auto-retry] Dispatching ${phase} for blueprint ${blueprintId}`)
+
+    const phaseDispatch: Record<string, () => Promise<void>> = {
+      specify: () => {
+        const bp = blueprintService.getBlueprint(blueprintId)
+        return blueprintSpecService.startSpecifyPhase({
+          blueprintId, workspaceId, workspacePath,
+          description: bp?.description ?? ''
+        })
+      },
+      clarify: () => blueprintSpecService.startClarifyPhase({ blueprintId, workspaceId, workspacePath }),
+      plan: () => blueprintPlanService.startPlanPhase({ blueprintId, workspaceId, workspacePath }),
+      tasks: () => blueprintTasksService.startTasksPhase({ blueprintId, workspaceId, workspacePath }),
+      review: () => blueprintReviewService.startReviewPhase({ blueprintId, workspaceId, workspacePath }),
+      build: () => blueprintBuildService.startBuildPhase({ blueprintId, workspaceId, workspacePath }),
+      verify: () => blueprintVerifyService.startVerifyPhase({ blueprintId, workspaceId, workspacePath })
     }
-  )
 
-  blueprintCleanup.addListener<BlueprintPhaseCompletePayload>(
-    cleanups,
-    blueprintVerifyService,
-    'phaseComplete',
-    (payload) => {
-      bpLog.info(`[verify-event] phaseComplete: ${payload.phase} — ${payload.status}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
+    const dispatch = phaseDispatch[phase]
+    if (dispatch) {
+      dispatch().catch((err) => {
+        bpLog.error(`[auto-retry] ${phase} phase auto-retry failed:`, err)
+      })
+    } else {
+      bpLog.error(`[auto-retry] Unknown phase: ${phase}`)
     }
-  )
+  })
 
-  blueprintCleanup.addListener<BlueprintPhaseArtifactPayload>(
-    cleanups,
-    blueprintVerifyService,
-    'phaseArtifact',
-    (payload) => {
-      bpLog.info(`[verify-event] phaseArtifact: ${payload.phase} — ${payload.artifact.type}`)
-      getSessionEventRouter().sendWorkspaceEvent(
-        IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
-        workspaceId,
-        payload as unknown as Record<string, unknown>
-      )
-    }
-  )
-
-  // Forward live token/context counters from verify service
-  blueprintCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
-    cleanups,
-    blueprintVerifyService,
-    'status',
-    (data) => {
-      if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
-    }
-  )
-
-  // Safety net: auto-clean listeners after 180 min (7 phases + approval gates)
-  blueprintCleanup.scheduleAutoCleanup(workspaceId, cleanups, 180 * 60_000)
+  // ── Remediation dispatch (gaps_found → rebuild → re-verify) ──
+  // BP-REMEDIATION-01: blueprintVerifyService emits 'remediationNeeded' after a 5s
+  // delay when verification finds gaps and remediation tasks are appended.
+  // Same dispatch pattern as autoRetry — build phase re-runs, BP-RESUME-01 skips
+  // all complete tasks, only new remediation waves execute.
+  ;(blueprintVerifyService as unknown as EventEmitterLike).on('remediationNeeded', (payload: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+  }) => {
+    const { blueprintId, workspaceId, workspacePath } = payload
+    bpLog.info(`[remediation] Dispatching build for remediation tasks — blueprint ${blueprintId}`)
+    blueprintBuildService.startBuildPhase({ blueprintId, workspaceId, workspacePath })
+      .catch((err) => {
+        bpLog.error(`[remediation] Build phase for remediation failed:`, err)
+      })
+  })
 }

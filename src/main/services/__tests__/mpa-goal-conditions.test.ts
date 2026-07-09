@@ -134,7 +134,7 @@ describe('MPA Tool Priority Directive', () => {
       detectedTechs: SAMPLE_TECHS
     })
     assert.ok(prompt.length > 100, 'Planner prompt should be substantial')
-    assert.ok(prompt.includes('## Constraints'), 'Planner prompt should include Constraints')
+    assert.ok(prompt.includes('## Rules'), 'Planner prompt should include Rules')
   })
 
   test('builder prompt includes ## Tool Priority', () => {
@@ -147,7 +147,7 @@ describe('MPA Tool Priority Directive', () => {
       detectedTechs: SAMPLE_TECHS
     })
     assert.ok(prompt.length > 100, 'Builder prompt should be substantial')
-    assert.ok(prompt.includes('## Constraints'), 'Builder prompt should include Constraints')
+    assert.ok(prompt.includes('## Rules'), 'Builder prompt should include Rules')
   })
 
   test('verifier prompt includes ## Tool Priority (via adapter lifecycle)', () => {
@@ -158,6 +158,6 @@ describe('MPA Tool Priority Directive', () => {
       workspaceName: 'test'
     })
     assert.ok(prompt.length > 100, 'Verifier prompt should be substantial')
-    assert.ok(prompt.includes('## Constraints'), 'Verifier prompt should include Constraints')
+    assert.ok(prompt.includes('## Rules'), 'Verifier prompt should include Rules')
   })
 })

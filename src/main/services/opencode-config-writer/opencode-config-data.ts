@@ -95,6 +95,13 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
       CONVERSATION_MODE: opts.mode
     }),
     timeout: 8_000
+  },
+  {
+    id: 'memory',
+    serverScript: 'memory-server.js',
+    condition: (opts) => !!opts.workspaceId,
+    environment: (opts) => ({ WORKSPACE_ID: opts.workspaceId! }),
+    timeout: 8_000
   }
 ]
 
@@ -102,7 +109,7 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
  * MCP servers that open the SQLite DB via getDatabase(). They run as plain `node`
  * (no Electron app global) so they must receive DB_PATH (the userData dir) explicitly.
  */
-export const DB_BACKED_SERVER_IDS = new Set(['code-graph', 'semantic-search', 'code-analysis'])
+export const DB_BACKED_SERVER_IDS = new Set(['code-graph', 'semantic-search', 'code-analysis', 'memory'])
 
 /**
  * Build local MCP server entries from the declarative registry.

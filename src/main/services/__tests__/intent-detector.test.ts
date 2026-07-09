@@ -11,7 +11,7 @@ import type { ControlToolState, AgentIntent } from '../../../shared/types'
 
 /** Helper to build an empty ControlToolState */
 function emptyControlState(): ControlToolState {
-  return { plan: false, askUser: false, memory: false }
+  return { plan: false, askUser: false }
 }
 
 describe('IntentDetector', () => {

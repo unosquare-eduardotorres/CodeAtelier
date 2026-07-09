@@ -7,96 +7,28 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 
-// ── Stub Electron app before importing CliMcpConfigWriter ──
-// The module requires `app` from 'electron' at module scope for isPackaged
-// and getAppPath. We mock via the global require cache.
+// Use the shared electron stub (ipcMain, app, BrowserWindow, electron-log).
+// Safe to call multiple times — idempotent.
+setupElectronStub()
 
-const mockIsPackaged = false
-const mockAppPath = '/mock/app'
-const mockUserDataPath = '/mock/userData'
-
-// Patch require cache for electron
-const electronMock = {
-  app: {
-    get isPackaged() {
-      return mockIsPackaged
-    },
-    getAppPath() {
-      return mockAppPath
-    },
-    getPath(name: string) {
-      if (name === 'userData') return mockUserDataPath
-      return `/mock/${name}`
-    }
-  }
-}
-
-// Install electron mock before the CJS require resolves
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require('module')._cache = require('module')._cache || {}
-  // Intercept electron import by patching Module._resolveFilename
-  const Module = require('module')
-  const origResolve = Module._resolveFilename
-  Module._resolveFilename = function (request: string, ...args: unknown[]) {
-    if (request === 'electron') return 'electron'
-    return origResolve.call(this, request, ...args)
-  }
-  require.cache[require.resolve('electron')] = {
-    id: 'electron',
-    filename: 'electron',
-    loaded: true,
-    exports: electronMock,
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // If module patching fails, tests will skip
-}
-
-// Also stub electron-log/main
-try {
-  const logMock = {
-    scope: () => ({
-      info: () => {},
-      warn: () => {},
-      error: () => {}
-    }),
-    info: () => {},
-    warn: () => {},
-    error: () => {}
-  }
-  require.cache[require.resolve('electron-log/main')] = {
-    id: 'electron-log/main',
-    filename: 'electron-log/main',
-    loaded: true,
-    exports: { default: logMock, ...logMock },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub appPreferenceRepository to avoid DB dependency
+// Stub appPreferenceRepository — patch instance methods in place for pre-loaded modules.
 try {
   const appPrefRepoPath = require.resolve('../../db/repositories/app-preference.repository')
-  require.cache[appPrefRepoPath] = {
-    id: appPrefRepoPath,
-    filename: appPrefRepoPath,
-    loaded: true,
-    exports: {
-      appPreferenceRepository: {
-        get: (_key: string) => null
-      }
-    },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
+  const cached = require.cache[appPrefRepoPath]
+  if (cached?.exports?.appPreferenceRepository) {
+    const repo = cached.exports.appPreferenceRepository
+    repo.get = (_key: string) => null
+    repo.set = (_key: string, _val: string) => {}
+    repo.getBool = (_key: string, _def?: boolean) => _def ?? false
+  } else {
+    require.cache[appPrefRepoPath] = {
+      id: appPrefRepoPath, filename: appPrefRepoPath, loaded: true,
+      exports: { appPreferenceRepository: { get: () => null, set: () => {}, getBool: (_k: string, d?: boolean) => d ?? false } },
+      children: [], paths: [], path: ''
+    } as unknown as NodeModule
+  }
 } catch {
   // skip
 }
@@ -310,7 +242,7 @@ describe('CliMcpConfigWriter.buildConfig', () => {
     const cg = config.mcpServers['code-graph']
     assert.ok(cg)
     assert.equal(cg.env?.WORKSPACE_ID, 'ws-1')
-    assert.equal(cg.env?.DB_PATH, mockUserDataPath)
+    assert.equal(cg.env?.DB_PATH, '/tmp/electron-test/userData')
   })
 })
 

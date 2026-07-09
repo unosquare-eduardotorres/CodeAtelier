@@ -32,6 +32,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.15.3",
     "better-sqlite3": "^12.11.1",
+    "echarts": "^6.1.0",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "jsdom": "^29.0.1",

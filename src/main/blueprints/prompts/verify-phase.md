@@ -67,6 +67,8 @@ MISSING/STUB artifacts or HOLLOW key links or critical anti-patterns → **gaps_
 
 ## Completion
 
+When `recommendation: "fix_gaps"`, include a `remediationTasks` array with concrete tasks to fix the identified gaps. Each task should be self-contained and reference specific files.
+
 ```blueprint-phase-complete
 {
   "phase": "verify",
@@ -87,6 +89,16 @@ MISSING/STUB artifacts or HOLLOW key links or critical anti-patterns → **gaps_
   "totalRequirements": <number>,
   "humanVerificationNeeded": [<descriptions>],
   "overallStatus": "passed|gaps_found|human_needed",
-  "recommendation": "ship|fix_gaps|manual_review"
+  "recommendation": "ship|fix_gaps|manual_review",
+  "remediationTasks": [
+    {
+      "taskId": "R001",
+      "description": "<what to fix>",
+      "files": ["<file paths>"],
+      "dependsOn": []
+    }
+  ]
 }
 ```
+
+Note: `remediationTasks` is only required when `recommendation` is `"fix_gaps"`. Omit it for `"ship"` and `"manual_review"`.

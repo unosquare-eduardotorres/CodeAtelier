@@ -13,7 +13,7 @@ export type { CreateSkillInput, UpdateSkillInput } from './skill.repository'
 export { AgentSessionRepository, agentSessionRepository } from './agent-session.repository'
 export type { AgentSession, TokenSummary } from './agent-session.repository'
 export { IdeaRepository, ideaRepository } from './idea.repository'
-export { MemoryRepository, memoryRepository } from './memory.repository'
+export { MemoryFactRepository, memoryFactRepository } from './memory-fact.repository'
 export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
 export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'
 export {
@@ -55,7 +55,6 @@ export { GrillSessionRepository, grillSessionRepository } from './grill-session.
 export type { GrillSession, GrillSessionStatus } from './grill-session.repository'
 export { PlanRepository, planRepository } from './plan.repository'
 export type { SavePlanParams } from './plan.repository'
-export { PresetRepository, presetRepository } from './preset.repository'
 export { LibraryDocRepository, libraryDocRepository } from './library-doc.repository'
 export type { LibraryDoc, PackageSummary } from './library-doc.repository'
 
@@ -67,3 +66,8 @@ export {
   BlueprintTaskRepository,
   blueprintTaskRepository
 } from './blueprint.repository'
+
+export { E2ETestRunRepository, e2eTestRunRepository } from './e2e-test-run.repository'
+export type { E2ETestRunRecord } from './e2e-test-run.repository'
+export { E2ETestResultRepository, e2eTestResultRepository } from './e2e-test-result.repository'
+export type { E2ETestResultRecord } from './e2e-test-result.repository'
