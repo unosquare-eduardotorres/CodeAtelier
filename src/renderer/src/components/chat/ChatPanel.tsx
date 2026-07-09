@@ -21,7 +21,6 @@ import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
-import { PresetSwitcher } from './PresetSwitcher'
 import TodoTaskBar from './TodoTaskBar'
 import {
   StackDriftBanner,
@@ -36,6 +35,7 @@ import { useApiRetryState } from './useApiRetryState'
 import { useSessionRecoveryState } from './useSessionRecoveryState'
 import { useMcpIntegrations } from './useMcpIntegrations'
 import ApiRetryBanner from './ApiRetryBanner'
+import ModelConfigPopover from './ModelConfigPopover'
 
 type ChatTab = 'chat' | 'code-changes'
 
@@ -169,7 +169,7 @@ function FloatingPillBar({
   onSetEffort,
   onMcpToggle
 }: {
-  conversation: NonNullable<React.ComponentProps<typeof PresetSwitcher>['conversation']>
+  conversation: { id: string; mode: ConversationMode; mcpOverrides?: Record<string, boolean> }
   isStreaming: boolean
   effortLevel: ThinkingEffort
   mcpIntegrations: React.ComponentProps<typeof McpPill>['integration'][]
@@ -182,8 +182,6 @@ function FloatingPillBar({
       <ModeCyclePill mode={conversation.mode} onCycle={onCycleMode} />
 
       <EffortPill effort={effortLevel} onChange={onSetEffort} disabled={isStreaming} />
-
-      <PresetSwitcher conversation={conversation} disabled={isStreaming} />
 
       {mcpIntegrations.map((integration) => (
         <McpPill
@@ -272,7 +270,6 @@ function EmptyConversationState({
     useIsolatedBranch?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
-    presetId?: string | null
   }) => Promise<void>
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }): React.JSX.Element {
@@ -355,7 +352,6 @@ export default function ChatPanel({
     useIsolatedBranch?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
-    presetId?: string | null
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -365,8 +361,7 @@ export default function ChatPanel({
       undefined,
       (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
       data.mcpOverrides,
-      data.communicationTone,
-      data.presetId
+      data.communicationTone
     )
     onNewChatDismiss?.()
     if (data.useIsolatedBranch) {
@@ -427,6 +422,10 @@ export default function ChatPanel({
           </div>
           {activeTab === 'chat' && (
             <div className="flex items-center gap-2">
+              <ModelConfigPopover
+                snapshot={activeConversation?.modelConfigSnapshot ?? null}
+                providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
+              />
               <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
               <PersonaSelector conversation={activeConversation} />
             </div>

@@ -12,17 +12,20 @@ import type {
   ImageAttachment,
   PlanDetectedEvent
 } from '../../shared/types'
-import { memoryService } from './memory.service'
+import { memoryExtractionService } from './memory-extraction.service'
+import { memoryRetrievalService } from './memory-retrieval.service'
 import { eventLoggerService } from './event-logger.service'
 import { forwardChunkToRenderer } from '../ipc/chat-shared'
 import {
   flushTextBatcher,
   getAndClearToolActivities,
+  recordExternalToolActivity,
   startStreamMetrics,
   completeStreamMetrics
 } from '../ipc/chunk-router'
 import {
   createTextChunk,
+  createToolActivityChunk,
   createCompleteMessage,
   createCompactNeeded,
   type CompactNeededMessage
@@ -34,6 +37,7 @@ import { conversationStateMachine } from './conversation-state-machine'
 import { conversationLifecycle } from './conversation-lifecycle'
 import { hookEngine } from './hook-engine.service'
 import { planRegistryService } from './plan-registry.service'
+import { promptOptimizerService } from './prompt-optimizer.service'
 
 const log = chatIpcLogger
 
@@ -48,6 +52,8 @@ interface StreamContext {
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
   readonly workspacePath: string | undefined
+  /** HEAD sha captured at stream start — for memory extraction git delta. */
+  readonly startSha: string | undefined
   /** Accumulated streamed content — mutable, shared across listeners. */
   streamedContent: string
   /** Guards against duplicate plan injection within a single stream. */
@@ -91,6 +97,9 @@ export class ChatStreamService {
   /** Prevents concurrent stream() calls — rejects if already streaming */
   private streamingLock = false
   private activeRequestId: string | null = null
+
+  /** Per-conversation set of already-injected memory fact IDs (prevents re-injection). */
+  private injectedFactIds = new Map<string, Set<string>>()
 
   /** Per-stream identity — set at stream() start, cleared on cleanup. */
   private currentStreamingRole: 'da-vinci' | 'specialist' = 'da-vinci'
@@ -373,12 +382,27 @@ export class ChatStreamService {
       )
     }
     this.streamingLock = true
-    conversationStateMachine.transition('sendMessage', conversationId)
+    // CHAT-SM-TRANSITION-UNCHECKED-01: If state machine rejects the transition,
+    // release the lock immediately to prevent a permanent streaming block.
+    if (!conversationStateMachine.transition('sendMessage', conversationId)) {
+      this.streamingLock = false
+      throw new Error(
+        `State machine rejected sendMessage — current state: ${conversationStateMachine.currentState}`
+      )
+    }
 
     const signal = conversationLifecycle.begin(conversationId)
     const requestId = conversationLifecycle.requestId!
     this.activeRequestId = requestId
     this.isStopped = false
+
+    // C3-FIX: Register lock-release disposer immediately at acquisition time.
+    // This guarantees Stop (abort) during Stage 6.5's async optimization
+    // releases the lock — even though registerStreamDisposers runs later (Stage 8).
+    conversationLifecycle.onDispose(() => {
+      this.streamingLock = false
+      this.activeRequestId = null
+    })
 
     let resolveDone!: () => void
     let rejectDone!: (err: Error) => void
@@ -482,6 +506,87 @@ export class ChatStreamService {
   }
 
   /**
+   * Run prompt optimization if guards pass.
+   * Returns the (possibly optimized) dispatch text, or null if aborted during the async call.
+   */
+  private async runPromptOptimization(params: {
+    text: string
+    conversationId: string
+    requestId: string
+    signal: AbortSignal
+    streamingRole: 'da-vinci' | 'specialist'
+    workspaceId: string
+    mode: 'plan' | 'build'
+    attachments?: string[]
+  }): Promise<string | null> {
+    const { text, conversationId, requestId, signal, streamingRole, workspaceId, mode, attachments } = params
+
+    const guardReason = promptOptimizerService.checkGuards({ text, workspaceId })
+    if (guardReason) return text // guarded — use original
+
+    const optimizerToolId = `prompt-optimizer-${Date.now()}`
+    const inputPreview = text.length > 500 ? text.slice(0, 500) + '…' : text
+    const startedAt = Date.now()
+
+    /** Emit + record a tool-activity card to the renderer. */
+    const emitCard = (card: {
+      status: 'running' | 'completed' | 'error'
+      result?: string
+      resultDetail?: string
+    }): void => {
+      const activity = {
+        id: optimizerToolId,
+        toolName: 'Prompt Optimizer',
+        status: card.status,
+        input: inputPreview,
+        ...(card.result != null ? { result: card.result } : {}),
+        ...(card.resultDetail != null ? { resultDetail: card.resultDetail } : {}),
+        startedAt,
+        ...(card.status !== 'running' ? { completedAt: Date.now() } : {}),
+        operationType: 'other' as const
+      }
+      this.safeWindowSend(
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createToolActivityChunk({ conversationId, requestId, role: streamingRole, toolActivity: activity })
+      )
+      recordExternalToolActivity(conversationId, activity)
+    }
+
+    emitCard({ status: 'running' })
+
+    const optimizeResult = await promptOptimizerService.optimize({
+      text, workspaceId, conversationId, mode
+    })
+
+    if (signal.aborted) {
+      log.info('[PIPELINE:prompt-optimizer] Aborted after optimization')
+      return null
+    }
+
+    if (optimizeResult.changed) {
+      const attachNote = attachments?.length
+        ? `\n\n(${attachments.length} file attachment${attachments.length > 1 ? 's' : ''} appended after optimization)`
+        : ''
+      emitCard({
+        status: 'completed',
+        result: 'Prompt optimized for clarity',
+        resultDetail: optimizeResult.optimizedText + attachNote
+      })
+      log.info('[PIPELINE:prompt-optimizer] Prompt optimized')
+      return optimizeResult.optimizedText
+    }
+
+    if (optimizeResult.skippedReason === 'error') {
+      emitCard({ status: 'error', result: 'Optimization skipped — original prompt sent' })
+      log.warn('[PIPELINE:prompt-optimizer] Error — using original prompt')
+    } else {
+      emitCard({ status: 'completed', result: 'No changes needed' })
+    }
+
+    return text // unchanged — use original
+  }
+
+  /**
    * Register centralized cleanup disposers — runs on both complete() and abort().
    */
   private registerStreamDisposers(
@@ -490,15 +595,10 @@ export class ChatStreamService {
     onIntent: (intent: AgentIntent) => Promise<void>,
     onPlanEvent: (data: PlanDetectedEvent) => void
   ): void {
-    // Release lock + clear request ID
-    conversationLifecycle.onDispose(() => {
-      this.streamingLock = false
-      this.activeRequestId = null
-      // Don't reset currentStreamingRole to a hardcoded 'da-vinci' —
-      // it should retain the per-stream value until the next stream starts.
-      // Resetting to 'da-vinci' corrupts any event forwarders that fire
-      // between dispose and the next stream() call (e.g. compactNeeded).
-    })
+    // NOTE: Lock release (streamingLock + activeRequestId) is registered in
+    // acquireStreamLock() so it's active before any async stages. Do not
+    // duplicate it here. conversationLifecycle.onDispose is idempotent-safe
+    // but re-registering would double-fire.
 
     // COMPACT-ABORT-01: Clear per-conversation adapter state (pending compaction,
     // pending context injection) on lifecycle abort. Without this, stale state
@@ -521,9 +621,20 @@ export class ChatStreamService {
       // F-19: Clear accumulated tool activities on lifecycle abort.
       // Without this, tool activities from an aborted stream sit in memory
       // until the next stream() call clears them. Defense-in-depth cleanup.
+      // CHAT-TOOLACTIVITY-DOUBLECLEAR-01: Only clear if stop() hasn't
+      // already cleared (isStopped means stop() handled it). The double-call
+      // resets the clearedConversations 10s timer, blocking tool activity
+      // accumulation for new streams started within that window.
       conversationLifecycle.onDispose(() => {
-        getAndClearToolActivities(streamConvId)
+        if (!this.isStopped) {
+          getAndClearToolActivities(streamConvId)
+        }
       })
+
+      // N1-FIX: The C3 disposer was removed because conversationLifecycle.complete()
+      // fires at the end of every stream (not just on conversation end), which wiped
+      // the dedupe set every turn. Cleanup now happens in dispose() and
+      // clearConversationMemoryState().
     }
 
     // Remove per-stream listeners
@@ -614,8 +725,46 @@ export class ChatStreamService {
       chatAgentService.on('complete', listeners.onComplete)
       chatAgentService.on('intent', listeners.onIntent)
       chatAgentService.on('plan', listeners.onPlanEvent)
+
+      // Per-turn memory injection: prepend relevant facts to the user message
+      let enrichedContent = fullContent
+      try {
+        const workspace = ctx.workspacePath ? workspaceRepository.findByPath(ctx.workspacePath) : undefined
+        if (workspace) {
+          // Get or create the dedupe set for this conversation
+          if (!this.injectedFactIds.has(conversationId)) {
+            // N1-FIX: LRU cap — evict oldest entry when the map exceeds 50
+            // conversations. Backstop against unbounded growth when dispose()
+            // doesn't run (e.g. long-lived singleton).
+            if (this.injectedFactIds.size >= 50) {
+              const oldest = this.injectedFactIds.keys().next().value
+              if (oldest) this.injectedFactIds.delete(oldest)
+            }
+            this.injectedFactIds.set(conversationId, new Set())
+          } else {
+            // L1-FIX: True LRU — refresh Map insertion order so the most
+            // recently accessed conversation is evicted last.
+            const existing = this.injectedFactIds.get(conversationId)!
+            this.injectedFactIds.delete(conversationId)
+            this.injectedFactIds.set(conversationId, existing)
+          }
+          const dedupeSet = this.injectedFactIds.get(conversationId)!
+          const memoryContext = await memoryRetrievalService.getContextForTurn(
+            workspace.id,
+            fullContent,
+            'medium',
+            dedupeSet
+          )
+          if (memoryContext) {
+            enrichedContent = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${fullContent}`
+          }
+        }
+      } catch (memErr) {
+        log.debug('Per-turn memory retrieval failed (non-fatal):', memErr)
+      }
+
       await chatAgentService.send(
-        fullContent,
+        enrichedContent,
         conversationId,
         imageAttachments.length > 0 ? imageAttachments : undefined
       )
@@ -738,6 +887,16 @@ export class ChatStreamService {
       let savedMessage: { id: string }
       try {
         const { getDatabase } = await import('../db/index')
+
+        // CHAT-STOP-FINALIZE-DOUBLESAVE-01: Re-check after async gap.
+        // stop() may have run during the await, saving its own "stopped" message.
+        // Without this guard, both stop()'s message AND this finalization's message
+        // are saved — creating a duplicate in the conversation.
+        if (this.isStopped) {
+          log.info('[PIPELINE:finalize-skipped-post-await] Stopped during DB import await')
+          return
+        }
+
         const db = getDatabase()
         savedMessage = db.transaction(() => {
           const msg = messageRepository.create(
@@ -758,9 +917,9 @@ export class ChatStreamService {
         // CHAT-FINALIZE-FALLBACK-01: Distinguish test environment (no DB) from
         // real DB errors. Only fall back to non-transactional insert for expected
         // test/no-DB scenarios. Real errors (disk full, FK violation) should surface.
-        const errMsg = txErr instanceof Error ? txErr.message : String(txErr)
-        const isTestEnv = errMsg.includes('getDatabase') || errMsg.includes('not a function') ||
-          errMsg.includes('not initialized')
+        // Deterministic check: process.versions.electron is set in packaged Electron
+        // but absent under tsx/node test runners — no string-matching needed.
+        const isTestEnv = !process.versions.electron
         if (!isTestEnv) {
           log.error('[PIPELINE:finalize-tx-failed] Transaction failed with real DB error:', txErr)
           throw txErr
@@ -788,8 +947,8 @@ export class ChatStreamService {
       }
       log.info('Agent message saved, id:', savedMessage.id)
 
-      // Process memory blocks
-      this.processMemoryBlocks(ctx)
+      // Enqueue memory extraction from transcript + git delta
+      this.enqueueMemoryExtraction(ctx)
 
       log.info(
         `[PIPELINE:agent-message-saved] messageId=${savedMessage.id} contentLen=${cleanedContent.length}`
@@ -841,26 +1000,27 @@ export class ChatStreamService {
   }
 
   /**
-   * Extract and persist memory blocks from agent response content.
+   * Enqueue fact extraction from the completed stream transcript + git delta.
+   * Replaces the old processMemoryBlocks regex-based extraction.
    */
-  private processMemoryBlocks(ctx: StreamContext): void {
+  private enqueueMemoryExtraction(ctx: StreamContext): void {
     try {
-      const wpPath = chatAgentService.getWorkspacePath()
-      const allWorkspaces = wpPath ? workspaceRepository.findAll() : []
-      const workspace = allWorkspaces.find((w) => w.repoPath === wpPath)
-      if (workspace) {
-        const memoriesCreated = memoryService.processMemoryBlocks(
-          ctx.streamedContent,
-          ctx.conversationId,
-          ctx.adapterAgentId,
-          workspace.id
-        )
-        if (memoriesCreated > 0) {
-          log.info(`Created ${memoriesCreated} memories from agent response`)
-        }
+      const wpPath = ctx.workspacePath
+      const workspace = wpPath ? workspaceRepository.findByPath(wpPath) : undefined
+      if (workspace && ctx.streamedContent.length > 200) {
+        // Gate on sessionCapture setting
+        const settings = workspaceRepository.getSettings(workspace.id) as Record<string, unknown>
+        if (settings.memorySessionCapture === false) return
+        memoryExtractionService.enqueueSessionExtraction({
+          workspaceId: workspace.id,
+          workspacePath: wpPath ?? null,
+          transcript: ctx.streamedContent,
+          startSha: ctx.startSha ?? null,
+          conversationId: ctx.conversationId
+        })
       }
-    } catch (memErr) {
-      log.warn('Memory block processing failed:', memErr)
+    } catch (err) {
+      log.warn('Memory extraction enqueue failed:', err)
     }
   }
 
@@ -933,6 +1093,9 @@ export class ChatStreamService {
       // and delete-then-complete scenarios. isActive is false when abortController
       // is null — which happens after both abort() and complete().
       if (this.isStopped || !conversationLifecycle.isActive) {
+        // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics on abort-triggered completion.
+        // Idempotent if stop() already called completeStreamMetrics.
+        completeStreamMetrics(ctx.conversationId, 'aborted')
         cleanupListeners()
         resolveDone()
         return
@@ -1016,15 +1179,16 @@ export class ChatStreamService {
   async stream(
     conversationId: string,
     text: string,
-    attachments?: string[]
+    attachments?: string[],
+    opts?: { optimizePrompt?: boolean }
   ): Promise<StreamHandle> {
     // Stage 1: Acquire lock + lifecycle
     const { requestId, signal, resolveDone, rejectDone, done } =
       this.acquireStreamLock(conversationId)
 
     // Stage 2: Ensure workspace session is live
+    const conv = conversationRepository.findById(conversationId)
     try {
-      const conv = conversationRepository.findById(conversationId)
       const ws = conv ? workspaceRepository.findById(conv.workspaceId) : undefined
       if (ws?.repoPath) await chatAgentService.ensureStarted(ws.id, ws.repoPath)
     } catch (error) {
@@ -1035,8 +1199,6 @@ export class ChatStreamService {
     // Stage 3: Resolve identity
     const { streamingRole, phase, specialistMeta, adapterAgentId } = this.resolveStreamIdentity()
     this.currentStreamingRole = streamingRole
-
-    void signal // AbortSignal available for future cooperative cancellation
 
     // Stage 4: Announce streaming identity to renderer
     this.announceStreamStart(conversationId, requestId, streamingRole, phase, specialistMeta)
@@ -1050,13 +1212,47 @@ export class ChatStreamService {
     // Start stream metrics tracking (TTFT, chunk count, total chars, duration)
     startStreamMetrics(conversationId)
 
-    // Stage 6: Prepare user message
-    const { fullContent, imageAttachments } = this.prepareUserMessage(text, attachments)
+    // Stage 6: Save original user message + run prompt optimization
     const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
     messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
     log.info('User message saved to DB')
 
+    // Stage 6.5: Prompt Optimization (chat plan/build only — skipped for programmatic callers)
+    let dispatchText = text
+    const convMode = (conv?.mode ?? chatAgentService.getMode()) as 'plan' | 'build'
+    if (opts?.optimizePrompt !== false && conv && (convMode === 'plan' || convMode === 'build')) {
+      const result = await this.runPromptOptimization({
+        text, conversationId, requestId, signal, streamingRole,
+        workspaceId: conv.workspaceId, mode: convMode, attachments
+      })
+      if (result === null) {
+        // H1-FIX: settle the done promise before returning
+        resolveDone()
+        return { done, abort: () => conversationLifecycle.abort('external'), requestId }
+      }
+      dispatchText = result
+    }
+
+    // Stage 6.9: Prepare dispatch content (uses optimized text if changed)
+    const { fullContent, imageAttachments } = this.prepareUserMessage(dispatchText, attachments)
+
     // Stage 7: Build context + listeners
+    // Capture HEAD sha for memory extraction (async to avoid blocking main thread)
+    let startSha: string | undefined
+    const wpPath = chatAgentService.getWorkspacePath()
+    if (wpPath) {
+      try {
+        const { exec } = require('node:child_process')
+        startSha = await new Promise<string | undefined>((resolve) => {
+          exec('git rev-parse HEAD 2>/dev/null || true', {
+            cwd: wpPath, encoding: 'utf-8', timeout: 2000
+          }, (err: Error | null, stdout: string) => {
+            resolve(err ? undefined : (stdout?.trim() || undefined))
+          })
+        })
+      } catch { /* no git — fine */ }
+    }
+
     const ctx: StreamContext = {
       conversationId,
       requestId,
@@ -1064,7 +1260,8 @@ export class ChatStreamService {
       phase,
       specialistMeta,
       adapterAgentId,
-      workspacePath: chatAgentService.getWorkspacePath() ?? undefined,
+      workspacePath: wpPath ?? undefined,
+      startSha,
       streamedContent: '',
       planInjected: false
     }
@@ -1228,13 +1425,28 @@ export class ChatStreamService {
       log.warn(
         `[STREAM:force-reset] lock=${lockStuck} smState=${conversationStateMachine.currentState} — force-resetting`
       )
+      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+      const wsConvId = conversationLifecycle.conversationId
+      if (wsConvId) completeStreamMetrics(wsConvId, 'aborted')
       conversationLifecycle.abort('workspace-switch')
     }
+  }
+
+  /**
+   * N1-FIX: Clear injected-fact dedupe state for a conversation.
+   * Called from conversation-delete IPC paths so facts can be re-injected
+   * if the user starts a new conversation about the same topics.
+   */
+  clearConversationMemoryState(conversationId: string): void {
+    this.injectedFactIds.delete(conversationId)
   }
 
   // N14: Clean up all persistent listeners when the service is replaced
   dispose(): void {
     this.isDisposed = true
+
+    // N1-FIX: Clear all per-conversation memory dedupe state on service replacement
+    this.injectedFactIds.clear()
 
     // Clean up all persistent event forwarders registered in registerEventForwarders()
     for (const cleanup of this.eventCleanups) {

@@ -1,53 +1,12 @@
-import type { JSX } from 'react'
-import { CheckCircle, Circle, Loader2, User, XCircle, MinusCircle } from 'lucide-react'
+import { useState, useEffect, type JSX } from 'react'
+import { CheckCircle, Circle, Loader2, XCircle, MinusCircle } from 'lucide-react'
 import type {
   BlueprintPhaseType,
   BlueprintPhaseStatus
 } from '../../../../../shared/blueprint-types'
 import { BLUEPRINT_PHASE_ORDER } from '../../../../../shared/blueprint-types'
-
-// ── Phase Display Config ──
-
-const PHASE_CONFIG: Record<
-  BlueprintPhaseType,
-  { label: string; emoji: string; description: string }
-> = {
-  specify: {
-    label: 'Specify',
-    emoji: '📋',
-    description: 'Analyze the feature and produce a detailed specification'
-  },
-  clarify: {
-    label: 'Clarify',
-    emoji: '❓',
-    description: 'Ask clarifying questions about ambiguous requirements'
-  },
-  plan: {
-    label: 'Plan',
-    emoji: '🗺️',
-    description: 'Create a detailed implementation plan with file paths and steps'
-  },
-  tasks: {
-    label: 'Tasks',
-    emoji: '📝',
-    description: 'Break the plan into ordered tasks with dependency waves'
-  },
-  review: {
-    label: 'Review',
-    emoji: '🔍',
-    description: 'Review the plan and tasks for completeness and correctness'
-  },
-  build: {
-    label: 'Build',
-    emoji: '🏗️',
-    description: 'Execute tasks in dependency-ordered waves'
-  },
-  verify: {
-    label: 'Verify',
-    emoji: '✅',
-    description: 'Run quality checks to confirm the implementation is correct'
-  }
-}
+import { PHASE_ICONS, GATE_ICON, type PhaseIconKey } from './phase-icons'
+import { formatPhaseDuration } from '@renderer/store/blueprint.store'
 
 type TimelineStatus = BlueprintPhaseStatus | 'gate'
 
@@ -55,18 +14,21 @@ interface BlueprintPhaseTimelineProps {
   currentPhase: BlueprintPhaseType | null
   awaitingApproval: boolean
   phaseStatuses?: Partial<Record<BlueprintPhaseType, BlueprintPhaseStatus>>
+  phaseDurations?: Partial<Record<BlueprintPhaseType, number>>
+  /** Timestamp (Date.now()) when the current phase started — for live ticking */
+  phaseStartedAt?: number | null
 }
 
 function StatusIcon({ status }: { status: TimelineStatus }): JSX.Element {
   switch (status) {
     case 'active':
-      return <Loader2 size={16} className="text-emerald-400 animate-spin" />
+      return <Loader2 size={16} className="text-accent animate-spin" />
     case 'complete':
       return <CheckCircle size={16} className="text-success" />
     case 'failed':
       return <XCircle size={16} className="text-danger" />
     case 'gate':
-      return <User size={16} className="text-cyan-400" />
+      return <GATE_ICON.icon size={16} className="text-info" />
     case 'skipped':
       return <MinusCircle size={16} className="text-text-muted" />
     default:
@@ -98,8 +60,18 @@ function derivePhaseStatus(
 export default function BlueprintPhaseTimeline({
   currentPhase,
   awaitingApproval,
-  phaseStatuses
+  phaseStatuses,
+  phaseDurations,
+  phaseStartedAt
 }: BlueprintPhaseTimelineProps): JSX.Element {
+  // Live ticking elapsed for active phase
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!currentPhase || !phaseStartedAt) return
+    const interval = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [currentPhase, phaseStartedAt])
+
   // Build timeline entries including user gate after review
   const entries: Array<{
     phaseType: BlueprintPhaseType
@@ -122,41 +94,62 @@ export default function BlueprintPhaseTimeline({
   }
 
   return (
-    <div data-testid="blueprint-phase-timeline" className="space-y-1">
+    <div data-testid="blueprint-phase-timeline" className="space-y-0.5">
       <h4 className="text-xs font-medium text-text-secondary mb-2">Pipeline</h4>
       <div className="relative">
         {entries.map((entry, idx) => {
-          const config = PHASE_CONFIG[entry.phaseType]
+          const config = PHASE_ICONS[entry.phaseType as PhaseIconKey]
+          const gateConfig = GATE_ICON
           const isCurrent =
             entry.phaseType === currentPhase && entry.status === 'active' && !entry.isGate
+          const isActive = entry.status === 'active'
+          const label = entry.isGate ? gateConfig.label : config.label
+          const description = entry.isGate ? gateConfig.description : config.description
+
+          // Duration: completed phases show recorded duration; active phase shows live ticking
+          const duration = phaseDurations?.[entry.phaseType]
+          const liveElapsed = isCurrent && phaseStartedAt ? now - phaseStartedAt : null
+          const durationText = duration
+            ? formatPhaseDuration(duration)
+            : liveElapsed !== null
+              ? formatPhaseDuration(liveElapsed)
+              : null
 
           return (
             <div
               key={`${entry.phaseType}-${entry.isGate ? 'gate' : 'phase'}`}
-              className="flex items-start gap-3 mb-3 last:mb-0"
+              className={`flex items-center gap-2.5 px-2 py-1.5 rounded-lg transition-colors ${
+                isCurrent
+                  ? 'bg-accent-muted border-l-2 border-accent'
+                  : entry.isGate && entry.status === 'gate'
+                    ? 'border-l-2 border-info/30 bg-info-muted/30'
+                    : ''
+              }`}
+              title={description}
             >
-              {/* Connector line */}
-              <div className="flex flex-col items-center">
-                <StatusIcon status={entry.status} />
-                {idx < entries.length - 1 && <div className="w-px h-6 bg-border-subtle mt-1" />}
-              </div>
+              {/* Status icon */}
+              <StatusIcon status={entry.status} />
 
-              {/* Content */}
-              <div className="flex-1 min-w-0 -mt-0.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm font-medium text-text-primary">
-                    {entry.isGate ? '👤 Approval Gate' : `${config.emoji} ${config.label}`}
-                  </span>
-                  {isCurrent && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium animate-pulse">
-                      running
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-text-muted mt-0.5">
-                  {entry.isGate ? 'Review and approve before building' : config.description}
-                </p>
-              </div>
+              {/* Label */}
+              <span
+                className={`text-sm font-medium flex-1 ${
+                  isActive || isCurrent ? 'text-text-primary' : 'text-text-secondary'
+                }`}
+              >
+                {label}
+              </span>
+
+              {/* Duration */}
+              {durationText && (
+                <span className="text-[10px] text-text-muted tabular-nums whitespace-nowrap">
+                  {durationText}
+                </span>
+              )}
+
+              {/* Connector line between items */}
+              {idx < entries.length - 1 && (
+                <div className="absolute left-[19px] w-px h-1.5 bg-border-subtle" style={{ marginTop: '28px' }} />
+              )}
             </div>
           )
         })}

@@ -111,6 +111,114 @@ describe('OmlxManagerService', () => {
         globalThis.fetch = originalFetch
       }
     }))
+
+  // ── Diagnostics tests ──
+
+  test('checkStatus returns diagnostics when admin API returns 401 (no key)', () =>
+    runExclusive(async () => {
+      const originalFetch = globalThis.fetch
+      try {
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const u = String(input)
+          if (u.includes('/admin/api/models')) return res({ ok: false, status: 401 })
+          if (u.includes('/v1/models'))
+            return res({ json: { data: [{ id: 'model-1' }] } })
+          throw new Error(`unexpected ${u}`)
+        }) as FetchFn
+
+        const status = await omlxManager.checkStatus()
+        assert.equal(status.running, true)
+        assert.equal(status.diagnostics?.adminAuthRequired, true)
+        assert.equal(status.diagnostics?.adminHttpStatus, 401)
+        assert.ok(status.diagnostics?.errorDetail?.includes('API key required'))
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    }))
+
+  test('checkStatus returns diagnostics when admin API returns 401 (wrong key)', () =>
+    runExclusive(async () => {
+      const originalFetch = globalThis.fetch
+      try {
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const u = String(input)
+          if (u.includes('/admin/api/login')) return res({ ok: false, status: 401 })
+          if (u.includes('/admin/api/models')) return res({ ok: false, status: 401 })
+          if (u.includes('/v1/models'))
+            return res({ json: { data: [{ id: 'model-1' }] } })
+          throw new Error(`unexpected ${u}`)
+        }) as FetchFn
+
+        const status = await omlxManager.checkStatus('http://127.0.0.1:8000', 'wrong-key')
+        assert.equal(status.running, true)
+        assert.equal(status.diagnostics?.adminAuthRequired, true)
+        assert.ok(status.diagnostics?.errorDetail?.includes('rejected'))
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    }))
+
+  test('checkStatus returns timeout diagnostics when admin API times out', () =>
+    runExclusive(async () => {
+      const originalFetch = globalThis.fetch
+      try {
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const u = String(input)
+          if (u.includes('/admin/api')) {
+            const err = new Error('The operation was aborted')
+            err.name = 'AbortError'
+            throw err
+          }
+          if (u.includes('/v1/models')) return res({ json: { data: [] } })
+          throw new Error(`unexpected ${u}`)
+        }) as FetchFn
+
+        const status = await omlxManager.checkStatus()
+        assert.equal(status.running, true)
+        assert.equal(status.diagnostics?.timedOut, true)
+        assert.ok(status.diagnostics?.errorDetail?.includes('timed out'))
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    }))
+
+  test('checkStatus synthesizes embedding type from model name patterns', () =>
+    runExclusive(async () => {
+      const originalFetch = globalThis.fetch
+      try {
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+          const u = String(input)
+          if (u.includes('/admin/api')) return res({ ok: false, status: 404 })
+          if (u.includes('/v1/models')) {
+            return res({
+              json: {
+                data: [
+                  { id: 'bge-m3-mlx-8bit' },
+                  { id: 'Qwen3-30B-A3B-4bit' },
+                  { id: 'nomic-embed-text-v1.5' },
+                  { id: 'gemma-3-27b-it' }
+                ]
+              }
+            })
+          }
+          throw new Error(`unexpected ${u}`)
+        }) as FetchFn
+
+        const status = await omlxManager.checkStatus()
+        assert.equal(status.running, true)
+        assert.equal(status.allModels?.length, 4)
+
+        const types = status.allModels!.map((m) => `${m.id}=${m.modelType}`)
+        assert.deepEqual(types, [
+          'bge-m3-mlx-8bit=embedding',
+          'Qwen3-30B-A3B-4bit=llm',
+          'nomic-embed-text-v1.5=embedding',
+          'gemma-3-27b-it=llm'
+        ])
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    }))
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

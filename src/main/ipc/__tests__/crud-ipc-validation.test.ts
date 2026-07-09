@@ -255,26 +255,23 @@ describe('events.ipc validation contracts', () => {
 // ── memory.ipc.ts contracts (type-only — document expected shapes) ───────────
 
 describe('memory.ipc validation contracts (type-only shapes)', () => {
-  test('MEMORY_LIST expected shape: { workspaceId: string }', () => {
+  test('MEMORY_FACTS_LIST expected shape: { workspaceId: string }', () => {
     // memory.ipc.ts uses inline types only — we document the expected contract
     const args = { workspaceId: 'ws-1' }
     assert.equal(typeof args.workspaceId, 'string')
   })
 
-  test('MEMORY_CREATE expected shape: workspaceId, type, title, content', () => {
+  test('MEMORY_FACTS_SEARCH expected shape: workspaceId, query', () => {
     const args = {
       workspaceId: 'ws-1',
-      type: 'manual' as const,
-      title: 'Note',
-      content: 'Some content'
+      query: 'architecture decisions'
     }
     assert.equal(typeof args.workspaceId, 'string')
-    assert.equal(typeof args.title, 'string')
-    assert.equal(typeof args.content, 'string')
+    assert.equal(typeof args.query, 'string')
   })
 
-  test('MEMORY_DELETE expected shape: { id: string }', () => {
-    const args = { id: 'mem-1' }
+  test('MEMORY_FACTS_DELETE expected shape: { id: string }', () => {
+    const args = { id: 'fact-1' }
     assert.equal(typeof args.id, 'string')
   })
 })

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { StructuredPlan, GrillQuestion, MemoryType } from '../../shared/types'
+import type { StructuredPlan, GrillQuestion } from '../../shared/types'
 
 /**
  * Event callback signatures for control tool actions.
@@ -22,7 +22,7 @@ export interface ControlActionCallbacks {
    * to the waiting ask_user promise. Undefined when no round-trip is wired.
    */
   onAskUser: (questions: GrillQuestion[], action?: string, requestId?: string) => void
-  onMemory: (memory: { type: MemoryType; title: string; content: string }) => void
+  // onMemory removed — memory tools now live on the dedicated memory MCP server
 }
 
 // -- Zod Schemas (reusable for tests) --

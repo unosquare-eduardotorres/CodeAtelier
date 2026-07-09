@@ -3,7 +3,7 @@ import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'luci
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ChatItem, NewConversationModal } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
-import type { CommunicationTone, ConversationMode } from '../../../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
 
 interface ChatSidebarProps {
   isCollapsed?: boolean
@@ -59,7 +59,7 @@ export default function ChatSidebar({
     personaSpecialistId?: string
     attachments?: string[]
     useIsolatedBranch?: boolean
-    presetId?: string | null
+    llmProvider?: LLMProvider
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -67,10 +67,9 @@ export default function ChatSidebar({
       data.mode,
       data.title,
       data.personaSpecialistId,
+      data.llmProvider,
       undefined,
-      undefined,
-      data.communicationTone,
-      data.presetId
+      data.communicationTone
     )
     setShowNewChatModal(false)
     if (data.useIsolatedBranch) {

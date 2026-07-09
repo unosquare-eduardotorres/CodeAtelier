@@ -1,10 +1,10 @@
 /**
  * Model Config E2E Tests
  *
- * Verifies ModelConfigTab (107 LOC) — LLM provider and model configuration:
- *   - Model config tab renders with provider toggle
- *   - Provider toggle switches between Claude and Local LLM
- *   - Claude config shows cost preference selector
+ * Verifies ModelConfigTab — LLM provider and model configuration:
+ *   - Model config tab renders with provider cards
+ *   - Both Claude and oMLX provider cards render simultaneously
+ *   - Claude config shows model role pickers
  *   - Claude config shows communication tone options
  *   - Local LLM config shows host/port/model fields
  *   - Connection test button validates local LLM endpoint
@@ -43,7 +43,7 @@ test.describe('Model Configuration', () => {
     return nav.navigateToSettingsTab('models')
   }
 
-  test('model config tab renders with provider toggle', async ({ electronPage: page }) => {
+  test('model config tab renders with provider cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
@@ -57,37 +57,36 @@ test.describe('Model Configuration', () => {
     const header = page.getByText(/model configuration/i).first()
     await expect(header).toBeVisible()
 
-    // Provider toggle section
-    const providerToggle = page.locator('[data-testid="provider-toggle"]')
-    await expect(providerToggle).toBeVisible()
+    // Provider cards grid
+    const providerCards = page.locator('[data-testid="provider-toggle"]')
+    await expect(providerCards).toBeVisible()
   })
 
-  test('provider toggle switches between Claude and Local LLM', async ({ electronPage: page }) => {
+  test('both Claude and oMLX provider cards render simultaneously', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
     const navigated = await navigateToModels(page)
     if (!navigated) { test.skip(); return }
 
-    const providerToggle = page.locator('[data-testid="provider-toggle"]')
-    const hasToggle = await providerToggle.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasToggle) { test.skip(); return }
+    const providerCards = page.locator('[data-testid="provider-toggle"]')
+    const hasCards = await providerCards.isVisible({ timeout: 5_000 }).catch(() => false)
+    if (!hasCards) { test.skip(); return }
 
-    // Should show both Claude and Local LLM options
-    const claudeBtn = providerToggle.getByText(/claude/i).first()
-    const localBtn = providerToggle.getByText(/local/i).first()
+    // Both Claude and oMLX cards should be visible at the same time
+    const claudeCard = page.locator('[data-testid="claude-config-section"]')
+    const omlxCard = page.locator('[data-testid="local-llm-config"]')
 
-    await expect(claudeBtn).toBeVisible()
-    await expect(localBtn).toBeVisible()
+    await expect(claudeCard).toBeVisible()
+    await expect(omlxCard).toBeVisible()
 
-    // One should be in the active state (border-primary)
-    const claudeClasses = await claudeBtn.locator('..').getAttribute('class') ?? ''
-    const localClasses = await localBtn.locator('..').getAttribute('class') ?? ''
-    const hasActive = claudeClasses.includes('primary') || localClasses.includes('primary')
-    expect(hasActive).toBeTruthy()
+    // Exactly one should have the "Default" chip
+    const providerText = await providerCards.textContent() ?? ''
+    const hasDefaultChip = /default/i.test(providerText)
+    expect(hasDefaultChip).toBeTruthy()
   })
 
-  test('claude config shows cost preference selector', async ({ electronPage: page }) => {
+  test('claude config shows model role pickers', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
@@ -98,25 +97,16 @@ test.describe('Model Configuration', () => {
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasConfig) { test.skip(); return }
 
-    // Ensure Claude is the active provider
-    const providerToggle = page.locator('[data-testid="provider-toggle"]')
-    const claudeBtn = providerToggle.locator('button').filter({ hasText: /claude/i }).first()
-    if (await claudeBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await claudeBtn.click()
-      await page.waitForTimeout(500)
-    }
+    // Model routing section should be visible (always visible, not behind provider tab)
+    const rolesSection = page.getByText(/Model Routing|Plan|Build/i).first()
+    const hasRoles = await rolesSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    // Cost preference section should be visible
-    const costSection = page.getByText(/cost|quality|preference|model tier/i).first()
-    const hasCost = await costSection.isVisible({ timeout: 3_000 }).catch(() => false)
-
-    if (!hasCost) {
-      // Provider might be locked to local
+    if (!hasRoles) {
       test.skip()
       return
     }
 
-    await expect(costSection).toBeVisible()
+    await expect(rolesSection).toBeVisible()
   })
 
   test('claude config shows communication tone options', async ({ electronPage: page }) => {
@@ -130,15 +120,7 @@ test.describe('Model Configuration', () => {
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasConfig) { test.skip(); return }
 
-    // Ensure Claude provider
-    const providerToggle = page.locator('[data-testid="provider-toggle"]')
-    const claudeBtn = providerToggle.locator('button').filter({ hasText: /claude/i }).first()
-    if (await claudeBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await claudeBtn.click()
-      await page.waitForTimeout(500)
-    }
-
-    // Communication tone section
+    // Communication tone section (always visible, not behind provider tab)
     const toneSection = page.getByText(/tone|communication/i).first()
     const hasTone = await toneSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
@@ -158,17 +140,13 @@ test.describe('Model Configuration', () => {
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasConfig) { test.skip(); return }
 
-    // Switch to Local LLM provider
-    const providerToggle = page.locator('[data-testid="provider-toggle"]')
-    const localBtn = providerToggle.locator('button').filter({ hasText: /local/i }).first()
-    const hasLocal = await localBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasLocal) { test.skip(); return }
+    // oMLX card is always visible — look for host/port/model fields directly
+    const omlxCard = page.locator('[data-testid="local-llm-config"]')
+    const hasOmlx = await omlxCard.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasOmlx) { test.skip(); return }
 
-    await localBtn.click()
-    await page.waitForTimeout(800)
-
-    // Should show local LLM configuration fields (host, port, model)
-    const localConfig = page.getByText(/host|port|model|endpoint|ollama/i).first()
+    // Should show server connection fields
+    const localConfig = page.getByText(/server address|host|port|model/i).first()
     const hasLocalConfig = await localConfig.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (!hasLocalConfig) { test.skip(); return }
@@ -187,16 +165,13 @@ test.describe('Model Configuration', () => {
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasConfig) { test.skip(); return }
 
-    // Switch to Local LLM
-    const providerToggle = page.locator('[data-testid="provider-toggle"]')
-    const localBtn = providerToggle.locator('button').filter({ hasText: /local/i }).first()
-    if (await localBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await localBtn.click()
-      await page.waitForTimeout(800)
-    }
+    // oMLX card is always visible — look for test button directly
+    const omlxCard = page.locator('[data-testid="local-llm-config"]')
+    const hasOmlx = await omlxCard.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasOmlx) { test.skip(); return }
 
-    // Look for test connection button
-    const testBtn = page.getByRole('button', { name: /test|connect|check/i }).first()
+    // Look for test connection button within oMLX card
+    const testBtn = omlxCard.getByRole('button', { name: /test|connect|check/i }).first()
     const hasTest = await testBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (!hasTest) {

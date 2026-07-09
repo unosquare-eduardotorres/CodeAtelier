@@ -572,4 +572,38 @@ CREATE TABLE IF NOT EXISTS blueprint_tasks (
 CREATE INDEX IF NOT EXISTS idx_bp_tasks_blueprint ON blueprint_tasks(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);
 
+-- E2E test runs: track each test execution batch
+CREATE TABLE IF NOT EXISTS e2e_test_runs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'cancelled')),
+  model_id TEXT,
+  backend TEXT,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT,
+  total_passed INTEGER NOT NULL DEFAULT 0,
+  total_failed INTEGER NOT NULL DEFAULT 0,
+  total_skipped INTEGER NOT NULL DEFAULT 0,
+  total_error INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_workspace ON e2e_test_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_status ON e2e_test_runs(status);
+
+-- E2E test results: individual scenario outcomes within a run
+CREATE TABLE IF NOT EXISTS e2e_test_results (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  run_id TEXT NOT NULL REFERENCES e2e_test_runs(id) ON DELETE CASCADE,
+  scenario_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'passed', 'failed', 'skipped', 'error')),
+  duration_ms INTEGER,
+  failure_reason TEXT,
+  assertion_results TEXT,
+  transcript_json TEXT,
+  conversation_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_e2e_test_results_run ON e2e_test_results(run_id);
+CREATE INDEX IF NOT EXISTS idx_e2e_test_results_scenario ON e2e_test_results(scenario_id);
+CREATE INDEX IF NOT EXISTS idx_e2e_test_results_status ON e2e_test_results(status);
+
 

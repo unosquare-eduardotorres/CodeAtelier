@@ -44,7 +44,8 @@ const FEATURE_LABELS: Record<string, string> = {
   skill_recommend: 'Skill recommendations',
   commit_message: 'Commit message',
   recovery_nudge: 'Recovery nudge',
-  plan_recovery: 'Plan recovery'
+  plan_recovery: 'Plan recovery',
+  prompt_optimize: 'Prompt Optimizer'
 }
 
 function featureLabel(feature: string): string {

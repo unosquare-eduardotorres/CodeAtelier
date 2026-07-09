@@ -7,8 +7,7 @@
  * Subclasses only override what differs:
  *   - `buildPrompts()` (always — identity/prompt differs per role)
  *   - `getMcpStrategy()` (if not 'full')
- *   - `resolveWorkspaceId()` (for memory-persisting adapters)
- *   - `persistMemory()` (override with no-op for evaluation adapters)
+ *   - `resolveWorkspaceId()` (for workspace-scoped adapters)
  *   - `emitDetectedIntents()` (override with no-op for audit/MPA)
  *
  * The interface `AgentRoleAdapter` remains the public contract consumed by
@@ -20,7 +19,6 @@ import type {
   AgentRole,
   CommunicationTone,
   LLMProvider,
-  MemoryType,
   ModelAction
 } from '../../../shared/types'
 import { EXTERNAL_MCP_INTEGRATIONS, LOCAL_MCP_INTEGRATIONS } from '../../../shared/constants'
@@ -38,7 +36,6 @@ import type { ControlActionCallbacks } from '../control-actions.tool'
 import { intentDetector } from '../intent-detector'
 import {
   conversationRepository,
-  memoryRepository,
   workspaceRepository
 } from '../../db/repositories'
 import { githubService } from '../github.service'
@@ -61,6 +58,13 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   interactionTimeoutMs?: number
 
   protected readonly log = chatAgentLogger
+
+  // ── Capability flags ───────────────────────────────────────────────
+  // Adapters that support the plan-card recovery flow (emit_plan re-issue
+  // after a blocked Write/Edit) set this to true.  Blueprint / grill /
+  // audit / council adapters inherit false — recovery never fires for them.
+
+  readonly supportsEmitPlanRecovery: boolean = false
 
   // ── Feature flags (shared across all adapters) ──────────────────────
 
@@ -176,7 +180,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
 
   // ── Control Callbacks (centralized, parameterized) ─────────────────
 
-  buildControlCallbacks(params: {
+  buildControlCallbacks(_params: {
     conversationId: string | null
     emit: (event: AgentSessionEventName, payload: unknown) => void
     getAccumulatedText: () => string
@@ -187,42 +191,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
       },
       onAskUser: () => {
         /* session wraps + emits */
-      },
-      onMemory: (memory: { type: MemoryType; title: string; content: string }) => {
-        this.persistMemory(memory, params.conversationId)
       }
-    }
-  }
-
-  /**
-   * Persist a memory emitted by a control tool.
-   * Override with no-op for evaluation adapters.
-   */
-  protected persistMemory(
-    memory: { type: MemoryType; title: string; content: string },
-    conversationId: string | null
-  ): void {
-    try {
-      const workspaceId = this.resolveWorkspaceId()
-      const memWorkspaceId =
-        memory.type === 'user' || memory.type === 'feedback' ? null : workspaceId
-      const mem = memoryRepository.createIfNotDuplicate({
-        workspaceId: memWorkspaceId,
-        type: memory.type,
-        title: memory.title,
-        content: memory.content,
-        tags: [],
-        sourceConversationId: conversationId ?? undefined,
-        sourceAgentId: this.agentId,
-        importance: 5
-      })
-      if (mem) {
-        this.log.info(`[${this.role}] Memory created: [${memory.type}] ${memory.title}`)
-      } else {
-        this.log.info(`[${this.role}] Memory skipped (duplicate): [${memory.type}] ${memory.title}`)
-      }
-    } catch (err) {
-      this.log.warn(`[${this.role}] Failed to persist memory:`, err)
     }
   }
 
@@ -295,14 +264,8 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
    */
   protected resolveModel(
     workspacePath: string,
-    action: ModelAction,
-    presetId?: string | null
+    action: ModelAction
   ): string | undefined {
-    if (presetId) {
-      const provider = modelConfigService.getProvider(workspacePath, action, presetId)
-      if (provider === 'local-llm') return undefined
-      return modelConfigService.getModel(workspacePath, action, presetId)
-    }
     const isLocal = modelConfigService.isLocalProvider(workspacePath)
     return isLocal ? undefined : modelConfigService.getModel(workspacePath, action)
   }

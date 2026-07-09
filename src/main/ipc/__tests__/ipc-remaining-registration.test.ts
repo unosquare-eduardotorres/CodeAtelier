@@ -17,7 +17,6 @@ import { IPC_CHANNELS } from '../../../shared/constants'
 import { registerChatModeIpc } from '../chat-mode.ipc'
 import { registerWorkspaceDeployIpc } from '../workspace-deploy.ipc'
 import { registerMemoryIpc } from '../memory.ipc'
-import { registerPresetIpc } from '../preset.ipc'
 import { registerIndexingIpc } from '../indexing.ipc'
 import { registerSessionIpc } from '../session.ipc'
 import { registerIdeaIpc } from '../idea.ipc'
@@ -57,6 +56,7 @@ import { registerUserProfileIpc } from '../user-profile.ipc'
 import { registerHooksIpc } from '../hooks.ipc'
 import { registerPlatformIpc } from '../platform.ipc'
 import { registerChatLifecycleIpc } from '../chat-lifecycle.ipc'
+import { registerTestingIpc } from '../testing.ipc'
 
 // ── Register function export verification ──
 
@@ -73,9 +73,6 @@ describe('IPC Remaining Registration — export verification', () => {
     assert.equal(typeof registerMemoryIpc, 'function')
   })
 
-  test('registerPresetIpc_is_exported_function', () => {
-    assert.equal(typeof registerPresetIpc, 'function')
-  })
 
   test('registerIndexingIpc_is_exported_function', () => {
     assert.equal(typeof registerIndexingIpc, 'function')
@@ -232,6 +229,10 @@ describe('IPC Remaining Registration — export verification', () => {
   test('registerChatLifecycleIpc_is_exported_function', () => {
     assert.equal(typeof registerChatLifecycleIpc, 'function')
   })
+
+  test('registerTestingIpc_is_exported_function', () => {
+    assert.equal(typeof registerTestingIpc, 'function')
+  })
 })
 
 // ── Channel existence checks grouped by domain ──
@@ -303,11 +304,11 @@ describe('IPC Channels — workspace domain', () => {
   })
 
   test('memory_channels_exist', () => {
-    assert.ok(IPC_CHANNELS.MEMORY_LIST)
-    assert.ok(IPC_CHANNELS.MEMORY_SEARCH)
-    assert.ok(IPC_CHANNELS.MEMORY_CREATE)
-    assert.ok(IPC_CHANNELS.MEMORY_UPDATE)
-    assert.ok(IPC_CHANNELS.MEMORY_DELETE)
+    assert.ok(IPC_CHANNELS.MEMORY_FACTS_LIST)
+    assert.ok(IPC_CHANNELS.MEMORY_FACTS_SEARCH)
+    assert.ok(IPC_CHANNELS.MEMORY_FACTS_GET)
+    assert.ok(IPC_CHANNELS.MEMORY_FACTS_UPDATE)
+    assert.ok(IPC_CHANNELS.MEMORY_FACTS_DELETE)
     assert.ok(IPC_CHANNELS.MEMORY_FEED_DOCUMENT)
   })
 })
@@ -338,14 +339,6 @@ describe('IPC Channels — tool domain', () => {
 })
 
 describe('IPC Channels — settings domain', () => {
-  test('preset_channels_exist', () => {
-    assert.ok(IPC_CHANNELS.PRESET_GET_ALL)
-    assert.ok(IPC_CHANNELS.PRESET_CREATE)
-    assert.ok(IPC_CHANNELS.PRESET_UPDATE)
-    assert.ok(IPC_CHANNELS.PRESET_DELETE)
-    assert.ok(IPC_CHANNELS.PRESET_SET_DEFAULT)
-  })
-
   test('permission_channels_exist', () => {
     assert.ok(IPC_CHANNELS.PERMISSION_REQUEST)
     assert.ok(IPC_CHANNELS.PERMISSION_RESPONSE)
@@ -511,6 +504,18 @@ describe('IPC Channels — utility domain', () => {
 
   test('platform_channel_exists', () => {
     assert.ok(IPC_CHANNELS.PLATFORM_INFO)
+  })
+
+  test('testing_channels_exist', () => {
+    assert.ok(IPC_CHANNELS.TESTING_LIST_SCENARIOS)
+    assert.ok(IPC_CHANNELS.TESTING_PREFLIGHT)
+    assert.ok(IPC_CHANNELS.TESTING_RUN)
+    assert.ok(IPC_CHANNELS.TESTING_REQUEUE_FAILED)
+    assert.ok(IPC_CHANNELS.TESTING_CANCEL)
+    assert.ok(IPC_CHANNELS.TESTING_GET_RUNS)
+    assert.ok(IPC_CHANNELS.TESTING_GET_RUN_RESULTS)
+    assert.ok(IPC_CHANNELS.TESTING_GET_RESULT_DETAIL)
+    assert.ok(IPC_CHANNELS.TESTING_PROGRESS)
   })
 })
 

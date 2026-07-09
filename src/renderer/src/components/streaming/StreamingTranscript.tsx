@@ -43,6 +43,13 @@ interface StreamingTranscriptProps<T> {
   /** Optional transform applied to the merged live content (e.g. strip JSON). */
   transformContent?: (raw: string) => string
 
+  /**
+   * When true, suppress the live-text bubble entirely — only show ThinkingIndicator
+   * (with in-flight tools) while streaming. Complete bubbles appear via committed
+   * messages instead. Used by Blueprint for chat-parity progressive rendering.
+   */
+  suppressLiveBubble?: boolean
+
   /** Optional slot rendered above the history (pinned context). */
   header?: React.ReactNode
   /** Optional slot rendered below the live region (e.g. question cards). */
@@ -69,6 +76,7 @@ export default function StreamingTranscript<T>({
   thinkingLabel,
   showHookIndicator = false,
   transformContent,
+  suppressLiveBubble = false,
   header,
   footer,
   className = 'flex-1 overflow-y-auto px-6 py-6',
@@ -129,17 +137,39 @@ export default function StreamingTranscript<T>({
 
         {isStreaming && (
           <>
-            {hasLiveContent && <MessageBubble message={liveMessage} identityOverride={identity} />}
-            <ThinkingIndicator
-              identity={{
-                name: identity.displayName,
-                avatarKey: identity.avatarKey,
-                accentColor: identity.accentColor
-              }}
-              toolActivities={liveToolActivities}
-              label={thinkingLabel}
-              showHookIndicator={showHookIndicator}
-            />
+            {hasLiveContent && !suppressLiveBubble ? (
+              /* Live content exists: tools render INSIDE the bubble via BubbleFooterActions,
+               * and a slim typing-dots row beneath signals "still working" without a
+               * second avatar/bubble/label (fixes the duplicate "Analyzing…" bubble). */
+              <>
+                <MessageBubble
+                  message={liveMessage}
+                  identityOverride={identity}
+                  isStreaming
+                  toolActivities={liveToolActivities}
+                />
+                {/* Slim typing dots — no avatar, no bubble chrome */}
+                <div className="flex justify-start pl-14">
+                  <div className="flex items-center gap-1.5 py-1 px-2">
+                    <span className="typing-dot" style={{ animationDelay: '0ms' }} />
+                    <span className="typing-dot" style={{ animationDelay: '150ms' }} />
+                    <span className="typing-dot" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* No live content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
+              <ThinkingIndicator
+                identity={{
+                  name: identity.displayName,
+                  avatarKey: identity.avatarKey,
+                  accentColor: identity.accentColor
+                }}
+                toolActivities={liveToolActivities}
+                label={thinkingLabel}
+                showHookIndicator={showHookIndicator}
+              />
+            )}
           </>
         )}
 

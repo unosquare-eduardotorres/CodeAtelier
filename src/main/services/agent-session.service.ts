@@ -32,7 +32,7 @@ import type {
   PlanDetectedEvent
 } from '../../shared/types'
 import type { AgentPromptInput } from './executor-types'
-import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
+import { EXTERNAL_MCP_INTEGRATIONS, resolveModelAction } from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
@@ -46,7 +46,6 @@ import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
-import type { ModelAction } from '../../shared/types'
 import { eventLoggerService } from './event-logger.service'
 import type { ControlActionCallbacks } from './control-actions.tool'
 import { evaluateAskUserGuard } from './ask-user-guard'
@@ -68,6 +67,7 @@ import { openCodeAgentWriter } from './opencode-agent-writer'
 import { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
+import { ensureOpencodePathInEnv, getOpencodePath, resolveOpencodePath } from '../../shared/opencode-cli-path'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
   AgentRoleAdapter,
@@ -100,8 +100,8 @@ interface ExecuteStreamOptions {
   localContextWindow?: number
   /** F3: Pre-resolved context tier — avoids re-resolving per tool_use chunk. */
   contextTier?: ContextWindowTier
-  /** LLM preset ID for per-action model resolution */
-  presetId?: string | null
+  /** Whether the local LLM context window was reliably detected (vs. heuristic fallback). */
+  contextWindowConfident?: boolean
 }
 
 /**
@@ -126,6 +126,33 @@ function parsePlanPayload(payload: unknown, beforePlan: string): PlanDetectedEve
   }
 }
 
+// ── Helpers ──
+
+/**
+ * Split SDK content-block arrays (from buildSdkPrompt) into separate text
+ * and image components for the OpenCode executor.
+ * Pure function — extracted for testability.
+ */
+export function splitContentBlocks(
+  input: string | Iterable<{ type: string; [k: string]: unknown }>
+): { text: string; images: ImageAttachment[] | undefined } {
+  if (typeof input === 'string') {
+    return { text: input, images: undefined }
+  }
+  const blocks = Array.from(input)
+  const text = blocks
+    .filter((b) => b.type === 'text')
+    .map((b) => (b as { text: string }).text)
+    .join('\n')
+  const images = blocks
+    .filter((b) => b.type === 'image')
+    .map((b) => {
+      const src = (b as { source: { media_type: string; data: string } }).source
+      return { base64: src.data, mimeType: src.media_type, fileName: 'pasted-image' }
+    })
+  return { text, images: images.length > 0 ? images : undefined }
+}
+
 /**
  * Generic session runtime. Accepts an AgentRoleAdapter that supplies the
  * role-specific pieces (prompt, MCP, control callbacks, intent detection).
@@ -148,6 +175,10 @@ export class AgentSessionService extends AgentBaseService {
   private workspaceId: string | null = null
   private currentConversationId: string | null = null
   private accumulatedText = ''
+  /** HEAD sha captured at session start — for memory extraction git delta. */
+  private currentStartSha: string | undefined
+  /** Per-session set of fact IDs already injected — prevents re-injection on subsequent turns. */
+  private injectedFactIds = new Set<string>()
   private currentMode: ConversationMode = 'plan'
   private costPreference: CostPreference = 'balanced'
   private llmProvider: LLMProvider = 'claude'
@@ -216,8 +247,7 @@ export class AgentSessionService extends AgentBaseService {
 
   private controlToolState: ControlToolState = {
     plan: false,
-    askUser: false,
-    memory: false
+    askUser: false
   }
 
   constructor(private readonly adapter: AgentRoleAdapter) {
@@ -285,6 +315,9 @@ export class AgentSessionService extends AgentBaseService {
     this.turnCounts.delete(conversationId)
     // SESSION-PENDING-01: Clear stale resume target to prevent cross-session resume races
     this.pendingResumeAt.delete(conversationId)
+    // SENDLOCKS-LEAK-01: Clean up send lock — it's a synchronization artifact,
+    // not resumable state. Once a conversation is cleared, its lock is dead weight.
+    this.sendLocks.delete(conversationId)
   }
 
   /**
@@ -385,6 +418,15 @@ export class AgentSessionService extends AgentBaseService {
     this.turnsSinceCompactSuggestion = 0
     this.tokenTracker.resetSession()
 
+    // Capture HEAD sha for memory extraction
+    this.currentStartSha = undefined
+    try {
+      const { execSync } = require('node:child_process')
+      this.currentStartSha = (execSync('git rev-parse HEAD 2>/dev/null || true', {
+        cwd: workspacePath, encoding: 'utf-8', timeout: 2000
+      }) as string).trim() || undefined
+    } catch { /* no git — fine */ }
+
     // Resolve workspace id + cost preference + executor backend
     try {
       const workspaces = workspaceRepository.findAll()
@@ -432,9 +474,12 @@ export class AgentSessionService extends AgentBaseService {
       workspaceId: this.workspaceId ?? undefined
     })
 
+    // G7: Uses live model resolution intentionally — at session start no conversation
+    // exists yet, so there's no snapshot to read. This is log-only; the actual model
+    // for API calls is resolved via resolveModelFromSnapshot() once a conversation ID exists.
     eventLoggerService.logSessionStarted({
       agentId: this.adapter.agentId,
-      model: modelConfigService.getModel(workspacePath, `${this.adapter.role}:plan` as ModelAction)
+      model: modelConfigService.getModel(workspacePath, resolveModelAction(this.adapter.role, false))
     })
 
     this.log.info(`${this.adapter.role} SDK session initialized for workspace:`, workspacePath)
@@ -481,16 +526,13 @@ export class AgentSessionService extends AgentBaseService {
     // Track turn count locally so we can supply it to the adapter.
     const turnCount = this.incrementTurnCount(conversationId, sessionId !== undefined)
 
-    // Resolve per-conversation LLM provider and preset BEFORE building prompts/MCP config
-    // so adapters can use preset-aware model resolution for prompt verbosity gating.
+    // Resolve per-conversation LLM provider BEFORE building prompts/MCP config
     let conversationProvider: LLMProvider = this.llmProvider
-    let conversationPresetId: string | null = null
     try {
       const conv = conversationRepository.findById(conversationId)
       if (conv?.llmProvider) {
         conversationProvider = conv.llmProvider as LLMProvider
       }
-      conversationPresetId = conv?.presetId ?? null
     } catch {
       /* non-fatal — keep session default */
     }
@@ -504,24 +546,26 @@ export class AgentSessionService extends AgentBaseService {
       mode: this.currentMode,
       workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
-      costPreference: this.costPreference,
-      presetId: conversationPresetId
+      costPreference: this.costPreference
     })
 
     // Resolve context tier for local LLMs — gates tool selection in MCP config.
-    // Resolve the local context window once here; pass it through to avoid redundant lookups.
+    // Use the async resolver to get accurate context window + confidence flag.
     // Declared early because the S6+S12 context injection block below also references these.
-    const isLocalForMcp = this.llmProvider === 'local-llm'
-    const localContextWindow: number | undefined = isLocalForMcp
-      ? this.resolveLocalContextWindow()
-      : undefined
-    const contextTier: ContextWindowTier | undefined = isLocalForMcp
-      ? resolveContextTier(localContextWindow!)
-      : undefined
+    const isLocalForMcp = conversationProvider === 'local-llm'
+    let localContextWindow: number | undefined
+    let contextTier: ContextWindowTier | undefined
+    let contextWindowConfident = false
+    if (isLocalForMcp) {
+      const resolved = await this.resolveLocalContextWindowAsync()
+      localContextWindow = resolved.contextWindow
+      contextWindowConfident = resolved.confident
+      contextTier = resolveContextTier(localContextWindow)
+    }
 
     // S6+S12: Inject conversation context for local LLMs on subsequent turns.
     let enrichedMessage = effectiveMessage
-    if (this.llmProvider === 'local-llm' && turnCount > 1 && !sessionId) {
+    if (conversationProvider === 'local-llm' && turnCount > 1 && !sessionId) {
       const ctxWindow = localContextWindow ?? this.resolveLocalContextWindow()
       enrichedMessage = this.enrichLocalLLMContext({
         message: effectiveMessage,
@@ -529,6 +573,24 @@ export class AgentSessionService extends AgentBaseService {
         localContextWindow: ctxWindow,
         contextTier: contextTier ?? resolveContextTier(ctxWindow)
       })
+    }
+
+    // Per-turn memory injection: prepend relevant facts
+    try {
+      if (this.workspaceId) {
+        const { memoryRetrievalService } = await import('./memory-retrieval.service')
+        const memoryContext = await memoryRetrievalService.getContextForTurn(
+          this.workspaceId,
+          enrichedMessage,
+          contextTier ?? 'medium',
+          this.injectedFactIds
+        )
+        if (memoryContext) {
+          enrichedMessage = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${enrichedMessage}`
+        }
+      }
+    } catch (memErr) {
+      this.log.debug('[_doSend] Per-turn memory retrieval failed (non-fatal):', memErr)
     }
 
     const sdkPrompt = this.buildSdkPrompt(enrichedMessage, images)
@@ -586,7 +648,7 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider: conversationProvider,
       localContextWindow,
       contextTier,
-      presetId: conversationPresetId
+      contextWindowConfident
     })
 
     // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
@@ -620,43 +682,68 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   async stop(): Promise<void> {
-    if (this.sdkAbortController) {
-      this.sdkAbortController.abort()
-      this.sdkAbortController = null
-    }
-    // Kill CLI process if active
-    if (this.executorBackend === 'cli') {
-      await this.cliExecutor.killProcess()
-    }
-
-    // Clean up CLI MCP config
-    if (this.workspacePath) {
-      this.mcpConfigWriter.dispose(this.workspacePath)
-    }
-
-    // Stop OpenCode server
-    if (this.executorBackend === 'opencode') {
-      await openCodeExecutor.stop()
-      if (this.workspacePath) {
-        openCodeConfigWriter.dispose(this.workspacePath)
+    // DEADLOCK-GUARD: wrap the entire stop body in a 10s hard timeout.
+    // If any sub-step (killProcess, opencode stop, IPC teardown) wedges,
+    // the pipeline still advances and markPipelineStopped() can fire.
+    const stopBody = async (): Promise<void> => {
+      if (this.sdkAbortController) {
+        this.sdkAbortController.abort()
+        this.sdkAbortController = null
       }
-    }
-    // Stop IPC bridge
-    if (this.ipcBridge) {
-      await this.ipcBridge.stop()
-      this.ipcBridge = null
+      // Kill CLI process if active
+      if (this.executorBackend === 'cli') {
+        await this.cliExecutor.killProcess()
+      }
+
+      // Clean up CLI MCP config
+      if (this.workspacePath) {
+        this.mcpConfigWriter.dispose(this.workspacePath)
+      }
+
+      // Stop OpenCode server
+      if (this.executorBackend === 'opencode') {
+        await openCodeExecutor.stop()
+        if (this.workspacePath) {
+          openCodeConfigWriter.dispose(this.workspacePath)
+        }
+      }
+      // Stop IPC bridge
+      if (this.ipcBridge) {
+        await this.ipcBridge.stop()
+        this.ipcBridge = null
+      }
+
+      if (this.workspaceId) {
+        await vectorSearchService.dispose(this.workspaceId)
+      }
+      // ELICIT-NOCLEANUP-01: Cancel any pending elicitations so their promises don't hang forever
+      elicitationService.resolveAll()
     }
 
-    if (this.workspaceId) {
-      await vectorSearchService.dispose(this.workspaceId)
+    const STOP_TIMEOUT_MS = 10_000
+    try {
+      await Promise.race([
+        stopBody(),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('stop() timed out after 10s')), STOP_TIMEOUT_MS)
+        )
+      ])
+    } catch (err) {
+      chatAgentLogger.warn(
+        `[stop] hard timeout — forcing cleanup: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
-    // ELICIT-NOCLEANUP-01: Cancel any pending elicitations so their promises don't hang forever
-    elicitationService.resolveAll()
+
+    // Cleanup that MUST run even if stopBody timed out
     this.adapter.onSessionStop()
     this.completeDbSession('terminated')
     this.currentStatus = 'idle'
     this.currentConversationId = null
     this.accumulatedText = ''
+
+    // SENDLOCKS-LEAK-01: Clear all locks on session stop. New conversations
+    // will create fresh locks on their first send().
+    this.sendLocks.clear()
 
     // NOTE: keep sessionMap populated — we may resume later.
     this.emit('statusUpdate', this.getStatus())
@@ -713,8 +800,14 @@ export class AgentSessionService extends AgentBaseService {
       )
       try {
         if (this.workspacePath) {
-          const providerConfig = this.resolveOpenCodeProviderConfig()
+          // Read per-conversation provider to avoid workspace-default cross-contamination
+          const switchConv = this.currentConversationId
+            ? conversationRepository.findById(this.currentConversationId)
+            : null
+          const switchProvider = (switchConv?.llmProvider as LLMProvider) ?? this.llmProvider
+          const providerConfig = this.resolveOpenCodeProviderConfig(switchProvider)
           const featureFlags = this.resolveWorkspaceMcpFlags()
+          const isLocal = switchProvider === 'local-llm'
           openCodeConfigWriter.writeConfig({
             workspacePath: this.workspacePath,
             workspaceId: this.workspaceId,
@@ -722,7 +815,8 @@ export class AgentSessionService extends AgentBaseService {
             mode,
             provider: providerConfig,
             featureFlags,
-            ipcSocketPath: this.ipcBridge?.getSocketPath() ?? undefined
+            ipcSocketPath: this.ipcBridge?.getSocketPath() ?? undefined,
+            isLocalProvider: isLocal
           })
         }
       } catch (err) {
@@ -738,7 +832,12 @@ export class AgentSessionService extends AgentBaseService {
 
     // Local LLMs: compaction is not available (no session resume).
     // Signal the UI to suggest a new conversation instead.
-    if (this.llmProvider === 'local-llm' && this.executorBackend !== 'opencode') {
+    // Read provider from conversation DB to avoid workspace-default cross-contamination.
+    const compactConv = this.currentConversationId
+      ? conversationRepository.findById(this.currentConversationId)
+      : null
+    const compactProvider = (compactConv?.llmProvider as LLMProvider) ?? this.llmProvider
+    if (compactProvider === 'local-llm' && this.executorBackend !== 'opencode') {
       this.log.info('[compaction] Local LLM — compaction unavailable, suggesting new conversation')
       this.emit('compactNeeded', {
         level: 'local-unsupported',
@@ -907,7 +1006,7 @@ export class AgentSessionService extends AgentBaseService {
     // start of each stream, and the recovery manager reads it on error. The send
     // lock ensures no concurrent access within the same conversation.
     this.lastStreamOpts = null
-    this.controlToolState = { plan: false, askUser: false, memory: false }
+    this.controlToolState = { plan: false, askUser: false }
     this.emit('statusUpdate', this.getStatus())
   }
 
@@ -1003,11 +1102,7 @@ export class AgentSessionService extends AgentBaseService {
       origAsk(questions, action, requestId)
     }
 
-    const origMemory = cb.onMemory
-    cb.onMemory = (memory) => {
-      this.controlToolState.memory = true
-      origMemory(memory)
-    }
+    // onMemory removed — memory tools now on dedicated memory MCP server
   }
 
   private emitAdapterEvent(evt: AgentSessionEventName, payload: unknown): void {
@@ -1078,7 +1173,6 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider,
       localContextWindow,
       contextTier: passedContextTier,
-      presetId: streamPresetId
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -1113,26 +1207,31 @@ export class AgentSessionService extends AgentBaseService {
 
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
-        case 'opencode':
+        case 'opencode': {
+          const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput)
           executorStream = this.executeOpenCodeStream({
-            prompt:
-              typeof cliPromptInput === 'string'
-                ? cliPromptInput
-                : '[image attachments not supported in opencode mode]',
+            prompt: ocPrompt,
+            images: ocImages,
             systemPrompt,
             isBuildMode,
             abortController,
-            mcpResult
+            mcpResult,
+            llmProvider
           })
           break
+        }
         case 'cli':
         default:
           {
-            // Thread goal condition from MPA adapters (if set)
+            // Thread goal condition + mode from MPA/Blueprint adapters (if set)
             const adapterGoal =
               'getGoalCondition' in this.adapter
                 ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
                 : null
+            const adapterGoalMode =
+              'getGoalMode' in this.adapter
+                ? (this.adapter as { getGoalMode(): 'advisory' | 'enforce' }).getGoalMode()
+                : ('advisory' as const)
             executorStream = this.executeCLIStream({
               prompt: cliPromptInput,
               systemPrompt,
@@ -1144,7 +1243,7 @@ export class AgentSessionService extends AgentBaseService {
               mcpResult,
               localContextWindow,
               goal: adapterGoal ?? undefined,
-              presetId: streamPresetId
+              goalMode: adapterGoalMode,
             })
           }
           break
@@ -1199,6 +1298,26 @@ export class AgentSessionService extends AgentBaseService {
         mcpResult,
         llmProvider
       })
+
+      // Enqueue memory extraction from session transcript + git delta
+      try {
+        if (this.workspaceId && this.accumulatedText.length > 200) {
+          // Gate on sessionCapture setting
+          const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<string, unknown>
+          if (wSettings.memorySessionCapture !== false) {
+            const { memoryExtractionService } = await import('./memory-extraction.service')
+            memoryExtractionService.enqueueSessionExtraction({
+              workspaceId: this.workspaceId,
+              workspacePath: this.workspacePath,
+              transcript: this.accumulatedText,
+              startSha: this.currentStartSha ?? null,
+              conversationId
+            })
+          }
+        }
+      } catch (memErr) {
+        this.log.debug('[executeStream] Memory extraction enqueue failed (non-fatal):', memErr)
+      }
     } catch (error) {
       clearTimeout(interactionTimer)
       await this.handleStreamError(error as Error, this._lastTimedOut, recoveryDepth, timeoutMs)
@@ -1207,11 +1326,19 @@ export class AgentSessionService extends AgentBaseService {
 
   /**
    * Resolve the context window size for the active local LLM model.
-   * Looks up the model in RECOMMENDED_LOCAL_MODELS; falls back to 32K for
-   * unknown models (conservative default).
+   * Sync path — checks static RECOMMENDED_LOCAL_MODELS only; falls back to 128K.
    */
   private resolveLocalContextWindow(): number {
     return this.executorFactory.resolveLocalContextWindow()
+  }
+
+  /**
+   * Async resolver — uses the full ContextWindowResolver chain:
+   *   user override → backend API → known models → 128K fallback.
+   * Caches for the session lifetime. Returns a confidence flag.
+   */
+  private resolveLocalContextWindowAsync(): Promise<{ contextWindow: number; confident: boolean }> {
+    return this.executorFactory.resolveLocalContextWindowAsync()
   }
 
   /** Host method: cached MCP config path for recovery turns needing control-actions/emit_plan. */
@@ -1248,7 +1375,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
-    presetId?: string | null
+    goalMode?: 'advisory' | 'enforce'
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
     const cliOptions = this.buildCLIExecuteOptions(params)
     return this.cliExecutor.execute(cliOptions)
@@ -1262,17 +1389,19 @@ export class AgentSessionService extends AgentBaseService {
    */
   private async *executeOpenCodeStream(params: {
     prompt: string
+    images?: ImageAttachment[]
     systemPrompt: string
     isBuildMode: boolean
     abortController: AbortController
     mcpResult: AdapterMcpResult
+    llmProvider?: LLMProvider
   }): AsyncGenerator<StreamChunk> {
-    const { prompt, isBuildMode, abortController } = params
+    const { prompt, images, isBuildMode, abortController } = params
 
     // Resolve provider config from workspace settings (shared helper)
     let providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     try {
-      providerConfig = this.resolveOpenCodeProviderConfig()
+      providerConfig = this.resolveOpenCodeProviderConfig(params.llmProvider)
     } catch {
       /* non-fatal — use defaults */
       providerConfig = {
@@ -1284,20 +1413,53 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     // Generate opencode.json config + agent definitions
-    this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt })
+    await this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt, llmProvider: params.llmProvider })
 
     // Start OpenCode server if not running
     if (!openCodeExecutor.isRunning()) {
+      let pathResolved = false
       try {
+        // Ensure opencode path is resolved and in PATH (uses cached value)
+        if (!getOpencodePath()) {
+          resolveOpencodePath()
+        }
+        pathResolved = ensureOpencodePathInEnv()
+
+        if (pathResolved) {
+          this.log.info('[opencode] Ensured opencode path in PATH at session start')
+        }
+
         await openCodeExecutor.start(this.workspacePath!, {
           configPath: this._openCodeConfigPath,
-          isLocal: this.llmProvider === 'local-llm'
+          isLocal: (params.llmProvider ?? this.llmProvider) === 'local-llm'
         })
       } catch (error) {
-        this.log.error('[opencode] Failed to start server:', error)
+        const err = error as Error
+        this.log.error('[opencode] Failed to start server:', err)
+
+        // Provide more helpful error message for missing CLI
+        let userFriendlyError = err.message
+        if (
+          err.message.includes('ENOENT') ||
+          err.message.includes('not found') ||
+          err.message.includes('spawn opencode') ||
+          err.message.includes('Failed to create OpenCode session')
+        ) {
+          const opencodePath = getOpencodePath() || 'not resolved'
+
+          userFriendlyError =
+            `OpenCode CLI is not installed or not in PATH.\n\n` +
+            `Resolved path: ${opencodePath}\n` +
+            `Current PATH: ${process.env.PATH?.slice(0, 600) || 'not set'}\n` +
+            `Spawn path injected: ${pathResolved ? 'yes' : 'no'}\n\n` +
+            'Install it globally:\n' +
+            '  npm install -g @opencode-ai/cli\n\n' +
+            'Or download from: https://opencode.ai/getting-started'
+        }
+
         yield {
           type: 'error',
-          error: `OpenCode server failed to start: ${(error as Error).message}`
+          error: userFriendlyError
         }
         return
       }
@@ -1308,24 +1470,25 @@ export class AgentSessionService extends AgentBaseService {
     const primingContext = this._pendingPrimingContext
     this._pendingPrimingContext = undefined
 
+    // MAXTURNS-HARDCODED-01: Use tier-appropriate maxTurns for local LLMs.
+    // Use the async resolver so user overrides and backend API queries take effect.
+    const maxTurns = await (async () => {
+      const { contextWindow } = await this.resolveLocalContextWindowAsync()
+      const tier = resolveContextTier(contextWindow)
+      const limits = TIER_LIMITS[tier]
+      return isBuildMode ? limits.maxTurnsBuild : limits.maxTurnsPlan
+    })()
+
     // Execute through OpenCode — pass conversationId for multi-turn session reuse
     for await (const chunk of openCodeExecutor.execute({
       prompt,
+      images,
       systemPrompt: params.systemPrompt,
       provider: providerConfig,
       cwd: this.workspacePath!,
       abortController,
       conversationId: this.currentConversationId ?? undefined,
-      // MAXTURNS-HARDCODED-01: Use tier-appropriate maxTurns for local LLMs.
-      // A small-tier model (32K context) with maxTurns=50 will exhaust its
-      // context window long before hitting the turn limit, causing overflow
-      // errors instead of a graceful turn limit stop.
-      maxTurns: (() => {
-        const ctxWindow = this.resolveLocalContextWindow()
-        const tier = resolveContextTier(ctxWindow)
-        const limits = TIER_LIMITS[tier]
-        return isBuildMode ? limits.maxTurnsBuild : limits.maxTurnsPlan
-      })(),
+      maxTurns,
       primingContext
     })) {
       // Forward chunks, converting OpenCode meta to executor meta format
@@ -1449,20 +1612,23 @@ export class AgentSessionService extends AgentBaseService {
    * Write opencode.json config + agent definitions to disk.
    * Extracted from executeOpenCodeStream() — cohesive config generation concern.
    */
-  private writeOpenCodeConfigFiles(params: {
+  private async writeOpenCodeConfigFiles(params: {
     providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     systemPrompt: string
-  }): void {
+    llmProvider?: LLMProvider
+  }): Promise<void> {
     try {
       const featureFlags = this.resolveWorkspaceMcpFlags()
       const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
 
       // Resolve context tier for tier-aware config (compaction, timeouts)
-      const isLocal = this.llmProvider === 'local-llm'
+      const isLocal = (params.llmProvider ?? this.llmProvider) === 'local-llm'
       let contextTier: ContextWindowTier | undefined
+      let contextWindowConfident = false
       if (isLocal) {
-        const ctxWindow = this.resolveLocalContextWindow()
-        contextTier = resolveContextTier(ctxWindow)
+        const resolved = await this.resolveLocalContextWindowAsync()
+        contextTier = resolveContextTier(resolved.contextWindow)
+        contextWindowConfident = resolved.confident
       }
 
       const configPath = openCodeConfigWriter.writeConfig({
@@ -1474,7 +1640,8 @@ export class AgentSessionService extends AgentBaseService {
         featureFlags,
         ipcSocketPath: socketPath,
         isLocalProvider: isLocal,
-        contextTier
+        contextTier,
+        contextWindowConfident
       })
 
       this._openCodeConfigPath = configPath
@@ -1527,7 +1694,7 @@ export class AgentSessionService extends AgentBaseService {
     mcpResult: AdapterMcpResult
     localContextWindow?: number
     goal?: string
-    presetId?: string | null
+    goalMode?: 'advisory' | 'enforce'
   }): CLIExecuteOptions {
     return this.executorFactory.buildCLIExecuteOptions(params)
   }
@@ -1612,10 +1779,7 @@ export class AgentSessionService extends AgentBaseService {
       )
     })
 
-    bridge.on('memory', (_payload: unknown) => {
-      this.controlToolState.memory = true
-      this.log.info(`[ipc-bridge] Memory event received for ${this.currentConversationId}`)
-    })
+    // memory bridge listener removed — memory tools now on dedicated memory MCP server
 
     const socketPath = bridge.getSocketPath()
     this.log.info(
@@ -1698,7 +1862,7 @@ export class AgentSessionService extends AgentBaseService {
    * Resolve OpenCode provider configuration from workspace settings.
    * Shared by switchMode() and executeOpenCodeStream() to eliminate duplication.
    */
-  private resolveOpenCodeProviderConfig(): {
+  private resolveOpenCodeProviderConfig(llmProvider?: LLMProvider): {
     providerId: string
     modelId: string
     baseUrl: string | undefined
@@ -1722,14 +1886,14 @@ export class AgentSessionService extends AgentBaseService {
         }
       }
 
-      // Auto-detect: if llmProvider is 'local-llm', configure Ollama
-      if (this.llmProvider === 'local-llm') {
-        const localConfig = modelConfigService.getLocalLLMConfig(this.workspacePath!)
+      // Auto-detect: if llmProvider is 'local-llm', configure from workspace backend (Ollama or oMLX)
+      if ((llmProvider ?? this.llmProvider) === 'local-llm') {
+        const openCodeConfig = modelConfigService.getOpenCodeConfig(this.workspacePath!)
         config = {
-          providerId: 'ollama',
-          modelId: localConfig.localModel,
-          baseUrl: `http://${localConfig.localHost}:${localConfig.localPort}`,
-          apiKey: localConfig.localApiKey
+          providerId: openCodeConfig.openCodeProvider,
+          modelId: openCodeConfig.openCodeModel,
+          baseUrl: openCodeConfig.openCodeBaseUrl,
+          apiKey: openCodeConfig.openCodeApiKey
         }
       }
     }

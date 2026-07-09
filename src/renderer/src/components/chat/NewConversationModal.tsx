@@ -12,10 +12,11 @@ import {
   Bone
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { CommunicationTone, ConversationMode } from '../../../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
 import { COMMUNICATION_TONES } from '../../../../shared/constants'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import { PresetSelector } from './PresetSelector'
+import { ModelPicker } from './ModelPicker'
+import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 
 /** Map tone icon names to Lucide components */
@@ -31,7 +32,7 @@ interface NewConversationModalProps {
     communicationTone?: CommunicationTone | null
     attachments?: string[]
     useIsolatedBranch?: boolean
-    presetId?: string | null
+    llmProvider?: LLMProvider
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -169,9 +170,21 @@ export default function NewConversationModal({
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
-  const [presetId, setPresetId] = useState<string | null>(null)
+  const [selectedModelId, setSelectedModelId] = useState<string | null>('claude-opus-4-8')
   const titleInputRef = useRef<HTMLInputElement>(null)
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const {
+    llmProvider,
+    setLlmProvider,
+    defaultLlmProvider,
+    localModelInfo,
+    platformInfo
+  } = useWorkspaceModelInfo(activeWorkspace?.id)
+
+  const handleModelChange = useCallback((provider: LLMProvider, modelId: string | null) => {
+    setLlmProvider(provider)
+    setSelectedModelId(modelId)
+  }, [setLlmProvider])
 
   // Auto-focus title input when opened
   useEffect(() => {
@@ -192,13 +205,19 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setUseIsolatedBranch(false)
-      setPresetId(null)
+      setSelectedModelId('claude-opus-4-8')
+      setLlmProvider(defaultLlmProvider)
     }
+  // Only reset on open — not when defaultLlmProvider changes mid-modal
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
-  const handleSubmit = useCallback((): void => {
+  const handleSubmit = useCallback(async (): Promise<void> => {
     const trimmedTitle = title.trim()
     if (!trimmedTitle) return
+
+    // Model defaults are now configured exclusively in Settings → Models tab.
+    // Chat creation should not silently rewrite workspace-wide settings.
 
     onSubmit({
       title: trimmedTitle,
@@ -207,7 +226,7 @@ export default function NewConversationModal({
       communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
-      presetId
+      llmProvider
     })
   }, [
     title,
@@ -216,7 +235,7 @@ export default function NewConversationModal({
     conversationTone,
     attachments,
     useIsolatedBranch,
-    presetId,
+    llmProvider,
     onSubmit
   ])
 
@@ -294,12 +313,15 @@ export default function NewConversationModal({
           {/* Mode Toggle */}
           <ModeToggle mode={mode} onModeChange={setMode} />
 
-          {/* LLM Preset Selector */}
+          {/* Model Picker */}
           {activeWorkspace && (
-            <PresetSelector
-              workspaceId={activeWorkspace.id}
-              presetId={presetId}
-              onChange={setPresetId}
+            <ModelPicker
+              provider={llmProvider}
+              selectedModelId={selectedModelId}
+              localModelInfo={localModelInfo}
+              platformInfo={platformInfo}
+              onChange={handleModelChange}
+              compact
             />
           )}
 

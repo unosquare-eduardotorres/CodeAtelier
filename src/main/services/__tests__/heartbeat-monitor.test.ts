@@ -72,6 +72,74 @@ describe('HeartbeatMonitor', () => {
     const hb = new HeartbeatMonitor(1000)
     assert.equal(hb.pendingHeartbeat, false)
   })
+
+  // ── onStall escalation hook tests ──
+
+  test('options constructor: onStall fires once when stall threshold crossed', () =>
+    runExclusive(async () => {
+      const stallCalls: number[] = []
+      const hb = new HeartbeatMonitor({
+        intervalMs: 10,
+        onStall: (ms) => stallCalls.push(ms)
+      })
+      // Override stall threshold to something testable
+      // The threshold is 60s by default — too long for tests.
+      // We'll simulate by setting lastActivityAt far in the past.
+      ;(hb as unknown as { lastActivityAt: number }).lastActivityAt = Date.now() - 70_000
+      hb.start()
+      // start() resets lastActivityAt, so override again
+      ;(hb as unknown as { lastActivityAt: number }).lastActivityAt = Date.now() - 70_000
+      await delay(40)
+      hb.stop()
+      assert.ok(stallCalls.length >= 1, 'onStall should have fired at least once')
+      assert.ok(stallCalls[0] >= 60_000, 'stalledMs should be >= 60s')
+    }))
+
+  test('options constructor: onStall fires only once per stall episode (reset by touch)', () =>
+    runExclusive(async () => {
+      const stallCalls: number[] = []
+      const hb = new HeartbeatMonitor({
+        intervalMs: 10,
+        onStall: (ms) => stallCalls.push(ms)
+      })
+      hb.start()
+      // Force stall
+      ;(hb as unknown as { lastActivityAt: number }).lastActivityAt = Date.now() - 70_000
+      await delay(30) // fires once
+      const countAfterFirst = stallCalls.length
+      assert.ok(countAfterFirst >= 1, 'should have fired at least once')
+
+      // touch() resets — should be able to fire again after next stall
+      hb.touch()
+      const countAfterTouch = stallCalls.length
+      ;(hb as unknown as { lastActivityAt: number }).lastActivityAt = Date.now() - 70_000
+      await delay(30) // fires again
+      assert.ok(stallCalls.length > countAfterTouch, 'should fire again after touch reset')
+      hb.stop()
+    }))
+
+  test('options constructor: no onStall — behaves identically to number constructor', () =>
+    runExclusive(async () => {
+      const hb = new HeartbeatMonitor({ intervalMs: 10 })
+      hb.start()
+      assert.equal(hb.pendingHeartbeat, false)
+      await delay(40)
+      assert.equal(hb.pendingHeartbeat, true)
+      hb.stop()
+    }))
+
+  test('onStall callback throwing does not crash the timer', () =>
+    runExclusive(async () => {
+      const hb = new HeartbeatMonitor({
+        intervalMs: 10,
+        onStall: () => { throw new Error('callback boom') }
+      })
+      hb.start()
+      ;(hb as unknown as { lastActivityAt: number }).lastActivityAt = Date.now() - 70_000
+      await delay(30) // should not throw
+      hb.stop()
+      // If we got here, the timer survived the throw
+    }))
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

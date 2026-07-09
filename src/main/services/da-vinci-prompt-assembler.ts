@@ -6,7 +6,7 @@ import type {
 } from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { PromptBuilder, promptBuilder } from './prompt-builder'
-import { memoryService } from './memory.service'
+// Memory retrieval now handled per-turn in chat-stream.service.ts and agent-session.service.ts
 import {
   specialistRepository,
   workspaceRepository,
@@ -212,22 +212,11 @@ export class DaVinciPromptAssembler {
       })
     }
 
-    // Strategy C: Memory context is now injected into the user prompt (not system prompt).
-    // This keeps the system prompt identical across turns → Claude prompt caching gives
-    // a 90% discount on the entire system prompt after the first turn (~1,350 tokens/turn saved).
-    if (opts.workspaceId) {
-      const memoryBudget = this.getMemoryBudgetForTurn(opts.turnCount, opts.costPreference)
-      try {
-        const memoryContextForTurn = memoryService.getContextForPrompt(
-          opts.workspaceId,
-          memoryBudget,
-          opts.message
-        )
-        this.memoryContext = memoryContextForTurn || undefined
-      } catch (error) {
-        this.log.warn('Failed to refresh filtered memory context; using cached context', error)
-      }
-    }
+    // Strategy C: Memory context injection moved to per-turn hooks in chat-stream.service.ts
+    // and agent-session.service.ts. The new memory engine uses async hybrid retrieval
+    // (cosine + keyword + tier scoring), so injection happens at the dispatch point
+    // rather than in this synchronous prompt builder.
+    // this.memoryContext is now set externally if needed for backward compat.
 
     // Pattern 7: SystemPromptCache for snapshot reuse
     const cacheKeys = {
@@ -538,20 +527,6 @@ export class DaVinciPromptAssembler {
    *
    * Index = clamped turnCount. Last value is the floor for all subsequent turns.
    */
-  private static readonly MEMORY_BUDGET_TIERS = {
-    economy: [2000, 2000, 1200, 800, 500, 300] as const,
-    standard: [3000, 3000, 2000, 1500, 1000, 700, 500] as const
-  } as const
-
-  private getMemoryBudgetForTurn(turnCount: number, costPreference: CostPreference): number {
-    const tiers =
-      costPreference === 'economy'
-        ? DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.economy
-        : DaVinciPromptAssembler.MEMORY_BUDGET_TIERS.standard
-    const idx = Math.min(turnCount, tiers.length - 1)
-    return tiers[idx]
-  }
-
   /**
    * Extract only the "Feedback & Corrections" section from memory context.
    * Used on turns 3+ to avoid re-injecting the full memory block that's already in history.

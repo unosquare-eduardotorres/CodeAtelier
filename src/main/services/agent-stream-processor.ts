@@ -15,11 +15,11 @@ import type {
   ExecutorResult
 } from './agent-session-host'
 import type { ContextWindowTier } from './context-management'
-import type { ModelAction } from '../../shared/types'
 import {
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   CLAUDE_1M_CONTEXT_WINDOW,
-  MCP_TOOLS
+  MCP_TOOLS,
+  resolveModelAction
 } from '../../shared/constants'
 import { resolveContextTier } from './context-management'
 import {
@@ -27,7 +27,7 @@ import {
   resolveCompactionThresholds as resolveCompactionThresholdsPolicy,
   resolveAppliedThresholds
 } from './compaction-policy'
-import { modelConfigService } from './model-config.service'
+import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { featureForAgentRole } from './usage-tracker.service'
 import { supportsContext1M } from '../../shared/constants'
 import { conversationRepository, turnUsageRepository } from '../db/repositories'
@@ -80,8 +80,13 @@ export class AgentStreamProcessor {
     }
 
     const isBuild = this.s.currentMode !== 'plan'
-    const modelAction = `${this.s.adapter.role}:${isBuild ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = modelConfigService.getModel(this.s.workspacePath!, modelAction)
+    const modelAction = resolveModelAction(this.s.adapter.role, isBuild)
+    const resolvedModel = resolveModelFromSnapshot(
+      conversationId,
+      this.s.workspacePath!,
+      modelAction,
+      isBuild
+    )
     const { totalTokens } = this.s.tokenTracker.recordTurn(meta, {
       turnCount,
       conversationId,
@@ -254,7 +259,7 @@ export class AgentStreamProcessor {
     conversationId: string,
     streamState: StreamLoopState
   ): 'next' | 'break' {
-    const error = chunk.error ?? ''
+    const error = typeof chunk.error === 'string' ? chunk.error : String(chunk.error ?? '')
 
     if (error.includes('No conversation found with session ID')) {
       this.s.log.warn(
@@ -504,8 +509,14 @@ export class AgentStreamProcessor {
       this.s.compactSuggestThreshold = suggest
       this.s.compactAutoThreshold = auto
     } else {
-      const modelAction = `${this.s.adapter.role}:${this.s.currentMode}` as ModelAction
-      const model = modelConfigService.getModel(this.s.workspacePath!, modelAction)
+      const isBuildCompact = this.s.currentMode !== 'plan'
+      const modelAction = resolveModelAction(this.s.adapter.role, isBuildCompact)
+      const model = resolveModelFromSnapshot(
+        this.s.currentConversationId,
+        this.s.workspacePath!,
+        modelAction,
+        isBuildCompact
+      )
       const supports1M = supportsContext1M(model)
       const effectiveWindow = supports1M ? CLAUDE_1M_CONTEXT_WINDOW : CLAUDE_DEFAULT_CONTEXT_WINDOW
       const { suggest, auto } = resolveAppliedThresholds({

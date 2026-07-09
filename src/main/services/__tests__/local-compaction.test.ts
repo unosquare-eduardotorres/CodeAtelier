@@ -31,6 +31,7 @@ function makeAdapter(): AgentRoleAdapter {
   return {
     role: 'da-vinci',
     agentId: 'da-vinci-test',
+    supportsEmitPlanRecovery: false,
     onSessionStart: async () => {},
     refreshFeatureFlags: () => {},
     onConversationSwitch: () => {},
@@ -42,8 +43,7 @@ function makeAdapter(): AgentRoleAdapter {
     }),
     buildControlCallbacks: (): ControlActionCallbacks => ({
       onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
+      onAskUser: () => {}
     }),
     emitDetectedIntents: () => {},
     onSessionStop: () => {}

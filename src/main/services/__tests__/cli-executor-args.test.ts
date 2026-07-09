@@ -30,6 +30,19 @@ interface CLIExecuteOptions {
 }
 
 /**
+ * Replicated goal-injection logic from buildCLIArgs.
+ * When systemPrompt and goal are both set, the goal is appended as a
+ * ## Completion Goal section in the system prompt content (not as a CLI flag).
+ */
+function buildSystemPromptWithGoal(systemPrompt: string, goal?: string): string {
+  let fullPrompt = systemPrompt
+  if (goal) {
+    fullPrompt += `\n\n## Completion Goal\n\nWork autonomously until the following condition is met, then emit the completion block:\n\n${goal}`
+  }
+  return fullPrompt
+}
+
+/**
  * Replicated from CLIExecutor.buildCLIArgs (cli-executor.ts:658-774).
  * Pure function: maps SDK-style options to `claude` CLI flags.
  */
@@ -110,13 +123,8 @@ function buildCLIArgs(options: CLIExecuteOptions): string[] {
     args.push('--fallback-model', options.fallbackModel)
   }
 
-  if (options.goal) {
-    args.push('--goal', options.goal)
-  }
-
-  if (options.thinkingBudget != null && options.thinkingBudget > 0) {
-    args.push('--thinking-budget', String(options.thinkingBudget))
-  }
+  // Goal is delivered via system prompt, not as a CLI flag.
+  // thinkingBudget is dropped silently (no CLI equivalent).
 
   return args
 }
@@ -314,39 +322,63 @@ describe('buildCLIArgs — fallback model', () => {
   })
 })
 
-describe('buildCLIArgs — goal', () => {
-  test('goal_includes_flag', () => {
+describe('buildCLIArgs — goal is NOT a CLI flag', () => {
+  test('goal_does_not_produce_cli_flag', () => {
     const args = buildCLIArgs({ goal: 'All tests pass' })
-    const idx = args.indexOf('--goal')
-    assert.ok(idx >= 0)
-    assert.equal(args[idx + 1], 'All tests pass')
+    assert.ok(!args.includes('--goal'), '--goal must not appear in CLI args')
+  })
+
+  test('goal_does_not_affect_arg_count', () => {
+    const withGoal = buildCLIArgs({ goal: 'All tests pass' })
+    const without = buildCLIArgs({})
+    assert.equal(withGoal.length, without.length)
   })
 })
 
-describe('buildCLIArgs — thinking budget', () => {
-  test('thinking_budget_includes_flag', () => {
+describe('buildCLIArgs — thinkingBudget is dropped', () => {
+  test('thinking_budget_does_not_produce_cli_flag', () => {
     const args = buildCLIArgs({ thinkingBudget: 10000 })
-    const idx = args.indexOf('--thinking-budget')
-    assert.ok(idx >= 0)
-    assert.equal(args[idx + 1], '10000')
+    assert.ok(!args.includes('--thinking-budget'), '--thinking-budget must not appear in CLI args')
+  })
+})
+
+describe('buildSystemPromptWithGoal', () => {
+  test('appends_goal_section_to_system_prompt', () => {
+    const prompt = buildSystemPromptWithGoal('You are a helpful assistant.', 'All tests pass')
+    assert.ok(prompt.includes('## Completion Goal'))
+    assert.ok(prompt.includes('All tests pass'))
+    assert.ok(prompt.startsWith('You are a helpful assistant.'))
   })
 
-  test('zero_thinking_budget_omits_flag', () => {
-    const args = buildCLIArgs({ thinkingBudget: 0 })
-    assert.ok(!args.includes('--thinking-budget'))
+  test('no_goal_returns_prompt_unchanged', () => {
+    const prompt = buildSystemPromptWithGoal('You are a helpful assistant.')
+    assert.equal(prompt, 'You are a helpful assistant.')
+    assert.ok(!prompt.includes('## Completion Goal'))
   })
 
-  test('negative_thinking_budget_omits_flag', () => {
-    const args = buildCLIArgs({ thinkingBudget: -1 })
-    assert.ok(!args.includes('--thinking-budget'))
+  test('empty_goal_returns_prompt_unchanged', () => {
+    const prompt = buildSystemPromptWithGoal('Base prompt.', '')
+    assert.equal(prompt, 'Base prompt.')
   })
 })
 
 describe('buildCLIArgs — omits flags when values undefined', () => {
   test('empty_options_produces_only_core_flags', () => {
     const args = buildCLIArgs({})
-    // Should have only the 7 core flags
+    // 7 core flags: --output-format stream-json --input-format stream-json
+    //   --verbose --include-partial-messages --allow-dangerously-skip-permissions
     assert.equal(args.length, 7)
+  })
+
+  test('no_unsupported_flags_leak_through', () => {
+    const args = buildCLIArgs({
+      goal: 'test goal',
+      thinkingBudget: 5000
+    })
+    // Only the 7 core flags should be present
+    assert.equal(args.length, 7)
+    assert.ok(!args.includes('--goal'))
+    assert.ok(!args.includes('--thinking-budget'))
   })
 })
 

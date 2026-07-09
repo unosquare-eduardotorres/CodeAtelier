@@ -73,7 +73,7 @@ export function buildProviderOptions(providerId: string, mode: 'plan' | 'build' 
 
     case 'ollama':
     case 'omlx':
-      lines.push('temperature: 0.5')
+      lines.push('temperature: 0.6')
       break
   }
 

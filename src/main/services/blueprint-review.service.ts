@@ -12,10 +12,12 @@ import { EventEmitter } from 'node:events'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
+import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintReviewAdapter } from './role-adapters/blueprint/blueprint-review.adapter'
 import { buildReviewGoalCondition } from './blueprint-goal-conditions'
-import { parsePhaseCompletionBlock } from './blueprint-artifact-parsers'
+import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
 import {
   blueprintRepository,
@@ -23,7 +25,6 @@ import {
 } from '../db/repositories/blueprint.repository'
 import type {
   BlueprintPhaseStartPayload,
-  BlueprintPhaseProgressPayload,
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload,
   BlueprintApprovalNeededPayload
@@ -34,6 +35,17 @@ const bpLog = log.scope('blueprint-review')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintReviewService extends EventEmitter {
+  // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
+  // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
+  private safeEmit(event: string, payload: unknown): boolean {
+    try {
+      return this.emit(event, payload)
+    } catch (err) {
+      bpLog.error(`[safeEmit] Event '${event}' listener threw:`, err)
+      return false
+    }
+  }
+
   async startReviewPhase(params: {
     blueprintId: string
     workspaceId: string
@@ -43,54 +55,61 @@ export class BlueprintReviewService extends EventEmitter {
 
     bpLog.info(`[startReviewPhase] Blueprint ${blueprintId} — starting REVIEW`)
 
-    // 1. Pipeline + DB state
-    blueprintService.markPipelineRunning(workspaceId, blueprintId, 'review')
-
-    const reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
-    if (reviewPhase) {
-      blueprintPhaseRepository.updateStatus(reviewPhase.id, 'active')
-    }
-
-    blueprintRepository.updateStatus(blueprintId, 'reviewing')
-    blueprintRepository.update(blueprintId, { currentPhase: 'review' })
-
-    // 2. Assemble context (includes spec + clarify + plan + tasks artifacts)
-    const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'review')
-
-    // 3. Create adapter + session
-    const adapter = new BlueprintReviewAdapter({ workspaceId, blueprintId, phaseContext })
-
-    const blueprint = blueprintService.getBlueprint(blueprintId)
-    adapter.setGoalCondition(buildReviewGoalCondition(blueprint?.title ?? 'Unknown'))
-
-    const session = new AgentSessionService(adapter)
-
-    // 4. Emit phaseStart
-    this.emit('phaseStart', {
-      blueprintId,
-      workspaceId,
-      phase: 'review'
-    } satisfies BlueprintPhaseStartPayload)
-
-    // 5. Wire streaming — named handlers for cleanup
-    const onChunk = (chunk: StreamChunk): void => {
-      if (chunk.type === 'text' && chunk.content) {
-        this.emit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'review',
-          text: chunk.content
-        } satisfies BlueprintPhaseProgressPayload)
-      }
-    }
-    const onStatus = (status: AgentStatus): void => {
-      this.emit('status', { workspaceId, status })
-    }
-    session.on('chunk', onChunk)
-    session.on('statusUpdate', onStatus)
+    // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
+    // finally's markPipelineStopped() is guaranteed to run.
+    let reviewPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let session: AgentSessionService | null = null
+    let onChunk: ((chunk: StreamChunk) => void) | null = null
+    let onStatus: ((status: AgentStatus) => void) | null = null
 
     try {
-      // 6. Start session + send with timeout + abort race
+      // 1. Pipeline + DB state
+      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'review')
+
+      reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
+      if (reviewPhase) {
+        blueprintPhaseRepository.updateStatus(reviewPhase.id, 'active')
+      }
+
+      blueprintRepository.updateStatus(blueprintId, 'reviewing')
+      blueprintRepository.update(blueprintId, { currentPhase: 'review' })
+
+      // 2. Assemble context (includes spec + clarify + plan + tasks artifacts)
+      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'review')
+
+      // 3. Create adapter + session
+      const adapter = new BlueprintReviewAdapter({ workspaceId, blueprintId, phaseContext })
+
+      const blueprint = blueprintService.getBlueprint(blueprintId)
+      adapter.setGoalCondition(buildReviewGoalCondition(blueprint?.title ?? 'Unknown'), 'enforce')
+
+      session = new AgentSessionService(adapter)
+
+      // 4. Emit phaseStart
+      this.safeEmit('phaseStart', {
+        blueprintId,
+        workspaceId,
+        phase: 'review',
+        goal: buildReviewGoalCondition(blueprint?.title ?? 'Unknown')
+      } satisfies BlueprintPhaseStartPayload)
+
+      // 5. Wire streaming — named handlers for cleanup + stall watchdog
+      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'REVIEW')
+
+      onChunk = (chunk: StreamChunk): void => {
+        stallWatchdog.touch()
+        forwardBlueprintChunk(
+          (event, payload) => this.safeEmit(event, payload),
+          chunk,
+          { blueprintId, workspaceId, phase: 'review', workspacePath, mode: 'plan' }
+        )
+      }
+      onStatus = (status: AgentStatus): void => {
+        this.safeEmit('status', { workspaceId, status })
+      }
+      session.on('chunk', onChunk)
+      session.on('statusUpdate', onStatus)
+      // 6. Start session + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
       const syntheticConvId = `blueprint-review-${blueprintId}-${Date.now()}`
@@ -114,9 +133,10 @@ export class BlueprintReviewService extends EventEmitter {
       const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
 
       try {
-        await Promise.race([sendPromise, timeoutPromise, abortPromise])
+        await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        stallWatchdog.dispose()
       }
 
       // 7. Parse output
@@ -131,6 +151,16 @@ export class BlueprintReviewService extends EventEmitter {
           contentJson: completion ?? undefined
         })
         blueprintPhaseRepository.setConversation(reviewPhase.id, syntheticConvId)
+
+        // 8b. Save discoveries artifact (if emitted)
+        const discoveries = parseDiscoveriesBlock(text)
+        if (discoveries?.length) {
+          blueprintPhaseRepository.appendArtifact(reviewPhase.id, {
+            type: 'discoveries',
+            contentJson: { phase: 'review', entries: discoveries }
+          })
+        }
+
         blueprintPhaseRepository.updateStatus(reviewPhase.id, 'complete')
       }
 
@@ -139,7 +169,7 @@ export class BlueprintReviewService extends EventEmitter {
       )
 
       // 9. Emit phaseComplete
-      this.emit('phaseComplete', {
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'review',
@@ -148,7 +178,7 @@ export class BlueprintReviewService extends EventEmitter {
       } satisfies BlueprintPhaseCompletePayload)
 
       if (reviewPhase) {
-        this.emit('phaseArtifact', {
+        this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'review',
@@ -157,8 +187,14 @@ export class BlueprintReviewService extends EventEmitter {
       }
 
       // 10. Emit approval gate — human must approve before BUILD
+      // Drive state machine: phase-running → awaiting-approval
+      const machine = blueprintService.getMachine(workspaceId)
+      machine.transition('approvalNeeded')
+
       const planSummary = this.buildApprovalSummary(completion ?? null)
-      this.emit('approvalNeeded', {
+      // M2: Track approval state for snapshot sync
+      blueprintService.setPendingApproval(workspaceId, { planSummary })
+      this.safeEmit('approvalNeeded', {
         blueprintId,
         workspaceId,
         phase: 'review',
@@ -178,7 +214,7 @@ export class BlueprintReviewService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session.getStreamedContent()
+      const partialText = session?.getStreamedContent()
       if (partialText && reviewPhase) {
         blueprintPhaseRepository.appendArtifact(reviewPhase.id, {
           type: 'review-partial',
@@ -186,16 +222,28 @@ export class BlueprintReviewService extends EventEmitter {
         })
       }
 
-      this.emit('phaseComplete', {
+      // M5: Use failPipeline to properly transition machine to 'failed' state
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      blueprintService.failPipeline(workspaceId, errorMsg)
+
+      const autoRetrying = blueprintService.scheduleAutoRetry({
+        blueprintId, workspaceId, workspacePath, phase: 'review', error: errorMsg
+      })
+
+      this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
         phase: 'review',
-        status: 'failed'
+        status: 'failed',
+        error: errorMsg,
+        ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
-      session.removeListener('chunk', onChunk)
-      session.removeListener('statusUpdate', onStatus)
-      await session.stop()
+      if (session) {
+        if (onChunk) session.removeListener('chunk', onChunk)
+        if (onStatus) session.removeListener('statusUpdate', onStatus)
+        await session.stop()
+      }
       blueprintService.markPipelineStopped(workspaceId)
     }
   }

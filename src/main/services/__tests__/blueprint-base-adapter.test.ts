@@ -50,7 +50,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/bp-test',
     workspaceId: 'ws-bp-1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -111,11 +111,30 @@ describe('BlueprintBaseAdapter', () => {
     )
   })
 
-  test('buildPrompts_returns_systemPrompt_and_effectiveMessage_after_setup', () => {
+  test('buildPrompts_returns_ctx_message_when_non_empty', () => {
     const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
     ;(adapter as any).systemPrompt = 'Test prompt'
     const result = adapter.buildPrompts(makePromptCtx())
     assert.equal(result.systemPrompt, 'Test prompt')
+    // ctx.message is 'hello' (non-empty) — should pass through
+    assert.equal(result.effectiveMessage, 'hello')
+  })
+
+  test('buildPrompts_falls_back_to_phaseMessage_when_ctx_message_empty', () => {
+    const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
+    ;(adapter as any).systemPrompt = 'Test prompt'
+    const ctx = makePromptCtx()
+    ctx.message = ''
+    const result = adapter.buildPrompts(ctx)
+    assert.equal(result.effectiveMessage, 'Test blueprint phase message')
+  })
+
+  test('buildPrompts_falls_back_to_phaseMessage_when_ctx_message_whitespace', () => {
+    const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
+    ;(adapter as any).systemPrompt = 'Test prompt'
+    const ctx = makePromptCtx()
+    ctx.message = '   '
+    const result = adapter.buildPrompts(ctx)
     assert.equal(result.effectiveMessage, 'Test blueprint phase message')
   })
 
@@ -196,7 +215,7 @@ describe('BlueprintBaseAdapter', () => {
     const emitted: unknown[] = []
     adapter.emitDetectedIntents({
       accumulatedText: 'some text',
-      controlToolState: { plan: false, askUser: false, memory: false },
+      controlToolState: { plan: false, askUser: false },
       mode: 'plan',
       conversationId: 'c1',
       emit: (_evt, payload) => emitted.push(payload)

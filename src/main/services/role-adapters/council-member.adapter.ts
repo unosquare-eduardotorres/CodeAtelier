@@ -57,7 +57,7 @@ export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
     this.applyLocalLlmTimeout(this.llmProvider)
 
     // Pattern 1: Centralized model resolution
-    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-member', ctx.presetId)
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, 'council-member')
 
     this.systemPrompt = this.buildSystemPrompt()
 
@@ -99,9 +99,6 @@ export class CouncilMemberRoleAdapter extends BaseRoleAdapter {
 
   protected override getIncludeGitContext(): boolean {
     return this.llmProvider !== 'local-llm'
-  }
-  protected override persistMemory(): void {
-    /* no-op */
   }
 
   override onSessionStop(): void {

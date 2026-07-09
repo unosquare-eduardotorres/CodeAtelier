@@ -1,6 +1,6 @@
 /**
  * Unit tests for context-window-resolver.ts — the resolution chain
- * (user override → backend API → known model table → 32768 fallback) plus
+ * (user override → backend API → known model table → 131072 fallback) plus
  * the oMLX / Ollama field mapping.
  *
  * `globalThis.fetch` is stubbed for the backend-query tests. Because the harness
@@ -39,6 +39,18 @@ describe('context-window-resolver › fromKnownModels', () => {
 
   test('hits on a known omlxId', () => {
     assert.equal(resolver.fromKnownModels('mlx-community/Qwen2.5-Coder-7B-Instruct-4bit'), 32768)
+  })
+
+  test('hits on Qwen3.6-35B-A3B-8bit omlxId → 262144', () => {
+    assert.equal(resolver.fromKnownModels('unsloth/Qwen3.6-35B-A3B-MLX-8bit'), 262144)
+  })
+
+  test('hits on Qwen3.6-35B-A3B-8bit ollamaId → 262144', () => {
+    assert.equal(resolver.fromKnownModels('qwen3.6:35b-a3b-q8'), 262144)
+  })
+
+  test('hits on Qwen3.6-27B-6bit omlxId → 262144', () => {
+    assert.equal(resolver.fromKnownModels('mlx-community/Qwen3.6-27B-6bit'), 262144)
   })
 
   test('misses on an unknown model → null', () => {
@@ -190,7 +202,7 @@ describe('context-window-resolver › resolve chain ordering', () => {
       }
     }))
 
-  test('4. hardcoded 32768 fallback for an unknown model with no backend data', () =>
+  test('4. hardcoded 131072 fallback for an unknown model with no backend data', () =>
     runExclusive(async () => {
       const original = globalThis.fetch
       try {
@@ -198,7 +210,7 @@ describe('context-window-resolver › resolve chain ordering', () => {
           throw new Error('down')
         }) as FetchFn
         const value = await resolver.resolve(cfg({ localModel: 'mystery-model:1t' }))
-        assert.equal(value, 32768)
+        assert.equal(value, 131072)
       } finally {
         globalThis.fetch = original
       }

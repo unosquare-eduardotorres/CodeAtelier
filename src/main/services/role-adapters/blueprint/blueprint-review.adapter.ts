@@ -1,7 +1,7 @@
 /**
  * Blueprint Review Adapter — read-only quality gate that validates cross-artifact consistency.
  *
- * CLI config: --permission-mode plan, --effort xhigh, --goal "condition"
+ * CLI config: --permission-mode plan, --effort xhigh, goalMode: enforce (/goal via stdin)
  *
  * One-shot phase: agent reads spec + plan + tasks artifacts, investigates codebase
  * for path validation, and produces a review report with findings and recommendation.

@@ -38,8 +38,6 @@ export interface AdapterPromptContext {
   workspacePath: string
   workspaceId: string | null
   costPreference: CostPreference
-  /** LLM preset ID for per-action model resolution */
-  presetId?: string | null
 }
 
 export interface AdapterPromptResult {
@@ -76,8 +74,6 @@ export interface AdapterSessionLifecycleCtx {
   workspacePath: string
   workspaceId: string | null
   conversationId: string | null
-  /** LLM preset ID — null at session start, available on refreshFeatureFlags */
-  presetId?: string | null
 }
 
 // ── Events emitted by AgentSessionService ────────────────────────────
@@ -113,6 +109,13 @@ export interface AgentRoleAdapter {
 
   /** Absolute interaction cap; null = use session default. */
   interactionTimeoutMs?: number
+
+  /**
+   * Whether this adapter supports the emit_plan recovery flow.
+   * Only chat (Da Vinci) uses plan cards — blueprint / grill / audit /
+   * council adapters return false so recovery never fires for them.
+   */
+  readonly supportsEmitPlanRecovery: boolean
 
   /**
    * Called from AgentSessionService.start() to warm role state

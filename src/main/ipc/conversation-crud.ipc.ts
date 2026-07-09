@@ -11,11 +11,14 @@ import {
 } from '../db/repositories'
 import { chatAgentService } from '../services'
 import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { chatStreamService } from '../services/chat-stream.service'
 import { repoService } from '../services/repo.service'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../shared/types'
+import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
+import { completeStreamMetrics } from './chunk-router'
 import {
   requireObject,
   requireString,
@@ -36,7 +39,6 @@ async function handleCreateConversation(args: {
   mode?: ConversationMode
   personaSpecialistId?: string
   llmProvider?: LLMProvider
-  presetId?: string
   mcpOverrides?: Record<string, boolean>
   communicationTone?: CommunicationTone | null
 }): Promise<ReturnType<typeof conversationRepository.create>> {
@@ -47,7 +49,6 @@ async function handleCreateConversation(args: {
     mode,
     personaSpecialistId,
     llmProvider,
-    presetId,
     mcpOverrides,
     communicationTone
   } = args
@@ -81,6 +82,9 @@ async function handleCreateConversation(args: {
   const resolvedProvider: LLMProvider =
     llmProvider ?? (settings.llmProvider as LLMProvider) ?? 'claude'
 
+  // Build model config snapshot — frozen at creation time
+  const snapshot = buildConversationModelSnapshot(workspaceId, resolvedProvider)
+
   const conversation = conversationRepository.create(
     workspaceId,
     title,
@@ -89,7 +93,8 @@ async function handleCreateConversation(args: {
     resolvedProvider,
     mcpOverrides,
     communicationTone,
-    presetId
+    undefined, // type
+    snapshot
   )
   conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
@@ -206,7 +211,6 @@ export function registerConversationCrudIpc(): void {
       mode: optionalString(args, 'mode', ch) as ConversationMode | undefined,
       personaSpecialistId: optionalString(args, 'personaSpecialistId', ch),
       llmProvider: optionalString(args, 'llmProvider', ch) as LLMProvider | undefined,
-      presetId: optionalString(args, 'presetId', ch),
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
       communicationTone: args.communicationTone as CommunicationTone | null | undefined
     })
@@ -230,10 +234,15 @@ export function registerConversationCrudIpc(): void {
     // CONV-DEL-RACE-01: Abort active stream before cascade-delete to prevent
     // FK violations when finalizeStreamMessage() races with conversation deletion.
     if (conversationLifecycle.conversationId === conversationId) {
+      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+      completeStreamMetrics(conversationId, 'aborted')
       conversationLifecycle.abort('conversation-deleted')
     }
 
     chatAgentService.clearSession(conversationId)
+    // N1-FIX: Clear per-conversation memory dedupe state so facts can be
+    // re-injected in future conversations about the same topics.
+    chatStreamService.clearConversationMemoryState(conversationId)
 
     conversationRepository.delete(conversationId)
 

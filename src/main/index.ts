@@ -24,7 +24,8 @@ import {
 } from './db/repositories'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
-import { memoryFeedService } from './services/memory-feed.service'
+import { memoryExtractionService } from './services/memory-extraction.service'
+import { memoryEngineService } from './services/memory-engine.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
 import { grillAgentService } from './services/grill-agent.service'
@@ -38,9 +39,57 @@ import { fileWatcherService } from './services/file-watcher.service'
 import { omlxEmbeddingProvider } from './services/omlx-embedding.service'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 
+// Augment PATH to include Homebrew and npm global bin directories
+// CRITICAL: Ensures child_process.spawn() can locate binaries like 'opencode',
+// which the @opencode-ai/sdk needs to start its server locally
+import { 
+  augmentOpenCodeCliPath, 
+  locateOpenCodeCli,
+  resolveOpencodePath,
+  ensureOpencodePathInEnv 
+} from '../shared/opencode-cli-path'
+
+// Augment PATH before any services or child processes are initialized
+augmentOpenCodeCliPath()
+
+// Synchronously resolve and inject the OpenCode CLI binary path into PATH
+// This MUST happen before any async code or services that might spawn processes
+try {
+  // Use npm-based resolution (more robust than hardcoded paths)
+  const opencodePath = resolveOpencodePath()
+  
+  if (opencodePath) {
+    ensureOpencodePathInEnv()
+    log.info(
+      `[OpenCode CLI] Resolved: ${opencodePath}. PATH updated.`,
+    )
+  } else {
+    log.warn(
+      `[OpenCode CLI] WARNING: Could not find 'opencode' binary. Install with: npm install -g @opencode-ai/cli`
+    )
+  }
+} catch (err: unknown) {
+  log.error('[OpenCode CLI] Path resolution failed:', err)
+}
+
 // Initialize electron-log for the main process
 // Must happen before app.whenReady() for early error capture
 log.initialize()
+
+// Asynchronously verify OpenCode CLI is available (for diagnostics)
+locateOpenCodeCli()
+  .then((result: any) => {
+    if (result.available) {
+      log.info(
+        `[OpenCode CLI] Verified at ${result.path} (${result.source}), version: ${result.version || 'unknown'}`
+      )
+    } else {
+      log.warn(`[OpenCode CLI] ${result.error}`)
+    }
+  })
+  .catch((err: unknown) => {
+    log.error('[OpenCode CLI] Location check failed:', err)
+  })
 
 // Fix dock tooltip: Electron defaults to "Electron" in dev mode.
 // Must be set before app.whenReady().
@@ -371,6 +420,13 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.code-atelier')
 
+  // ── Memory Engine: decay sweep at app launch (throttled to max 1/24h) ──
+  try {
+    memoryEngineService.runDecaySweepIfDue()
+  } catch (e) {
+    log.debug('Memory decay sweep error (non-fatal):', e)
+  }
+
   // ── Code Atelier: Force dark mode always ──
   nativeTheme.themeSource = 'dark'
 
@@ -399,6 +455,47 @@ app.whenReady().then(() => {
 
   // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
   cleanupStalePromptFiles()
+
+  // ── OpenCode CLI: Verify resolution at startup and log to BUGS section if failed ──
+  try {
+    const reResolved = resolveOpencodePath()
+    if (!reResolved) {
+      // Resolution failed - log to bug tracker
+      const { bugRepository } = require('./db/repositories/bug.repository')
+      bugRepository.upsertBug({
+        process: 'main' as const,
+        severity: 'error',
+        errorMessage: 'Failed to resolve OpenCode CLI path at startup',
+        stackTrace: new Error('OpenCode CLI resolution failed').stack,
+        sourceFile: __filename,
+        sourceLine: -1,
+        sourceColumn: -1,
+        appVersion: app.getVersion(),
+        osInfo: `${process.platform} ${os.release()}`
+      })
+    } else {
+      log.info(`[OpenCode CLI] Startup verification: Resolved at ${reResolved}`)
+      ensureOpencodePathInEnv()
+    }
+  } catch (error) {
+    // Log resolution failure to bug tracker
+    try {
+      const { bugRepository } = require('./db/repositories/bug.repository')
+      bugRepository.upsertBug({
+        process: 'main' as const,
+        severity: 'error',
+        errorMessage: `OpenCode CLI resolution failed: ${(error as Error).message}`,
+        stackTrace: (error as Error).stack,
+        sourceFile: __filename,
+        sourceLine: -1,
+        sourceColumn: -1,
+        appVersion: app.getVersion(),
+        osInfo: `${process.platform} ${os.release()}`
+      })
+    } catch {
+      // Silent fail - don't crash the crash handler
+    }
+  }
 
   // ── Security: Restrict web permissions (#7) ──
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -498,7 +595,7 @@ app.on('before-quit', async (event) => {
 
   // Cleanup memory feed (cancel in-progress claude -p summarizer)
   try {
-    memoryFeedService.shutdown()
+    memoryExtractionService.shutdown()
   } catch (e) {
     log.debug('Memory feed shutdown error (expected during quit):', e)
   }

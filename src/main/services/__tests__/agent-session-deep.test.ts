@@ -160,7 +160,6 @@ class SessionResolver {
 interface ControlToolState {
   plan: boolean
   askUser: boolean
-  memory: boolean
   planIntent?: { type: 'plan'; plan: unknown }
 }
 
@@ -460,7 +459,7 @@ describe('resolveSession', () => {
 
 describe('wrapControlCallbacks — onPlan', () => {
   test('onPlan_sets_controlToolState_plan_true', () => {
-    const state: ControlToolState = { plan: false, askUser: false, memory: false }
+    const state: ControlToolState = { plan: false, askUser: false }
     let originalCalled = false
     const plan = { type: 'structured', items: [] }
 
@@ -471,7 +470,7 @@ describe('wrapControlCallbacks — onPlan', () => {
   })
 
   test('onPlan_stores_planIntent', () => {
-    const state: ControlToolState = { plan: false, askUser: false, memory: false }
+    const state: ControlToolState = { plan: false, askUser: false }
     const plan = { type: 'structured', items: [{ id: 1, title: 'Task 1' }] }
 
     wrapOnPlan(state, () => {}, plan)

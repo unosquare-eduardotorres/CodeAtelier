@@ -27,7 +27,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/grill-test',
     workspaceId: 'ws-1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -138,20 +138,7 @@ describe('GrillRoleAdapter', () => {
     assert.ok(true)
   })
 
-  // ── persistMemory (no-op) ──
-
-  test('persistMemory_is_no_op', () => {
-    // Access via (adapter as any) — persistMemory is protected
-    const adapter = createAdapter() as unknown as {
-      persistMemory: (
-        m: { type: string; title: string; content: string },
-        cid: string | null
-      ) => void
-    }
-    // Should not throw or attempt DB access
-    adapter.persistMemory({ type: 'project', title: 'test', content: 'content' }, 'conv-1')
-    assert.ok(true, 'persistMemory completed without error')
-  })
+  // persistMemory removed — memory tools now on dedicated memory MCP server
 
   // ── Different tracks ──
 

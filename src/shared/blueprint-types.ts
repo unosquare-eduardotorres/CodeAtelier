@@ -5,6 +5,8 @@
  * through 7 phases: specify → clarify → plan → tasks → review → build → verify.
  */
 
+import type { ToolActivity } from './types'
+
 // ── Phase & Status Enums ──
 
 export type BlueprintPhaseType =
@@ -154,6 +156,12 @@ export interface BlueprintPhaseStartPayload {
   blueprintId: string
   workspaceId: string
   phase: BlueprintPhaseType
+  /** Goal condition string for this phase — displayed in UI status bar. */
+  goal?: string
+  /** Total task count across all waves (build phase only). */
+  totalTasks?: number
+  /** Total wave count (build phase only). */
+  totalWaves?: number
 }
 
 export interface BlueprintPhaseProgressPayload {
@@ -161,6 +169,10 @@ export interface BlueprintPhaseProgressPayload {
   workspaceId: string
   phase: BlueprintPhaseType
   text: string
+  /** 'tool' for tool-use events (tool name in text), 'text' or omitted for normal text chunks */
+  kind?: 'text' | 'tool'
+  /** Full tool activity data — enables expandable input/output panels in the UI */
+  toolActivity?: Partial<ToolActivity> & { id: string; toolName: string }
 }
 
 export interface BlueprintPhaseCompletePayload {
@@ -169,6 +181,12 @@ export interface BlueprintPhaseCompletePayload {
   phase: BlueprintPhaseType
   status: BlueprintPhaseStatus
   completion?: BlueprintPhaseCompletion
+  /** Error message when status is 'failed' — surfaced in the UI retry banner. */
+  error?: string
+  /** When true, an automatic retry has been scheduled for this transient failure. */
+  autoRetry?: boolean
+  /** Phase completion metrics (tasksCompleted, filesCreated, recommendation, etc.) */
+  completionMetrics?: Record<string, unknown>
 }
 
 export interface BlueprintPhaseArtifactPayload {
@@ -176,6 +194,30 @@ export interface BlueprintPhaseArtifactPayload {
   workspaceId: string
   phase: BlueprintPhaseType
   artifact: BlueprintArtifact
+}
+
+export interface BlueprintClarifyAwaitingInputPayload {
+  blueprintId: string
+  workspaceId: string
+}
+
+export interface BlueprintClarifyFindingsPayload {
+  blueprintId: string
+  workspaceId: string
+  findings: import('./blueprint-clarify-parsers').ClarifyFindingsBlock
+}
+
+export interface BlueprintClarifyQuestionsPayload {
+  blueprintId: string
+  workspaceId: string
+  questions: import('./blueprint-clarify-parsers').ClarifyQuestionsBlock
+}
+
+export interface BlueprintClarifyGatePayload {
+  blueprintId: string
+  workspaceId: string
+  findings: import('./blueprint-clarify-parsers').ClarifyFindingsBlock | null
+  questions: import('./blueprint-clarify-parsers').ClarifyQuestionsBlock | null
 }
 
 export interface BlueprintApprovalNeededPayload {
@@ -198,6 +240,8 @@ export interface BlueprintWaveTaskStartPayload {
   wave: number
   taskId: string
   description: string
+  /** Per-task goal condition — shown in execution panel task detail. */
+  goal?: string
 }
 
 export interface BlueprintWaveTaskCompletePayload {

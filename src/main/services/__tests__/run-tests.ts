@@ -1,266 +1,315 @@
 // Migration test runner entrypoint (used by: npx tsx src/main/services/__tests__/run-tests.ts)
+//
+// Uses dynamic imports in a sequential loop so that:
+//   1. Any file that fails to load reports loudly (no silent truncation)
+//   2. A completeness sentinel prints after all files are loaded
+//   3. Individual file failures don't block the rest of the suite
+import { setupElectronStub } from './electron-stub'
 import { summaryAsync } from './test-harness'
-import './generalist-migration.test'
-import './event-sequence.test'
-import './agent-services.test'
-import './mcp-server-service.test'
-import './preprocessing.test'
-import './description-cache.test'
-import './code-graph-logic.test'
-import './vector-search.test'
-import './code-graph-db.test'
-import './mcp-tool-wiring.test'
-import './path-traversal.test'
-import './control-actions.test'
-import './conversation-state-machine.test'
-import './intent-detector.test'
-import './intent-router.test'
-// Run 3 — P0 continued
-import './agent-circuit-breaker.test'
-import './da-vinci-prompt-assembler.test'
-// Run 4 — P1 targets
-import './cost-tracker.test'
-import './agent-token-tracker.test'
-import './elicitation.test'
-// Run 5 — P1 expansion
-import './model-config.test'
-import './opus-48-thinking.test'
-import './session-recovery.test'
-import './health-check.test'
-// Run 6 — lifecycle
-import './conversation-lifecycle.test'
-// Run 6b — Project Specialist refactor (Phase 1)
-import './agent-session.service.test'
-import './da-vinci-adapter.test'
-// Run 6c — Project Specialist refactor (Phase 2)
-import './prompt-assembly-helpers.test'
-import './project-specialist-prompt-template.test'
-import './project-specialist-adapter.test'
-import './stack-drift-detector.test'
-import './tech-stack-detector.test'
-import './specialist-builder-meta-prompt.test'
-// Run 6d — Phase 4 cleanup
-import './layer2-rename-migration.test'
-// Run 7 — IPC protocol + input validation (in ../../ipc/__tests__/)
-import '../../ipc/__tests__/chat-protocol.test'
-import '../../ipc/__tests__/validate-args.test'
-// Run 8 — bubble identity / role tagging / consent regression
-import './chat-stream-role-tagging.test'
-import './resolve-adapter-consent.test'
-import '../../ipc/__tests__/chat-swap-handler.test'
-// Run 9 — renderer utilities (pure logic, no DOM)
-import './sentence-buffer.test'
 
-// ─── Run 11: Prompt optimization (Opus 4.8) ───
-import './prompt-verbosity.test'
-import './prompt-lean-identity.test'
-import './prompt-lean-mode.test'
+// Install the shared electron/electron-log stubs ONCE before any test file
+// loads. This guarantees every module in the CJS cache gets the full mock
+// (ipcMain, app, BrowserWindow, …) instead of an undefined string.
+// Individual test files that also call setupElectronStub() are safe — it's
+// idempotent (guarded by `stubInstalled`).
+setupElectronStub()
 
-// ─── Run 12: MPA (Multi-Phased Agent Pipeline) ───
-import './mpa-goal-conditions.test'
-import './mpa-preflight.test'
-import './mpa-orchestration.test'
-import './goal-decomposer.test'
-import './mpa-verify-criteria.test'
-import './multi-session.test'
+const TEST_FILES: string[] = [
+  './generalist-migration.test',
+  './event-sequence.test',
+  './agent-services.test',
+  './mcp-server-service.test',
+  './preprocessing.test',
+  './description-cache.test',
+  './code-graph-logic.test',
+  './vector-search.test',
+  './code-graph-db.test',
+  './mcp-tool-wiring.test',
+  './path-traversal.test',
+  './control-actions.test',
+  './conversation-state-machine.test',
+  './intent-detector.test',
+  './intent-router.test',
+  // Run 3 — P0 continued
+  './agent-circuit-breaker.test',
+  './da-vinci-prompt-assembler.test',
+  // Run 4 — P1 targets
+  './cost-tracker.test',
+  './agent-token-tracker.test',
+  './elicitation.test',
+  // Run 5 — P1 expansion
+  './model-config.test',
+  './opus-48-thinking.test',
+  './session-recovery.test',
+  './health-check.test',
+  // Run 6 — lifecycle
+  './conversation-lifecycle.test',
+  // Run 6b — Project Specialist refactor (Phase 1)
+  './agent-session.service.test',
+  './da-vinci-adapter.test',
+  // Run 6c — Project Specialist refactor (Phase 2)
+  './prompt-assembly-helpers.test',
+  './project-specialist-prompt-template.test',
+  './project-specialist-adapter.test',
+  './stack-drift-detector.test',
+  './tech-stack-detector.test',
+  './specialist-builder-meta-prompt.test',
+  // Run 6d — Phase 4 cleanup
+  './layer2-rename-migration.test',
+  // Run 7 — IPC protocol + input validation (in ../../ipc/__tests__/)
+  '../../ipc/__tests__/chat-protocol.test',
+  '../../ipc/__tests__/validate-args.test',
+  // Run 8 — bubble identity / role tagging / consent regression
+  './chat-stream-role-tagging.test',
+  './resolve-adapter-consent.test',
+  '../../ipc/__tests__/chat-swap-handler.test',
+  // Run 9 — renderer utilities (pure logic, no DOM)
+  './sentence-buffer.test',
+  // ─── Run 11: Prompt optimization (Opus 4.8) ───
+  './prompt-verbosity.test',
+  './prompt-lean-identity.test',
+  './prompt-lean-mode.test',
+  // ─── Run 12: MPA (Multi-Phased Agent Pipeline) ───
+  './mpa-goal-conditions.test',
+  './mpa-preflight.test',
+  './mpa-orchestration.test',
+  './goal-decomposer.test',
+  './mpa-verify-criteria.test',
+  './multi-session.test',
+  // ─── Run 13: Council (LLM Council) ───
+  './council.service.test',
+  // ─── Run 14: Grill Plan + Resume ───
+  './grill-plan-and-resume.test',
+  './grill-plan-from-decisions.test',
+  './grill-handoff-utils.test',
+  // ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
+  '../../ipc/__tests__/tool-chunk-processor.test',
+  // ─── Run 16: Context usage level/quality resolution ───
+  './context-usage-level.test',
+  // ─── Run 17: Context compaction verification (badge + thresholds + local) ───
+  './compaction-thresholds.test',
+  './local-compaction.test',
+  './auto-compact-options.test',
+  // ─── Run 18: oMLX embedding provider ───
+  './omlx-embedding.test',
+  // ─── Run 19: Previously-orphaned test files (registered for coverage) ───
+  './context-management.test',
+  './workspace-mcp-config-tiers.test',
+  './tag-to-chunk-adapter.test',
+  './skill-summary.test',
+  './prompt-assembler-turn-count.test',
+  './agent-session-token-split.test',
+  // ─── Run 20: Coverage expansion — streaming / tools / hooks (pure logic) ───
+  './thinking-parser.test',
+  '../../ipc/__tests__/tool-result-summarizer.test',
+  './tool-input-summarizer.test',
+  './tool-activity-accumulator.test',
+  './opencode-event-normalizer.test',
+  './hook-engine.test',
+  // ─── Run 21: Coverage expansion — chat / handlers / MCP ───
+  './sanitize-prompt-input.test',
+  './mode-permissions.test',
+  './system-prompt-cache.test',
+  './context-budget-auditor.test',
+  './structured-output-repair.test',
+  './session-event-router.test',
+  './agent-stream-processor.test',
+  './chat-agent.service.test',
+  // ─── Run 22: Coverage expansion — health / grilling / embeddings ───
+  './indexing-diagnostics.test',
+  './quality-gate-runner.test',
+  './council-parser.test',
+  './mpa-artifact-parsers.test',
+  './ollama-manager.test',
+  './omlx-manager.test',
+  './grill-parsers.test',
+  // ─── Run 23: Coverage expansion — parser / dispatch / resolver family ───
+  './audit-response-parser.test',
+  './mpa-campaign-retry.test',
+  '../../ipc/__tests__/text-delta-batcher.test',
+  './prompt-variant.test',
+  './env-utils.test',
+  './context-window-resolver.test',
+  './agent-recovery-nudge.test',
+  '../../ipc/__tests__/chunk-router.test',
+  './grill-plan-mapper.test',
+  // ─── Run 24: stdin-safe one-shot Claude CLI runner ───
+  './claude-cli-oneshot.test',
+  // ─── Run 25: Unified token usage logging (usage_log sink) ───
+  './usage-tracker.service.test',
+  './one-shot-claude.test',
+  // ─── Run 26: Plan-mode UX — ask_user registry (no-timeout) + before-plan guard ───
+  '../../mcp-servers/__tests__/ask-user-registry.test',
+  './ask-user-guard.test',
+  // ─── Run 27: Executor family + audit/parsing pipeline ───
+  './tool-tracker.test',
+  './token-accountant.test',
+  './heartbeat-monitor.test',
+  './stream-normalizer.test',
+  './ndjson-parser.test',
+  './output-cap.test',
+  './audit-coverage-tracker.test',
+  './audit-prompt-templates.test',
+  './claude-md-generator.test',
+  './workspace-deploy-parsing.test',
+  // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
+  './chat-stream-lifecycle.test',
+  // ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
+  './telemetry-recorder.test',
+  '../../ipc/__tests__/listener-cleanup.test',
+  './prompt-builder.test',
+  './skill-prompt-composer.test',
+  './sandbox-config.test',
+  // ─── Run 30: Blueprint pipeline — parsers, conditions, review service, build service ───
+  './blueprint-parsers-conditions.test',
+  './blueprint-review.service.test',
+  './blueprint-build.service.test',
+  './blueprint-verify-conditions.test',
+  // ─── Run 31: Plan Hub — unified plan registry ───
+  './audit-plan-mapper.test',
+  './plan-registry.test',
+  // ─── Run 32: Library Documentation Service (three-tier lookup) ───
+  './library-doc-service.test',
+  // ─── Run 33: ESLint MCP tools (output parsing, summary formatting, error handling) ───
+  './eslint-mcp-tools.test',
+  './analyze-complexity.test',
+  // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
+  './evaluation-mcp-config.test',
+  './mpa-base-adapter.test',
+  './grill-adapter.test',
+  './greenfield-grill-adapter.test',
+  './blueprint-service-logic.test',
+  './cli-mcp-config-writer-logic.test',
+  // ─── Run 35: Adapter subclass family + pure functions + config builders ───
+  './mpa-planner-adapter.test',
+  './mpa-verifier-adapter.test',
+  './mpa-builder-adapter.test',
+  './blueprint-base-adapter.test',
+  './blueprint-build-adapter.test',
+  './blueprint-verify-adapter.test',
+  './repo-service-pure.test',
+  './opencode-config-writer-logic.test',
+  './opencode-config-schema.test',
+  './opencode-cli-check.test',
+  './opencode-path-augmentation.test',
+  './description-cache-pure.test',
+  './workspace-mcp-config-logic.test',
+  // ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───
+  './blueprint-remaining-adapters.test',
+  './council-member-adapter.test',
+  './council-chairman-adapter.test',
+  './audit-adapter.test',
+  './skill-tiers-parser.test',
+  './parse-plan-payload.test',
+  './specialist-builder-pure.test',
+  './blueprint-prompt-loader-pure.test',
+  './repository-maprow-logic.test',
+  './base-adapter-strategies.test',
+  './heuristic-description-logic.test',
+  './event-logger-service.test',
+  '../../ipc/__tests__/ipc-registration.test',
+  '../../mcp-servers/__tests__/mcp-server-registration.test',
+  // ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
+  '../../ipc/__tests__/ipc-remaining-registration.test',
+  './cli-executor-args.test',
+  './opencode-executor-pure.test',
+  './agent-session-deep.test',
+  './chat-stream-methods.test',
+  './mpa-orchestration-helpers.test',
+  './council-service-helpers.test',
+  './grill-agent-helpers.test',
+  './audit-agent-helpers.test',
+  './grill-persistence-logic.test',
+  './council-persistence-logic.test',
+  './shared-types-coverage.test',
+  './blueprint-spec-helpers.test',
+  './plan-registry-helpers.test',
+  './zero-coverage-services.test',
+  // ─── Phase 15: Coverage Mega-Push — pure function tests ───
+  './default-prompts-constants.test',
+  './preprocessing-pure.test',
+  './vector-search-pure.test',
+  // ─── Phase 16: Coverage Mega-Push II — types, services, IPC, MCP ───
+  './type-coverage.test',
+  './mpa-orchestration-deep.test',
+  './service-mid-coverage-deep.test',
+  '../../ipc/__tests__/ipc-zero-coverage.test',
+  '../../ipc/__tests__/ipc-blueprint-handlers.test',
+  '../../ipc/__tests__/ipc-audit-handlers.test',
+  '../../ipc/__tests__/ipc-crud-deep.test',
+  '../../mcp-servers/__tests__/mcp-server-tools-deep.test',
+  // ─── OpenCode error pipeline (normalizer → processor end-to-end) ───
+  './opencode-error-pipeline.test',
+  // ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
+  '../../ipc/__tests__/ipc-handler-bodies.test',
+  './service-instance-deep.test',
+  './blueprint-pipeline-instance.test',
+  './adapter-branch-push.test',
+  './migration-metadata.test',
+  // ─── Blueprint retry + CLI error-path tests ───
+  './blueprint-retry.test',
+  // ─── Native /goal support (CLI executor goal queuing + enforcement) ───
+  './cli-executor-goal.test',
+  // ─── Blueprint store guard (workspace event adoption logic) ───
+  './blueprint-store-guard.test',
+  // ─── Blueprint phase-chain map ───
+  './blueprint-phase-chain.test',
+  // ─── Blueprint Clarify Redesign — parsers + gate logic ───
+  './blueprint-clarify-parsers.test',
+  './blueprint-clarify-gate.test',
+  // ─── Blueprint Pipeline Hardening — state machine ───
+  './blueprint-state-machine.test',
+  // ─── Blueprint Pipeline Stall Fix + Chunk Forwarder ───
+  './blueprint-recovery-gating.test',
+  './blueprint-chunk-forwarder.test',
+  // ─── Pipeline Stabilization Round 2 — phase watchdog ───
+  './blueprint-phase-watchdog.test',
+  // ─── Blueprint Crash Recovery & Resume ───
+  './blueprint-resume.test',
+  // ─── Blueprint Discoveries Ledger ───
+  './blueprint-discoveries.test',
+  // ─── CLI executor killProcess deadlock regression ───
+  './cli-executor-kill.test',
+  // ─── Prompt Optimizer ───
+  './prompt-optimizer.test',
+  // ─── Cross-provider model roles — resolveAssignment + resolveModelAction ───
+  './resolve-assignment.test',
+  // ─── Snapshot model resolver — blueprint IDs + conversation snapshots ───
+  './snapshot-resolver.test',
+  // ─── Test registry sync guard (self-referential) ───
+  './test-registry-sync.test',
+  // ─── Memory Engine (knowledge-aware) ───
+  './memory-engine.test',
+  './memory-retrieval.test',
+  './memory-extraction.test',
+  './memory-doc-watcher.test',
+  // ─── E2E Testing Infrastructure ───
+  './scenario-catalog.test',
+  './e2e-assertions.test',
+  './e2e-runner.test',
+]
 
-// ─── Run 13: Council (LLM Council) ───
-import './council.service.test'
+// ─── Dynamic import loop with per-file error isolation ───
+// Wrapped in async IIFE because the project is CJS (no top-level await).
+void (async () => {
+  let loadFailures = 0
+  for (const file of TEST_FILES) {
+    try {
+      await import(file)
+    } catch (err) {
+      console.error(`\n[run-tests] FAILED to load ${file}:`, err)
+      loadFailures++
+    }
+  }
 
-// ─── Run 14: Grill Plan + Resume ───
-import './grill-plan-and-resume.test'
-import './grill-plan-from-decisions.test'
-import './grill-handoff-utils.test'
+  if (loadFailures > 0) {
+    console.error(`\n[run-tests] ${loadFailures} file(s) failed to load`)
+    process.exitCode = 1
+  }
+  console.log(`[run-tests] all ${TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`)
 
-// ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
-import '../../ipc/__tests__/tool-chunk-processor.test'
-
-// ─── Run 16: Context usage level/quality resolution ───
-import './context-usage-level.test'
-
-// ─── Run 17: Context compaction verification (badge + thresholds + local) ───
-import './compaction-thresholds.test'
-import './local-compaction.test'
-import './auto-compact-options.test'
-
-// ─── Run 18: oMLX embedding provider ───
-import './omlx-embedding.test'
-
-// ─── Run 19: Previously-orphaned test files (registered for coverage) ───
-import './context-management.test'
-import './workspace-mcp-config-tiers.test'
-import './tag-to-chunk-adapter.test'
-import './skill-summary.test'
-import './prompt-assembler-turn-count.test'
-import './agent-session-token-split.test'
-
-// ─── Run 20: Coverage expansion — streaming / tools / hooks (pure logic) ───
-import './thinking-parser.test'
-import '../../ipc/__tests__/tool-result-summarizer.test'
-import './tool-input-summarizer.test'
-import './tool-activity-accumulator.test'
-import './opencode-event-normalizer.test'
-import './hook-engine.test'
-
-// ─── Run 21: Coverage expansion — chat / handlers / MCP ───
-import './sanitize-prompt-input.test'
-import './mode-permissions.test'
-import './system-prompt-cache.test'
-import './context-budget-auditor.test'
-import './structured-output-repair.test'
-import './session-event-router.test'
-import './agent-stream-processor.test'
-import './chat-agent.service.test'
-
-// ─── Run 22: Coverage expansion — health / grilling / embeddings ───
-import './indexing-diagnostics.test'
-import './quality-gate-runner.test'
-import './council-parser.test'
-import './mpa-artifact-parsers.test'
-import './ollama-manager.test'
-import './omlx-manager.test'
-import './grill-parsers.test'
-
-// ─── Run 23: Coverage expansion — parser / dispatch / resolver family ───
-import './audit-response-parser.test'
-import './mpa-campaign-retry.test'
-import '../../ipc/__tests__/text-delta-batcher.test'
-import './prompt-variant.test'
-import './env-utils.test'
-import './context-window-resolver.test'
-import './agent-recovery-nudge.test'
-import '../../ipc/__tests__/chunk-router.test'
-import './grill-plan-mapper.test'
-
-// ─── Run 24: stdin-safe one-shot Claude CLI runner ───
-import './claude-cli-oneshot.test'
-
-// ─── Run 25: Unified token usage logging (usage_log sink) ───
-import './usage-tracker.service.test'
-import './one-shot-claude.test'
-
-// ─── Run 26: Plan-mode UX — ask_user registry (no-timeout) + before-plan guard ───
-import '../../mcp-servers/__tests__/ask-user-registry.test'
-import './ask-user-guard.test'
-
-// ─── Run 27: Executor family + audit/parsing pipeline ───
-import './tool-tracker.test'
-import './token-accountant.test'
-import './heartbeat-monitor.test'
-import './stream-normalizer.test'
-import './ndjson-parser.test'
-import './output-cap.test'
-import './audit-coverage-tracker.test'
-import './audit-prompt-templates.test'
-import './claude-md-generator.test'
-import './workspace-deploy-parsing.test'
-
-// ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
-import './chat-stream-lifecycle.test'
-
-// ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
-import './telemetry-recorder.test'
-import '../../ipc/__tests__/listener-cleanup.test'
-import './prompt-builder.test'
-import './skill-prompt-composer.test'
-import './sandbox-config.test'
-
-// ─── Run 30: Blueprint pipeline — parsers, conditions, review service, build service ───
-import './blueprint-parsers-conditions.test'
-import './blueprint-review.service.test'
-import './blueprint-build.service.test'
-import './blueprint-verify-conditions.test'
-
-// ─── Run 31: Plan Hub — unified plan registry ───
-import './audit-plan-mapper.test'
-import './plan-registry.test'
-
-// ─── Run 32: Library Documentation Service (three-tier lookup) ───
-import './library-doc-service.test'
-
-// ─── Run 33: ESLint MCP tools (output parsing, summary formatting, error handling) ───
-import './eslint-mcp-tools.test'
-import './analyze-complexity.test'
-
-// ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
-import './evaluation-mcp-config.test'
-import './mpa-base-adapter.test'
-import './grill-adapter.test'
-import './greenfield-grill-adapter.test'
-import './blueprint-service-logic.test'
-import './cli-mcp-config-writer-logic.test'
-
-// ─── Run 35: Adapter subclass family + pure functions + config builders ───
-import './mpa-planner-adapter.test'
-import './mpa-verifier-adapter.test'
-import './mpa-builder-adapter.test'
-import './blueprint-base-adapter.test'
-import './blueprint-build-adapter.test'
-import './blueprint-verify-adapter.test'
-import './preset-service-logic.test'
-import './repo-service-pure.test'
-import './opencode-config-writer-logic.test'
-import './description-cache-pure.test'
-import './workspace-mcp-config-logic.test'
-
-// ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───
-import './blueprint-remaining-adapters.test'
-import './council-member-adapter.test'
-import './council-chairman-adapter.test'
-import './audit-adapter.test'
-import './skill-tiers-parser.test'
-import './parse-plan-payload.test'
-import './specialist-builder-pure.test'
-import './blueprint-prompt-loader-pure.test'
-import './repository-maprow-logic.test'
-import './base-adapter-strategies.test'
-import './heuristic-description-logic.test'
-import './event-logger-service.test'
-import '../../ipc/__tests__/ipc-registration.test'
-import '../../mcp-servers/__tests__/mcp-server-registration.test'
-
-// ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
-import '../../ipc/__tests__/ipc-remaining-registration.test'
-import './cli-executor-args.test'
-import './opencode-executor-pure.test'
-import './agent-session-deep.test'
-import './chat-stream-methods.test'
-import './mpa-orchestration-helpers.test'
-import './council-service-helpers.test'
-import './grill-agent-helpers.test'
-import './audit-agent-helpers.test'
-import './grill-persistence-logic.test'
-import './council-persistence-logic.test'
-import './shared-types-coverage.test'
-import './blueprint-spec-helpers.test'
-import './memory-service-logic.test'
-import './plan-registry-helpers.test'
-import './zero-coverage-services.test'
-
-// ─── Phase 15: Coverage Mega-Push — pure function tests ───
-import './default-prompts-constants.test'
-import './preprocessing-pure.test'
-import './vector-search-pure.test'
-
-// ─── Phase 16: Coverage Mega-Push II — types, services, IPC, MCP ───
-import './type-coverage.test'
-import './mpa-orchestration-deep.test'
-import './service-mid-coverage-deep.test'
-import '../../ipc/__tests__/ipc-zero-coverage.test'
-import '../../ipc/__tests__/ipc-blueprint-handlers.test'
-import '../../ipc/__tests__/ipc-audit-handlers.test'
-import '../../ipc/__tests__/ipc-crud-deep.test'
-import '../../mcp-servers/__tests__/mcp-server-tools-deep.test'
-
-// ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
-import '../../ipc/__tests__/ipc-handler-bodies.test'
-import './service-instance-deep.test'
-import './blueprint-pipeline-instance.test'
-import './adapter-branch-push.test'
-import './migration-metadata.test'
-
-// Await every async test queued by the harness before printing the aggregate
-// summary and exiting. Individual test files guard their own summary() calls
-// with `if (import.meta.url === file://${process.argv[1]})` so they only
-// exit when run standalone.
-void summaryAsync()
+  // Await every async test queued by the harness before printing the aggregate
+  // summary and exiting. Individual test files guard their own summaryAsync()
+  // calls with `if (import.meta.url === ...)` so they only exit when run standalone.
+  await summaryAsync()
+})()

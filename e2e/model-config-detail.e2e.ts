@@ -1,13 +1,14 @@
 /**
  * Model Config Detail E2E Tests
  *
- * Tests LocalLLMConfigSection (517 LOC) + ClaudeConfigSection (236 LOC):
- *   - Local LLM config section shows host, port, and model name fields
+ * Tests Provider Cards + Model Routing:
+ *   - oMLX card shows host, port, and model name fields
  *   - Context window slider adjusts the token limit
  *   - System prompt override textarea accepts custom text
  *   - Connection test button validates endpoint and shows result
- *   - Claude config shows cost preference radio buttons
- *   - Claude config shows communication tone selector
+ *   - Claude card shows fast mode and budget settings
+ *   - Model routing section shows role pickers
+ *   - Workspace defaults shows communication tone selector
  *
  * Navigation: Workspace settings → Models tab → provider sections.
  *
@@ -136,8 +137,8 @@ test.describe('Model Config Detail', () => {
     await testBtn.click()
     await page.waitForTimeout(2_000)
 
-    // After clicking, should show some result (connected/error status)
-    const statusIndicator = section.locator('[class*="text-green"], [class*="text-red"], [class*="text-yellow"]').first()
+    // After clicking, should show some result (connected/error status chips)
+    const statusIndicator = section.locator('[class*="text-success"], [class*="text-green"], [class*="text-red"], [class*="text-yellow"], [class*="text-amber"]').first()
     const hasStatus = await statusIndicator.isVisible({ timeout: 3_000 }).catch(() => false)
     // Either status appeared or button changed state
     expect(hasTestBtn).toBeTruthy()
@@ -146,7 +147,7 @@ test.describe('Model Config Detail', () => {
     }
   })
 
-  test('claude config shows cost preference radio buttons', async ({
+  test('claude card shows fast mode and budget settings', async ({
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)
@@ -158,25 +159,45 @@ test.describe('Model Config Detail', () => {
 
     await expect(section).toBeVisible()
 
-    // Should have cost preference options (economy, balanced, power)
+    // Should have Fast Mode and Budget content
     const sectionText = await section.textContent()
-    const hasCostOptions = /economy|balanced|power/i.test(sectionText ?? '')
-    expect(hasCostOptions).toBeTruthy()
-
-    // Should have clickable buttons/radio for cost preference
-    const costBtns = section.locator('button, input[type="radio"]').filter({ hasText: /Economy|Balanced|Power/i })
-    if ((await costBtns.count()) > 0) {
-      await expect(costBtns.first()).toBeVisible()
-    }
+    const hasFastMode = /Fast Mode/i.test(sectionText ?? '')
+    const hasBudget = /Budget/i.test(sectionText ?? '')
+    expect(hasFastMode || hasBudget).toBeTruthy()
   })
 
-  test('claude config shows communication tone selector', async ({
+  test('model routing section shows role pickers (Plan/Build/Background)', async ({
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)
     if (!ready) { test.skip(); return }
 
-    const section = page.locator('[data-testid="claude-config-section"]')
+    const section = page.locator('[data-testid="model-roles-section"]')
+    const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
+    if (!isVisible) { test.skip(); return }
+
+    await expect(section).toBeVisible()
+
+    // Should have model role assignment selectors
+    const sectionText = await section.textContent()
+    const hasRoles = /Plan|Build|Background/i.test(sectionText ?? '')
+    expect(hasRoles).toBeTruthy()
+
+    // Should have select dropdowns for model selection
+    const selects = section.locator('select')
+    if ((await selects.count()) > 0) {
+      await expect(selects.first()).toBeVisible()
+    }
+  })
+
+  test('workspace defaults shows communication tone selector', async ({
+    electronPage: page
+  }) => {
+    const ready = await navigateToModelsTab(page)
+    if (!ready) { test.skip(); return }
+
+    // Tone is in the "Workspace Defaults" section at the bottom of the page
+    const section = page.locator('[data-testid="conversation-defaults-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!isVisible) { test.skip(); return }
 

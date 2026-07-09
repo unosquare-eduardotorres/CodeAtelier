@@ -29,6 +29,7 @@ import {
   messageRepository
 } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
+import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { auditPlanGeneratorService } from '../services/audit-plan-generator.service'
 import { detectTechStack } from '../services/tech-stack-detector.service'
 import {
@@ -411,9 +412,20 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
       const wsSettings = workspaceRepository.getSettings(workspaceId)
       const llmProvider: LLMProvider = wsSettings.llmProvider ?? 'claude'
 
-      // Create conversation in plan mode
+      // Create conversation in plan mode with frozen model snapshot
       const title = `🔍 Audit: Fix ${findings.length} finding${findings.length > 1 ? 's' : ''}`
-      const conv = conversationRepository.create(workspaceId, title, 'plan', undefined, llmProvider)
+      const snapshot = buildConversationModelSnapshot(workspaceId, llmProvider)
+      const conv = conversationRepository.create(
+        workspaceId,
+        title,
+        'plan',
+        undefined,
+        llmProvider,
+        undefined,
+        undefined,
+        undefined,
+        snapshot
+      )
 
       // Build a structured first message with all findings as context
       const findingsContext = findings

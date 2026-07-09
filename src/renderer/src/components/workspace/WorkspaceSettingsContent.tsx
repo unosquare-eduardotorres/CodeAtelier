@@ -21,6 +21,7 @@ import { CouncilLanding } from './council'
 import { SkillDetailPage } from '@renderer/components/settings'
 import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
+import TestingPage from '@renderer/pages/TestingPage'
 import type { SettingsTab } from './WorkspaceSettingsPanel'
 
 interface WorkspaceSettingsContentProps {
@@ -57,6 +58,7 @@ export default function WorkspaceSettingsContent({
     selectSkill,
     confirmClaudeMd,
     dismissClaudeMdPreview,
+    setModelsViewIntent,
     reset
   } = useSettingsStore()
 
@@ -158,7 +160,14 @@ export default function WorkspaceSettingsContent({
       )}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
-      {tab === 'code-intelligence' && <CodeIntelligencePage />}
+      {tab === 'code-intelligence' && (
+        <CodeIntelligencePage
+          onNavigateToModels={() => {
+            setModelsViewIntent({ provider: 'local-llm', backend: 'omlx' })
+            onSettingsTabChange?.('models')
+          }}
+        />
+      )}
       {tab === 'integrations' && <IntegrationsPage />}
 
       {tab === 'team' && workspacePath && (
@@ -230,6 +239,7 @@ export default function WorkspaceSettingsContent({
       {tab === 'documents' && <DocumentsPage />}
       {tab === 'tokens' && <TokenUsagePage />}
       {tab === 'events' && <EventLogPage />}
+      {tab === 'testing' && <TestingPage />}
     </div>
   )
 }

@@ -95,7 +95,6 @@ describe('ProjectSpecialistRoleAdapter', () => {
     })
     assert.equal(typeof cb.onPlan, 'function')
     assert.equal(typeof cb.onAskUser, 'function')
-    assert.equal(typeof cb.onMemory, 'function')
   })
 
   test('emitDetectedIntents_emits_a_response_fallback_when_nothing_else_fires', () => {
@@ -105,7 +104,7 @@ describe('ProjectSpecialistRoleAdapter', () => {
       // No grill blocks, no MCP planIntent / askUserIntent on state → detector
       // returns empty array → adapter falls back to 'response' intent.
       accumulatedText: 'hello from the specialist',
-      controlToolState: { plan: false, askUser: false, memory: false },
+      controlToolState: { plan: false, askUser: false },
       mode: 'plan',
       conversationId: 'c1',
       emit: (evt, payload) => emitted.push({ evt, payload })
@@ -126,7 +125,7 @@ describe('ProjectSpecialistRoleAdapter', () => {
       '```grill-summary\n' + JSON.stringify({ summary: 'done', proposedTasks: [] }) + '\n```'
     adapter.emitDetectedIntents({
       accumulatedText: `some text ${grillBlock}`,
-      controlToolState: { plan: false, askUser: false, memory: false },
+      controlToolState: { plan: false, askUser: false },
       mode: 'plan',
       conversationId: 'c1',
       emit: (evt, payload) => emitted.push({ evt, payload })

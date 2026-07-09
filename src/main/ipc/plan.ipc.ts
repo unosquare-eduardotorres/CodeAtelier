@@ -9,10 +9,11 @@ import { ipcMain } from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { planRepository } from '../db/repositories/plan.repository'
-import { conversationRepository, messageRepository } from '../db/repositories'
+import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
 import { validateSender } from './validate-sender'
-import type { PlanFilters, PlanStatus } from '../../shared/types'
+import type { LLMProvider, PlanFilters, PlanStatus } from '../../shared/types'
+import { buildConversationModelSnapshot } from '../services/model-config.service'
 
 const planLog = log.scope('plan-ipc')
 
@@ -85,8 +86,23 @@ export function registerPlanIpc(): void {
       // ATOM-03: Wrap all three writes in a transaction so partial failure
       // doesn't leave an orphaned conversation or un-linked plan.
       const db = getDatabase()
+      // Resolve workspace provider and snapshot for the new conversation
+      const wsSettings = workspaceRepository.getSettings(args.workspaceId)
+      const llmProvider: LLMProvider = (wsSettings.llmProvider as LLMProvider) ?? 'claude'
+      const snapshot = buildConversationModelSnapshot(args.workspaceId, llmProvider)
+
       const result = db.transaction(() => {
-        const conversation = conversationRepository.create(args.workspaceId, plan.title, 'plan')
+        const conversation = conversationRepository.create(
+          args.workspaceId,
+          plan.title,
+          'plan',
+          undefined,
+          llmProvider,
+          undefined,
+          undefined,
+          undefined,
+          snapshot
+        )
         messageRepository.create(conversation.id, 'user', messageContent)
         planRepository.markHandedOff(plan.id, conversation.id)
         return { conversationId: conversation.id, planId: plan.id }

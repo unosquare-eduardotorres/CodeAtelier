@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
-import { Flame, Lightbulb, FileText } from 'lucide-react'
+import { Flame, Lightbulb, FileText, BookmarkPlus } from 'lucide-react'
 import {
   remarkEmojiSpan,
   remarkHighlightQuestions,
@@ -324,6 +324,44 @@ function BubbleContentBody({
   )
 }
 
+/** "Save to memory" hover action — extracts facts from a message via the extraction pipeline. */
+function SaveToMemoryButton({ message }: { message: Message }): React.JSX.Element {
+  const [saving, setSaving] = React.useState(false)
+  const [feedbackLabel, setFeedbackLabel] = React.useState<string | null>(null)
+
+  const handleSave = async (): Promise<void> => {
+    const workspace = useWorkspaceStore.getState().activeWorkspace
+    if (!workspace?.id || !message.contentMd) return
+    setSaving(true)
+    try {
+      const { created } = await window.api.memorySaveMessage({
+        workspaceId: workspace.id,
+        messageContent: message.contentMd,
+        workspacePath: workspace.repoPath ?? undefined
+      })
+      // N2-FIX: Always schedule the reset; show distinct feedback when no facts found.
+      setFeedbackLabel(created > 0 ? 'Saved' : 'No facts found')
+      setTimeout(() => setFeedbackLabel(null), 3000)
+    } catch (err) {
+      console.error('Failed to save to memory:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleSave}
+      disabled={saving || feedbackLabel !== null}
+      className="inline-flex items-center gap-0.5 text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+      title={feedbackLabel ?? 'Save to memory'}
+    >
+      <BookmarkPlus className="w-3 h-3" />
+      {saving ? 'Saving…' : feedbackLabel ?? 'Save to memory'}
+    </button>
+  )
+}
+
 interface BubbleFooterActionsProps {
   message: Message
   isUser: boolean
@@ -367,24 +405,27 @@ function BubbleFooterActions({
           )}
         </span>
         {!isUser && !isStreaming && (
-          <button
-            onClick={async () => {
-              if (message.conversationId && message.id) {
-                try {
-                  await window.api.chatResumeAt({
-                    conversationId: message.conversationId,
-                    messageId: message.id
-                  })
-                } catch (err) {
-                  console.error('Failed to resume at checkpoint:', err)
+          <>
+            <button
+              onClick={async () => {
+                if (message.conversationId && message.id) {
+                  try {
+                    await window.api.chatResumeAt({
+                      conversationId: message.conversationId,
+                      messageId: message.id
+                    })
+                  } catch (err) {
+                    console.error('Failed to resume at checkpoint:', err)
+                  }
                 }
-              }
-            }}
-            className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100"
-            title="Undo to this message"
-          >
-            Undo to here
-          </button>
+              }}
+              className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100"
+              title="Undo to this message"
+            >
+              Undo to here
+            </button>
+            <SaveToMemoryButton message={message} />
+          </>
         )}
       </div>
     </>

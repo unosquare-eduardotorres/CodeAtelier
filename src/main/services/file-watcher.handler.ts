@@ -16,12 +16,24 @@ export function initFileWatcherHandler(): void {
 
     log.info(`[FileWatcher] ${changedFiles.length} file(s) changed in workspace ${workspaceId}`)
 
-    // Code Graph: incremental re-index (fast, ~100ms)
-    if (event.codeGraphEnabled && codeGraphService.hasPersistedIndex(workspaceId)) {
-      try {
-        await codeGraphService.reindexFiles(workspaceId, workspacePath, changedFiles)
-      } catch (err) {
-        log.error('[FileWatcher] Code graph incremental re-index failed:', err)
+    // Code Graph: bootstrap full index if none exists, then incremental re-index
+    if (event.codeGraphEnabled) {
+      if (!codeGraphService.hasPersistedIndex(workspaceId)) {
+        // Bootstrap: no persisted index yet — run a full tree-sitter parse.
+        // Cheap for small/medium repos; subsequent changes take the incremental path.
+        try {
+          log.info(`[FileWatcher] Code graph bootstrap: running full indexWorkspace for ${workspaceId}`)
+          await codeGraphService.indexWorkspace(workspaceId, workspacePath)
+        } catch (err) {
+          log.error('[FileWatcher] Code graph bootstrap failed:', err)
+        }
+      } else {
+        // Incremental re-index (fast, ~100ms)
+        try {
+          await codeGraphService.reindexFiles(workspaceId, workspacePath, changedFiles)
+        } catch (err) {
+          log.error('[FileWatcher] Code graph incremental re-index failed:', err)
+        }
       }
     }
 

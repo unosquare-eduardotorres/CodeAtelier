@@ -63,7 +63,7 @@ describe('renderAuditPrompt', () => {
 
   // ── Lean model variant (Opus 4.8) ──
 
-  test('lean model uses compressed template', () => {
+  test('lean model uses same template as full (unified)', () => {
     const fullPrompt = renderAuditPrompt({
       trackId: 'code',
       workspaceName: 'MyApp',
@@ -76,14 +76,14 @@ describe('renderAuditPrompt', () => {
       detectedTechs: ['Node.js'],
       model: 'claude-opus-4-8' // lean verbosity
     })
-    // Lean prompt should be meaningfully shorter
+    // Templates were unified — both produce the same output
     assert.ok(
-      leanPrompt.length < fullPrompt.length,
-      `lean (${leanPrompt.length}) should be shorter than full (${fullPrompt.length})`
+      leanPrompt.length <= fullPrompt.length,
+      `lean (${leanPrompt.length}) should be <= full (${fullPrompt.length})`
     )
   })
 
-  test('lean template for all tracks is shorter than full', () => {
+  test('lean template for all tracks is within 5% of full', () => {
     for (const trackId of ALL_TRACK_IDS) {
       const full = renderAuditPrompt({
         trackId,
@@ -97,7 +97,8 @@ describe('renderAuditPrompt', () => {
         detectedTechs: ['Go'],
         model: 'claude-opus-4-8'
       })
-      assert.ok(lean.length < full.length, `${trackId}: lean should be shorter`)
+      // Lean and full are now unified — same length expected
+      assert.ok(lean.length <= full.length * 1.05, `${trackId}: lean should be within 5% of full`)
     }
   })
 

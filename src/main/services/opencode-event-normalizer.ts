@@ -12,6 +12,12 @@ import log from 'electron-log/main'
 
 const openCodeLog = log.scope('OpenCode')
 
+/**
+ * Matches raw JSON control signals from local LLM backends that leak
+ * into text deltas. These should never reach the chunk-router as text.
+ */
+const LOCAL_CONTROL_SIGNAL_RE = /^\s*\{\s*"type"\s*:\s*"(?:busy|idle|ready|processing)"\s*\}\s*$/
+
 /** GAP-11: Transient error patterns — mirrors TRANSIENT_ERROR_PATTERNS from executor */
 const TRANSIENT_PATTERNS = [
   /rate.?limit/i,
@@ -48,6 +54,10 @@ export interface NormalizerState {
   lastPartType?: 'text' | 'thinking' | 'tool'
   /** F16: Whether we've seen text content before (for thinking→text boundary) */
   hasPriorText?: boolean
+  /** R5: Dedupe — callIDs for which we already emitted tool_use */
+  emittedToolUse?: Set<string>
+  /** R5: Dedupe — callIDs for which we already emitted tool_result */
+  emittedToolResult?: Set<string>
 }
 
 type EventProperties = Record<string, unknown>
@@ -65,6 +75,12 @@ type EventHandler = (
 function handleTextPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
   const text = part.content as string | undefined
   if (!text) return []
+
+  // CONTROL-SIGNAL-FILTER-02: Drop raw JSON control signals from local backends
+  if (LOCAL_CONTROL_SIGNAL_RE.test(text)) {
+    openCodeLog.debug('[opencode] Filtered control signal in text part: %s', text.slice(0, 60))
+    return []
+  }
 
   const chunks: StreamChunk[] = []
   // F16: Emit turn_boundary when transitioning from thinking→text
@@ -156,6 +172,86 @@ function handleThinkingPart(part: Record<string, unknown>, state: NormalizerStat
   return [{ type: 'thinking', content }]
 }
 
+/**
+ * R5: Handle modern SDK ToolPart shape:
+ *   { type: 'tool', tool: string, callID: string, state: { status, input, output, error } }
+ *
+ * message.part.updated fires a full snapshot on every status transition
+ * (pending → running → completed). We dedupe via emittedToolUse / emittedToolResult
+ * sets so each callID emits exactly one tool_use and one tool_result.
+ */
+function handleToolPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
+  const toolName = part.tool as string | undefined
+  const callID = part.callID as string | undefined
+  const toolState = part.state as Record<string, unknown> | undefined
+  if (!toolName || !callID || !toolState) return []
+
+  const status = (toolState.status ?? toolState) as string
+  const chunks: StreamChunk[] = []
+
+  // Lazily initialise dedupe sets
+  if (!state.emittedToolUse) state.emittedToolUse = new Set()
+  if (!state.emittedToolResult) state.emittedToolResult = new Set()
+
+  // ── tool_use (first sighting with input) ──
+  // Emit on 'running', 'completed', or 'error' (or 'pending' when input is present).
+  if (!state.emittedToolUse.has(callID)) {
+    const input = toolState.input as Record<string, unknown> | string | undefined
+    const hasInput = input !== undefined && input !== null
+    if (status !== 'pending' || hasInput) {
+      state.emittedToolUse.add(callID)
+      state.lastPartType = 'tool'
+      chunks.push({
+        type: 'tool_use',
+        toolName,
+        toolId: callID,
+        toolInput: hasInput
+          ? (typeof input === 'string' ? input : JSON.stringify(input))
+          : undefined
+      })
+    }
+  }
+
+  // ── tool_result (on completed / error) ──
+  if ((status === 'completed' || status === 'error') && !state.emittedToolResult.has(callID)) {
+    state.emittedToolResult.add(callID)
+
+    const output = (status === 'error' ? toolState.error : toolState.output) as string | undefined
+    const resultStr = typeof output === 'string' ? output : JSON.stringify(output ?? '')
+
+    chunks.push({
+      type: 'tool_result',
+      toolName,
+      toolId: callID,
+      content: resultStr
+    })
+
+    // Generate a human-readable tool_use_summary (mirrors legacy tool-invocation logic)
+    const resultSummaryObj = extractResultSummary(toolName, resultStr)
+    let inputSummary: string | undefined
+    const rawInput = toolState.input as Record<string, unknown> | undefined
+    if (rawInput && typeof rawInput === 'object') {
+      inputSummary = summarizeToolInput(toolName, rawInput)
+    }
+
+    if (resultSummaryObj?.result || inputSummary) {
+      chunks.push({
+        type: 'tool_use_summary',
+        toolName,
+        toolId: callID,
+        content: [
+          inputSummary ? `Input: ${inputSummary}` : '',
+          resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
+        ]
+          .filter(Boolean)
+          .join(' — ')
+      })
+    }
+  }
+
+  return chunks
+}
+
 /** GAP-9: Handle structured_output / structured-output part. */
 function handleStructuredOutputPart(part: Record<string, unknown>): StreamChunk[] {
   const data = part.content ?? part.data ?? part.result
@@ -174,6 +270,47 @@ function handleStructuredOutputPart(part: Record<string, unknown>): StreamChunk[
 
 // ── Per-event-type handler functions ──
 
+/**
+ * Handle message.part.delta — lightweight text/reasoning streaming deltas.
+ * Replaces full message.part.updated snapshots for incremental text in OpenCode ≥1.17.
+ */
+function handleMessagePartDelta(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  const field = properties.field as string | undefined
+  const delta = properties.delta as string | undefined
+  if (!delta) return []
+
+  if (field === 'text') {
+    // CONTROL-SIGNAL-FILTER-02: Drop raw JSON control signals from local backends
+    if (LOCAL_CONTROL_SIGNAL_RE.test(delta)) {
+      openCodeLog.debug('[opencode] Filtered control signal in text delta: %s', delta.slice(0, 60))
+      return []
+    }
+    // Same boundary detection as handleTextPart (F16)
+    const chunks: StreamChunk[] = []
+    if (state.lastPartType === 'thinking' && state.hasPriorText) {
+      chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+    }
+    chunks.push({ type: 'text', content: delta })
+    state.lastPartType = 'text'
+    state.hasPriorText = true
+    return chunks
+  }
+
+  if (field === 'reasoning' || field === 'thinking') {
+    state.lastPartType = 'thinking'
+    return [{ type: 'thinking', content: delta }]
+  }
+
+  // Unknown field — log but don't drop
+  openCodeLog.info(`[opencode] message.part.delta field="${field}" (not text/reasoning)`)
+  return []
+}
+
 /** Dispatcher for message.part.updated — delegates to per-part-type sub-handlers. */
 function handleMessagePartUpdated(
   properties: EventProperties,
@@ -189,6 +326,8 @@ function handleMessagePartUpdated(
       return handleTextPart(part, state)
     case 'tool-invocation':
       return handleToolInvocationPart(part, state)
+    case 'tool':
+      return handleToolPart(part, state)
     case 'thinking':
     case 'reasoning':
     case 'reasoning-delta':
@@ -260,8 +399,17 @@ function handleSessionUpdated(
 }
 
 function handleSessionError(properties: EventProperties): StreamChunk[] {
-  const error = properties.error as string | undefined
-  if (!error) return []
+  const rawError = properties.error
+  if (!rawError) return []
+
+  // The SDK sends error as an object: { name: string, data: { message: string, ... } }.
+  // Coerce to a string for downstream consumers that pattern-match on error messages.
+  const error: string =
+    typeof rawError === 'string'
+      ? rawError
+      : (rawError as any)?.data?.message ??
+        (rawError as any)?.message ??
+        JSON.stringify(rawError)
 
   // GAP-11: Classify transient vs permanent errors. Transient errors emit
   // api_retry instead of error, giving the UI a more accurate status indicator.
@@ -339,7 +487,8 @@ function handleSessionIdle(
 ): StreamChunk[] {
   const chunks: StreamChunk[] = [{ type: 'status', content: 'idle' }]
 
-  // 6C-2: Include finishReason in the idle status for the executor
+  // Note: 'idle' status is suppressed by SUPPRESSED_STATUS_VALUES in chunk-router.ts.
+  // The 'finishReason:' prefix is suppressed by SUPPRESSED_STATUS_PREFIXES.
   if (state.lastFinishReason) {
     const reasonMap: Record<string, string> = {
       stop: 'completed',
@@ -372,19 +521,48 @@ function handleFileEdited(properties: EventProperties): StreamChunk[] {
   ]
 }
 
+// Cap diff content before allocating a chunk string. The chunk-router has a
+// separate 1MB guard, but capping here avoids a transient multi-MB allocation
+// in the main process when OpenCode emits very large diffs.
+const MAX_SESSION_DIFF_CHARS = 2_000_000 // 2MB — generous for recovery metadata
+
 function handleSessionDiff(properties: EventProperties): StreamChunk[] {
   const diff = properties.diff as string | undefined
   if (!diff) return []
-  return [{ type: 'text', content: `\n\n**Session Revert Diff:**\n\`\`\`diff\n${diff}\n\`\`\`\n` }]
+  // Session diffs are internal recovery metadata — route to session_state,
+  // not text, to prevent rendering in the chat bubble.
+  const safeDiff = diff.length > MAX_SESSION_DIFF_CHARS
+    ? diff.slice(0, MAX_SESSION_DIFF_CHARS)
+    : diff
+  return [{ type: 'session_state', content: `session_diff:${safeDiff}` }]
 }
 
+/**
+ * session.status — maps OpenCode session statuses to internal status labels.
+ * These labels are suppressed from chat rendering by SUPPRESSED_STATUS_VALUES
+ * in src/main/ipc/chunk-router.ts. If you add a new mapping here, update
+ * the suppression list there.
+ */
 function handleSessionStatus(properties: EventProperties): StreamChunk[] {
-  const status = properties.status as string | undefined
-  if (!status) return []
+  const rawStatus = properties.status
+  if (!rawStatus) return []
+  let status: string
+  if (typeof rawStatus === 'string') {
+    status = rawStatus
+  } else if (
+    typeof rawStatus === 'object' &&
+    typeof (rawStatus as Record<string, unknown>).type === 'string'
+  ) {
+    // OpenCode local backends emit object statuses like {type:'busy'}
+    status = (rawStatus as { type: string }).type
+  } else {
+    status = JSON.stringify(rawStatus)
+  }
   const statusMap: Record<string, string> = {
     thinking: 'thinking',
     tool_use: 'reviewing',
     idle: 'idle',
+    busy: 'thinking',  // local LLM backend status → map to 'thinking' (already suppressed)
     error: 'failed',
     compacting: 'thinking',
     generating: 'writing'
@@ -612,10 +790,58 @@ function handleServerConnected(
   return []
 }
 
+// ── session.next.* V2 event bus handlers ──
+
+/** No-op handler — suppresses "Unhandled event type" log for known V2 events. */
+function noopHandler(): StreamChunk[] {
+  return []
+}
+
+/**
+ * session.next.agent.switched — emits status chunk with agent name.
+ * The 'agent_switched:' prefix is suppressed from chat rendering by
+ * SUPPRESSED_STATUS_PREFIXES in src/main/ipc/chunk-router.ts.
+ */
+function handleAgentSwitched(properties: EventProperties): StreamChunk[] {
+  const raw = properties.agent ?? properties.name ?? 'unknown'
+  const name = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.name ?? (raw as Record<string, unknown>)?.id ?? JSON.stringify(raw)
+  return [{ type: 'status', content: `agent_switched:${name}` }]
+}
+
+/**
+ * session.next.model.switched — emits status chunk with model id.
+ * The 'model_switched:' prefix is suppressed from chat rendering by
+ * SUPPRESSED_STATUS_PREFIXES in src/main/ipc/chunk-router.ts.
+ */
+function handleModelSwitched(properties: EventProperties): StreamChunk[] {
+  const raw = properties.model ?? properties.modelID ?? properties.id ?? 'unknown'
+  const modelId = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.id ?? (raw as Record<string, unknown>)?.modelID ?? JSON.stringify(raw)
+  return [{ type: 'status', content: `model_switched:${modelId}` }]
+}
+
+/** session.next.step.ended — extracts per-step token usage when available. */
+function handleStepEnded(
+  properties: EventProperties,
+  _sessionId: string,
+  tokenUsage: ExecutorTokenUsage
+): StreamChunk[] {
+  const usage = properties.usage as Record<string, number> | undefined
+  if (usage) {
+    tokenUsage.input = usage.inputTokens ?? usage.input ?? tokenUsage.input
+    tokenUsage.output = usage.outputTokens ?? usage.output ?? tokenUsage.output
+    tokenUsage.cacheReadInputTokens =
+      usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
+    tokenUsage.cacheCreationInputTokens =
+      usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
+  }
+  return []
+}
+
 // ── Dispatch table ──
 
 const EVENT_HANDLERS: Record<string, EventHandler> = {
   'message.part.updated': handleMessagePartUpdated,
+  'message.part.delta': handleMessagePartDelta,
   'session.updated': handleSessionUpdated,
   'session.error': handleSessionError as EventHandler,
   'session.compacted': handleSessionCompacted as EventHandler, // 6C-4: now emits context_usage_update
@@ -636,7 +862,49 @@ const EVENT_HANDLERS: Record<string, EventHandler> = {
   'session.deleted': handleSessionDeleted,
   'file.watcher.updated': handleFileWatcherUpdated as EventHandler,
   'lsp.updated': handleLspUpdated as EventHandler,
-  'server.connected': handleServerConnected
+  'server.connected': handleServerConnected,
+
+  // session.next.* — V2 event bus. Currently fires alongside V1 events.
+  // Registered to suppress "Unhandled event type" log spam.
+  'session.next.agent.switched': handleAgentSwitched as EventHandler,
+  'session.next.model.switched': handleModelSwitched as EventHandler,
+  'session.next.text.started': noopHandler as EventHandler,
+  'session.next.text.delta': noopHandler as EventHandler,
+  'session.next.text.ended': noopHandler as EventHandler,
+  'session.next.reasoning.started': noopHandler as EventHandler,
+  'session.next.reasoning.delta': noopHandler as EventHandler,
+  'session.next.reasoning.ended': noopHandler as EventHandler,
+  'session.next.tool.input.started': noopHandler as EventHandler,
+  'session.next.tool.input.delta': noopHandler as EventHandler,
+  'session.next.tool.input.ended': noopHandler as EventHandler,
+  'session.next.tool.called': noopHandler as EventHandler,
+  'session.next.tool.progress': noopHandler as EventHandler,
+  'session.next.tool.success': noopHandler as EventHandler,
+  'session.next.tool.failed': noopHandler as EventHandler,
+  'session.next.step.started': noopHandler as EventHandler,
+  'session.next.step.ended': handleStepEnded as EventHandler,
+  'session.next.step.failed': noopHandler as EventHandler,
+  'session.next.compaction.started': noopHandler as EventHandler,
+  'session.next.compaction.delta': noopHandler as EventHandler,
+  'session.next.compaction.ended': noopHandler as EventHandler,
+  'session.next.retried': noopHandler as EventHandler,
+  'session.next.prompted': noopHandler as EventHandler,
+  'session.next.prompt.admitted': noopHandler as EventHandler,
+  'session.next.context.updated': noopHandler as EventHandler,
+  'session.next.synthetic': noopHandler as EventHandler,
+  'session.next.shell.started': noopHandler as EventHandler,
+  'session.next.shell.ended': noopHandler as EventHandler,
+  'session.next.moved': noopHandler as EventHandler,
+
+  // Server lifecycle — suppress heartbeat noise (~6x/minute).
+  'server.heartbeat': noopHandler as EventHandler,
+
+  // Plugin/catalog/integration lifecycle — informational, no UI action needed.
+  'plugin.added': noopHandler as EventHandler,
+  'plugin.removed': noopHandler as EventHandler,
+  'catalog.updated': noopHandler as EventHandler,
+  'integration.updated': noopHandler as EventHandler,
+  'reference.updated': noopHandler as EventHandler
 }
 
 /**

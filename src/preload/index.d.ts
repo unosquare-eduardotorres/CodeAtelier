@@ -19,11 +19,8 @@ import type {
   CompleteResult,
   GrillQuestion,
   GrillTrackId,
-  Memory,
-  MemoryType,
   MemoryFeedProgress,
   MemoryFeedResult,
-  WorkspaceFeedTimestamps,
   TokenSummary,
   WorkspaceUsageSummary,
   AgentSessionRecord,
@@ -62,7 +59,21 @@ import type {
   GrillDecision,
   GrillTrackScore,
   GrillStructuredPlan,
-  PlanRecord
+  PlanRecord,
+  MemoryFact,
+  MemoryFactCategory,
+  MemoryFactTier,
+  MemoryFactStatus,
+  MemoryContradiction,
+  MemoryCaptureSettings,
+  MemoryEmbeddingStatus,
+  ContradictionStatus,
+  E2EScenarioSummary,
+  E2EPreflightResult,
+  E2ERunSummary,
+  E2EResultSummary,
+  E2EResultDetail,
+  E2EProgressEvent
 } from '../shared/types'
 
 interface Api {
@@ -124,7 +135,6 @@ interface Api {
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
-    presetId?: string | null
   }) => Promise<Conversation>
   updatePersona: (args: {
     conversationId: string
@@ -290,31 +300,27 @@ interface Api {
   // Deploy all (inactive) to workspace
   deployAll: (args: { workspacePath: string }) => Promise<{ agents: number; skills: number }>
 
-  // Memory (auto memory system)
-  listMemories: (args: { workspaceId: string }) => Promise<Memory[]>
-  searchMemories: (args: { workspaceId: string; query: string }) => Promise<Memory[]>
-  createMemory: (args: {
-    workspaceId: string | null
-    type: MemoryType
-    title: string
-    content: string
-    tags?: string[]
-    importance?: number
-  }) => Promise<Memory>
-  updateMemory: (args: {
-    id: string
-    title?: string
-    content?: string
-    tags?: string[]
-    importance?: number
-  }) => Promise<Memory>
-  deleteMemory: (args: { id: string }) => Promise<void>
-  memoryUpdateSetting: (args: { workspaceId: string; memoryEnabled: boolean }) => Promise<void>
+  // Memory Engine (knowledge-aware facts)
+  memoryFactsList: (args: { workspaceId: string; status?: MemoryFactStatus }) => Promise<MemoryFact[]>
+  memoryFactsSearch: (args: { workspaceId: string; query: string; category?: MemoryFactCategory }) => Promise<MemoryFact[]>
+  memoryFactsGet: (args: { id: string }) => Promise<MemoryFact>
+  memoryFactsUpdate: (args: { id: string; title?: string; content?: string; tags?: string[]; scopePaths?: string[]; category?: MemoryFactCategory }) => Promise<MemoryFact>
+  memoryFactsArchive: (args: { id: string }) => Promise<void>
+  memoryFactsConfirm: (args: { id: string }) => Promise<MemoryFact>
+  memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }) => Promise<MemoryFact>
+  memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }) => Promise<MemoryFact>
+  memoryFactsDelete: (args: { id: string }) => Promise<void>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus }) => Promise<MemoryContradiction[]>
+  memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }) => Promise<MemoryContradiction>
+  memoryCaptureSettingsGet: (args: { workspaceId: string }) => Promise<MemoryCaptureSettings>
+  memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }) => Promise<void>
+  memoryEmbeddingStatus: (args?: { workspaceId?: string }) => Promise<MemoryEmbeddingStatus>
+  memoryEmbeddingBackfill: () => Promise<{ backfilled: number }>
+  memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
 
-  // Memory Feed
+  // Memory Feed (retained)
   memorySelectDocument: () => Promise<string | null>
   memoryFeedCancel: () => Promise<void>
-  memoryGetFeedTimestamps: (args: { workspaceId: string }) => Promise<WorkspaceFeedTimestamps>
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
   }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
@@ -718,8 +724,8 @@ interface Api {
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
   // Embedding Provider
-  embeddingCheckStatus: () => Promise<EmbeddingModelStatus>
-  embeddingInitialize: () => Promise<void>
+  embeddingCheckStatus: (args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }) => Promise<EmbeddingModelStatus>
+  embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }) => Promise<void>
   onEmbeddingModelReady: (callback: () => void) => () => void
   onEmbeddingModelError: (callback: (error: string) => void) => () => void
 
@@ -948,22 +954,6 @@ interface Api {
     planId: string
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
-
-  // LLM Presets
-  getPresets: (args: { workspaceId: string }) => Promise<unknown>
-  getPreset: (args: { presetId: string }) => Promise<unknown>
-  createPreset: (args: {
-    workspaceId: string
-    name: string
-    actionConfig: Record<string, unknown>
-  }) => Promise<unknown>
-  updatePreset: (args: {
-    presetId: string
-    changes: { name?: string; actionConfig?: Record<string, unknown> }
-  }) => Promise<unknown>
-  deletePreset: (args: { presetId: string }) => Promise<unknown>
-  setDefaultPreset: (args: { workspaceId: string; presetId: string }) => Promise<unknown>
-  switchConversationPreset: (args: { conversationId: string; presetId: string }) => Promise<unknown>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
@@ -1211,6 +1201,14 @@ interface Api {
     message: string
   }) => Promise<{ sent: boolean }>
   blueprintSkipClarify: (args: { blueprintId: string }) => Promise<{ skipped: boolean }>
+  blueprintClarifyProceed: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ proceeded: boolean }>
+  blueprintClarifyIterate: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ iterated: boolean }>
   blueprintStartPlan: (args: {
     blueprintId: string
     workspaceId: string
@@ -1246,11 +1244,33 @@ interface Api {
   blueprintGetPipelineStatus: (args: {
     workspaceId: string
   }) => Promise<{ running: boolean; blueprintId: string | null; currentPhase: string | null }>
+  blueprintRetryPhase: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{ retrying: boolean; phase: string }>
+  blueprintGetTranscript: (args: {
+    blueprintId: string
+    afterSeq?: number
+  }) => Promise<Array<{
+    id: string
+    blueprintId: string
+    seq: number
+    type: string
+    payload: Record<string, unknown>
+    createdAt: string
+  }>>
   onBlueprintPhaseStart: (
     cb: (data: { blueprintId: string; workspaceId: string; phase: string }) => void
   ) => () => void
   onBlueprintPhaseProgress: (
-    cb: (data: { blueprintId: string; workspaceId: string; phase: string; text: string }) => void
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      text: string
+      kind?: 'text' | 'tool'
+      toolActivity?: Record<string, unknown>
+    }) => void
   ) => () => void
   onBlueprintPhaseComplete: (
     cb: (data: {
@@ -1274,6 +1294,12 @@ interface Api {
     approved: boolean
     feedback?: string
   }) => Promise<{ responded: boolean }>
+  onBlueprintClarifyAwaitingInput: (
+    cb: (data: { blueprintId: string; workspaceId: string }) => void
+  ) => () => void
+  onBlueprintClarifyFindings: (cb: (data: unknown) => void) => () => void
+  onBlueprintClarifyQuestions: (cb: (data: unknown) => void) => () => void
+  onBlueprintClarifyGate: (cb: (data: unknown) => void) => () => void
   onBlueprintApprovalNeeded: (
     cb: (data: {
       blueprintId: string
@@ -1311,6 +1337,40 @@ interface Api {
   onBlueprintWaveComplete: (
     cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ) => () => void
+
+  // Blueprint Snapshot Sync (M2)
+  onBlueprintStateSync: (
+    cb: (data: {
+      seq: number
+      workspaceId: string
+      blueprintId: string | null
+      running: boolean
+      machineState: string
+      currentPhase: string | null
+      phaseStartedAt: number | null
+      clarifyFindings: unknown
+      clarifyQuestions: unknown
+      pendingApproval: { planSummary: string } | null
+      wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      lastError: string | null
+    }) => void
+  ) => () => void
+
+  // Blueprint Snapshot Pull (M7)
+  blueprintGetSnapshot: (args: { workspaceId: string }) => Promise<{
+    seq: number
+    workspaceId: string
+    blueprintId: string | null
+    running: boolean
+    machineState: string
+    currentPhase: string | null
+    phaseStartedAt: number | null
+    clarifyFindings: unknown
+    clarifyQuestions: unknown
+    pendingApproval: { planSummary: string } | null
+    wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+    lastError: string | null
+  }>
 
   // Council (LLM Council — multi-advisor review)
   councilStart: (args: {
@@ -1385,6 +1445,17 @@ interface Api {
       summary: string
     }) => void
   ) => () => void
+
+  // E2E Testing
+  testingListScenarios: () => Promise<E2EScenarioSummary[]>
+  testingPreflight: (args?: { workspaceId?: string }) => Promise<E2EPreflightResult>
+  testingRun: (args?: { scenarioIds?: string[]; category?: string; workspaceId?: string }) => Promise<{ runId: string }>
+  testingRequeueFailed: (args: { runId: string; workspaceId?: string }) => Promise<{ runId: string }>
+  testingCancel: () => Promise<void>
+  testingGetRuns: (args?: { workspaceId?: string }) => Promise<E2ERunSummary[]>
+  testingGetRunResults: (args: { runId: string }) => Promise<E2EResultSummary[]>
+  testingGetResultDetail: (args: { resultId: string }) => Promise<E2EResultDetail | undefined>
+  onTestingProgress: (cb: (data: E2EProgressEvent) => void) => () => void
 }
 
 declare global {

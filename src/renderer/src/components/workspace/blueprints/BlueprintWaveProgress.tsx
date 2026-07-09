@@ -12,7 +12,7 @@ interface BlueprintWaveProgressProps {
 function TaskStatusIcon({ status }: { status: TaskStatus }): JSX.Element {
   switch (status) {
     case 'running':
-      return <Loader2 size={14} className="text-emerald-400 animate-spin" />
+      return <Loader2 size={14} className="text-accent animate-spin" />
     case 'complete':
       return <CheckCircle size={14} className="text-success" />
     case 'failed':
@@ -50,14 +50,14 @@ export default function BlueprintWaveProgress({
       {/* Wave header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Layers size={14} className="text-emerald-400" />
+          <Layers size={14} className="text-accent" />
           <span className="text-xs font-semibold text-text-primary">Wave {wave}</span>
           <span className="text-[10px] text-text-muted">
             {taskCount} task{taskCount !== 1 ? 's' : ''}
           </span>
         </div>
         <div className="flex items-center gap-3 text-[10px]">
-          {runningCount > 0 && <span className="text-emerald-400">{runningCount} running</span>}
+          {runningCount > 0 && <span className="text-accent">{runningCount} running</span>}
           {completedCount > 0 && <span className="text-success">{completedCount} done</span>}
           {failedCount > 0 && <span className="text-danger">{failedCount} failed</span>}
         </div>
@@ -66,7 +66,7 @@ export default function BlueprintWaveProgress({
       {/* Progress bar */}
       <div className="w-full h-1.5 bg-surface-base rounded-full overflow-hidden">
         <div
-          className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+          className="h-full bg-accent rounded-full transition-all duration-300"
           style={{
             width: `${taskCount > 0 ? ((completedCount + failedCount) / taskCount) * 100 : 0}%`
           }}
@@ -88,7 +88,7 @@ export default function BlueprintWaveProgress({
               <span
                 className={`text-[10px] font-medium ${
                   status === 'running'
-                    ? 'text-emerald-400'
+                    ? 'text-accent'
                     : status === 'complete'
                       ? 'text-success'
                       : status === 'failed'

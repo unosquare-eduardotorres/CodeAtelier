@@ -9,81 +9,13 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 
-// ── Stub Electron before importing ──
-const electronMock = {
-  app: {
-    get isPackaged() { return false },
-    getAppPath() { return '/mock/app' },
-    getPath(name: string) { return `/mock/${name}` }
-  }
-}
+// Use the shared electron stub (ipcMain, app, BrowserWindow, electron-log).
+// Safe to call multiple times — idempotent.
+setupElectronStub()
 
-try {
-  const Module = require('module')
-  const origResolve = Module._resolveFilename
-  Module._resolveFilename = function (request: string, ...args: unknown[]) {
-    if (request === 'electron') return 'electron'
-    return origResolve.call(this, request, ...args)
-  }
-  require.cache[require.resolve('electron')] = {
-    id: 'electron',
-    filename: 'electron',
-    loaded: true,
-    exports: electronMock,
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub electron-log/main
-try {
-  const logMock = {
-    scope: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {}
-  }
-  require.cache[require.resolve('electron-log/main')] = {
-    id: 'electron-log/main',
-    filename: 'electron-log/main',
-    loaded: true,
-    exports: { default: logMock, ...logMock },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub electron-log (bare import used by some modules)
-try {
-  const logMock = {
-    scope: () => ({ info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }),
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {}
-  }
-  require.cache[require.resolve('electron-log')] = {
-    id: 'electron-log',
-    filename: 'electron-log',
-    loaded: true,
-    exports: { default: logMock, ...logMock },
-    children: [],
-    paths: [],
-    path: ''
-  } as unknown as NodeModule
-} catch {
-  // skip
-}
-
-// Stub chatAgentLogger
+// Stub chatAgentLogger (non-electron; still needed independently)
 try {
   const loggerPath = require.resolve('../../logger')
   const loggerMock = {
@@ -134,8 +66,7 @@ function makeOpts(overrides: Record<string, unknown> = {}) {
     },
     controlCallbacks: {
       onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: () => {}
+      onAskUser: () => {}
     },
     ...overrides
   }

@@ -164,8 +164,7 @@ describe('Control action callbacks', () => {
       onPlan: (plan) => {
         receivedPlan = plan
       },
-      onAskUser: () => {},
-      onMemory: () => {}
+      onAskUser: () => {}
     }
     const plan = planSchema.parse({ title: 'Test Plan', summary: 'Plan summary' })
     callbacks.onPlan(plan as Parameters<ControlActionCallbacks['onPlan']>[0])
@@ -182,8 +181,7 @@ describe('Control action callbacks', () => {
       onAskUser: (questions, _action, requestId) => {
         receivedQuestions = questions
         receivedRequestId = requestId
-      },
-      onMemory: () => {}
+      }
     }
     const { questions } = askUserSchema.parse({
       questions: [{ question: 'Which approach?' }]
@@ -198,23 +196,5 @@ describe('Control action callbacks', () => {
     assert.equal(receivedRequestId, 'req-123')
   })
 
-  test('onMemory callback receives memory data', () => {
-    let receivedMemory: unknown = null
-    const callbacks: ControlActionCallbacks = {
-      onPlan: () => {},
-      onAskUser: () => {},
-      onMemory: (memory) => {
-        receivedMemory = memory
-      }
-    }
-    const memory = emitMemorySchema.parse({
-      type: 'feedback',
-      title: 'Use kebab-case',
-      content: 'User corrected: always use kebab-case for file names'
-    })
-    callbacks.onMemory(memory)
-    assert.ok(receivedMemory)
-    assert.equal((receivedMemory as Record<string, unknown>).type, 'feedback')
-    assert.equal((receivedMemory as Record<string, unknown>).title, 'Use kebab-case')
-  })
+  // onMemory callback removed — memory tools now on dedicated memory MCP server
 })

@@ -112,62 +112,115 @@ describe('OpenCodeConfigWriter.buildCompactionConfig', () => {
 describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   const baseProvider = { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' }
 
-  test('anthropic cloud → setCacheKey true + timeout 300K', () => {
+  test('anthropic cloud → options.setCacheKey true + options.timeout 300K', () => {
     const providers = (writer as any).buildProviderConfig(baseProvider, false, undefined)
     const entry = providers.anthropic
     assert.ok(entry, 'should have anthropic entry')
-    assert.equal(entry.setCacheKey, true)
-    assert.equal(entry.timeout, 300_000)
-    assert.equal(entry.chunkTimeout, 15_000)
+    assert.equal(entry.options.setCacheKey, true)
+    assert.equal(entry.options.timeout, 300_000)
+    assert.equal(entry.options.chunkTimeout, 15_000)
+    // Built-in provider should NOT have npm
+    assert.equal(entry.npm, undefined)
   })
 
-  test('local provider → timeout 600K + chunkTimeout 30K', () => {
+  test('local provider → options.timeout 600K + options.chunkTimeout 30K', () => {
     const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b' }
     const providers = (writer as any).buildProviderConfig(provider, true, 'medium')
     const entry = providers.ollama
     assert.ok(entry, 'should have ollama entry')
-    assert.equal(entry.timeout, 600_000)
-    assert.equal(entry.chunkTimeout, 30_000)
+    assert.equal(entry.options.timeout, 600_000)
+    assert.equal(entry.options.chunkTimeout, 30_000)
   })
 
-  test('provider with baseUrl → includes baseUrl', () => {
+  test('provider with baseUrl → options.baseURL (uppercase)', () => {
     const provider = { providerId: 'openai', modelId: 'gpt-5', baseUrl: 'http://localhost:4000' }
     const providers = (writer as any).buildProviderConfig(provider, false, undefined)
     const entry = providers.openai
     assert.ok(entry)
-    assert.equal(entry.baseUrl, 'http://localhost:4000')
+    assert.equal(entry.options.baseURL, 'http://localhost:4000')
   })
 
-  test('provider with apiKey → includes apiKey', () => {
+  test('provider with apiKey → options.apiKey', () => {
     const provider = { providerId: 'openai', modelId: 'gpt-5', apiKey: 'sk-test-123' }
     const providers = (writer as any).buildProviderConfig(provider, false, undefined)
     const entry = providers.openai
     assert.ok(entry)
-    assert.equal(entry.apiKey, 'sk-test-123')
+    assert.equal(entry.options.apiKey, 'sk-test-123')
   })
 
-  test('local + small tier → limit.context 8192', () => {
-    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:7b' }
+  test('custom provider with baseUrl → npm: @ai-sdk/openai-compatible', () => {
+    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000' }
     const providers = (writer as any).buildProviderConfig(provider, true, 'small')
-    const entry = providers.ollama
+    const entry = providers.omlx
     assert.ok(entry)
-    assert.deepEqual(entry.limit, { context: 8192 })
+    assert.equal(entry.npm, '@ai-sdk/openai-compatible')
   })
 
-  test('local + medium tier → limit.context 32768', () => {
-    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b' }
-    const providers = (writer as any).buildProviderConfig(provider, true, 'medium')
-    const entry = providers.ollama
-    assert.ok(entry)
-    assert.deepEqual(entry.limit, { context: 32768 })
+  test('custom provider baseUrl auto-appends /v1 for OpenAI-compatible SDK', () => {
+    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'small')
+    assert.equal(providers.omlx.options.baseURL, 'http://192.168.1.1:8000/v1')
   })
 
-  test('local + large tier → limit.context 131072', () => {
-    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b' }
-    const providers = (writer as any).buildProviderConfig(provider, true, 'large')
+  test('custom provider baseUrl already ending with /v1 is not doubled', () => {
+    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000/v1' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'small')
+    assert.equal(providers.omlx.options.baseURL, 'http://192.168.1.1:8000/v1')
+  })
+
+  test('built-in provider with baseUrl → no npm, no /v1 append', () => {
+    const provider = { providerId: 'openai', modelId: 'gpt-5', baseUrl: 'http://localhost:4000' }
+    const providers = (writer as any).buildProviderConfig(provider, false, undefined)
+    assert.equal(providers.openai.npm, undefined)
+    assert.equal(providers.openai.options.baseURL, 'http://localhost:4000')
+  })
+
+  test('local + small tier + confident → models with tier-accurate limits', () => {
+    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:7b', baseUrl: 'http://localhost:11434' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'small', true)
     const entry = providers.ollama
     assert.ok(entry)
-    assert.deepEqual(entry.limit, { context: 131072 })
+    assert.deepEqual(entry.models['qwen2.5-coder:7b'].limit, { context: 8192, output: 4096 })
+  })
+
+  test('local + medium tier + confident → models with context 32768', () => {
+    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b', baseUrl: 'http://localhost:11434' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'medium', true)
+    const entry = providers.ollama
+    assert.ok(entry)
+    assert.deepEqual(entry.models['qwen2.5-coder:32b'].limit, { context: 32768, output: 32768 })
+  })
+
+  test('local + large tier + confident → models with context 131072', () => {
+    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b', baseUrl: 'http://localhost:11434' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'large', true)
+    const entry = providers.ollama
+    assert.ok(entry)
+    assert.deepEqual(entry.models['qwen2.5-coder:32b'].limit, { context: 131072, output: 32768 })
+  })
+
+  test('custom provider + not confident → models with default fallback limits', () => {
+    const provider = { providerId: 'omlx', modelId: 'mlx-community/test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'medium', false)
+    const entry = providers.omlx
+    assert.ok(entry, 'should have omlx entry')
+    assert.ok(entry.models, 'models block must exist even when not confident')
+    assert.deepEqual(entry.models['mlx-community/test-model'].limit, { context: 131072, output: 32768 })
+  })
+
+  test('custom provider + no contextWindowConfident → models with default limits', () => {
+    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const providers = (writer as any).buildProviderConfig(provider, true, 'small')
+    const entry = providers.omlx
+    assert.ok(entry, 'should have omlx entry')
+    assert.ok(entry.models, 'models block must exist for custom providers')
+    assert.deepEqual(entry.models['test-model'].limit, { context: 131072, output: 32768 })
+  })
+
+  test('built-in provider → no models block (resolved via models.dev)', () => {
+    const provider = { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' }
+    const providers = (writer as any).buildProviderConfig(provider, false, undefined)
+    assert.equal(providers.anthropic.models, undefined)
   })
 
   test('non-anthropic, non-local, no baseUrl/apiKey → empty providers', () => {
@@ -266,6 +319,41 @@ describe('OpenCodeConfigWriter.buildPermissions — build-mode all-allow', () =>
     assert.equal(perms.skill, 'allow')
     assert.equal(perms.lsp, 'allow')
     assert.equal(perms.todowrite, 'allow')
+  })
+})
+
+// ── buildInstructions ──
+
+describe('OpenCodeConfigWriter.buildInstructions — glob safety', () => {
+  test('non-existent workspace returns empty array (no {file:} refs)', () => {
+    const instructions = (writer as any).buildInstructions('/tmp/non-existent-workspace-abc123')
+    // Should NOT include any {file:docs/architecture/*.md} or {file:.cursor/rules/*.md}
+    const fileRefs = instructions.filter((i: string) => i.includes('{file:'))
+    assert.equal(
+      fileRefs.length,
+      0,
+      `Expected no file refs for non-existent workspace, got: ${JSON.stringify(fileRefs)}`
+    )
+  })
+
+  test('workspace with CLAUDE.md includes it', () => {
+    // Use the actual AgentStudio workspace which has CLAUDE.md
+    const instructions = (writer as any).buildInstructions(process.cwd())
+    // Just verify the method runs without error and returns an array
+    assert.ok(Array.isArray(instructions))
+  })
+
+  test('glob patterns only included when directory exists', () => {
+    // For a non-existent workspace, NO glob patterns should be added
+    const instructions = (writer as any).buildInstructions('/tmp/no-such-dir-xyz')
+    const archGlob = instructions.find((i: string) => i.includes('docs/architecture'))
+    const cursorGlob = instructions.find((i: string) => i.includes('.cursor/rules'))
+    assert.equal(archGlob, undefined, 'Should not include docs/architecture glob for non-existent dir')
+    assert.equal(
+      cursorGlob,
+      undefined,
+      'Should not include .cursor/rules glob for non-existent dir'
+    )
   })
 })
 

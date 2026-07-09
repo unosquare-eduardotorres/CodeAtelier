@@ -146,6 +146,11 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
 
   /** Update score, label, and feedback after evaluation */
   updateScore(id: string, score: number, scoreLabel: string, feedback: string): void {
+    // GRILL-SCORE-NOCLAMP-01: Defensive clamping in case upstream validation is bypassed.
+    const clampedScore = Math.min(10, Math.max(0, score))
+    if (!Number.isFinite(clampedScore)) {
+      throw new Error(`updateScore: score must be a finite number, got ${score}`)
+    }
     // GRILL-ITERATION-01: Increment iteration_count so the DB tracks actual
     // re-evaluation count. Without this, iteration_count stays at 0 forever
     // and useGrillSessionRestore() shows stale progress after app restart.
@@ -157,7 +162,7 @@ export class GrillSessionRepository extends BaseRepository<GrillSessionRow, Gril
            updated_at = datetime('now')
        WHERE id = ?`
       )
-      .run(score, scoreLabel, feedback, id)
+      .run(clampedScore, scoreLabel, feedback, id)
   }
 
   /** Update question states and current iteration (after questions arrive or user answers) */

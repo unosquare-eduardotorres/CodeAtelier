@@ -120,6 +120,37 @@ npm run format        # Prettier
 
 > **Restart convention:** "restart the app" → always `npm run dev:restart`
 
+## ⚠️ build:mac — Destructive Pipeline
+
+`npm run build:mac` **mutilates `node_modules` and `package.json`** during the build, then restores them via an EXIT trap. If the build fails, is interrupted, or the trap misfires, you will be left with a broken environment.
+
+**Before running `build:mac`:**
+1. `npm run typecheck:node` → must be 0 errors
+2. `npm run typecheck:web` → must be 0 errors  
+3. `grep '"dependencies"' package.json` → must return 1 match
+4. `cp package.json package.json.safe` → safety backup
+
+**After `build:mac` (success or failure):**
+1. `grep '"dependencies"' package.json` → must return 1 match. If 0 → `git checkout package.json`
+2. `npm run typecheck:node` → verify 0 errors
+3. `echo $NODE_ENV` → if `production`, the restore may have silently skipped dev deps
+4. `npm config get omit` → if `dev`, run `npm install --include=dev` to restore them
+
+**If type errors appear after build:mac, diagnose FIRST:**
+1. `find node_modules/electron-log -name '*.d.ts' | wc -l` → if 0, `.d.ts` files are missing (not a code bug)
+2. `echo $NODE_ENV` → if `production`, npm silently omitted devDependencies
+3. `npm config get omit` → if `dev`, that confirms the cause
+
+**If `.d.ts` files are missing** (NODE_ENV/omit issue):
+- ✅ `rm -rf node_modules && npm install --include=dev` — this is the correct fix
+
+**If `.d.ts` files are present** (genuine code bugs):
+- ❌ Do NOT `rm -rf node_modules && npm install` — this won't help
+- ❌ Do NOT `npm prune` outside of the build-mac flow
+- Fix the type errors in the code — they were latent bugs exposed by the clean install
+
+**Full recipe:** `scripts/BUILD-MAC-RECIPE.md`
+
 ## Architecture notes
 
 - **Two role adapters, one execution pipeline**

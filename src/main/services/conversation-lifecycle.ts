@@ -84,10 +84,17 @@ export class ConversationLifecycle {
     log.info(
       `[ConversationLifecycle] Complete: conversation=${this._conversationId} requestId=${this._requestId}`
     )
+    // LIFECYCLE-BEGIN-FROM-DISPOSER-01: Snapshot current controller before
+    // disposers run. If a disposer calls begin(), the controller changes.
+    // Only null-out if the controller is still the one we started with.
+    const controllerBeforeDispose = this.abortController
     this.runDisposers()
-    this.abortController = null
-    this._requestId = null
-    this._conversationId = null
+    if (this.abortController === controllerBeforeDispose) {
+      this.abortController = null
+      this._requestId = null
+      this._conversationId = null
+    }
+    // else: a disposer called begin() — new lifecycle owns state now
   }
 
   /**
@@ -98,14 +105,26 @@ export class ConversationLifecycle {
     log.warn(
       `[ConversationLifecycle] Abort: reason=${reason ?? 'unknown'} conversation=${this._conversationId} requestId=${this._requestId}`
     )
-    if (this.abortController) {
-      this.abortController.abort(reason)
+    // LIFECYCLE-BEGIN-FROM-DISPOSER-01: Snapshot controller before disposers.
+    const controllerBeforeDispose = this.abortController
+    if (controllerBeforeDispose) {
+      controllerBeforeDispose.abort(reason)
     }
     this.runDisposers()
-    this.abortController = null
-    this._requestId = null
-    this._conversationId = null
-    conversationStateMachine.forceReset()
+    if (this.abortController === controllerBeforeDispose) {
+      this.abortController = null
+      this._requestId = null
+      this._conversationId = null
+    }
+    // else: a disposer called begin() — new lifecycle owns state now
+
+    // LIFECYCLE-ABORT-IDLE-FORCERESET-01: Only force-reset the state machine
+    // if we actually had an active lifecycle to abort. If controllerBeforeDispose
+    // is null, this was an idle abort — force-resetting could clobber a new
+    // stream's state machine transition that just started.
+    if (controllerBeforeDispose) {
+      conversationStateMachine.forceReset()
+    }
   }
 
   private runDisposers(): void {
@@ -120,6 +139,21 @@ export class ConversationLifecycle {
         fn()
       } catch (e) {
         log.warn('[ConversationLifecycle] Disposer error:', e)
+      }
+    }
+
+    // LIFECYCLE-DISPOSER-REGISTERED-DURING-DISPOSAL-01: Drain any disposers
+    // added by disposers that just ran. One pass is sufficient since
+    // isDisposing prevents recursive runDisposers() from executing.
+    while (this.disposers.length > 0) {
+      const extra = this.disposers
+      this.disposers = []
+      for (const fn of extra) {
+        try {
+          fn()
+        } catch (e) {
+          log.warn('[ConversationLifecycle] Late-registered disposer error:', e)
+        }
       }
     }
 

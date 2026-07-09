@@ -12,9 +12,7 @@ import './migration-v102.test'
 import './specialist.repository.test'
 import './skill.repository.test'
 import './bug.repository.test'
-import './preset.repository.test'
 import './idea.repository.test'
-import './memory.repository.test'
 import './event.repository.test'
 
 // ─── Phase 15: Track 1B: Pipeline Repos ───
@@ -39,6 +37,9 @@ import './repo-branch-coverage.test'
 
 // ─── Phase 17: Track 8: Repo deep branch completion ───
 import './repo-deep-branch.test'
+
+// ─── E2E Testing Repos ───
+import './e2e-test-repos.test'
 
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 

@@ -174,6 +174,64 @@ describe('chunk-router › handleStatus edge cases', () => {
   })
 })
 
+describe('chunk-router › handleStatus suppression', () => {
+  test('agent_switched: prefix → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-agent', window), { type: 'status', content: 'agent_switched:davinci' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('model_switched: prefix → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-model', window), { type: 'status', content: 'model_switched:claude-sonnet-4' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('idle status → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-idle', window), { type: 'status', content: 'idle' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('finishReason: prefix → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-finish', window), { type: 'status', content: 'finishReason:completed' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('thinking/reviewing/writing/failed → suppressed', () => {
+    const { window, send } = mockWindow()
+    for (const value of ['thinking', 'reviewing', 'writing', 'failed']) {
+      routeChunk(ctx(`c-${value}`, window), { type: 'status', content: value } as StreamChunk)
+    }
+    assert.equal(send.callCount, 0)
+  })
+
+  test('non-metadata status → still rendered', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-custom', window), { type: 'status', content: 'processing your request' } as StreamChunk)
+    assert.equal(send.callCount, 1)
+  })
+})
+
+describe('chunk-router › handleSessionState size guard', () => {
+  test('normal-sized session_state → forwarded', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-state', window), { type: 'session_state', content: 'session_diff:small' } as StreamChunk)
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.SDK_SESSION_STATE)
+  })
+
+  test('oversized session_state → truncated and still forwarded', () => {
+    const { window, send } = mockWindow()
+    const huge = 'x'.repeat(1_100_000)
+    routeChunk(ctx('c-big-state', window), { type: 'session_state', content: huge } as StreamChunk)
+    assert.equal(send.callCount, 1)
+    const payload = send.lastCall?.[1] as { state: string }
+    assert.equal(payload.state.length, 1_000_000)
+  })
+})
+
 describe('chunk-router › handleFilesPersisted', () => {
   test('sends SDK_FILES_PERSISTED with files payload', () => {
     const { window, send } = mockWindow()
@@ -273,6 +331,82 @@ describe('chunk-router › handleSubagentComplete', () => {
       toolId: 'sub-4'
     } as unknown as StreamChunk)
     assert.ok(send.callCount >= 1)
+  })
+})
+
+// ── Control signal filtering (CONTROL-SIGNAL-FILTER-01) ──
+
+describe('chunk-router › handleText control signal filtering', () => {
+  test('{"type":"busy"} text chunk is dropped (no accumulation, no send)', () => {
+    const { window, send } = mockWindow()
+    const c = ctx('c-busy', window)
+    routeChunk(c, { type: 'text', content: '{"type":"busy"}' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+    // No IPC send (text batcher may not flush immediately, but accumulator is untouched)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('{"type":"idle"} text chunk is dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-idle-text', window)
+    routeChunk(c, { type: 'text', content: '{"type":"idle"}' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('{"type":"ready"} and {"type":"processing"} are also dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-ready-proc', window)
+    routeChunk(c, { type: 'text', content: '{"type":"ready"}' } as StreamChunk)
+    routeChunk(c, { type: 'text', content: '{"type":"processing"}' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('control signal with whitespace padding is still dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-ws', window)
+    routeChunk(c, { type: 'text', content: '  { "type" : "busy" }  ' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, '')
+  })
+
+  test('legitimate text containing "busy" is NOT dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-legit', window)
+    routeChunk(c, { type: 'text', content: 'The server is busy processing your request.' } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, 'The server is busy processing your request.')
+  })
+
+  test('JSON embedded in larger text is NOT dropped', () => {
+    const { window } = mockWindow()
+    const c = ctx('c-embed', window)
+    const content = 'Here is the status: {"type":"busy"} and more text'
+    routeChunk(c, { type: 'text', content } as StreamChunk)
+    assert.equal(c.contentAccumulator.value, content)
+  })
+})
+
+describe('chunk-router › handleStatus busy suppression', () => {
+  test('busy status → suppressed (no send)', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-busy-status', window), { type: 'status', content: 'busy' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('status chunk with JSON content {"type":"busy"} → suppressed via regex', () => {
+    const { window, send } = mockWindow()
+    routeChunk(
+      ctx('c-json-busy-status', window),
+      { type: 'status', content: '{"type":"busy"}' } as StreamChunk
+    )
+    assert.equal(send.callCount, 0)
+  })
+
+  test('status chunk with JSON content {"type":"idle"} → suppressed via regex', () => {
+    const { window, send } = mockWindow()
+    routeChunk(
+      ctx('c-json-idle-status', window),
+      { type: 'status', content: '{"type":"idle"}' } as StreamChunk
+    )
+    assert.equal(send.callCount, 0)
   })
 })
 

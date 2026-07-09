@@ -10,6 +10,30 @@ import { requireObject, requireString, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
 
+/**
+ * Enqueue commit-based memory extraction if gated settings allow it.
+ * Extracted to keep the REPO_COMMIT_FILES handler below complexity threshold.
+ */
+async function maybeEnqueueCommitExtraction(
+  workspaceId: string,
+  repoPath: string,
+  headBefore: string | null,
+  commitHash: string | undefined
+): Promise<void> {
+  if (!headBefore || !commitHash) return
+
+  const settings = workspaceRepository.getSettings(workspaceId) as Record<string, unknown>
+  if (settings.memoryCommitCapture === false) return
+
+  const { memoryExtractionService } = await import('../services/memory-extraction.service')
+  memoryExtractionService.enqueueCommitExtraction({
+    workspaceId,
+    workspacePath: repoPath,
+    startSha: headBefore,
+    endSha: commitHash
+  })
+}
+
 /** Resolve workspace repoPath from conversationId */
 function resolveRepoPath(conversationId: string): { repoPath: string; workspaceId: string } {
   const conversation = conversationRepository.findById(conversationId)
@@ -54,8 +78,18 @@ export function registerCodeChangesIpc(): void {
       throw new Error(`${IPC_CHANNELS.REPO_COMMIT_FILES}: filePaths must be a non-empty array`)
     }
 
-    const { repoPath } = resolveRepoPath(conversationId)
+    const { repoPath, workspaceId } = resolveRepoPath(conversationId)
+
+    // Capture HEAD before commit for memory extraction
+    const headBefore = await repoService.getHeadSha(repoPath).catch(() => null)
+
     const result = await repoService.commitFiles(repoPath, filePaths, message)
+
+    // G3-FIX: Wire commit extraction, gated by memoryCommitCapture setting
+    maybeEnqueueCommitExtraction(workspaceId, repoPath, headBefore, result.commitHash).catch(
+      (err) => logger.debug('Commit memory extraction failed (non-fatal):', err)
+    )
+
     return result
   })
 

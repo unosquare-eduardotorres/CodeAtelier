@@ -328,4 +328,4 @@ describe('VectorSearchService.indexProject — phase transitions', () => {
 
 console.log(`\n${'─'.repeat(40)}`)
 console.log(`vector-search: ${passed} passed, ${failed} failed`)
-if (failed > 0) process.exit(1)
+if (failed > 0) process.exitCode = 1

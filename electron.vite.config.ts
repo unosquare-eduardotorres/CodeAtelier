@@ -29,7 +29,8 @@ export default defineConfig({
           ),
           'mcp-servers/github-context-server': resolve(
             'src/main/mcp-servers/github-context-server.ts'
-          )
+          ),
+          'mcp-servers/memory-server': resolve('src/main/mcp-servers/memory-server.ts')
         }
       }
     },

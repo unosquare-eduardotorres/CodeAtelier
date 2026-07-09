@@ -514,4 +514,4 @@ console.log(`\n${'─'.repeat(40)}`)
 console.log(
   `code-graph-db: ${passed} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`
 )
-if (failed > 0) process.exit(1)
+if (failed > 0) process.exitCode = 1

@@ -460,7 +460,7 @@ export class MpaOrchestrationService extends EventEmitter {
     goalCondition: string
     workspacePath: string
   }): Promise<{ phase: MpaPhase; text: string }> {
-    params.adapter.setGoalCondition(params.goalCondition)
+    params.adapter.setGoalCondition(params.goalCondition, 'enforce')
 
     const phase = mpaRunRepository.createPhase({
       runId: params.run.id,

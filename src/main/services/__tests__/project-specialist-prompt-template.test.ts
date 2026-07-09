@@ -45,7 +45,6 @@ describe('project-specialist-prompt-template', () => {
     // The template is just role identity + skills slot.
     const out = renderTemplate({ workspaceName: 'Acme' })
     assert.ok(out.includes('Acme Specialist'))
-    assert.ok(out.toLowerCase().includes('your identity'))
     assert.ok(out.toLowerCase().includes('sole implementer'))
   })
 

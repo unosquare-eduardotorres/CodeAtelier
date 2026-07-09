@@ -196,19 +196,22 @@ export class GrillPersistenceController {
     // is preserved on the renderer.
     this.textBatcher.flush(workspaceId)
 
-    // Forward to renderer via router
-    router.sendWorkspaceEvent(
-      IPC_CHANNELS.GRILL_EVALUATION_RESULT,
-      workspaceId,
-      evaluation as unknown as Record<string, unknown>
-    )
-
     const tracking = this.getTracking(workspaceId)
-    if (!tracking) return
+    if (!tracking) {
+      // GRILL-EVAL-RENDER-BEFORE-DB-01: For greenfield (no tracking), send directly.
+      router.sendWorkspaceEvent(
+        IPC_CHANNELS.GRILL_EVALUATION_RESULT,
+        workspaceId,
+        evaluation as unknown as Record<string, unknown>
+      )
+      return
+    }
 
     // Flush any pending text/tool messages first
     this.flushToDb(workspaceId)
 
+    // GRILL-EVAL-RENDER-BEFORE-DB-01: Persist to DB FIRST, then notify renderer.
+    // If the transaction fails, don't send stale data to the renderer.
     // GRILL-TX-NOERRHANDLING-01: Wrap transaction in try-catch so a DB failure
     // doesn't crash the event listener. If it fails, evaluationHandled stays false
     // and handleComplete() recovery logic will kick in.
@@ -234,8 +237,17 @@ export class GrillPersistenceController {
       tracking.evaluationHandled = true
     } catch (err) {
       ctrlLog.error('[grill-persistence] Evaluation transaction failed:', err)
-      // evaluationHandled stays false — handleComplete() will recover gracefully
+      // evaluationHandled stays false — handleComplete() will recover gracefully.
+      // Don't send to renderer if DB persistence failed.
+      return
     }
+
+    // GRILL-EVAL-RENDER-BEFORE-DB-01: Send to renderer ONLY after DB succeeds.
+    router.sendWorkspaceEvent(
+      IPC_CHANNELS.GRILL_EVALUATION_RESULT,
+      workspaceId,
+      evaluation as unknown as Record<string, unknown>
+    )
 
     // GRILL-HANDLEEVAL-EMIT-UNGUARDED-01: Wrap in try-catch matching
     // startTracking/clearTracking pattern. If router throws here,
@@ -406,7 +418,17 @@ export class GrillPersistenceController {
     }
     const tracking = this.getTracking(workspaceId)
     if (tracking && tracking.ideaId === ideaId) {
-      this.flushToDb(workspaceId)
+      // GRILL-FLUSH-ORPHAN-01: Inline flush instead of flushToDb() to prevent
+      // the retry-then-delete race. flushToDb() schedules a retry on failure,
+      // but the next line deletes the tracking state — the retry finds nothing.
+      if (tracking.flushTimer) { clearTimeout(tracking.flushTimer); tracking.flushTimer = null }
+      if (tracking.messageBuffer.length > 0) {
+        try {
+          grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+        } catch (err) {
+          ctrlLog.error('[grill-persistence] Terminal flush failed — messages lost:', err)
+        }
+      }
       this.activeSessions.delete(workspaceId)
     }
   }
@@ -432,7 +454,14 @@ export class GrillPersistenceController {
         } catch {
           /* router may not be initialized during early cancellation */
         }
-        this.flushToDb(workspaceId)
+        // GRILL-FLUSH-ORPHAN-01: Inline flush — same pattern as notifyTerminal().
+        if (tracking.messageBuffer.length > 0) {
+          try {
+            grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+          } catch (err) {
+            ctrlLog.error('[grill-persistence] Cancel flush failed — messages lost:', err)
+          }
+        }
         this.activeSessions.delete(workspaceId)
       }
     } else {
@@ -451,7 +480,14 @@ export class GrillPersistenceController {
         } catch {
           /* router may not be initialized during early cancellation */
         }
-        this.flushToDb(wsId)
+        // GRILL-FLUSH-ORPHAN-01: Inline flush for cancel-all branch.
+        if (tracking.messageBuffer.length > 0) {
+          try {
+            grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)
+          } catch (err) {
+            ctrlLog.error('[grill-persistence] Cancel-all flush failed — messages lost:', err)
+          }
+        }
       }
       this.activeSessions.clear()
     }

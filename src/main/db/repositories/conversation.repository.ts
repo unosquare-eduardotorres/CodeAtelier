@@ -4,6 +4,8 @@ import type {
   CommunicationTone,
   Conversation,
   ConversationMode,
+  ConversationModelSnapshot,
+  ConversationType,
   LLMProvider,
   ThinkingEffort
 } from '../../../shared/types'
@@ -13,6 +15,7 @@ interface ConversationRow {
   workspace_id: string
   title: string
   mode: 'plan' | 'build' | 'danger'
+  type: 'chat' | 'blueprint'
   created_at: string
   status: 'active' | 'archived'
   summary: string | null
@@ -28,6 +31,7 @@ interface ConversationRow {
   effort: string | null
   preset_id: string | null
   handoff_context: string | null
+  model_config_json: string | null
 }
 
 function parseMcpOverrides(json: string | null): Record<string, boolean> | undefined {
@@ -45,6 +49,7 @@ function mapRow(row: ConversationRow): Conversation {
     workspaceId: row.workspace_id,
     title: row.title,
     mode: row.mode,
+    type: row.type ?? 'chat',
     createdAt: row.created_at,
     status: row.status,
     summary: row.summary ?? undefined,
@@ -58,8 +63,10 @@ function mapRow(row: ConversationRow): Conversation {
     mcpOverrides: parseMcpOverrides(row.mcp_overrides_json),
     communicationTone: (row.communication_tone as CommunicationTone) ?? null,
     effort: (row.effort as ThinkingEffort) ?? 'high',
-    presetId: row.preset_id ?? null,
-    handoffContext: row.handoff_context ?? null
+    handoffContext: row.handoff_context ?? null,
+    modelConfigSnapshot: row.model_config_json
+      ? safeParseJSON<ConversationModelSnapshot | null>(row.model_config_json, null)
+      : null
   }
 }
 
@@ -77,12 +84,13 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     llmProvider?: LLMProvider,
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null,
-    presetId?: string | null
+    type?: ConversationType,
+    modelConfigSnapshot?: ConversationModelSnapshot | null
   ): Conversation {
     const row = this.db()
       .prepare(
-        `INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider, mcp_overrides_json, communication_tone, preset_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider, mcp_overrides_json, communication_tone, preset_id, type, model_config_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -93,7 +101,9 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
         llmProvider ?? 'claude',
         mcpOverrides ? JSON.stringify(mcpOverrides) : '{}',
         communicationTone ?? null,
-        presetId ?? null
+        null, // preset_id — deprecated, always null
+        type ?? 'chat',
+        modelConfigSnapshot ? JSON.stringify(modelConfigSnapshot) : null
       ) as ConversationRow
     return mapRow(row)
   }
@@ -109,9 +119,12 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
   }
 
   findByWorkspace(workspaceId: string): Conversation[] {
-    return this.findManyBy('workspace_id', workspaceId, {
-      orderBy: 'sort_order ASC, created_at DESC'
-    })
+    const rows = this.db()
+      .prepare(
+        `SELECT * FROM conversations WHERE workspace_id = ? AND type = 'chat' ORDER BY sort_order ASC, created_at DESC`
+      )
+      .all(workspaceId) as ConversationRow[]
+    return rows.map(mapRow)
   }
 
   updateTitle(id: string, title: string): Conversation | undefined {
@@ -213,13 +226,7 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     return row?.summary ?? undefined
   }
 
-  /** Update the preset assigned to a conversation */
-  updatePreset(conversationId: string, presetId: string | null): Conversation | undefined {
-    const row = this.db()
-      .prepare(`UPDATE conversations SET preset_id = ? WHERE id = ? RETURNING *`)
-      .get(presetId, conversationId) as ConversationRow | undefined
-    return row ? mapRow(row) : undefined
-  }
+
 
   /** Update handoff context injected when switching providers mid-chat */
   updateHandoffContext(conversationId: string, handoffContext: string | null): void {

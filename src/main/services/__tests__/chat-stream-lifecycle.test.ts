@@ -60,7 +60,7 @@ interface ChatStreamServiceInternal {
     rejectDone: (err: Error) => void
   ): void
   finalizeStreamMessage(ctx: StreamContext): Promise<void>
-  processMemoryBlocks(ctx: StreamContext): void
+  enqueueMemoryExtraction(ctx: StreamContext): void
   forceResetIfStuck(): void
 }
 
@@ -104,7 +104,7 @@ function createTestService(overrides?: {
     setupStreamTimers: undefined as unknown as ChatStreamServiceInternal['setupStreamTimers'],
     finalizeStreamMessage:
       undefined as unknown as ChatStreamServiceInternal['finalizeStreamMessage'],
-    processMemoryBlocks: undefined as unknown as ChatStreamServiceInternal['processMemoryBlocks'],
+    enqueueMemoryExtraction: undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
     forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck']
   }
 
@@ -121,7 +121,7 @@ function createTestService(overrides?: {
   svc.resolveStreamIdentity = proto.resolveStreamIdentity.bind(svc)
   svc.setupStreamTimers = proto.setupStreamTimers.bind(svc)
   svc.finalizeStreamMessage = proto.finalizeStreamMessage.bind(svc)
-  svc.processMemoryBlocks = proto.processMemoryBlocks.bind(svc)
+  svc.enqueueMemoryExtraction = proto.enqueueMemoryExtraction.bind(svc)
   svc.forceResetIfStuck = proto.forceResetIfStuck.bind(svc)
   // Bind safeWindowSend so finalizeStreamMessage can call it on the test double
   if (proto.safeWindowSend) {
@@ -159,7 +159,7 @@ describe('acquireStreamLock', () => {
         'chat-agent-streaming',
         'state machine should be streaming'
       )
-      assert.match(result.requestId, /^req-[0-9a-f-]+$/, 'requestId matches expected pattern')
+      assert.match(result.requestId, /^req-\d+-[a-z0-9]+$/, 'requestId matches expected pattern')
       assert.equal(typeof result.resolveDone, 'function')
       assert.equal(typeof result.rejectDone, 'function')
       assert.ok(result.done instanceof Promise, 'done is a Promise')
@@ -244,6 +244,30 @@ describe('acquireStreamLock', () => {
       const { done, rejectDone } = svc.acquireStreamLock('conv-1')
       rejectDone(new Error('test error'))
       await assert.rejects(done, /test error/)
+
+      conversationLifecycle.abort('test-cleanup')
+    }))
+
+  test('C3 regression: abort before Stage 8 releases streamingLock', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      svc.acquireStreamLock('conv-x')
+
+      // The C3 fix registers a lock-release disposer inside acquireStreamLock
+      // itself — so aborting (simulating Stop during Stage 6.5, before
+      // registerStreamDisposers in Stage 8) still releases the lock.
+      assert.equal(svc.streamingLock, true, 'lock should be held')
+      conversationLifecycle.abort('userStop')
+
+      assert.equal(svc.streamingLock, false, 'streamingLock must be released by abort')
+      assert.equal(svc.activeRequestId, null, 'activeRequestId must be cleared by abort')
+
+      // A subsequent acquireStreamLock must succeed — no permanent lockout.
+      conversationStateMachine.forceReset()
+      const result = svc.acquireStreamLock('conv-y')
+      assert.ok(result.requestId, 'second acquireStreamLock should succeed')
+      assert.equal(svc.streamingLock, true, 'lock should be re-acquired')
 
       conversationLifecycle.abort('test-cleanup')
     }))
@@ -421,6 +445,7 @@ describe('finalizeStreamMessage', () => {
       resetGlobals()
       // Drive state machine to streaming so transition('chatAgentComplete') works
       conversationStateMachine.transition('sendMessage', 'conv-finalize')
+      conversationLifecycle.begin('conv-finalize')
 
       const mainWindow = mockMainWindow()
       const svc = createTestService({ mainWindow })
@@ -429,7 +454,7 @@ describe('finalizeStreamMessage', () => {
 
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
-        requestId: 'req-fin-1',
+        requestId: conversationLifecycle.requestId!,
         streamingRole: 'da-vinci',
         phase: 'da-vinci-responding',
         specialistMeta: undefined,
@@ -461,6 +486,7 @@ describe('finalizeStreamMessage', () => {
     runExclusive(async () => {
       resetGlobals()
       conversationStateMachine.transition('sendMessage', 'conv-finalize')
+      conversationLifecycle.begin('conv-finalize')
 
       const mainWindow = mockMainWindow()
       const svc = createTestService({ mainWindow })
@@ -470,7 +496,7 @@ describe('finalizeStreamMessage', () => {
 
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
-        requestId: 'req-fin-2',
+        requestId: conversationLifecycle.requestId!,
         streamingRole: 'da-vinci',
         phase: 'da-vinci-responding',
         specialistMeta: undefined,
@@ -503,6 +529,7 @@ describe('finalizeStreamMessage', () => {
     runExclusive(async () => {
       resetGlobals()
       conversationStateMachine.transition('sendMessage', 'conv-finalize')
+      conversationLifecycle.begin('conv-finalize')
 
       const mainWindow = mockMainWindow()
       const svc = createTestService({ mainWindow })
@@ -512,7 +539,7 @@ describe('finalizeStreamMessage', () => {
 
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
-        requestId: 'req-fin-3',
+        requestId: conversationLifecycle.requestId!,
         streamingRole: 'da-vinci',
         phase: 'da-vinci-responding',
         specialistMeta: undefined,
@@ -554,6 +581,7 @@ describe('finalizeStreamMessage', () => {
     runExclusive(async () => {
       resetGlobals()
       conversationStateMachine.transition('sendMessage', 'conv-finalize')
+      conversationLifecycle.begin('conv-finalize')
 
       const mainWindow = mockMainWindow()
       const svc = createTestService({ mainWindow })
@@ -572,7 +600,7 @@ describe('finalizeStreamMessage', () => {
 
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
-        requestId: 'req-fin-4',
+        requestId: conversationLifecycle.requestId!,
         streamingRole: 'da-vinci',
         phase: 'da-vinci-responding',
         specialistMeta: undefined,
@@ -631,11 +659,11 @@ describe('forceResetIfStuck', () => {
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
-// F. processMemoryBlocks
+// F. enqueueMemoryExtraction
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe('processMemoryBlocks', () => {
-  test('does not crash when memoryService throws', () => {
+describe('enqueueMemoryExtraction', () => {
+  test('does not crash when memoryExtractionService throws', () => {
     const svc = createTestService()
     const ctx: StreamContext = {
       conversationId: 'conv-mem',
@@ -645,12 +673,12 @@ describe('processMemoryBlocks', () => {
       specialistMeta: undefined,
       adapterAgentId: 'da-vinci',
       workspacePath: undefined,
-      streamedContent: 'some <memory_block> content',
+      streamedContent: 'some content that is definitely longer than 200 characters to pass the length guard in enqueueMemoryExtraction which checks ctx.streamedContent.length > 200 before calling the service so we need to have enough text here to exceed that threshold',
       planInjected: false
     }
 
     // Should not throw — errors are caught internally
-    assert.doesNotThrow(() => svc.processMemoryBlocks(ctx))
+    assert.doesNotThrow(() => svc.enqueueMemoryExtraction(ctx))
   })
 })
 

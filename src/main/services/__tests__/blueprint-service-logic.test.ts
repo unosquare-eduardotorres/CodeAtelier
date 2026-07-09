@@ -191,6 +191,160 @@ describe('BlueprintService.getPipelineStatus', () => {
   })
 })
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  M5: failPipeline tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BlueprintService.failPipeline', () => {
+  test('failPipeline_from_phase_running_transitions_to_failed', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-f1', 'bp-f1', 'specify')
+    svc.failPipeline('ws-f1', 'test error')
+    const machine = svc.getMachine('ws-f1')
+    assert.equal(machine.currentState, 'failed')
+    assert.equal(svc.isRunning('ws-f1'), false)
+  })
+
+  test('failPipeline_from_awaiting_clarify_questions', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-f2', 'bp-f2', 'clarify')
+    const machine = svc.getMachine('ws-f2')
+    machine.transition('questionsParsed')
+    svc.failPipeline('ws-f2', 'session died')
+    assert.equal(machine.currentState, 'failed')
+    assert.equal(svc.isRunning('ws-f2'), false)
+  })
+
+  test('failPipeline_from_awaiting_clarify_gate', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-f3', 'bp-f3', 'clarify')
+    const machine = svc.getMachine('ws-f3')
+    machine.transition('gateParsed')
+    svc.failPipeline('ws-f3', 'gate error')
+    assert.equal(machine.currentState, 'failed')
+  })
+
+  test('failPipeline_from_awaiting_approval', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-f4', 'bp-f4', 'review')
+    const machine = svc.getMachine('ws-f4')
+    machine.transition('approvalNeeded')
+    svc.failPipeline('ws-f4', 'approval timeout')
+    assert.equal(machine.currentState, 'failed')
+  })
+
+  test('failPipeline_from_idle_is_safe', () => {
+    const svc = new BlueprintService()
+    // Should not throw
+    svc.failPipeline('ws-f5', 'no-op error')
+    const machine = svc.getMachine('ws-f5')
+    assert.equal(machine.currentState, 'idle')
+  })
+
+  test('failPipeline_stores_lastError_in_snapshot', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-f6', 'bp-f6', 'plan')
+    svc.failPipeline('ws-f6', 'plan exploded')
+    const snapshot = svc.getSnapshot('ws-f6')
+    assert.equal(snapshot.lastError, 'plan exploded')
+    assert.equal(snapshot.running, false)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  M5: Watchdog assertMachineConsistency tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BlueprintService.assertMachineConsistency', () => {
+  test('idle_machine_is_consistent', () => {
+    const svc = new BlueprintService()
+    // Should not throw or change state
+    svc.assertMachineConsistency('ws-w1')
+    assert.equal(svc.getMachine('ws-w1').currentState, 'idle')
+  })
+
+  test('running_pipeline_is_consistent', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-w2', 'bp-w2', 'plan')
+    svc.assertMachineConsistency('ws-w2')
+    // Machine should remain in phase-running
+    assert.equal(svc.getMachine('ws-w2').currentState, 'phase-running')
+  })
+
+  test('stranded_machine_gets_force_reset', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-w3', 'bp-w3', 'clarify')
+    const machine = svc.getMachine('ws-w3')
+    machine.transition('questionsParsed')
+    // Manually set running=false to simulate crash
+    svc.markPipelineStopped('ws-w3')
+    // Machine is now idle (markPipelineStopped drives phaseComplete).
+    // But if it were stuck in awaiting-clarify-questions without running=true...
+    // Let's test with a forced state mismatch:
+    // Force machine to a non-idle state without pipeline running
+    machine.transition('startPhase', { blueprintId: 'bp-w3', phase: 'clarify' })
+    machine.transition('questionsParsed')
+    // Now machine is awaiting-clarify-questions but running=false and no session
+    svc.assertMachineConsistency('ws-w3')
+    assert.equal(machine.currentState, 'idle', 'Watchdog should have reset stranded machine')
+  })
+
+  test('terminal_machine_is_consistent', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-w4', 'bp-w4', 'build')
+    svc.failPipeline('ws-w4', 'test')
+    svc.assertMachineConsistency('ws-w4')
+    // Machine should remain in failed state
+    assert.equal(svc.getMachine('ws-w4').currentState, 'failed')
+  })
+
+  test('pending_approval_is_consistent', () => {
+    const svc = new BlueprintService()
+    svc.markPipelineRunning('ws-w5', 'bp-w5', 'review')
+    const machine = svc.getMachine('ws-w5')
+    machine.transition('approvalNeeded')
+    // Set approval state but clear running
+    svc.setPendingApproval('ws-w5', { planSummary: 'test' })
+    svc.markPipelineStopped('ws-w5')
+    // Force back to awaiting approval
+    machine.transition('startPhase', { blueprintId: 'bp-w5', phase: 'review' })
+    machine.transition('approvalNeeded')
+    // Should NOT force-reset because pendingApproval is set
+    svc.assertMachineConsistency('ws-w5')
+    assert.equal(machine.currentState, 'awaiting-approval')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  M9: setClarifyState tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('BlueprintService.setClarifyState', () => {
+  test('setClarifyState_pushes_and_getClarifyStateForSnapshot_reads', () => {
+    const svc = new BlueprintService()
+    svc.setClarifyState('ws-c1', { findings: null, questions: null })
+    const state = svc.getClarifyStateForSnapshot('ws-c1')
+    assert.ok(state !== null)
+    assert.equal(state!.findings, null)
+  })
+
+  test('setClarifyState_null_clears', () => {
+    const svc = new BlueprintService()
+    svc.setClarifyState('ws-c2', { findings: null, questions: null })
+    svc.setClarifyState('ws-c2', null)
+    const state = svc.getClarifyStateForSnapshot('ws-c2')
+    assert.equal(state, null)
+  })
+
+  test('getSnapshot_uses_clarifyState', () => {
+    const svc = new BlueprintService()
+    const testFindings = { findings: [{ topic: 'test', status: 'outstanding' as const, detail: 'details' }] }
+    svc.setClarifyState('ws-c3', { findings: testFindings as unknown as null, questions: null })
+    const snapshot = svc.getSnapshot('ws-c3')
+    assert.deepEqual(snapshot.clarifyFindings, testFindings)
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

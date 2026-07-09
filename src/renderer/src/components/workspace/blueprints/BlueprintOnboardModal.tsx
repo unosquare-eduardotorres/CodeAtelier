@@ -96,7 +96,7 @@ export default function BlueprintOnboardModal({
           <div className="text-center space-y-1.5">
             <p className="text-sm text-text-primary leading-relaxed">
               As this is a blank project, the{' '}
-              <span className="font-semibold text-emerald-400">Blueprint pipeline</span> can help
+              <span className="font-semibold text-accent">Blueprint pipeline</span> can help
               you generate a project skeleton, plan features, and build them step by step.
             </p>
             <p className="text-xs text-text-secondary">
@@ -119,8 +119,8 @@ export default function BlueprintOnboardModal({
             type="button"
             onClick={onProceedToInput}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white
-                       bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors
-                       focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                       bg-button-primary-bg hover:bg-button-primary-hover rounded-lg transition-colors
+                       focus:outline-none focus:ring-2 focus:ring-accent/50"
           >
             Create Your First Blueprint
           </button>

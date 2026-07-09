@@ -141,7 +141,8 @@ describe('BlueprintSpecifyAdapter', () => {
       phaseContext: dummyPhaseContext
     })
     ;(a as any).systemPrompt = 'Test prompt'
-    const result = a.buildPrompts(makePromptCtx())
+    // Pass empty message so buildPrompts falls through to getPhaseMessage()
+    const result = a.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.equal(result.systemPrompt, 'Test prompt')
     assert.ok(result.effectiveMessage.includes('Build feature'))
   })
@@ -306,7 +307,7 @@ describe('BlueprintTasksAdapter', () => {
       phaseContext: dummyPhaseContext
     })
     ;(a as any).systemPrompt = 'Test system prompt'
-    const result = a.buildPrompts(makePromptCtx())
+    const result = a.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('Decompose'))
   })
 })

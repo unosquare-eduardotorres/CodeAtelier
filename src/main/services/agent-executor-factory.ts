@@ -13,17 +13,20 @@ import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
 import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 
-import type { ConversationMode, ModelAction } from '../../shared/types'
+import type { ConversationMode } from '../../shared/types'
 import {
   BUDGET_CAP_MODE_MULTIPLIERS,
   CLAUDE_1M_CONTEXT_WINDOW,
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   EXTERNAL_MCP_INTEGRATIONS,
   RECOMMENDED_LOCAL_MODELS,
+  resolveModelAction,
   supportsContext1M
 } from '../../shared/constants'
 
 import { modelConfigService } from './model-config.service'
+import { resolveModelFromSnapshot } from './snapshot-model-resolver'
+import { contextWindowResolver } from './context-window-resolver'
 import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { join } from 'node:path'
@@ -34,6 +37,9 @@ export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
   /** Cached MCP config path — reused on continueSession turns to avoid rebuild. */
   private cachedMcpConfigPath: string | undefined
+  /** Cached async-resolved context window + confidence flag. */
+  private cachedContextWindow: number | null = null
+  private cachedContextWindowConfident = false
   /** F18: 1M context beta header — extracted from magic string for maintainability. */
   private static readonly CONTEXT_1M_BETA = 'context-1m-2025-08-07'
 
@@ -54,17 +60,56 @@ export class AgentExecutorFactory {
 
   // ── resolveLocalContextWindow ─────────────────────────────────────────
 
+  /** Sync fallback — checks static RECOMMENDED_LOCAL_MODELS only. */
   resolveLocalContextWindow(): number {
-    if (!this.s.workspacePath) return 32_768
+    if (!this.s.workspacePath) return 131_072
     try {
       const localConfig = modelConfigService.getLocalLLMConfig(this.s.workspacePath)
       const model = localConfig.localModel
       const recommended = RECOMMENDED_LOCAL_MODELS.find(
         (m) => m.ollamaId === model || m.omlxId === model
       )
-      return recommended?.contextWindow ?? 32_768
+      return recommended?.contextWindow ?? 131_072
     } catch {
-      return 32_768
+      return 131_072
+    }
+  }
+
+  /**
+   * Async resolver — uses the full ContextWindowResolver chain:
+   *   user override → backend API query → known models → 128K fallback.
+   *
+   * Caches the result for the session lifetime so subsequent calls are free.
+   * Returns `confident: true` when the value came from a user override or
+   * backend API (not the static table fallback), which gates whether we
+   * write `models.*.limit` into opencode.json.
+   */
+  async resolveLocalContextWindowAsync(): Promise<{ contextWindow: number; confident: boolean }> {
+    if (this.cachedContextWindow !== null) {
+      return { contextWindow: this.cachedContextWindow, confident: this.cachedContextWindowConfident }
+    }
+
+    if (!this.s.workspacePath) {
+      return { contextWindow: 131_072, confident: false }
+    }
+
+    try {
+      const localConfig = modelConfigService.getLocalLLMConfig(this.s.workspacePath)
+      const settings = workspaceRepository.getSettingsByPath(this.s.workspacePath)
+      const userOverride =
+        typeof settings?.localContextWindow === 'number' ? settings.localContextWindow : undefined
+
+      const resolved = await contextWindowResolver.resolve(localConfig, userOverride)
+
+      // Confident if user explicitly set a value, or the resolver got a
+      // non-fallback answer (i.e. backend API or known model table hit).
+      const confident = userOverride != null || resolved !== 131_072
+
+      this.cachedContextWindow = resolved
+      this.cachedContextWindowConfident = confident
+      return { contextWindow: resolved, confident }
+    } catch {
+      return { contextWindow: 131_072, confident: false }
     }
   }
 
@@ -220,18 +265,19 @@ export class AgentExecutorFactory {
     // referenced. Context window is resolved internally from the model config.
     /** Completion goal — Claude works autonomously until this condition is met */
     goal?: string
-    /** LLM preset ID for per-action model resolution */
-    presetId?: string | null
+    /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
+    goalMode?: 'advisory' | 'enforce'
   }): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
     const { allowedTools, disallowedTools } = mcpResult
 
-    const modelAction = `${this.s.adapter.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = modelConfigService.getModel(
+    const modelAction = resolveModelAction(this.s.adapter.role, isBuildMode)
+    const resolvedModel = resolveModelFromSnapshot(
+      this.s.currentConversationId,
       this.s.workspacePath!,
       modelAction,
-      params.presetId
+      isBuildMode
     )
 
     const supports1M = supportsContext1M(resolvedModel)
@@ -286,7 +332,8 @@ export class AgentExecutorFactory {
         thinkingBudget: this.resolveThinkingBudget(),
         // F2: goal must persist so MPA autonomous completion conditions
         // are evaluated on every turn, not just the initial spawn.
-        goal: params.goal
+        goal: params.goal,
+        goalMode: params.goalMode
       }
     }
 
@@ -341,6 +388,7 @@ export class AgentExecutorFactory {
       continueSession: false,
       mcpConfigPath,
       goal: params.goal,
+      goalMode: params.goalMode,
       thinkingBudget: this.resolveThinkingBudget()
     }
   }

@@ -297,6 +297,12 @@ export class RepoService {
     return { commitHash: result.commit }
   }
 
+  /** Get the current HEAD commit SHA. */
+  async getHeadSha(repoPath: string): Promise<string> {
+    const git = simpleGit(repoPath)
+    return (await git.revparse(['HEAD'])).trim()
+  }
+
   /**
    * Push current branch to origin.
    */

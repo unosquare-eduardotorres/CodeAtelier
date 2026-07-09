@@ -5,11 +5,13 @@ import simpleGit from 'simple-git'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
 import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { chatStreamService } from '../services/chat-stream.service'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
+import { completeStreamMetrics } from './chunk-router'
 
 const log = chatIpcLogger
 
@@ -33,10 +35,14 @@ function cleanupChatImages(conversationId: string): void {
 async function handleChatClose(conversationId: string): Promise<void> {
   // CONV-DEL-01: Abort active stream if it's for this conversation.
   if (conversationLifecycle.conversationId === conversationId) {
+    // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+    completeStreamMetrics(conversationId, 'aborted')
     conversationLifecycle.abort('conversation-deleted')
   }
 
   chatAgentService.clearSession(conversationId)
+  // N1-FIX: Clear per-conversation memory dedupe state
+  chatStreamService.clearConversationMemoryState(conversationId)
 
   // Clean up branches (local + remote if PR was merged)
   const workspacePath = chatAgentService.getWorkspacePath()
@@ -169,12 +175,22 @@ async function handleChatComplete(args: {
       }
     }
 
-    // Cleanup: abort active stream + stop agents, delete conversation
+    // CHAT-COMPLETE-PUSH-DELETE-RACE-01: Isolate post-push cleanup so failures
+    // don't trigger the catch handler's branch-deletion recovery. The commit and
+    // push already succeeded — cleanup errors are non-fatal.
     if (conversationLifecycle.conversationId === conversationId) {
+      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
+      completeStreamMetrics(conversationId, 'completed')
       conversationLifecycle.abort('conversation-completed')
     }
     chatAgentService.clearSession(conversationId)
-    conversationRepository.delete(conversationId)
+    // N1-FIX: Clear per-conversation memory dedupe state
+    chatStreamService.clearConversationMemoryState(conversationId)
+    try {
+      conversationRepository.delete(conversationId)
+    } catch (deleteErr) {
+      log.error('[chat:complete] Failed to delete conversation after successful push — non-fatal:', deleteErr)
+    }
     cleanupChatImages(conversationId)
 
     return { branch: branchName, commitHash, prUrl }

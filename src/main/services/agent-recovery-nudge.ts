@@ -88,6 +88,52 @@ export interface PlanToolRecoveryResult {
 export class RecoveryNudgeService {
   private readonly log = chatAgentLogger
 
+  // ── Shared watchdog helper ──
+
+  /**
+   * Wraps an async generator with a per-chunk inactivity timeout.
+   * If no chunk arrives within `timeoutMs`, the iterator is force-closed
+   * and the generator returns — callers see a normal `done: true`.
+   *
+   * Used by both `attemptRecovery` and `attemptPlanToolRecovery` to prevent
+   * an unbounded `for await` from wedging the session.
+   */
+  private async *withChunkTimeout<T>(
+    iter: AsyncGenerator<T>,
+    timeoutMs: number,
+    label: string
+  ): AsyncGenerator<T> {
+    let timedOut = false
+    try {
+      while (true) {
+        const timeoutPromise = new Promise<{ done: true; value: undefined }>((resolve) =>
+          setTimeout(() => resolve({ done: true, value: undefined }), timeoutMs)
+        )
+        const raceStart = Date.now()
+        const next = iter.next()
+        const result = await Promise.race([next, timeoutPromise])
+
+        if (result.done) {
+          // Distinguish normal completion from timeout by elapsed time
+          if (Date.now() - raceStart >= timeoutMs - 50) {
+            this.log.warn(
+              `[${label}-timeout] No chunk for ${timeoutMs / 1000}s — force-closing iterator`
+            )
+            timedOut = true
+            iter.return?.(undefined as never).catch(() => { /* ignore */ })
+          }
+          break
+        }
+
+        yield result.value
+      }
+    } finally {
+      if (timedOut) {
+        this.log.info(`[${label}-timeout] Iterator cleanup complete`)
+      }
+    }
+  }
+
   /**
    * Attempt a 1-turn text-only recovery when tools completed without summary.
    * Returns whether recovery succeeded and the text produced (or fallback).
@@ -105,8 +151,12 @@ export class RecoveryNudgeService {
       ? ` Your previous call(s) used ${opts.lastToolNames.join(', ')}.`
       : ''
 
+    // Defence-in-depth: 2-minute per-chunk watchdog prevents an unbounded
+    // recovery turn from wedging the session (same timeout as plan-tool-recovery).
+    const RECOVERY_TIMEOUT_MS = 120_000
+
     try {
-      for await (const chunk of opts.cliExecutor.execute({
+      const rawIter = opts.cliExecutor.execute({
         prompt: (() => {
           const action = opts.isBuildMode ? 'found or executed' : 'found'
           const source = opts.isBuildMode ? 'read or ran' : 'read'
@@ -130,7 +180,9 @@ export class RecoveryNudgeService {
         agentId: DA_VINCI_AGENT_ID,
         // Recovery is lightweight summarization — omit thinking entirely.
         effort: 'low'
-      })) {
+      })
+
+      for await (const chunk of this.withChunkTimeout(rawIter, RECOVERY_TIMEOUT_MS, 'recovery-nudge')) {
         if ('_meta' in chunk && chunk._meta) {
           const meta = chunk._meta as ExecutorResult
           if (meta.sessionId && opts.conversationId) {
@@ -214,8 +266,12 @@ export class RecoveryNudgeService {
       'type, title, and phases (referencing the real file paths you already identified). ' +
       'Do NOT use Write or Edit — emit_plan is the only way to deliver a plan. Do not write any other text.]'
 
+    // Defence-in-depth: 2-minute per-chunk watchdog prevents an unbounded
+    // recovery turn from wedging the session.
+    const RECOVERY_TIMEOUT_MS = 120_000
+
     try {
-      for await (const chunk of opts.cliExecutor.execute({
+      const rawIter = opts.cliExecutor.execute({
         prompt,
         systemPrompt: opts.systemPrompt,
         model: opts.model,
@@ -239,7 +295,9 @@ export class RecoveryNudgeService {
         resume: opts.sessionId,
         agentId: DA_VINCI_AGENT_ID,
         effort: 'low'
-      })) {
+      })
+
+      for await (const chunk of this.withChunkTimeout(rawIter, RECOVERY_TIMEOUT_MS, 'plan-tool-recovery')) {
         if ('_meta' in chunk && chunk._meta) {
           const meta = chunk._meta as ExecutorResult
           if (meta.sessionId && opts.conversationId) {

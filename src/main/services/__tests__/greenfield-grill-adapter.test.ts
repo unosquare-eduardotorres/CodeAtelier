@@ -29,7 +29,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/greenfield-test',
     workspaceId: null,
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -144,18 +144,7 @@ describe('GreenfieldGrillRoleAdapter', () => {
     assert.ok(true)
   })
 
-  // ── persistMemory (no-op) ──
-
-  test('persistMemory_is_no_op', () => {
-    const adapter = createAdapter() as unknown as {
-      persistMemory: (
-        m: { type: string; title: string; content: string },
-        cid: string | null
-      ) => void
-    }
-    adapter.persistMemory({ type: 'project', title: 'test', content: 'content' }, 'conv-1')
-    assert.ok(true, 'persistMemory completed without error')
-  })
+  // persistMemory removed — memory tools now on dedicated memory MCP server
 
   // ── Different tracks ──
 

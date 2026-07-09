@@ -54,6 +54,22 @@ function accumulateToolActivity(
 }
 
 /**
+ * Record an externally-created tool activity (e.g. Prompt Optimizer) into the
+ * accumulator so it persists with the assistant message via the existing
+ * getAndClearToolActivities → DB finalize path.
+ *
+ * Clears the conversation from `clearedConversations` first so the synthetic
+ * activity is not silently dropped by the 10s tombstone guard.
+ */
+export function recordExternalToolActivity(
+  conversationId: string,
+  activity: Partial<ToolActivity> & { id: string; toolName: string }
+): void {
+  clearedConversations.delete(conversationId)
+  accumulateToolActivity(conversationId, activity)
+}
+
+/**
  * Retrieve and clear accumulated tool activities for a conversation.
  * Called during finalize to persist tool activities to the DB.
  * Returns all activities including 'running' ones (e.g. subagents interrupted mid-execution).
@@ -90,7 +106,18 @@ export interface ChunkRouterContext {
 // The StreamMetricsAggregator keeps a sliding window of recent streams
 // for completion-rate and TTFT p95 aggregation.
 
-type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout'
+/**
+ * How a stream ended. Used for metrics aggregation.
+ *
+ *   complete   — LLM finished naturally (message_stop received)
+ *   completed  — User/system marked the conversation as done
+ *   stopped    — User manually stopped the response mid-stream
+ *   swapped    — Specialist swap interrupted the stream
+ *   aborted    — System abort (workspace switch, conversation deleted, safety timeout cleanup)
+ *   error      — Unrecoverable stream error
+ *   timeout    — Safety timeout fired before LLM responded
+ */
+type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout' | 'aborted' | 'completed' | 'swapped'
 
 interface StreamMetrics {
   startedAt: number
@@ -126,10 +153,16 @@ export class StreamMetricsAggregator {
     if (this.records.length > this.windowSize) this.records.shift()
   }
 
-  /** Fraction of streams that ended with 'complete' outcome (0–1). */
+  /**
+   * Fraction of streams that ended successfully (0–1).
+   * Counts 'complete' (natural finish) and 'completed' (user-finished) as success.
+   * User-initiated interruptions (stopped, swapped, aborted) are neutral — not failures.
+   */
   get completionRate(): number {
     if (this.records.length === 0) return 1
-    return this.records.filter((r) => r.outcome === 'complete').length / this.records.length
+    return this.records.filter(
+      (r) => r.outcome === 'complete' || r.outcome === 'completed'
+    ).length / this.records.length
   }
 
   /** TTFT at the given percentile (0–1). Returns null when no TTFT data exists. */
@@ -154,7 +187,7 @@ export class StreamMetricsAggregator {
 
   /** Distribution of outcomes in the current window. */
   get outcomeCounts(): Record<StreamOutcome, number> {
-    const counts: Record<StreamOutcome, number> = { complete: 0, stopped: 0, error: 0, timeout: 0 }
+    const counts: Record<StreamOutcome, number> = { complete: 0, stopped: 0, error: 0, timeout: 0, completed: 0, aborted: 0, swapped: 0 }
     for (const r of this.records) counts[r.outcome]++
     return counts
   }
@@ -278,8 +311,22 @@ function basePayload(ctx: ChunkRouterContext): BasePayload {
 
 // ── Per-type handler functions ──
 
+/**
+ * Regex matching raw JSON control signals that local LLM backends
+ * (Ollama/oMLX) emit as text deltas instead of structured events.
+ * Only matches when the ENTIRE chunk content is the JSON object.
+ */
+const LOCAL_CONTROL_SIGNAL_RE = /^\s*\{\s*"type"\s*:\s*"(?:busy|idle|ready|processing)"\s*\}\s*$/
+
 function handleText(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   if (!chunk.content) return
+
+  // CONTROL-SIGNAL-FILTER-01: Local LLM backends may leak raw JSON control
+  // signals (e.g. {"type":"busy"}) as text deltas. Drop them silently.
+  if (LOCAL_CONTROL_SIGNAL_RE.test(chunk.content)) {
+    chatIpcLogger.debug('[chunk-router] Filtered control signal in text: %s', chunk.content)
+    return
+  }
   chatIpcLogger.debug(
     `[chunk-router:text] ${chunk.content.length} chars → ${ctx.conversationId.slice(0, 8)}`
   )
@@ -379,10 +426,61 @@ function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   )
 }
 
+/**
+ * Status content patterns that are internal metadata — never rendered in chat.
+ * These are operational lifecycle events emitted by the OpenCode event normalizer.
+ *
+ * MAINTENANCE: Keep in sync with status-emitting handlers in
+ * src/main/services/opencode-event-normalizer.ts:
+ *
+ *   Prefix               Emitter
+ *   ───────────────────   ──────────────────────────────
+ *   agent_switched:       handleAgentSwitched()
+ *   model_switched:       handleModelSwitched()
+ *   finishReason:         handleSessionIdle()
+ *
+ *   Value                 Emitter
+ *   ───────────────────   ──────────────────────────────
+ *   idle                  handleSessionStatus() → statusMap
+ *   thinking              handleSessionStatus() → statusMap
+ *   reviewing             handleSessionStatus() → statusMap
+ *   writing               handleSessionStatus() → statusMap
+ *   failed                handleSessionStatus() → statusMap
+ */
+const SUPPRESSED_STATUS_PREFIXES = [
+  'agent_switched:',
+  'model_switched:',
+  'finishReason:',
+] as const
+
+const SUPPRESSED_STATUS_VALUES: ReadonlySet<string> = new Set([
+  'idle',
+  'busy',     // local LLM backend status signal
+  'thinking',
+  'reviewing',
+  'writing',
+  'failed',
+])
+
 function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before status messages
   textBatcher.flush(ctx.conversationId)
   if (!chunk.content || chunk.content === 'heartbeat') return
+
+  // Guard: non-string content (e.g., object coerced via template literal)
+  if (typeof chunk.content !== 'string') return
+
+  // Suppress internal metadata status — these are operational signals,
+  // not conversational content. They come from the OpenCode event normalizer.
+  if (
+    SUPPRESSED_STATUS_VALUES.has(chunk.content) ||
+    SUPPRESSED_STATUS_PREFIXES.some((p) => chunk.content!.startsWith(p)) ||
+    LOCAL_CONTROL_SIGNAL_RE.test(chunk.content)
+  ) {
+    chatIpcLogger.debug('[chunk-router] Suppressed metadata status: %s', chunk.content)
+    return
+  }
+
   const statusText = `\n\n_${chunk.content}_\n\n`
   ctx.contentAccumulator.value += statusText
   safeSend(
@@ -437,10 +535,23 @@ function handleHookLifecycle(ctx: ChunkRouterContext, chunk: StreamChunk): void 
   })
 }
 
+const MAX_SESSION_STATE_CHARS = 1_000_000 // 1MB safety net
+
 function handleSessionState(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  let state = chunk.content ?? ''
+
+  if (state.length > MAX_SESSION_STATE_CHARS) {
+    chatIpcLogger.warn(
+      '[chunk-router] Session state exceeds %d chars (%d); truncating',
+      MAX_SESSION_STATE_CHARS,
+      state.length
+    )
+    state = state.slice(0, MAX_SESSION_STATE_CHARS)
+  }
+
   safeSend(ctx, IPC_CHANNELS.SDK_SESSION_STATE, {
     ...basePayload(ctx),
-    state: chunk.content
+    state
   })
 }
 

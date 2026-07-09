@@ -17,7 +17,12 @@ export function buildPlannerGoalCondition(goal: string): string {
  * Build the /goal completion condition for the Builder phase.
  */
 export function buildBuilderGoalCondition(plan: MpaPlanArtifact): string {
-  const itemIds = plan.items.map((i) => i.id).join(', ')
+  const MAX_LISTED_IDS = 40
+  const allIds = plan.items.map((i) => i.id)
+  const itemIds =
+    allIds.length <= MAX_LISTED_IDS
+      ? allIds.join(', ')
+      : `${allIds.slice(0, MAX_LISTED_IDS).join(', ')}… and ${allIds.length - MAX_LISTED_IDS} more`
   return [
     `All plan items (${itemIds}) are fully implemented`,
     'No TODO or placeholder implementations in new code',

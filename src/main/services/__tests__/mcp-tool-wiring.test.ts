@@ -64,13 +64,13 @@ describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
 
   test('expected server count is correct', () => {
     const servers = new Set(EXPECTED_MCP_TOOLS.map((n) => n.split('__')[1]))
-    // code-graph, semantic-search, git-context, checkpoint-context, github-context, code-analysis
-    assert.equal(servers.size, 6, `Expected 6 MCP servers, got ${servers.size}`)
+    // code-graph, semantic-search, git-context, checkpoint-context, github-context, code-analysis, memory
+    assert.equal(servers.size, 7, `Expected 7 MCP servers, got ${servers.size}`)
   })
 
-  test('registry includes all 7 MCP servers (including control-actions)', () => {
+  test('registry includes all 8 MCP servers (including control-actions)', () => {
     const allServers = new Set(ALL_MCP_TOOL_NAMES.map((n) => n.split('__')[1]))
-    assert.equal(allServers.size, 7, `Expected 7 MCP servers, got ${allServers.size}`)
+    assert.equal(allServers.size, 8, `Expected 8 MCP servers, got ${allServers.size}`)
   })
 })
 
@@ -78,4 +78,4 @@ describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
 
 console.log(`\n${'─'.repeat(40)}`)
 console.log(`mcp-tool-wiring: ${passed} passed, ${failed} failed`)
-if (failed > 0) process.exit(1)
+if (failed > 0) process.exitCode = 1

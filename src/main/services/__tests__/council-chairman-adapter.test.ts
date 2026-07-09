@@ -98,7 +98,7 @@ describe('CouncilChairmanRoleAdapter', () => {
       workspacePath: '/tmp',
       workspaceId: 'ws-1',
       conversationId: null,
-      controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} }
+      controlCallbacks: { onPlan: () => {}, onAskUser: () => {} }
     })
     assert.deepEqual(result.allowedTools, [])
     assert.ok(result.disallowedTools!.length > 0)
@@ -122,13 +122,7 @@ describe('CouncilChairmanRoleAdapter', () => {
     assert.equal(result.effectiveMessage, 'Synthesize the council verdict.')
   })
 
-  // ── persistMemory (no-op) ──
-
-  test('persistMemory_is_no_op', () => {
-    const a = createAdapter()
-    // Calling persistMemory should not throw
-    ;(a as any).persistMemory({ type: 'project', title: 'test', content: 'test' }, null)
-  })
+  // persistMemory removed — memory tools now on dedicated memory MCP server
 
   // ── onSessionStop ──
 

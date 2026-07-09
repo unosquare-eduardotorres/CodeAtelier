@@ -69,7 +69,7 @@ export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
 
     const track = GRILL_TRACKS[this.trackId]
     // Pattern 1: Centralized model resolution
-    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill', ctx.presetId)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, 'grill')
     this.systemPrompt = this.buildSystemPrompt(track, resolvedModel)
 
     this.log.info(
@@ -119,9 +119,6 @@ export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
     }
   }
 
-  protected override persistMemory(): void {
-    /* no-op */
-  }
 
   override onSessionStop(): void {
     this.systemPrompt = null

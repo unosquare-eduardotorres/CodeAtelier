@@ -90,11 +90,21 @@ export const test = base.extend<ElectronFixtures>({
         env.NODE_ENV = 'test'
         env.E2E_CDP_PORT = String(cdpPort)
 
-        // Spawn Electron with the bootstrap preload that sets the CDP port
-        electronProcess = spawn(ELECTRON_BIN, ['-r', BOOTSTRAP, MAIN_ENTRY], {
-          env,
-          stdio: ['pipe', 'pipe', 'pipe']
-        })
+        // When CLAUDE_SHIM_DIR is set, prepend it to PATH so the shim
+        // intercepts `spawn('claude')` in cli-executor.ts.
+        if (process.env.CLAUDE_SHIM_DIR) {
+          const shimDir = resolve(__dirname, '../../', process.env.CLAUDE_SHIM_DIR)
+          env.PATH = `${shimDir}:${env.PATH ?? ''}`
+        }
+
+        // Spawn Electron with CDP port.
+        // Electron 42+ ignores app.commandLine.appendSwitch for --remote-debugging-port
+        // when called from a -r preload, so pass it directly on the CLI.
+        electronProcess = spawn(
+          ELECTRON_BIN,
+          [`--remote-debugging-port=${cdpPort}`, '-r', BOOTSTRAP, MAIN_ENTRY],
+          { env, stdio: ['pipe', 'pipe', 'pipe'] }
+        )
 
         // Forward stderr for debugging (suppress noisy DevTools lines)
         electronProcess.stderr?.on('data', (d: Buffer) => {
@@ -104,17 +114,46 @@ export const test = base.extend<ElectronFixtures>({
           }
         })
 
-        // Wait for a page target to appear on the CDP port
-        const pageWsUrl = await waitForPageWsUrl(cdpPort)
+        // Wait for CDP to become available on the debugging port
+        await waitForPageWsUrl(cdpPort)
 
-        // Connect Playwright to the page WebSocket
-        // NOTE: use chromium.connect (not connectOverCDP) — the latter hangs
-        // with Electron's non-standard CDP implementation.
-        browser = await chromium.connect(pageWsUrl, { timeout: 30_000 })
+        // Connect Playwright via CDP.
+        // Electron 42+ requires connectOverCDP (chromium.connect expects a
+        // Playwright server, not a raw CDP endpoint).
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, {
+          timeout: 30_000
+        })
         const contexts = browser.contexts()
         const context = contexts[0] || (await browser.newContext())
-        const pages = context.pages()
-        const page = pages[0] || (await context.newPage())
+
+        // The app shows splash.html first, then navigates to index.html.
+        // Wait for the main page (non-splash) to appear.
+        let page: Page | null = null
+        const deadline = Date.now() + 30_000
+        while (Date.now() < deadline) {
+          const allPages = context.pages()
+          const mainPage = allPages.find((p) => p.url().includes('index.html'))
+          if (mainPage) {
+            page = mainPage
+            break
+          }
+          // Listen for new pages (splash → main transition creates a new page)
+          if (!page) {
+            const newPagePromise = context.waitForEvent('page', { timeout: 5_000 }).catch(() => null)
+            const newPage = await newPagePromise
+            if (newPage && newPage.url().includes('index.html')) {
+              page = newPage
+              break
+            }
+          }
+          await new Promise((r) => setTimeout(r, 500))
+        }
+
+        if (!page) {
+          // Fallback: use whatever page is available
+          const fallbackPages = context.pages()
+          page = fallbackPages[fallbackPages.length - 1] || (await context.newPage())
+        }
 
         // Wait for DOM + initial renders to settle
         await page.waitForLoadState('domcontentloaded')

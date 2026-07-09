@@ -29,7 +29,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Specify',
     agentLabel: 'Specifier',
     icon: ClipboardList,
-    color: 'text-blue-400',
+    color: 'text-info',
     hexColor: '#3b82f6',
     description: 'Analyze the feature and produce a detailed specification'
   },
@@ -37,7 +37,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Clarify',
     agentLabel: 'Clarifier',
     icon: HelpCircle,
-    color: 'text-amber-400',
+    color: 'text-warning',
     hexColor: '#fbbf24',
     description: 'Ask clarifying questions about ambiguous requirements'
   },
@@ -45,7 +45,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Plan',
     agentLabel: 'Planner',
     icon: Map,
-    color: 'text-purple-400',
+    color: 'text-accent',
     hexColor: '#a78bfa',
     description: 'Create a detailed implementation plan with file paths and steps'
   },
@@ -53,7 +53,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Tasks',
     agentLabel: 'Task Builder',
     icon: ListTodo,
-    color: 'text-cyan-400',
+    color: 'text-info',
     hexColor: '#22d3ee',
     description: 'Break the plan into ordered tasks with dependency waves'
   },
@@ -61,7 +61,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Review',
     agentLabel: 'Reviewer',
     icon: Search,
-    color: 'text-orange-400',
+    color: 'text-warning',
     hexColor: '#fb923c',
     description: 'Review the plan and tasks for completeness and correctness'
   },
@@ -69,7 +69,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Build',
     agentLabel: 'Builder',
     icon: Hammer,
-    color: 'text-emerald-400',
+    color: 'text-accent',
     hexColor: '#34d399',
     description: 'Execute tasks in dependency-ordered waves'
   },
@@ -77,7 +77,7 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     label: 'Verify',
     agentLabel: 'Verifier',
     icon: ShieldCheck,
-    color: 'text-teal-400',
+    color: 'text-success',
     hexColor: '#2dd4bf',
     description: 'Run quality checks to confirm the implementation is correct'
   }

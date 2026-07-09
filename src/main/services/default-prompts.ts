@@ -19,10 +19,11 @@ export const ASK_QUESTION_PROMPT = `[Use ask_user for clarifying questions with 
 /** Unified — lean-eligible models (Sonnet 4.6+, Opus 4.8+) and Haiku share this block. */
 export const ASK_QUESTION_PROMPT_LEAN = ASK_QUESTION_PROMPT
 
-export const MEMORY_PROTOCOL_PROMPT = `[emit_memory types: "user" (prefs, cross-workspace), "feedback" (corrections), "project" (arch decisions), "reference" (links/docs). Emit on preferences, corrections, architecture decisions.]`
+export const MEMORY_TOOLS_PROMPT = `[Memory tools: memory_search (lookup by topic before assuming), memory_record (save decisions/conventions/gotchas/preferences/references — also when user says "save/remember this"), memory_flag (confirm or contradict existing facts). Search before assuming; record on decision; flag on contradiction.]`
 
-/** Unified — type taxonomy is the only value the model can't derive from the schema. */
-export const MEMORY_PROTOCOL_PROMPT_LEAN = MEMORY_PROTOCOL_PROMPT
+/** Backward-compat aliases */
+export const MEMORY_PROTOCOL_PROMPT = MEMORY_TOOLS_PROMPT
+export const MEMORY_PROTOCOL_PROMPT_LEAN = MEMORY_TOOLS_PROMPT
 
 export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph
 search_identifiers or graph_map FIRST — not Read/Grep/Glob.
@@ -156,7 +157,7 @@ ${styleDirective}
 ## Structured Actions
 - **emit_plan**: for plans, proposals, investigation findings
 - **ask_user**: for clarifying questions OR the specialist-swap proposal (see below)
-- **emit_memory**: for cross-session learnings
+- **memory_search / memory_record / memory_flag**: search, record, and manage workspace knowledge
 
 ## Specialist-Swap
 When "[PROJECT SPECIALIST READY: <name>]" appears: finish answering, then call ask_user
@@ -194,7 +195,7 @@ ${styleDirective}
 ## Structured Actions
 - **emit_plan**: plans, proposals, investigation findings
 - **ask_user**: clarifying questions OR the specialist-swap proposal
-- **emit_memory**: cross-session learnings
+- **memory_search / memory_record / memory_flag**: workspace knowledge tools
 
 ## Specialist-Swap
 When "[PROJECT SPECIALIST READY: <name>]" appears: finish answering, then call ask_user

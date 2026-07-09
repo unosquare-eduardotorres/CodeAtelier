@@ -4,29 +4,25 @@ import type { Idea, LLMProvider } from '../../shared/types'
 import {
   ideaRepository,
   conversationRepository,
-  memoryRepository,
   workspaceRepository
 } from '../db/repositories'
+import { buildConversationModelSnapshot } from '../services/model-config.service'
+import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 
 /**
- * Sync a completed idea into the auto memory system.
- * Creates a 'project' memory so the generalist and dream system
- * can reference refined ideas in future conversations.
+ * Sync a completed idea into the knowledge-aware memory engine.
+ * Creates a 'decision' fact so agents can reference refined ideas.
  */
 function syncIdeaToMemory(idea: Idea): void {
-  // Only completed ideas become memories
   if (idea.status !== 'completed') return
 
-  // Check if a memory already exists for this idea (idempotency)
-  // Use a stable tag convention: idea:{id}
   const ideaTag = `idea:${idea.id}`
-  const existing = memoryRepository
-    .findByType(idea.workspaceId, 'project')
-    .filter((m) => m.tags.includes(ideaTag))
+  const existing = memoryFactRepository
+    .search(idea.workspaceId, idea.title, 5)
+    .filter((f) => f.tags.includes(ideaTag))
 
-  // Build memory content from idea + optional grill summary
   const contentParts = [idea.description]
   if (idea.grillSummary) {
     contentParts.push(`\n### Grill Summary\n${idea.grillSummary}`)
@@ -34,35 +30,34 @@ function syncIdeaToMemory(idea: Idea): void {
   const content = contentParts.filter(Boolean).join('\n')
 
   if (existing.length > 0) {
-    // Update existing memory (in case grillSummary was added later)
-    memoryRepository.update(existing[0].id, {
+    memoryFactRepository.updateFact(existing[0].id, {
       title: `Idea: ${idea.title}`,
       content,
       tags: ['idea', ideaTag]
     })
   } else {
-    // Create new memory
-    memoryRepository.create({
+    memoryFactRepository.createFact({
       workspaceId: idea.workspaceId,
-      type: 'project',
+      category: 'decision',
       title: `Idea: ${idea.title}`,
       content,
       tags: ['idea', ideaTag],
-      importance: idea.grillSummary ? 7 : 5 // Grilled ideas are more important
+      sourceType: 'manual',
+      sourceRef: idea.id
     })
   }
 }
 
 /**
- * Remove the memory linked to a deleted idea.
+ * Remove the fact linked to a deleted idea.
  */
 function removeIdeaMemory(idea: Idea): void {
   const ideaTag = `idea:${idea.id}`
-  const existing = memoryRepository
-    .findByType(idea.workspaceId, 'project')
-    .filter((m) => m.tags.includes(ideaTag))
-  for (const memory of existing) {
-    memoryRepository.delete(memory.id)
+  const existing = memoryFactRepository
+    .search(idea.workspaceId, idea.title, 5)
+    .filter((f) => f.tags.includes(ideaTag))
+  for (const fact of existing) {
+    memoryFactRepository.archiveFact(fact.id)
   }
 }
 
@@ -126,6 +121,7 @@ export function registerIdeaIpc(): void {
     // Read workspace LLM provider for conversation creation
     const wsSettings = workspaceRepository.getSettings(workspaceId)
     const llmProvider: LLMProvider = wsSettings.llmProvider ?? 'claude'
+    const snapshot = buildConversationModelSnapshot(workspaceId, llmProvider)
 
     // Create a new conversation for the grill session
     const conv = conversationRepository.create(
@@ -133,7 +129,11 @@ export function registerIdeaIpc(): void {
       `💡 Grill: ${idea.title}`,
       'plan',
       undefined,
-      llmProvider
+      llmProvider,
+      undefined,
+      undefined,
+      undefined,
+      snapshot
     )
 
     // Link it to the idea and update status
@@ -156,6 +156,7 @@ export function registerIdeaIpc(): void {
     // Read workspace LLM provider for conversation creation
     const wsSettingsDirect = workspaceRepository.getSettings(workspaceId)
     const llmProviderDirect: LLMProvider = wsSettingsDirect.llmProvider ?? 'claude'
+    const snapshotDirect = buildConversationModelSnapshot(workspaceId, llmProviderDirect)
 
     // Create conversation with idea title
     const conv = conversationRepository.create(
@@ -163,7 +164,11 @@ export function registerIdeaIpc(): void {
       idea.title,
       'plan',
       undefined,
-      llmProviderDirect
+      llmProviderDirect,
+      undefined,
+      undefined,
+      undefined,
+      snapshotDirect
     )
 
     // Mark idea as completed

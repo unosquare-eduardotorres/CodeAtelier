@@ -46,7 +46,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/bp-verify-test',
     workspaceId: 'ws-bv1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -93,7 +93,8 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
-    const result = adapter.buildPrompts(makePromptCtx())
+    // Pass empty message so buildPrompts falls through to getPhaseMessage()
+    const result = adapter.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('4-level artifact verification methodology'))
   })
 
@@ -104,7 +105,7 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
-    const result = adapter.buildPrompts(makePromptCtx())
+    const result = adapter.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('EXISTS'))
     assert.ok(result.effectiveMessage.includes('SUBSTANTIVE'))
     assert.ok(result.effectiveMessage.includes('WIRED'))
@@ -118,7 +119,7 @@ describe('BlueprintVerifyAdapter', () => {
       phaseContext: basePhaseContext
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
-    const result = adapter.buildPrompts(makePromptCtx())
+    const result = adapter.buildPrompts({ ...makePromptCtx(), message: '' })
     assert.ok(result.effectiveMessage.includes('blueprint-phase-complete'))
   })
 

@@ -17,11 +17,8 @@ import type {
   CompleteResult,
   SyncDiff,
   SyncResult,
-  Memory,
-  MemoryType,
   MemoryFeedProgress,
   MemoryFeedResult,
-  WorkspaceFeedTimestamps,
   TokenSummary,
   WorkspaceUsageSummary,
   AgentSessionRecord,
@@ -59,7 +56,21 @@ import type {
   GrillDecision,
   GrillTrackScore,
   GrillStructuredPlan,
-  PlanRecord
+  PlanRecord,
+  MemoryFact,
+  MemoryFactCategory,
+  MemoryFactTier,
+  MemoryFactStatus,
+  MemoryContradiction,
+  MemoryCaptureSettings,
+  MemoryEmbeddingStatus,
+  ContradictionStatus,
+  E2EScenarioSummary,
+  E2EPreflightResult,
+  E2ERunSummary,
+  E2EResultSummary,
+  E2EResultDetail,
+  E2EProgressEvent
 } from '../shared/types'
 
 const api = {
@@ -145,7 +156,6 @@ const api = {
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
-    presetId?: string | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
   updatePersona: (args: {
@@ -451,44 +461,63 @@ const api = {
   applySync: (args: { workspacePath: string; skipRemoved?: boolean }): Promise<SyncResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SYNC_APPLY, args),
 
-  // ── Memory (auto memory system) ──
-  listMemories: (args: { workspaceId: string }): Promise<Memory[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_LIST, args),
+  // ── Memory Engine (knowledge-aware facts) ──
+  memoryFactsList: (args: { workspaceId: string; status?: MemoryFactStatus }): Promise<MemoryFact[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_LIST, args),
 
-  searchMemories: (args: { workspaceId: string; query: string }): Promise<Memory[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SEARCH, args),
+  memoryFactsSearch: (args: { workspaceId: string; query: string; category?: MemoryFactCategory }): Promise<MemoryFact[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_SEARCH, args),
 
-  createMemory: (args: {
-    workspaceId: string | null
-    type: MemoryType
-    title: string
-    content: string
-    tags?: string[]
-    importance?: number
-  }): Promise<Memory> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CREATE, args),
+  memoryFactsGet: (args: { id: string }): Promise<MemoryFact> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_GET, args),
 
-  updateMemory: (args: {
-    id: string
-    title?: string
-    content?: string
-    tags?: string[]
-    importance?: number
-  }): Promise<Memory> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_UPDATE, args),
+  memoryFactsUpdate: (args: { id: string; title?: string; content?: string; tags?: string[]; scopePaths?: string[]; category?: MemoryFactCategory }): Promise<MemoryFact> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_UPDATE, args),
 
-  deleteMemory: (args: { id: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DELETE, args),
+  memoryFactsArchive: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_ARCHIVE, args),
 
-  memoryUpdateSetting: (args: { workspaceId: string; memoryEnabled: boolean }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_UPDATE_SETTING, args),
+  memoryFactsConfirm: (args: { id: string }): Promise<MemoryFact> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_CONFIRM, args),
 
-  // ── Memory Feed ──
+  memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }): Promise<MemoryFact> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_PROMOTE, args),
+
+  memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }): Promise<MemoryFact> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_SCOPE_TOGGLE, args),
+
+  memoryFactsDelete: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_DELETE, args),
+
+  // Contradictions
+  memoryContradictionsList: (args?: { status?: ContradictionStatus }): Promise<MemoryContradiction[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST, args),
+
+  memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }): Promise<MemoryContradiction> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_RESOLVE, args),
+
+  // Capture settings
+  memoryCaptureSettingsGet: (args: { workspaceId: string }): Promise<MemoryCaptureSettings> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CAPTURE_SETTINGS_GET, args),
+
+  memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CAPTURE_SETTINGS_SET, args),
+
+  // Embedding status
+  memoryEmbeddingStatus: (args?: { workspaceId?: string }): Promise<MemoryEmbeddingStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EMBEDDING_STATUS, args),
+
+  memoryEmbeddingBackfill: (): Promise<{ backfilled: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EMBEDDING_BACKFILL),
+
+  memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }): Promise<{ created: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SAVE_MESSAGE, args),
+
+  // ── Memory Feed (retained) ──
   memorySelectDocument: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SELECT_DOCUMENT),
 
   memoryFeedCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FEED_CANCEL),
-
-  memoryGetFeedTimestamps: (args: { workspaceId: string }): Promise<WorkspaceFeedTimestamps> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GET_FEED_TIMESTAMPS, args),
 
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
@@ -1242,10 +1271,11 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
   // ── Embedding Provider ──
-  embeddingCheckStatus: (): Promise<EmbeddingModelStatus> =>
-    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS),
+  embeddingCheckStatus: (args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }): Promise<EmbeddingModelStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS, args),
 
-  embeddingInitialize: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE),
+  embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE, args),
 
   onEmbeddingModelReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()
@@ -1765,26 +1795,7 @@ const api = {
   }): Promise<{ conversationId: string; planId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
 
-  // ── LLM Presets ──
-  getPresets: (args: { workspaceId: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_ALL, args),
-  getPreset: (args: { presetId: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_GET_BY_ID, args),
-  createPreset: (args: {
-    workspaceId: string
-    name: string
-    actionConfig: Record<string, unknown>
-  }) => ipcRenderer.invoke(IPC_CHANNELS.PRESET_CREATE, args),
-  updatePreset: (args: {
-    presetId: string
-    changes: { name?: string; actionConfig?: Record<string, unknown> }
-  }) => ipcRenderer.invoke(IPC_CHANNELS.PRESET_UPDATE, args),
-  deletePreset: (args: { presetId: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_DELETE, args),
-  setDefaultPreset: (args: { workspaceId: string; presetId: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_SET_DEFAULT, args),
-  switchConversationPreset: (args: { conversationId: string; presetId: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PRESET_SWITCH, args),
+
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -2397,6 +2408,16 @@ const api = {
   blueprintSkipClarify: (args: { blueprintId: string }): Promise<{ skipped: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_CLARIFY, args),
 
+  blueprintClarifyProceed: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ proceeded: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_PROCEED, args),
+
+  blueprintClarifyIterate: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ iterated: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE, args),
+
   blueprintStartPlan: (args: {
     blueprintId: string
     workspaceId: string
@@ -2453,6 +2474,26 @@ const api = {
   }): Promise<{ running: boolean; blueprintId: string | null; currentPhase: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_PIPELINE_STATUS, args),
 
+  blueprintRetryPhase: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{ retrying: boolean; phase: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RETRY_PHASE, args),
+
+  // M3: Transcript retrieval
+  blueprintGetTranscript: (args: {
+    blueprintId: string
+    afterSeq?: number
+  }): Promise<Array<{
+    id: string
+    blueprintId: string
+    seq: number
+    type: string
+    payload: Record<string, unknown>
+    createdAt: string
+  }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_TRANSCRIPT, args),
+
   onBlueprintPhaseStart: (
     cb: (data: { blueprintId: string; workspaceId: string; phase: string }) => void
   ): (() => void) => {
@@ -2465,11 +2506,25 @@ const api = {
   },
 
   onBlueprintPhaseProgress: (
-    cb: (data: { blueprintId: string; workspaceId: string; phase: string; text: string }) => void
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      phase: string
+      text: string
+      kind?: 'text' | 'tool'
+      toolActivity?: Record<string, unknown>
+    }) => void
   ): (() => void) => {
     const handler = (
       _: unknown,
-      data: { blueprintId: string; workspaceId: string; phase: string; text: string }
+      data: {
+        blueprintId: string
+        workspaceId: string
+        phase: string
+        text: string
+        kind?: 'text' | 'tool'
+        toolActivity?: Record<string, unknown>
+      }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS, handler)
@@ -2525,6 +2580,33 @@ const api = {
     feedback?: string
   }): Promise<{ responded: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND, args),
+
+  onBlueprintClarifyAwaitingInput: (
+    cb: (data: { blueprintId: string; workspaceId: string }) => void
+  ): (() => void) => {
+    const handler = (_: unknown, data: { blueprintId: string; workspaceId: string }): void =>
+      cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_CLARIFY_AWAITING_INPUT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_CLARIFY_AWAITING_INPUT, handler)
+  },
+
+  onBlueprintClarifyFindings: (cb: (data: unknown) => void): (() => void) => {
+    const handler = (_: unknown, data: unknown): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_CLARIFY_FINDINGS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_CLARIFY_FINDINGS, handler)
+  },
+
+  onBlueprintClarifyQuestions: (cb: (data: unknown) => void): (() => void) => {
+    const handler = (_: unknown, data: unknown): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_CLARIFY_QUESTIONS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_CLARIFY_QUESTIONS, handler)
+  },
+
+  onBlueprintClarifyGate: (cb: (data: unknown) => void): (() => void) => {
+    const handler = (_: unknown, data: unknown): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_CLARIFY_GATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_CLARIFY_GATE, handler)
+  },
 
   onBlueprintApprovalNeeded: (
     cb: (data: {
@@ -2630,6 +2712,46 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE, handler)
   },
 
+  // ── Blueprint Snapshot Sync (M2) ──
+
+  onBlueprintStateSync: (
+    cb: (data: {
+      seq: number
+      workspaceId: string
+      blueprintId: string | null
+      running: boolean
+      machineState: string
+      currentPhase: string | null
+      phaseStartedAt: number | null
+      clarifyFindings: unknown
+      clarifyQuestions: unknown
+      pendingApproval: { planSummary: string } | null
+      wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      lastError: string | null
+    }) => void
+  ): (() => void) => {
+    const handler = (_: unknown, data: unknown): void => cb(data as Parameters<typeof cb>[0])
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_STATE_SYNC, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_STATE_SYNC, handler)
+  },
+
+  // ── Blueprint Snapshot Pull (M7) ──
+
+  blueprintGetSnapshot: (args: { workspaceId: string }): Promise<{
+    seq: number
+    workspaceId: string
+    blueprintId: string | null
+    running: boolean
+    machineState: string
+    currentPhase: string | null
+    phaseStartedAt: number | null
+    clarifyFindings: unknown
+    clarifyQuestions: unknown
+    pendingApproval: { planSummary: string } | null
+    wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+    lastError: string | null
+  }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT, args),
+
   // ── Council (LLM Council — multi-advisor review) ──
 
   councilStart: (args: {
@@ -2715,7 +2837,45 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_GET_HISTORY, args),
 
   councilDeleteSession: (args: { sessionId: string }): Promise<{ deleted: boolean }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_DELETE_SESSION, args)
+    ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_DELETE_SESSION, args),
+
+  // ── E2E Testing ──
+
+  testingListScenarios: (): Promise<E2EScenarioSummary[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_LIST_SCENARIOS),
+
+  testingPreflight: (args?: { workspaceId?: string }): Promise<E2EPreflightResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_PREFLIGHT, args),
+
+  testingRun: (args?: {
+    scenarioIds?: string[]
+    category?: string
+    workspaceId?: string
+  }): Promise<{ runId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_RUN, args),
+
+  testingRequeueFailed: (args: { runId: string; workspaceId?: string }): Promise<{ runId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_REQUEUE_FAILED, args),
+
+  testingCancel: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_CANCEL),
+
+  testingGetRuns: (args?: { workspaceId?: string }): Promise<E2ERunSummary[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_GET_RUNS, args),
+
+  testingGetRunResults: (args: { runId: string }): Promise<E2EResultSummary[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_GET_RUN_RESULTS, args),
+
+  testingGetResultDetail: (args: { resultId: string }): Promise<E2EResultDetail | undefined> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_GET_RESULT_DETAIL, args),
+
+  onTestingProgress: (
+    cb: (data: E2EProgressEvent) => void
+  ): (() => void) => {
+    const handler = (_: unknown, data: E2EProgressEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.TESTING_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TESTING_PROGRESS, handler)
+  }
 } as const
 
 if (process.contextIsolated) {

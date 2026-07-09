@@ -1,14 +1,48 @@
+import { useEffect, useRef } from 'react'
 import {
   useModelConfig,
-  ProviderToggle,
-  ExecutorBackendSection,
-  ClaudeConfigSection,
-  LocalLLMConfigSection
+  ProviderCards,
+  ModelRolesSection,
+  ConversationDefaultsSection
 } from './model-config'
-import { PresetManager } from './PresetManager'
+import { useSettingsStore } from '@renderer/store/settings.store'
 
 export default function ModelConfigTab(): React.JSX.Element {
   const config = useModelConfig()
+
+  // ── Deep-link intent: consume and trigger silent oMLX auto-test ──
+  const modelsViewIntent = useSettingsStore((s) => s.modelsViewIntent)
+  const setModelsViewIntent = useSettingsStore((s) => s.setModelsViewIntent)
+
+  useEffect(() => {
+    if (modelsViewIntent) {
+      setModelsViewIntent(null)
+      // Auto-test oMLX connection when deep-linked to local provider
+      if (modelsViewIntent.provider === 'local-llm') {
+        config.testConnection(undefined, undefined, true)
+      }
+    }
+  }, [modelsViewIntent, setModelsViewIntent, config])
+
+  // ── Unsaved-changes navigation guard (scoped to connection draft) ──
+  const setUnsavedGuard = useSettingsStore((s) => s.setUnsavedGuard)
+  const clearUnsavedGuard = useSettingsStore((s) => s.clearUnsavedGuard)
+
+  const isDirtyRef = useRef(config.isConnectionDirty)
+  isDirtyRef.current = config.isConnectionDirty
+  const saveRef = useRef(config.saveConnection)
+  saveRef.current = config.saveConnection
+  const discardRef = useRef(config.discardConnection)
+  discardRef.current = config.discardConnection
+
+  useEffect(() => {
+    setUnsavedGuard({
+      isDirty: () => isDirtyRef.current,
+      save: () => saveRef.current(),
+      discard: () => discardRef.current()
+    })
+    return () => clearUnsavedGuard()
+  }, [setUnsavedGuard, clearUnsavedGuard])
 
   if (!config.activeWorkspace) {
     return (
@@ -19,89 +53,58 @@ export default function ModelConfigTab(): React.JSX.Element {
   }
 
   return (
-    <div data-testid="model-config-tab" className="w-full px-6 py-8">
-      {/* Header — full width */}
-      <div className="mb-6">
-        <h2 className="text-base font-semibold text-text-primary">Model Configuration</h2>
-        <p className="text-xs text-text-secondary mt-1">
-          Configure which LLM provider and models power this workspace.
-        </p>
-      </div>
+    <div data-testid="model-config-tab" className="w-full pb-8">
+      <div className="px-6 pt-6">
+        <h2 className="text-base font-semibold text-text-primary mb-6">Model Configuration</h2>
 
-      {/* ── LLM Provider Toggle ── */}
-      <ProviderToggle provider={config.provider} onProviderChange={config.handleProviderChange} />
-
-      {/* ── Executor Backend (advanced, Claude only) ── */}
-      {config.provider === 'claude' && (
-        <ExecutorBackendSection
-          executorBackend={config.executorBackend}
-          activeWorkspaceId={config.activeWorkspace.id}
-          onBackendChange={async (backend) => {
-            config.setExecutorBackend(backend)
-            try {
-              const settings = await window.api.getWorkspaceSettings({
-                workspaceId: config.activeWorkspace!.id
-              })
-              await window.api.updateWorkspaceSettings({
-                workspaceId: config.activeWorkspace!.id,
-                settings: { ...settings, executorBackend: backend }
-              })
-            } catch (err) {
-              console.error('Failed to save executor backend:', err)
-            }
-          }}
-        />
-      )}
-
-      {/* ── Claude-specific config ── */}
-      {config.provider === 'claude' && (
-        <ClaudeConfigSection
-          costPreference={config.costPreference}
+        {/* ── Provider Cards (always both visible) ── */}
+        <ProviderCards
+          defaultProvider={config.defaultProvider}
+          claudeCliStatus={config.claudeCliStatus}
           fastMode={config.fastMode}
           budgetCapUsd={config.budgetCapUsd}
-          communicationTone={config.communicationTone}
-          onCostPreferenceChange={config.handleCostPreferenceChange}
-          onFastModeToggle={config.handleFastModeToggle}
-          onBudgetCapChange={config.handleBudgetCapChange}
-          onToneChange={config.handleToneChange}
-        />
-      )}
-
-      {/* ── Local LLM configuration ── */}
-      {config.provider === 'local-llm' && (
-        <LocalLLMConfigSection
-          backend={config.backend}
-          platformInfo={config.platformInfo}
-          localHost={config.localHost}
-          localPort={config.localPort}
-          localApiKey={config.localApiKey}
-          localContextWindow={config.localContextWindow}
+          executorBackend={config.executorBackend}
+          connectionDraft={config.connectionDraft}
+          isConnectionDirty={config.isConnectionDirty}
           localStatus={config.localStatus}
           connectionTesting={config.connectionTesting}
           modelLoading={config.modelLoading}
           localModel={config.localModel}
           localBaseUrl={config.localBaseUrl}
           isRemoteServer={config.isRemoteServer}
-          showOllamaSetup={config.showOllamaSetup}
-          provider={config.provider}
-          activeWorkspaceId={config.activeWorkspace.id}
-          onBackendChange={config.handleBackendChange}
-          onLocalModelSelect={config.handleLocalModelSelect}
-          onLoadOmlxModel={config.handleLoadOmlxModel}
-          onTestConnection={() => config.testConnection()}
+          platformInfo={config.platformInfo}
+          onSetDefaultProvider={config.handleSetDefaultProvider}
+          onFastModeToggle={config.handleFastModeToggle}
+          onBudgetCapChange={config.handleBudgetCapChange}
+          onExecutorBackendChange={config.handleExecutorBackendChange}
           onHostChange={config.setLocalHost}
           onPortChange={config.setLocalPort}
           onApiKeyChange={config.setLocalApiKey}
           onContextWindowChange={config.setLocalContextWindow}
-          onShowOllamaSetupChange={config.setShowOllamaSetup}
-          saveProviderSettings={config.saveProviderSettings}
-          setProvider={config.setProvider}
-          setLocalModel={config.setLocalModel}
+          onSaveConnection={config.saveConnection}
+          onDiscardConnection={config.discardConnection}
+          onTestConnection={() => config.testConnection()}
+          onAutoTest={config.scheduleAutoTest}
+          onLocalModelSelect={config.handleLocalModelSelect}
+          onLoadOmlxModel={config.handleLoadOmlxModel}
+          onUnloadOmlxModel={config.handleUnloadOmlxModel}
         />
-      )}
 
-      {/* ── LLM Presets ── */}
-      <PresetManager />
+        {/* ── Model Routing (cross-provider) ── */}
+        <ModelRolesSection
+          modelRoles={config.modelRoles}
+          claudeModelOverrides={config.claudeModelOverrides}
+          workspaceProvider={config.defaultProvider}
+          omlxModels={config.omlxChatModels}
+          onModelRolesChange={config.handleModelRolesChange}
+        />
+
+        {/* ── Workspace Defaults (provider-agnostic, bottom) ── */}
+        <ConversationDefaultsSection
+          communicationTone={config.communicationTone}
+          onToneChange={config.handleToneChange}
+        />
+      </div>
     </div>
   )
 }

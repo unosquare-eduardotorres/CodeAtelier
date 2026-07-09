@@ -28,6 +28,7 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
   protected workspaceId: string
   protected systemPrompt: string | null = null
   protected goalCondition: string | null = null
+  protected goalMode: 'advisory' | 'enforce' = 'advisory'
   protected workspaceName = ''
   protected detectedTechs: string[] = []
   /** Resolved model ID for lean prompt gating (undefined for local LLMs) */
@@ -39,13 +40,19 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
   }
 
   /** Set the /goal completion condition before starting the phase. */
-  setGoalCondition(condition: string): void {
+  setGoalCondition(condition: string, mode: 'advisory' | 'enforce' = 'advisory'): void {
     this.goalCondition = condition
+    this.goalMode = mode
   }
 
   /** Read the /goal completion condition — used by executor factory. */
   getGoalCondition(): string | null {
     return this.goalCondition
+  }
+
+  /** Read the goal delivery mode — 'advisory' (system prompt only) or 'enforce' (/goal stdin). */
+  getGoalMode(): 'advisory' | 'enforce' {
+    return this.goalMode
   }
 
   override async onSessionStart(ctx: AdapterSessionLifecycleCtx): Promise<void> {
@@ -64,7 +71,7 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
     this.detectedTechs = ctx.workspacePath ? detectTechStack(ctx.workspacePath).detectedTechs : []
 
     // Pattern 1: Centralized model resolution
-    this.resolvedModel = this.resolveModel(ctx.workspacePath, this.getModelAction(), ctx.presetId)
+    this.resolvedModel = this.resolveModel(ctx.workspacePath, this.getModelAction())
 
     // Build the phase-specific system prompt
     this.systemPrompt = this.buildPhaseSystemPrompt()
@@ -131,12 +138,10 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
     /* no-op */
   }
 
-  protected override persistMemory(): void {
-    /* no-op */
-  }
 
   override onSessionStop(): void {
     this.systemPrompt = null
     this.goalCondition = null
+    this.goalMode = 'advisory'
   }
 }

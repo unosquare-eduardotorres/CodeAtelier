@@ -54,6 +54,14 @@ After each task, verify:
 - [ ] No lint errors introduced
 - [ ] Constitution rules followed
 
+## Discoveries
+
+Before your completion block, emit a `blueprint-discoveries` block: a JSON array of up to 10 short strings (≤250 chars each) recording non-obvious things you learned about this codebase that later phases need — real entry points, gotchas, dead-ends tried, key file relationships. Skip obvious facts. Example:
+
+```blueprint-discoveries
+["Auth flows through src/middleware/session.ts — NOT auth.ts", "db/index.ts re-exports all repositories"]
+```
+
 ## Completion
 
 When all assigned tasks are complete:

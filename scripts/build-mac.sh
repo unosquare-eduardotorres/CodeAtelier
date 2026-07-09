@@ -15,8 +15,29 @@
 # (common in CI and some shells) causes npm 11+ to default `omit=dev`.
 set -euo pipefail
 
+# ── Warn if NODE_ENV=production could affect the restore
+if [ "${NODE_ENV:-}" = "production" ]; then
+  echo "⚠️  NODE_ENV=production detected — restore step will use --include=dev to override"
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# ── Augment PATH for @opencode-ai/cli installation
+# The OpenCode CLI is installed globally and needs to be in PATH for the app to spawn it.
+# Add Homebrew bin directories and npm global bin to PATH before running npm commands.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.npm-global/bin:$PATH"
+
+# ── Verify OpenCode CLI is available before build
+echo "▸ Verify OpenCode CLI installation:"
+if command -v opencode &>/dev/null; then
+  which opencode
+  opencode --version || true
+  echo "OpenCode CLI found and available"
+else
+  echo "WARNING: OpenCode CLI not found. Install with: npm install -g @opencode-ai/cli"
+  echo "This may cause spawn errors when building the app."
+fi
 
 # ── macOS Notarization credentials ──────────────────────────────────────────
 # electron-builder checks three credential methods in order:

@@ -18,7 +18,7 @@ import type {
 } from '../agent-session.types'
 import { DA_VINCI_AGENT_ID } from '../../../shared/constants'
 import { DaVinciPromptAssembler } from '../da-vinci-prompt-assembler'
-import { memoryService } from '../memory.service'
+// memoryService removed — per-turn injection handled by memory-retrieval.service.ts
 import { modelConfigService } from '../model-config.service'
 import {
   conversationRepository,
@@ -30,6 +30,7 @@ import { BaseRoleAdapter } from './base.adapter'
 export class DaVinciRoleAdapter extends BaseRoleAdapter {
   readonly role = 'da-vinci' as const
   readonly agentId = DA_VINCI_AGENT_ID
+  override readonly supportsEmitPlanRecovery = true
 
   private readonly promptAssembler = new DaVinciPromptAssembler()
 
@@ -58,9 +59,7 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
       if (settings.memoryEnabled !== false && workspace) {
         // Cache-audit optimization: session-start budget reduced from 10K→5K (balanced)
         // and 5K→3K (economy) to lower the first-turn context footprint.
-        const memoryBudget = settings.costPreference === 'economy' ? 3000 : 5000
-        const memoryCtx = memoryService.getContextForPrompt(workspace.id, memoryBudget)
-        if (memoryCtx) this.promptAssembler.setMemoryContext(memoryCtx)
+        // Memory context no longer set at session start — handled per-turn by retrieval engine
       }
     } catch {
       /* non-fatal — keep defaults */
@@ -118,7 +117,7 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
     // Pattern 1: Centralized model resolution
     const isBuildMode = ctx.mode === 'build' || ctx.mode === 'danger'
     const modelAction = `${this.role}:${isBuildMode ? 'build' : 'plan'}` as ModelAction
-    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction, ctx.presetId)
+    const resolvedModel = this.resolveModel(ctx.workspacePath, modelAction)
     // isLocalProvider is still needed by the assembler for local-prompt branching
     const isLocalProvider = modelConfigService.isLocalProvider(ctx.workspacePath)
 

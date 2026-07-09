@@ -3,6 +3,8 @@ import { rendererLog } from '@renderer/utils/logger'
 import type {
   DiscoveredAgent,
   DiscoveredSkill,
+  LLMProvider,
+  LocalLLMBackend,
   WorkspaceClaudeStatus,
   ActivationResult,
   SyncDiff,
@@ -48,7 +50,20 @@ interface SettingsState {
   isFileLoading: boolean
   isFileSaving: boolean
 
+  // Deep-link navigation intent for Models tab
+  modelsViewIntent: { provider: LLMProvider; backend?: LocalLLMBackend } | null
+
+  // Unsaved-changes navigation guard (registered by ModelConfigTab)
+  unsavedGuard: {
+    isDirty: () => boolean
+    save: () => Promise<void>
+    discard: () => void
+  } | null
+
   // Actions
+  setUnsavedGuard: (guard: SettingsState['unsavedGuard']) => void
+  clearUnsavedGuard: () => void
+  setModelsViewIntent: (intent: { provider: LLMProvider; backend?: LocalLLMBackend } | null) => void
   scanWorkspace: (workspacePath: string) => Promise<void>
   activateWorkspace: (workspacePath: string) => Promise<ActivationResult>
   cancelActivation: () => Promise<void>
@@ -94,11 +109,25 @@ const initialState = {
   activeFileContent: null,
   activeFilePath: null,
   isFileLoading: false,
-  isFileSaving: false
+  isFileSaving: false,
+  modelsViewIntent: null,
+  unsavedGuard: null
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   ...initialState,
+
+  setUnsavedGuard: (guard) => {
+    set({ unsavedGuard: guard })
+  },
+
+  clearUnsavedGuard: () => {
+    set({ unsavedGuard: null })
+  },
+
+  setModelsViewIntent: (intent) => {
+    set({ modelsViewIntent: intent })
+  },
 
   scanWorkspace: async (workspacePath: string) => {
     set({ isScanning: true })

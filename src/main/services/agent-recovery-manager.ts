@@ -10,9 +10,10 @@
 
 import type { AgentSessionHost, StreamLoopState, StreamChunk } from './agent-session-host'
 import { SESSION_CONSTANTS } from './agent-session-host'
-import type { AgentIntent, LLMProvider, ModelAction } from '../../shared/types'
+import type { AgentIntent, LLMProvider } from '../../shared/types'
 import type { AdapterMcpResult } from './agent-session.types'
-import { modelConfigService } from './model-config.service'
+import { resolveModelAction } from '../../shared/constants'
+import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import type { DiscoveredContext } from './local-plan-state.service'
@@ -261,9 +262,12 @@ export class AgentRecoveryManager {
     const { streamState, conversationId, systemPrompt, isBuildMode, timedOut } = params
 
     // Plan-mode tool-block recovery: fire a deterministic emit_plan recovery
-    // so the user still gets a plan card.
+    // so the user still gets a plan card.  Gated by adapter capability so
+    // blueprint / grill / audit / council sessions (which also run in plan
+    // mode) are never hijacked by a pointless recovery turn.
     let planRecoveryAttempted = false
     if (
+      this.s.adapter.supportsEmitPlanRecovery &&
       streamState.planModeToolBlock &&
       this.s.currentMode === 'plan' &&
       !this.s.controlToolState.plan &&
@@ -274,9 +278,11 @@ export class AgentRecoveryManager {
           cliExecutor: this.s.cliExecutor,
           systemPrompt,
           workspacePath: this.s.workspacePath!,
-          model: modelConfigService.getModel(
+          model: resolveModelFromSnapshot(
+            conversationId,
             this.s.workspacePath!,
-            this.s.adapter.role as ModelAction
+            resolveModelAction(this.s.adapter.role, false),
+            false
           ),
           sessionId: this.s.sessionMap.get(conversationId),
           conversationId,
@@ -318,9 +324,11 @@ export class AgentRecoveryManager {
         cliExecutor: this.s.cliExecutor,
         systemPrompt,
         workspacePath: this.s.workspacePath!,
-        model: modelConfigService.getModel(
+        model: resolveModelFromSnapshot(
+          conversationId,
           this.s.workspacePath!,
-          this.s.adapter.role as ModelAction
+          resolveModelAction(this.s.adapter.role, isBuildMode),
+          isBuildMode
         ),
         isBuildMode,
         sessionId: this.s.sessionMap.get(conversationId),

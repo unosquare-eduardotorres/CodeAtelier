@@ -1,7 +1,7 @@
 /**
  * Blueprint Tasks Adapter — read-only decomposer that produces wave-ordered implementation tasks.
  *
- * CLI config: --permission-mode plan, --effort xhigh, --goal "condition"
+ * CLI config: --permission-mode plan, --effort xhigh, goalMode: enforce (/goal via stdin)
  *
  * One-shot phase: agent reads spec + plan artifacts, investigates codebase,
  * produces a structured task list with waves, dependencies, and file ownership.

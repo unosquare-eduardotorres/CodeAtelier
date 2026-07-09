@@ -1,6 +1,6 @@
 // @ts-nocheck — TODO: fix after blueprint refactoring
 import type { JSX } from 'react'
-import { BookOpen, Plus, XCircle, RotateCcw } from 'lucide-react'
+import { BookOpen, Plus, XCircle, RotateCcw, AlertTriangle, PlayCircle, X } from 'lucide-react'
 import {
   BlueprintHistoryItem,
   BlueprintFilterBar,
@@ -16,6 +16,13 @@ interface BlueprintLandingViewProps {
   searchQuery: string
   filterCounts: Record<BlueprintFilter, number>
   lastError: { phase: string; message: string; blueprintId: string } | null
+  orphanedBlueprint: {
+    blueprintId: string
+    title: string
+    currentPhase: string
+    tasksCompleted: number
+    totalTasks: number
+  } | null
   workspaceId: string
   onFilterChange: (f: BlueprintFilter) => void
   onSearchChange: (q: string) => void
@@ -23,6 +30,7 @@ interface BlueprintLandingViewProps {
   onSelectBlueprint: (id: string) => void
   onRetry: (bp: Blueprint) => void
   onRetryPhase: (blueprintId: string, workspaceId: string) => void
+  onDismissOrphan: () => void
   onDelete: (id: string) => void
 }
 
@@ -40,6 +48,7 @@ export default function BlueprintLandingView({
   searchQuery,
   filterCounts,
   lastError,
+  orphanedBlueprint,
   workspaceId,
   onFilterChange,
   onSearchChange,
@@ -47,6 +56,7 @@ export default function BlueprintLandingView({
   onSelectBlueprint,
   onRetry,
   onRetryPhase,
+  onDismissOrphan,
   onDelete
 }: BlueprintLandingViewProps): JSX.Element {
   return (
@@ -135,6 +145,39 @@ export default function BlueprintLandingView({
                 <RotateCcw size={12} />
                 Retry Phase
               </button>
+            </div>
+          )}
+
+          {/* BP-RESUME-02: Orphaned blueprint resume banner */}
+          {orphanedBlueprint && (
+            <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-amber-300">
+              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">
+                  &ldquo;{orphanedBlueprint.title}&rdquo; was interrupted during {orphanedBlueprint.currentPhase}
+                </span>
+                <span className="text-xs opacity-80">
+                  {orphanedBlueprint.totalTasks > 0
+                    ? `${orphanedBlueprint.tasksCompleted}/${orphanedBlueprint.totalTasks} tasks complete`
+                    : 'No tasks started yet'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => onRetryPhase(orphanedBlueprint.blueprintId, workspaceId)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-white bg-amber-600 hover:bg-amber-500 rounded-lg transition-colors"
+                >
+                  <PlayCircle size={12} />
+                  Resume
+                </button>
+                <button
+                  onClick={onDismissOrphan}
+                  className="inline-flex items-center justify-center w-6 h-6 text-amber-400/60 hover:text-amber-300 rounded transition-colors"
+                  title="Dismiss"
+                >
+                  <X size={14} />
+                </button>
+              </div>
             </div>
           )}
 

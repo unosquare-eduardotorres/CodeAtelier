@@ -42,7 +42,7 @@ function makeMcpCtx(overrides: Partial<AdapterMcpContext> = {}): AdapterMcpConte
     workspacePath: '/tmp/audit-test',
     workspaceId: 'ws-1',
     conversationId: null,
-    controlCallbacks: { onPlan: () => {}, onAskUser: () => {}, onMemory: () => {} },
+    controlCallbacks: { onPlan: () => {}, onAskUser: () => {} },
     ...overrides
   }
 }
@@ -113,7 +113,7 @@ describe('AuditRoleAdapter', () => {
     const emitted: unknown[] = []
     a.emitDetectedIntents({
       accumulatedText: 'audit findings here',
-      controlToolState: { plan: false, askUser: false, memory: false },
+      controlToolState: { plan: false, askUser: false },
       mode: 'plan',
       conversationId: 'c1',
       emit: (_evt, payload) => emitted.push(payload)
@@ -133,13 +133,7 @@ describe('AuditRoleAdapter', () => {
     assert.equal((a as any).getIncludeGitContext(), false)
   })
 
-  // ── persistMemory (no-op) ──
-
-  test('persistMemory_is_no_op', () => {
-    const a = createAdapter()
-    ;(a as any).persistMemory({ type: 'project', title: 'test', content: 'test' }, null)
-    // Should not throw
-  })
+  // persistMemory removed — memory tools now on dedicated memory MCP server
 
   // ── onSessionStop ──
 

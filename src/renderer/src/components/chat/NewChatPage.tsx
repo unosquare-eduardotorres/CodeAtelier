@@ -4,8 +4,6 @@ import {
   Hammer,
   Lightbulb,
   GitBranch,
-  Cloud,
-  Monitor,
   Puzzle,
   Smartphone,
   Network,
@@ -31,7 +29,8 @@ import {
 import type { ExternalMcpDefinition, LocalMcpDefinition } from '../../../../shared/constants'
 import ToggleButtonGroup from './ToggleButtonGroup'
 import McpToolsSection from './McpToolsSection'
-import { PresetSelector } from './PresetSelector'
+import { ModelPicker } from './ModelPicker'
+import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -46,7 +45,6 @@ interface NewChatPageProps {
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
     mcpOverrides?: Record<string, boolean>
-    presetId?: string | null
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -75,11 +73,7 @@ function buildMcpPayload(
 
 // ── useWorkspaceSettings — loads provider + MCP config ───────────────────
 
-function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
-  const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
-  const [localModelInfo, setLocalModelInfo] = useState<{ backend: string; model: string } | null>(
-    null
-  )
+function useMcpSettings(activeWorkspace: { id: string } | null) {
   const [mcpOverrides, setMcpOverrides] = useState<Record<string, boolean>>({})
   const [showMcpTools, setShowMcpTools] = useState(false)
   const [availableIntegrations, setAvailableIntegrations] = useState<ExternalMcpDefinition[]>([])
@@ -90,11 +84,6 @@ function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
     window.api
       .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
       .then((s) => {
-        setLlmProvider((s.llmProvider as LLMProvider) ?? 'claude')
-        setLocalModelInfo({
-          backend: (s.localLlmBackend as string) ?? 'ollama',
-          model: (s.localModel as string) ?? (s.ollamaModel as string) ?? 'unknown'
-        })
         const available = EXTERNAL_MCP_INTEGRATIONS.filter((i) => !!s[`${i.id}Available`])
         setAvailableIntegrations(available)
         setShowMcpTools(available.length > 0)
@@ -115,9 +104,6 @@ function useWorkspaceSettings(activeWorkspace: { id: string } | null) {
   }, [activeWorkspace])
 
   return {
-    llmProvider,
-    setLlmProvider,
-    localModelInfo,
     availableIntegrations,
     availableLocalMcps,
     showMcpTools,
@@ -197,14 +183,22 @@ export default function NewChatPage({
     llmProvider,
     setLlmProvider,
     localModelInfo,
+    platformInfo
+  } = useWorkspaceModelInfo(activeWorkspace?.id)
+  const {
     availableIntegrations,
     availableLocalMcps,
     showMcpTools,
     setShowMcpTools,
     mcpOverrides,
     setMcpOverrides
-  } = useWorkspaceSettings(activeWorkspace)
-  const [presetId, setPresetId] = useState<string | null>(null)
+  } = useMcpSettings(activeWorkspace)
+  const [selectedModelId, setSelectedModelId] = useState<string | null>('claude-opus-4-8')
+
+  const handleModelChange = useCallback((provider: LLMProvider, modelId: string | null) => {
+    setLlmProvider(provider)
+    setSelectedModelId(modelId)
+  }, [setLlmProvider])
   const [mcpSubTab, setMcpSubTab] = useState<McpSubTab>('external')
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -231,9 +225,12 @@ export default function NewChatPage({
   const activeLocalMcps = availableLocalMcps.filter((lm) => mcpOverrides[lm.id] !== false)
   const activeExternalMcps = availableIntegrations.filter((i) => !!mcpOverrides[i.id])
 
-  const handleSubmit = useCallback((): void => {
+  const handleSubmit = useCallback(async (): Promise<void> => {
     const trimmedTitle = title.trim()
     if (!trimmedTitle) return
+
+    // Model defaults are now configured exclusively in Settings → Models tab.
+    // Chat creation should not silently rewrite workspace-wide settings.
 
     const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
 
@@ -246,7 +243,6 @@ export default function NewChatPage({
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
       llmProvider,
       mcpOverrides: mcpOverridesPayload,
-      presetId
     })
   }, [
     title,
@@ -259,7 +255,6 @@ export default function NewChatPage({
     mcpOverrides,
     availableLocalMcps,
     availableIntegrations,
-    presetId,
     onCreateChat
   ])
 
@@ -357,15 +352,15 @@ export default function NewChatPage({
           }
         />
 
-        {/* LLM Preset */}
+        {/* Model Picker */}
         {activeWorkspace && (
-          <div className="w-full mb-5">
-            <PresetSelector
-              workspaceId={activeWorkspace.id}
-              presetId={presetId}
-              onChange={setPresetId}
-            />
-          </div>
+          <ModelPicker
+            provider={llmProvider}
+            selectedModelId={selectedModelId}
+            localModelInfo={localModelInfo}
+            platformInfo={platformInfo}
+            onChange={handleModelChange}
+          />
         )}
 
         {/* Communication Tone */}
@@ -438,33 +433,6 @@ export default function NewChatPage({
             </label>
           </div>
         )}
-
-        {/* LLM Provider */}
-        <ToggleButtonGroup
-          data-testid="new-chat-provider-toggle"
-          label="Provider"
-          value={llmProvider}
-          onChange={setLlmProvider}
-          options={[
-            {
-              value: 'claude',
-              label: 'Claude',
-              icon: Cloud,
-              activeClass: 'bg-primary-muted text-primary-text border border-primary/30'
-            },
-            {
-              value: 'local-llm',
-              label: 'Local LLM',
-              icon: Monitor,
-              activeClass: 'bg-primary-muted text-primary-text border border-primary/30'
-            }
-          ]}
-          description={
-            llmProvider === 'local-llm' && localModelInfo
-              ? `Using ${localModelInfo.backend === 'omlx' ? '🐧 oMLX' : '🦙 Ollama'} — ${localModelInfo.model}`
-              : undefined
-          }
-        />
 
         {/* MCP Tools — system + external integrations */}
         {(availableLocalMcps.length > 0 || availableIntegrations.length > 0) && (

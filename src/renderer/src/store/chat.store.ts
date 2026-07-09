@@ -94,8 +94,7 @@ export interface ChatState {
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null,
-    presetId?: string | null
+    communicationTone?: CommunicationTone | null
   ) => Promise<void>
   switchPersona: (personaSpecialistId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
@@ -285,8 +284,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null,
-    presetId?: string | null
+    communicationTone?: CommunicationTone | null
   ) => {
     const conversation = await window.api.createConversation({
       workspaceId,
@@ -295,8 +293,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       personaSpecialistId,
       llmProvider,
       mcpOverrides,
-      communicationTone,
-      presetId
+      communicationTone
     })
     set((state) => ({
       conversations: [conversation, ...state.conversations],
