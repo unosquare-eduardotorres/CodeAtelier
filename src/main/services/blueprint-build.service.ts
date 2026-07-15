@@ -17,7 +17,7 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
 import type {
   BlueprintTask,
   BlueprintPhaseStartPayload,
@@ -631,6 +631,9 @@ export class BlueprintBuildService extends EventEmitter {
     session.on('chunk', onChunk)
     session.on('statusUpdate', onStatus)
 
+    // B4-FIX: Auto-respond to ask_user calls — build is non-interactive
+    const cleanupAskUser = wireAskUserAutoResponder(session, 'BUILD')
+
     try {
       // Start session in BUILD mode (write access)
       await session.start(workspacePath, 'build')
@@ -699,6 +702,7 @@ export class BlueprintBuildService extends EventEmitter {
 
       return { success: false, completion: null, discoveries: [] }
     } finally {
+      cleanupAskUser()
       session.removeListener('chunk', onChunk)
       session.removeListener('statusUpdate', onStatus)
       // BP-SESSION-LEAK-01: Wrap session.stop() in its own try-catch so a stop()

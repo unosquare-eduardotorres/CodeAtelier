@@ -1,6 +1,6 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
+  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/renderer/src/utils/sentence-buffer.ts", "src/renderer/src/components/workspace/grill/handoff-utils.ts"],
   "compilerOptions": {
     "composite": true,
     "noImplicitAny": true,

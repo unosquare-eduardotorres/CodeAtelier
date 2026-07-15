@@ -24,11 +24,7 @@ try {
   dbAvailable = false
 }
 
-if (!dbAvailable) {
-  describe('usageTrackerService (skipped — native module unavailable)', () => {
-    test('recordUsage', () => {}, { skipReason: 'no DB' })
-  })
-} else {
+if (dbAvailable) {
   describe('usageTrackerService', () => {
     test('recordUsage computes cost via estimateCostCents (model pricing)', () => {
       _setDatabaseForTesting(createTestDb())

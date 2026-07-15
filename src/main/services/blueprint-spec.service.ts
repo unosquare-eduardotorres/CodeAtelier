@@ -13,9 +13,11 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintSpecifyAdapter } from './role-adapters/blueprint/blueprint-specify.adapter'
+import { buildReferenceDocsBlock, loadAllReferenceDocuments, splitBinaryDocs } from './blueprint-document-loader'
+import { memoryExtractionService } from './memory-extraction.service'
 import { BlueprintClarifyAdapter } from './role-adapters/blueprint/blueprint-clarify.adapter'
 import { buildSpecifyGoalCondition, buildClarifyGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
@@ -31,7 +33,8 @@ import {
   parseClarifyFindings,
   parseClarifyQuestions,
   parseClarifyCompletion,
-  deduplicateClarifyQuestions
+  deduplicateClarifyQuestions,
+  grillQuestionsToClarifyBlock
 } from '../../shared/blueprint-clarify-parsers'
 import type { ClarifyFindingsBlock, ClarifyQuestionsBlock, ClarifyQuestion } from '../../shared/blueprint-clarify-parsers'
 import type {
@@ -41,10 +44,34 @@ import type {
   BlueprintPhaseArtifactPayload,
   GrillDecisionForBlueprint
 } from '../../shared/blueprint-types'
+import type { GrillQuestion } from '../../shared/types'
 
 const bpLog = log.scope('blueprint-spec')
 
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min per phase
+
+const RESOLVED_CLARIFICATIONS_HEADING = '## Resolved Clarifications'
+
+/**
+ * Strip a previously-appended "## Resolved Clarifications" block from a spec markdown string.
+ * This makes re-running finalizeClarifyPhase idempotent — no duplicate blocks.
+ * Exported for testing.
+ */
+export function stripClarificationsSection(md: string): string {
+  const idx = md.indexOf(RESOLVED_CLARIFICATIONS_HEADING)
+  if (idx === -1) return md
+  return md.slice(0, idx).trimEnd()
+}
+
+/**
+ * Corrective nudge sent when the model's turn yields zero parseable fenced blocks.
+ * Uses the EXACT fence names the parsers expect (blueprint-clarify-findings, etc.).
+ * Exported so unit tests can validate fence-name alignment with the parser regexes.
+ */
+export const CLARIFY_CORRECTION_MESSAGE =
+  'Your last turn contained none of the required fenced blocks. ' +
+  'Re-emit the findings block (```blueprint-clarify-findings) and either a questions block ' +
+  '(```blueprint-clarify-questions) or the completion block (```blueprint-phase-complete).'
 
 // ── Per-Blueprint Session State ──
 
@@ -55,6 +82,8 @@ interface BlueprintSessionState {
   workspaceId: string
   /** Mutable stall watchdog — set before each send, cleared after. */
   activeWatchdog: PhaseActivityWatchdog | null
+  /** B2-FIX: Pending ask_user requestId — set when the model calls ask_user during clarify. */
+  pendingAskUserRequestId: string | null
 }
 
 // ── Service ──
@@ -127,8 +156,9 @@ export class BlueprintSpecService extends EventEmitter {
     workspacePath: string
     description: string
     grillDecisions?: GrillDecisionForBlueprint[]
+    referenceDocuments?: Array<{ type: string; path: string; name?: string }>
   }): Promise<void> {
-    const { blueprintId, workspaceId, workspacePath, description, grillDecisions } = params
+    const { blueprintId, workspaceId, workspacePath, description, grillDecisions, referenceDocuments } = params
 
     bpLog.info(`[startSpecifyPhase] Blueprint ${blueprintId} — starting SPECIFY`)
 
@@ -144,6 +174,7 @@ export class BlueprintSpecService extends EventEmitter {
     let session: AgentSessionService | null = null
     // BP-CHAIN-SPECIFY-CLARIFY: Method-local (not instance field) to avoid race across concurrent workspaces.
     let pendingClarifyDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
+    let cleanupAskUser: (() => void) | undefined
 
     try {
       // Update pipeline state
@@ -181,13 +212,51 @@ export class BlueprintSpecService extends EventEmitter {
         })
       }
 
+      // 3c. Load reference documents (if provided)
+      const mappedDocs = referenceDocuments?.map((d) => ({ type: d.type as 'file' | 'workspace-file' | 'url', path: d.path, name: d.name }))
+      const referenceDocsBlock = mappedDocs?.length
+        ? await buildReferenceDocsBlock(workspacePath, mappedDocs)
+        : undefined
+
+      // 3d. MEM-DOC-SPECIFY-01: Extract memories from reference documents.
+      // Moved here from BLUEPRINT_CREATE — covers create, createFromIdea, resume, and retry paths.
+      // Uses loadAllReferenceDocuments (already loaded by buildReferenceDocsBlock internally,
+      // cheap for text; URLs may double-fetch but extraction is async/queued anyway).
+      // Gated by captureDocumentsOnAttach setting (default ON).
+      const docAttachEnabled = (wsSettings as any).memoryCaptureDocumentsOnAttach !== false
+      if (docAttachEnabled && mappedDocs && mappedDocs.length > 0) {
+        const { textDocs } = splitBinaryDocs(mappedDocs)
+        if (textDocs.length > 0) {
+          const loaded = await loadAllReferenceDocuments(workspacePath, textDocs)
+          for (const ld of loaded) {
+            if (ld.content.length < 20) continue
+            memoryExtractionService.enqueue(async () => {
+              try {
+                await memoryExtractionService.extractFromContent(
+                  workspaceId,
+                  workspacePath,
+                  ld.doc.name ?? ld.doc.path,
+                  ld.content,
+                  undefined,
+                  { tags: ['blueprint', `blueprint:${blueprintId}`] }
+                )
+              } catch (err) {
+                bpLog.warn(`[startSpecifyPhase] Failed to extract memory from doc "${ld.doc.name}": ${err}`)
+              }
+            })
+          }
+          bpLog.info(`[startSpecifyPhase] Enqueued memory extraction for ${textDocs.length} reference doc(s)`)
+        }
+      }
+
       // 4. Create adapter
       const adapter = new BlueprintSpecifyAdapter({
         workspaceId,
         blueprintId,
         description,
         grillDecisions,
-        phaseContext
+        phaseContext,
+        referenceDocsBlock
       })
 
       // 5. Set goal condition
@@ -219,6 +288,9 @@ export class BlueprintSpecService extends EventEmitter {
       session.on('statusUpdate', (status: AgentStatus) => {
         this.safeEmit('status', { workspaceId, status })
       })
+
+      // B4-FIX: Auto-respond to ask_user calls — specify is non-interactive
+      cleanupAskUser = wireAskUserAutoResponder(session, 'SPECIFY')
 
       // 9. Start session in plan mode (read-only)
       await session.start(workspacePath, 'plan')
@@ -361,6 +433,7 @@ export class BlueprintSpecService extends EventEmitter {
         ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
+      cleanupAskUser?.()
       if (session) {
         await session.stop()
       }
@@ -444,7 +517,8 @@ export class BlueprintSpecService extends EventEmitter {
         conversationId: syntheticConvId,
         blueprintId,
         workspaceId,
-        activeWatchdog: null
+        activeWatchdog: null,
+        pendingAskUserRequestId: null
       })
 
       // 7. Wire streaming events — chunk handler touches active watchdog
@@ -460,6 +534,41 @@ export class BlueprintSpecService extends EventEmitter {
 
       session.on('statusUpdate', (status: AgentStatus) => {
         this.safeEmit('status', { workspaceId, status })
+      })
+
+      // B2-FIX: Bridge ask_user → structured question card.
+      // When the local LLM calls ask_user (via control-actions MCP), intercept it
+      // and drive the same question card UI as the fenced-block path.
+      session.on('askQuestion', (data: { questions: GrillQuestion[]; requestId?: string }) => {
+        const state = this.clarifySessions.get(blueprintId)
+        if (!state || !data.requestId) return
+
+        bpLog.info(`[askQuestion bridge] Blueprint ${blueprintId} — model called ask_user with ${data.questions.length} questions`)
+
+        // Convert GrillQuestion[] → ClarifyQuestionsBlock
+        const clarifyBlock = grillQuestionsToClarifyBlock(data.questions)
+
+        // Dedupe against previously asked
+        const prev = this.previouslyAskedQuestions.get(blueprintId) ?? []
+        const newQuestions = deduplicateClarifyQuestions(clarifyBlock.questions, prev)
+        if (newQuestions.length === 0) {
+          // All questions already asked — auto-respond to unblock the turn
+          state.session.respondToAskUser(data.requestId, 'All questions were already answered in previous turns. Proceed with the information you have.')
+          return
+        }
+
+        // Store requestId so sendClarifyAnswer can route the response back
+        state.pendingAskUserRequestId = data.requestId
+
+        // Pause watchdog — user is being prompted
+        state.activeWatchdog?.pause()
+
+        // Drive the same UI flow as the fenced-block path
+        const questionsBlock: ClarifyQuestionsBlock = { questions: newQuestions }
+        this.previouslyAskedQuestions.set(blueprintId, [...prev, ...newQuestions])
+        this.clarifyUiState.set(blueprintId, { questions: questionsBlock, awaitingInput: false })
+        this.pushClarifyState(blueprintId, workspaceId)
+        this.safeEmit('clarifyQuestions', { blueprintId, workspaceId, questions: questionsBlock })
       })
 
       // 8. Emit phaseStart
@@ -552,6 +661,22 @@ export class BlueprintSpecService extends EventEmitter {
       bpLog.warn(
         `[sendClarifyAnswer] Machine rejected answerReceived (state=${machine.currentState}) — proceeding anyway`
       )
+    }
+
+    // B2-FIX: If the model called ask_user, route the answer via respondToAskUser
+    // instead of session.send() — the original turn is still in-flight.
+    if (sessionState.pendingAskUserRequestId) {
+      const requestId = sessionState.pendingAskUserRequestId
+      sessionState.pendingAskUserRequestId = null
+      sessionState.activeWatchdog?.resume()
+
+      bpLog.info(`[sendClarifyAnswer] Routing answer via respondToAskUser (requestId=${requestId})`)
+      sessionState.session.respondToAskUser(requestId, message)
+
+      // The original send() promise is still being awaited in startClarifyPhase.
+      // It will resolve when the model continues its turn after receiving our response.
+      // The chunk handler + handleClarifyTurnEnd will process the continuation normally.
+      return
     }
 
     const answerWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CLARIFY')
@@ -687,10 +812,7 @@ export class BlueprintSpecService extends EventEmitter {
         if (sessionState) {
           try {
             // Machine is still in 'phase-running' — no reverse-dance needed
-            const correctionMsg =
-              'Your last turn contained none of the required fenced blocks. ' +
-              'Re-emit the findings block (```clarify-findings) and either a questions block ' +
-              '(```clarify-questions) or the completion block (```clarify-complete).'
+            const correctionMsg = CLARIFY_CORRECTION_MESSAGE
 
             await sessionState.session.send(correctionMsg, sessionState.conversationId)
             const retryText = sessionState.session.getStreamedContent()
@@ -910,6 +1032,22 @@ export class BlueprintSpecService extends EventEmitter {
         contentJson: completion as unknown as Record<string, unknown>
       })
       blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'complete')
+    }
+
+    // Plan B: Merge resolved clarifications into the specify phase's spec artifact in-place.
+    // This makes `plan → [spec]` genuinely correct — the spec becomes the single source of truth.
+    const specifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
+    if (specifyPhase) {
+      const artifacts = specifyPhase.artifactsJson.map((a) => {
+        if (a.type !== 'spec') return a
+        // Idempotent: strip any prior clarifications block before re-appending
+        const base = stripClarificationsSection(a.contentMd ?? '')
+        return {
+          ...a,
+          contentMd: `${base}\n\n${RESOLVED_CLARIFICATIONS_HEADING}\n\n${text}`.trim()
+        }
+      })
+      blueprintPhaseRepository.saveArtifacts(specifyPhase.id, artifacts)
     }
 
     // Clean up session

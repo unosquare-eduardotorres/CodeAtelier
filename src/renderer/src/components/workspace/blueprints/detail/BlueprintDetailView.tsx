@@ -17,7 +17,8 @@ import {
   XCircle,
   RotateCcw,
   PlayCircle,
-  ChevronDown
+  ChevronDown,
+  AlertTriangle
 } from 'lucide-react'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
 import { StatusBadge } from '../StatusBadge'
@@ -99,6 +100,7 @@ export function BlueprintDetailView({
   const bp = currentBlueprint
   const isComplete = bp.status === 'complete'
   const outcomeStats = isComplete ? getOutcomeStats(bp.phases, bp.tasks) : null
+  const isGapsFound = isComplete && outcomeStats?.verifyStatus === 'gaps_found'
 
   // Compute total duration for header
   const startTimes = bp.phases.map((p) => p.startedAt).filter(Boolean) as string[]
@@ -127,7 +129,6 @@ export function BlueprintDetailView({
             {bp.title}
           </h4>
           <StatusBadge status={bp.status} />
-          <span className="text-[10px] text-text-muted">{bp.priority}</span>
           {totalDuration && (
             <span className="text-[10px] text-text-muted flex items-center gap-1">
               <Clock size={10} />
@@ -147,6 +148,26 @@ export function BlueprintDetailView({
       {/* ── Outcome Summary (complete runs only) ── */}
       {outcomeStats && (
         <OutcomeSummary stats={outcomeStats} />
+      )}
+
+      {/* ── Gaps found banner with Fix Gaps button ── */}
+      {isGapsFound && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-warning/20 bg-warning/5 text-warning">
+          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+          <div className="flex flex-col gap-0.5 flex-1">
+            <span className="text-sm font-medium">Gaps Found During Verification</span>
+            <span className="text-xs opacity-80">
+              The verifier identified issues that need fixing. Retry to generate fix tasks and rebuild.
+            </span>
+          </div>
+          <button
+            onClick={onRetryPhase}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-warning hover:bg-warning/80 rounded-lg transition-colors flex-shrink-0"
+          >
+            <RotateCcw size={12} />
+            Fix Gaps
+          </button>
+        </div>
       )}
 
       {/* ── Failed phase error banner with retry ── */}

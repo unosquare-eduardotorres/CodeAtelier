@@ -2,7 +2,7 @@ import {
   Settings,
   Zap,
   Lightbulb,
-  Database,
+  Waypoints,
   Users,
   FileText,
   GitBranch,
@@ -89,6 +89,13 @@ export const SETTINGS_MENU: {
     group: 'configuration'
   },
   {
+    id: 'memory',
+    label: 'Brain',
+    icon: Waypoints,
+    iconColor: 'text-mode-plan-text',
+    group: 'configuration'
+  },
+  {
     id: 'code-intelligence',
     label: 'Code Intelligence',
     icon: Brain,
@@ -108,13 +115,6 @@ export const SETTINGS_MENU: {
     label: 'Documents',
     icon: FileText,
     iconColor: 'text-info',
-    group: 'configuration'
-  },
-  {
-    id: 'memory',
-    label: 'Memory',
-    icon: Database,
-    iconColor: 'text-mode-plan-text',
     group: 'configuration'
   },
   { id: 'tokens', label: 'Tokens', icon: Zap, group: 'configuration' },

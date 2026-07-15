@@ -22,8 +22,10 @@ import type {
 } from '../../../shared/types'
 import PreflightBanner from './testing/PreflightBanner'
 import ScenarioCatalog from './testing/ScenarioCatalog'
-import ProgressBar from './testing/ProgressBar'
+import RunningBanner from './testing/RunningBanner'
 import RunsView from './testing/RunsView'
+import ResultDetailView from './testing/ResultDetailView'
+import type { DetailTarget } from './testing/ResultDetailView'
 
 // ── Regression delta types ──
 
@@ -48,6 +50,10 @@ export default function TestingPage(): React.JSX.Element {
   const [isRunning, setIsRunning] = useState(false)
   const [progressCounts, setProgressCounts] = useState<E2EProgressEvent['counts'] | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('scenarios')
+  const [detailTarget, setDetailTarget] = useState<DetailTarget | null>(null)
+  const [forceTools, setForceTools] = useState(false)
+  const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(null)
+  const [runStartedAt, setRunStartedAt] = useState<number>(Date.now())
 
   // Track active run for progress
   const activeRunId = useRef<string | null>(null)
@@ -117,10 +123,17 @@ export default function TestingPage(): React.JSX.Element {
 
       if (event.scenarioId === '__run_complete__') {
         setIsRunning(false)
+        setCurrentScenarioId(null)
         loadRuns()
         // Auto-switch to Runs tab when run completes
         setActiveTab('runs')
+        setDetailTarget(null)
         return
+      }
+
+      // Track actively running scenario for RunningBanner
+      if (event.status === 'running') {
+        setCurrentScenarioId(event.scenarioId)
       }
 
       setResults((prev) => {
@@ -194,10 +207,15 @@ export default function TestingPage(): React.JSX.Element {
       try {
         setIsRunning(true)
         setProgressCounts(null)
+        setCurrentScenarioId(null)
+        setRunStartedAt(Date.now())
+        const runArgs = {
+          ...opts,
+          workspaceId: activeWorkspace?.id,
+          ...(forceTools ? { forceTools: true } : {})
+        }
         const { runId } = await window.api.testingRun(
-          opts
-            ? { ...opts, workspaceId: activeWorkspace?.id }
-            : activeWorkspace?.id ? { workspaceId: activeWorkspace.id } : undefined
+          Object.keys(runArgs).length > 0 ? runArgs : undefined
         )
         activeRunId.current = runId
         setSelectedRunId(runId)
@@ -209,7 +227,7 @@ export default function TestingPage(): React.JSX.Element {
         console.error('Failed to start test run:', err)
       }
     },
-    [loadRuns, activeWorkspace]
+    [loadRuns, activeWorkspace, forceTools]
   )
 
   const handleRunAll = useCallback(() => handleRun(), [handleRun])
@@ -241,6 +259,23 @@ export default function TestingPage(): React.JSX.Element {
     [loadRuns, activeWorkspace]
   )
 
+  const handleResumeRun = useCallback(
+    async (runId: string) => {
+      try {
+        setIsRunning(true)
+        setProgressCounts(null)
+        const { runId: newRunId } = await window.api.testingResumeRun({ runId, workspaceId: activeWorkspace?.id })
+        activeRunId.current = newRunId
+        setSelectedRunId(newRunId)
+        await loadRuns()
+      } catch (err) {
+        setIsRunning(false)
+        console.error('Failed to resume run:', err)
+      }
+    },
+    [loadRuns, activeWorkspace]
+  )
+
   const handleCancel = useCallback(async () => {
     await window.api.testingCancel()
     setIsRunning(false)
@@ -252,8 +287,21 @@ export default function TestingPage(): React.JSX.Element {
     { id: 'runs', label: 'Runs' }
   ]
 
+  const handleOpenDetail = useCallback((target: DetailTarget) => {
+    setDetailTarget(target)
+  }, [])
+
+  const handleBackFromDetail = useCallback(() => {
+    setDetailTarget(null)
+  }, [])
+
+  const handleTabChange = useCallback((tab: Tab) => {
+    setActiveTab(tab)
+    setDetailTarget(null)
+  }, [])
+
   return (
-    <div data-testid="testing-page" className="max-w-6xl mx-auto px-6 py-8 space-y-5">
+    <div data-testid="testing-page" className="w-full px-8 py-6 space-y-5">
       {/* Header */}
       <div className="flex items-center gap-3">
         <FlaskConical size={20} className="text-purple-400" />
@@ -270,63 +318,86 @@ export default function TestingPage(): React.JSX.Element {
         preflight={preflight}
         isChecking={isCheckingPreflight}
         onCheck={checkPreflight}
+        forceTools={forceTools}
+        onForceToolsChange={setForceTools}
       />
 
-      {/* Tab bar (segmented control) */}
-      <div className="flex items-center gap-1 p-0.5 rounded-lg bg-surface-base/60 border border-border-subtle w-fit">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
-              activeTab === tab.id
-                ? 'bg-surface-overlay text-text-body shadow-sm'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ─── Scenarios tab ─── */}
-      {activeTab === 'scenarios' && (
+      {detailTarget ? (
+        /* ─── Drill-in detail view (replaces tabs) ─── */
+        <ResultDetailView target={detailTarget} onBack={handleBackFromDetail} />
+      ) : (
         <>
-          {/* Progress bar (visible during runs) */}
-          {progressCounts && isRunning && <ProgressBar counts={progressCounts} />}
+          {/* Tab bar (segmented control) */}
+          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-surface-base/60 border border-border-subtle w-fit">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => handleTabChange(tab.id)}
+                className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-surface-overlay text-text-body shadow-sm'
+                    : 'text-text-muted hover:text-text-secondary'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-          {/* Scenario catalog with inline expansion */}
-          <ScenarioCatalog
-            scenarios={scenarios}
-            results={resultMap}
-            baselineResults={baselineResultMap}
-            deltaMap={deltaMap}
-            isRunning={isRunning}
-            preflightOk={preflight?.ok ?? false}
-            onRunAll={handleRunAll}
-            onRunCategory={handleRunCategory}
-            onRunOne={handleRunOne}
-          />
+          {/* ─── Scenarios tab ─── */}
+          {activeTab === 'scenarios' && (
+            <>
+              {/* Running banner (visible during runs) */}
+              {isRunning && (
+                <RunningBanner
+                  scenarioTitle={
+                    currentScenarioId
+                      ? (scenarios.find((s) => s.id === currentScenarioId)?.title ?? currentScenarioId)
+                      : null
+                  }
+                  counts={progressCounts}
+                  startedAt={runStartedAt}
+                  onCancel={handleCancel}
+                />
+              )}
+
+              {/* Scenario catalog with inline expansion */}
+              <ScenarioCatalog
+                scenarios={scenarios}
+                results={resultMap}
+                baselineResults={baselineResultMap}
+                deltaMap={deltaMap}
+                isRunning={isRunning}
+                preflightOk={preflight?.ok ?? false}
+                onRunAll={handleRunAll}
+                onRunCategory={handleRunCategory}
+                onRunOne={handleRunOne}
+                onOpenDetail={handleOpenDetail}
+              />
+            </>
+          )}
+
+          {/* ─── Runs tab ─── */}
+          {activeTab === 'runs' && (
+            <RunsView
+              runs={runs}
+              selectedRunId={selectedRunId}
+              baselineRunId={baselineRunId}
+              results={results}
+              scenarios={scenarios}
+              isRunning={isRunning}
+              preflightOk={preflight?.ok ?? false}
+              regressionSummary={regressionSummary}
+              deltaMap={deltaMap}
+              onSelectRun={setSelectedRunId}
+              onBaselineChange={setBaselineRunId}
+              onRequeueFailed={handleRequeueFailed}
+              onResumeRun={handleResumeRun}
+              onCancel={handleCancel}
+              onOpenDetail={handleOpenDetail}
+            />
+          )}
         </>
-      )}
-
-      {/* ─── Runs tab ─── */}
-      {activeTab === 'runs' && (
-        <RunsView
-          runs={runs}
-          selectedRunId={selectedRunId}
-          baselineRunId={baselineRunId}
-          results={results}
-          scenarios={scenarios}
-          isRunning={isRunning}
-          preflightOk={preflight?.ok ?? false}
-          regressionSummary={regressionSummary}
-          deltaMap={deltaMap}
-          onSelectRun={setSelectedRunId}
-          onBaselineChange={setBaselineRunId}
-          onRequeueFailed={handleRequeueFailed}
-          onCancel={handleCancel}
-        />
       )}
     </div>
   )

@@ -262,11 +262,11 @@ export function BlueprintPlanCard({ plan, taskStatuses }: {
                     </div>
 
                     {/* Description — full wrap, no truncation */}
-                    {item.description && (
+                    {item.description ? (
                       <p className="text-sm text-text-secondary mt-1 leading-relaxed">
                         {String(item.description)}
                       </p>
-                    )}
+                    ) : null}
 
                     {/* Meta row: user story + depends-on */}
                     {(userStory || dependsOn.length > 0) && (
@@ -351,9 +351,9 @@ export function BlueprintTasksCard({ tasks }: { tasks: Record<string, unknown> }
                   <span className="text-xs font-semibold text-text-secondary">
                     Wave {wave.wave != null ? String(wave.wave) : wi + 1}
                   </span>
-                  {wave.name && (
+                  {wave.name ? (
                     <span className="text-xs text-text-muted">— {String(wave.name)}</span>
-                  )}
+                  ) : null}
                   <span className="text-[11px] text-text-muted ml-auto">{waveTasks.length} tasks</span>
                 </button>
                 {isExpanded && (

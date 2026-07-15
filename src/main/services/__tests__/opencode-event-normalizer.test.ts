@@ -198,7 +198,7 @@ describe('normalizeOpenCodeEvent — context delta gating', () => {
     assert.equal(update!.contextUsageUpdate!.percentage, 10)
   })
 
-  test('sub-2% delta from last percentage is suppressed', () => {
+  test('sub-2% delta from last percentage is emitted (no gating)', () => {
     const out = normalizeOpenCodeEvent(
       {
         type: 'session.updated',
@@ -206,12 +206,11 @@ describe('normalizeOpenCodeEvent — context delta gating', () => {
       },
       SID,
       freshUsage(),
-      freshState({ lastContextPercentage: 9 }) // 10% vs 9% = 1% delta < 2%
+      freshState({ lastContextPercentage: 9 }) // Was 10% vs 9% = 1% delta < 2%
     )
-    assert.equal(
-      out.find((c) => c.type === 'context_usage_update'),
-      undefined
-    )
+    const update = out.find((c) => c.type === 'context_usage_update')
+    assert.ok(update)
+    assert.equal(update!.contextUsageUpdate!.percentage, 10)
   })
 })
 
@@ -455,7 +454,7 @@ describe('normalizeOpenCodeEvent — handleToolPart (modern SDK)', () => {
     assert.ok(toolResult.content!.includes('ENOENT'))
   })
 
-  test('pending with input emits tool_use immediately', () => {
+  test('pending with input does NOT emit tool_use (R6-A2: pending args are incomplete)', () => {
     const state = freshState()
     const out = normalizeOpenCodeEvent(
       {
@@ -473,8 +472,7 @@ describe('normalizeOpenCodeEvent — handleToolPart (modern SDK)', () => {
       freshUsage(),
       state
     )
-    assert.equal(out.length, 1)
-    assert.equal(out[0].type, 'tool_use')
+    assert.deepEqual(out, [], 'pending should never emit tool_use even with input')
   })
 
   test('missing tool/callID/state returns []', () => {
@@ -579,6 +577,69 @@ describe('normalizeOpenCodeEvent — handleToolPart (modern SDK)', () => {
       state
     )
     assert.equal(out[0].toolInput, 'ls -la')
+  })
+})
+
+describe('normalizeOpenCodeEvent — state persistence (R6-A1)', () => {
+  test('dedupe sets survive across multiple events (same state object)', () => {
+    const state = freshState()
+
+    // First event: running → emits tool_use
+    const out1 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-persist',
+            state: { status: 'running', input: { command: 'echo hi' } }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out1.length, 1)
+    assert.equal(out1[0].type, 'tool_use')
+
+    // Second event with same callID: completed → emits tool_result but NOT a second tool_use
+    const out2 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'bash',
+            callID: 'call-persist',
+            state: { status: 'completed', input: { command: 'echo hi' }, output: 'hi' }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const types2 = out2.map((c) => c.type)
+    assert.ok(types2.includes('tool_result'), 'completed should emit tool_result')
+    assert.ok(!types2.includes('tool_use'), 'should NOT re-emit tool_use for same callID')
+  })
+
+  test('session.idle clears dedupe sets for bounded memory', () => {
+    const state = freshState()
+    state.emittedToolUse = new Set(['call-1', 'call-2'])
+    state.emittedToolResult = new Set(['call-1'])
+
+    normalizeOpenCodeEvent(
+      { type: 'session.idle', properties: {} },
+      SID,
+      freshUsage(),
+      state
+    )
+
+    assert.equal(state.emittedToolUse!.size, 0, 'emittedToolUse should be cleared on idle')
+    assert.equal(state.emittedToolResult!.size, 0, 'emittedToolResult should be cleared on idle')
   })
 })
 
@@ -720,6 +781,65 @@ describe('normalizeOpenCodeEvent — handleSessionError edge cases', () => {
       freshState()
     )
     assert.deepEqual(out, [])
+  })
+
+  test('R8: empty object error falls back to JSON.stringify', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.error', properties: { error: { data: { code: 'VISION_UNSUPPORTED' } } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'error')
+    assert.ok(out[0].error!.includes('VISION_UNSUPPORTED'), 'should contain the error detail')
+    assert.ok(out[0].error!.length > 0, 'error text should not be empty')
+  })
+
+  test('R8: error with empty message string falls back to JSON', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.error', properties: { error: { data: { message: '' } } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'error')
+    assert.ok(out[0].error!.length > 0, 'error text should not be empty')
+    assert.ok(out[0].error! !== '', 'should not produce empty error')
+  })
+
+  test('R8: error with whitespace-only message falls back', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.error', properties: { error: { message: '   ' } } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.ok(out[0].error!.trim().length > 0, 'should produce non-whitespace error')
+  })
+
+  test('R8: completely empty error object produces descriptive placeholder', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.error', properties: { error: {} } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].error, 'OpenCode session error (no message)')
+  })
+
+  test('R8: non-empty string error passes through unchanged', () => {
+    const out = normalizeOpenCodeEvent(
+      { type: 'session.error', properties: { error: 'Connection refused' } },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].error, 'Connection refused')
   })
 })
 
@@ -1102,7 +1222,7 @@ describe('normalizeOpenCodeEvent — session.next.* handlers', () => {
     assert.deepEqual(out, [])
   })
 
-  test('session.next.tool.called is a no-op', () => {
+  test('session.next.tool.called without callID returns [] (handled by V2 handler)', () => {
     const out = normalizeOpenCodeEvent(
       { type: 'session.next.tool.called', properties: { tool: 'Bash' } },
       SID,
@@ -1293,6 +1413,435 @@ describe('normalizeOpenCodeEvent — object status extraction', () => {
     assert.equal(out[0].type, 'status')
     // Falls through to JSON.stringify since there's no .type string field
     assert.equal(out[0].content, '{"code":42}')
+  })
+})
+
+// ── R7: V2 session.next.tool.* handlers ──
+
+describe('normalizeOpenCodeEvent — V2 session.next.tool.called', () => {
+  test('session.next.tool.called emits tool_use (deduped)', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: {
+          tool: 'Bash',
+          callID: 'v2-call-1',
+          input: { command: 'echo hello' }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'tool_use')
+    assert.equal(out[0].toolName, 'Bash')
+    assert.equal(out[0].toolId, 'v2-call-1')
+    assert.ok(out[0].toolInput!.includes('echo hello'))
+  })
+
+  test('duplicate callID is deduped (no second tool_use)', () => {
+    const state = freshState()
+    // First call
+    normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: { tool: 'Bash', callID: 'v2-dup', input: { command: 'ls' } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    // Second call with same callID
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: { tool: 'Bash', callID: 'v2-dup', input: { command: 'ls' } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out, [])
+  })
+
+  test('property name fallbacks (name instead of tool, id instead of callID)', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: { name: 'Read', id: 'v2-fb-1', args: { file_path: 'foo.ts' } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out[0].toolName, 'Read')
+    assert.equal(out[0].toolId, 'v2-fb-1')
+  })
+
+  test('missing callID returns []', () => {
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: { tool: 'Bash' }
+      },
+      SID,
+      freshUsage(),
+      freshState()
+    )
+    assert.deepEqual(out, [])
+  })
+})
+
+describe('normalizeOpenCodeEvent — V2 session.next.tool.success', () => {
+  test('success emits tool_result + tool_use_summary', () => {
+    const state = freshState()
+    // Pre-emit tool_use via called
+    normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: { tool: 'Bash', callID: 'v2-s1', input: { command: 'echo hi' } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    // Now success
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.success',
+        properties: {
+          tool: 'Bash',
+          callID: 'v2-s1',
+          output: 'hi',
+          input: { command: 'echo hi' }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const types = out.map((c) => c.type)
+    assert.ok(types.includes('tool_result'))
+    // Should NOT re-emit tool_use (already emitted by called)
+    assert.ok(!types.includes('tool_use'))
+    const result = out.find((c) => c.type === 'tool_result')!
+    assert.equal(result.content, 'hi')
+  })
+
+  test('success without prior called also emits tool_use', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.success',
+        properties: {
+          tool: 'Read',
+          callID: 'v2-s2',
+          output: 'file content',
+          input: { file_path: 'x.ts' }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const types = out.map((c) => c.type)
+    assert.ok(types.includes('tool_use'), 'should emit tool_use when called was not seen')
+    assert.ok(types.includes('tool_result'))
+  })
+
+  test('duplicate callID is deduped (no second tool_result)', () => {
+    const state = freshState()
+    normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.success',
+        properties: { tool: 'Bash', callID: 'v2-s-dup', output: 'hi' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.success',
+        properties: { tool: 'Bash', callID: 'v2-s-dup', output: 'hi' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out, [])
+  })
+})
+
+describe('normalizeOpenCodeEvent — V2 session.next.tool.failed', () => {
+  test('failed emits tool_result with error content', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.failed',
+        properties: {
+          tool: 'Read',
+          callID: 'v2-f1',
+          error: 'ENOENT: no such file'
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const toolUse = out.find((c) => c.type === 'tool_use')
+    assert.ok(toolUse, 'should also emit tool_use')
+    const result = out.find((c) => c.type === 'tool_result')!
+    assert.ok(result.content!.includes('ENOENT'))
+  })
+
+  test('failed with no error uses default message', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.failed',
+        properties: { tool: 'Bash', callID: 'v2-f2' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const result = out.find((c) => c.type === 'tool_result')!
+    assert.ok(result.content!.includes('Tool execution failed'))
+  })
+})
+
+describe('normalizeOpenCodeEvent — V2/V1 cross-bus dedupe', () => {
+  test('V1 tool part + V2 tool.called for same callID emits once', () => {
+    const state = freshState()
+
+    // V1 fires first (message.part.updated with type: 'tool')
+    const v1out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'Bash',
+            callID: 'cross-1',
+            state: { status: 'running', input: { command: 'ls' } }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(v1out.length, 1)
+    assert.equal(v1out[0].type, 'tool_use')
+
+    // V2 fires for the same callID
+    const v2out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.called',
+        properties: { tool: 'Bash', callID: 'cross-1', input: { command: 'ls' } }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(v2out, [], 'V2 should be deduped since V1 already emitted')
+  })
+
+  test('V2 tool.success + V1 completed for same callID emits result once', () => {
+    const state = freshState()
+
+    // V2 success fires first
+    const v2out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.tool.success',
+        properties: { tool: 'Bash', callID: 'cross-2', output: 'done' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.ok(v2out.some((c) => c.type === 'tool_result'))
+
+    // V1 completed fires for same callID
+    const v1out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            type: 'tool',
+            tool: 'Bash',
+            callID: 'cross-2',
+            state: { status: 'completed', input: { command: 'ls' }, output: 'done' }
+          }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    // V1 should NOT re-emit tool_result (already deduped)
+    assert.ok(!v1out.some((c) => c.type === 'tool_result'), 'V1 should be deduped for tool_result')
+  })
+})
+
+// ── R7: Inline <think> block routing ──
+
+describe('normalizeOpenCodeEvent — inline <think> tag routing (R7)', () => {
+  test('text delta with <think> block routes content to thinking', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: '<think>Let me reason about this</think>The answer is 4' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const thinking = out.find((c) => c.type === 'thinking')
+    assert.ok(thinking, 'should emit thinking chunk')
+    assert.equal(thinking!.content, 'Let me reason about this')
+    const text = out.find((c) => c.type === 'text')
+    assert.ok(text, 'should emit text chunk')
+    assert.equal(text!.content, 'The answer is 4')
+  })
+
+  test('think tag split across two deltas', () => {
+    const state = freshState()
+
+    // First delta: opens the think block
+    const out1 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: '<think>Starting to' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out1.length, 1)
+    assert.equal(out1[0].type, 'thinking')
+    assert.equal(out1[0].content, 'Starting to')
+    assert.equal(state.inThinkBlock, true)
+
+    // Second delta: closes the think block + regular text
+    const out2 = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: ' think about it</think>Here is the answer' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const thinking2 = out2.find((c) => c.type === 'thinking')
+    assert.ok(thinking2)
+    assert.equal(thinking2!.content, ' think about it')
+    const text2 = out2.find((c) => c.type === 'text')
+    assert.ok(text2)
+    assert.equal(text2!.content, 'Here is the answer')
+    assert.equal(state.inThinkBlock, false)
+  })
+
+  test('no think tags — text passes through unchanged', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: 'Just regular text' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'text')
+    assert.equal(out[0].content, 'Just regular text')
+  })
+
+  test('think tag in message.part.updated text part also routes', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.updated',
+        properties: {
+          part: { type: 'text', content: '<think>reasoning here</think>Final answer' }
+        }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    const thinking = out.find((c) => c.type === 'thinking')
+    assert.ok(thinking)
+    assert.equal(thinking!.content, 'reasoning here')
+    const text = out.find((c) => c.type === 'text')
+    assert.ok(text)
+    assert.equal(text!.content, 'Final answer')
+  })
+
+  test('thinking→text boundary emits turn_boundary after think block ends', () => {
+    const state = freshState({ hasPriorText: true })
+
+    // First: a think block sets lastPartType to 'thinking'
+    normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: '<think>reasoning</think>' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(state.lastPartType, 'thinking')
+
+    // Second: regular text should trigger turn_boundary
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: 'The answer' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out[0].type, 'turn_boundary')
+    assert.equal(out[1].type, 'text')
+  })
+
+  test('only <think> open tag — remaining content is thinking', () => {
+    const state = freshState()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: '<think>deep thoughts' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'thinking')
+    assert.equal(state.inThinkBlock, true)
+  })
+
+  test('only </think> close tag — exits think mode', () => {
+    const state = freshState({ inThinkBlock: true })
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: '</think>' }
+      },
+      SID,
+      freshUsage(),
+      state
+    )
+    assert.deepEqual(out, []) // no content between tags
+    assert.equal(state.inThinkBlock, false)
   })
 })
 

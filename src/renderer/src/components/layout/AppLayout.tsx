@@ -33,6 +33,7 @@ import {
 } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import { useCouncilStore } from '@renderer/store/council.store'
+import { useBlueprintStore } from '@renderer/store/blueprint.store'
 
 import StatusBar from './StatusBar'
 import {
@@ -216,6 +217,19 @@ export default function AppLayout(): React.JSX.Element {
     setPendingNav(null)
   }, [])
 
+  // ── Pending onboard: auto-navigate to Blueprints tab ──
+  const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
+  useEffect(() => {
+    if (
+      activeWorkspace &&
+      pendingOnboard?.workspaceId === activeWorkspace.id
+    ) {
+      // Direct navigation — fresh workspace has no unsaved state
+      setSidebarView('settings')
+      setWorkspaceSettingsTab('blueprints')
+    }
+  }, [activeWorkspace, pendingOnboard])
+
   // ── Extracted hooks ──
   const zoomFactor = useAppZoom()
   const { currentBranch, isGitRepo } = useBranchIndicator(
@@ -318,6 +332,7 @@ export default function AppLayout(): React.JSX.Element {
     isStreaming,
     updateMode,
     navigateBack,
+    view,
     setSidebarCollapsed,
     setView: guardedSetView,
     setShowNewChat

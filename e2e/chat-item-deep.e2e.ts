@@ -81,12 +81,12 @@ test.describe('ChatItem Deep', () => {
     const hasIcon = await iconContainer.isVisible({ timeout: 3_000 }).catch(() => false)
     expect(hasIcon).toBeTruthy()
 
-    // Should also have a provider pill label (e.g., "Claude", "Local")
-    const providerPill = firstItem.locator('span[class*="rounded-full"]')
-    const pillCount = await providerPill.count()
+    // Should also have a mode pill label (e.g., "Plan", "Build", "Danger")
+    const modePill = firstItem.locator('span[class*="rounded-full"]')
+    const pillCount = await modePill.count()
     expect(pillCount).toBeGreaterThan(0)
 
-    const pillText = await providerPill.first().textContent()
+    const pillText = await modePill.first().textContent()
     expect(pillText).toBeTruthy()
   })
 

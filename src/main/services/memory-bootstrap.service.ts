@@ -1,0 +1,1072 @@
+/**
+ * memory-bootstrap.service.ts — Orchestrates project knowledge bootstrapping.
+ *
+ * Two modes:
+ *   1. "Feed Brain" (full/incremental): deterministic 6-phase pipeline
+ *      Preflight → Docs → Stack → Architecture → History → Structure → Finalize
+ *   2. "Deep Scan" (deep-scan): Phases 0–2 + agent-driven exploration via Claude CLI
+ *
+ * Every fact tagged ['bootstrap', <phase>]; the write pipeline's cosine-dedup
+ * makes re-runs confirm (not duplicate).
+ *
+ * Singleton: memoryBootstrapService
+ */
+
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { execSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { join, relative, basename } from 'node:path'
+import { createHash } from 'node:crypto'
+import log from 'electron-log'
+import type { BootstrapProgress, BootstrapMode, BootstrapPhaseLabel } from '../../shared/types'
+import { memoryExtractionService } from './memory-extraction.service'
+import { memoryEngineService } from './memory-engine.service'
+import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
+import { codeGraphService } from './code-graph.service'
+import { omlxEmbeddingProvider } from './omlx-embedding.service'
+import { workspaceRepository } from '../db/repositories'
+import { readDocument } from './document-reader'
+import { chunkDocument, detectStrategy } from './document-chunker'
+
+const bsLog = log.scope('memory-bootstrap')
+
+// ── Configuration ────────────────────────────────────────────────────────────
+
+/** Directories to skip during discovery */
+const IGNORE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'out', 'build', 'coverage',
+  '.next', '.nuxt', '.cache', '__pycache__', '.tox', '.venv',
+  'vendor', 'target', 'bin', 'obj', '.gradle', '.idea',
+  '.vscode', '.vs'
+])
+
+/** Max files to read per phase for safety */
+const MAX_ARCHITECTURE_FILES = 40
+const MAX_CHUNKS_PER_FILE = 25
+const MAX_HOTSPOT_FACTS = 15
+const MAX_COCHANGE_RESULTS = 15
+const MAX_COMMIT_SUBJECTS = 50
+const DEEP_SCAN_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+
+/** Doc patterns for Phase 1 */
+const DOC_PATTERNS = [
+  'README.md', 'README.txt', 'README.rst', 'README',
+  'CLAUDE.md', 'AGENTS.md',
+  'ARCHITECTURE.md', 'ARCHITECTURE.txt',
+  'CONTRIBUTING.md', 'CONTRIBUTING.txt',
+  'CHANGELOG.md', 'CHANGELOG.txt',
+  'SECURITY.md', 'LICENSE.md'
+]
+
+/** Globs for doc directories */
+const DOC_DIRS = ['docs', 'doc', 'documentation', '.github']
+
+/** Manifest files for Phase 2 */
+const MANIFEST_FILES = [
+  'package.json', 'tsconfig.json', 'tsconfig.base.json',
+  'requirements.txt', 'pyproject.toml', 'setup.py', 'setup.cfg',
+  'go.mod', 'go.sum',
+  'Cargo.toml',
+  'Gemfile',
+  'pom.xml', 'build.gradle', 'build.gradle.kts',
+  'electron-builder.yml', 'electron-builder.json5',
+  'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
+  '.github/workflows/*.yml', '.github/workflows/*.yaml',
+  'Makefile', 'justfile'
+]
+
+// ── Phase definitions ────────────────────────────────────────────────────────
+
+const FULL_PHASES: BootstrapPhaseLabel[] = [
+  'preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize'
+]
+
+const DEEP_SCAN_PHASES: BootstrapPhaseLabel[] = [
+  'preflight', 'docs', 'stack', 'agent-exploration', 'finalize'
+]
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export type BootstrapProgressCallback = (progress: BootstrapProgress) => void
+
+interface BootstrapJob {
+  controller: AbortController
+  jobId: string
+}
+
+// ── Service ──────────────────────────────────────────────────────────────────
+
+class MemoryBootstrapService {
+  private activeJob: BootstrapJob | null = null
+  private jobCounter = 0
+
+  /**
+   * Start the project knowledge bootstrap pipeline.
+   *
+   * @param workspaceId - Workspace to associate facts with
+   * @param workspacePath - Absolute path to workspace root
+   * @param mode - 'full' (first run), 'incremental' (re-run), or 'deep-scan' (agent-driven)
+   * @param onProgress - Progress callback for UI streaming
+   */
+  async startBootstrap(
+    workspaceId: string,
+    workspacePath: string,
+    mode: BootstrapMode = 'full',
+    onProgress?: BootstrapProgressCallback
+  ): Promise<{ jobId: string; factsCreated: number }> {
+    if (this.activeJob) {
+      throw new Error('A bootstrap job is already running')
+    }
+
+    const jobId = `bootstrap-${++this.jobCounter}-${Date.now()}`
+    const controller = new AbortController()
+    this.activeJob = { controller, jobId }
+
+    const phases = mode === 'deep-scan' ? DEEP_SCAN_PHASES : FULL_PHASES
+    let totalFacts = 0
+
+    const emit = (
+      phaseIndex: number,
+      phaseLabel: BootstrapPhaseLabel,
+      message: string,
+      jobStatus: BootstrapProgress['jobStatus'] = 'running'
+    ): void => {
+      onProgress?.({
+        jobId,
+        phaseIndex,
+        phaseCount: phases.length,
+        phaseLabel,
+        factsCreated: totalFacts,
+        message,
+        jobStatus,
+        mode
+      })
+    }
+
+    try {
+      const signal = controller.signal
+
+      // ── Phase 0: Preflight ──
+      emit(0, 'preflight', 'Checking prerequisites…')
+      const preflight = await this.phasePreflight(workspaceId, workspacePath, mode, signal)
+      if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+      // ── Phase 1: Docs ──
+      emit(1, 'docs', 'Discovering documentation…')
+      const docFacts = await this.phaseDocs(workspaceId, workspacePath, signal, (msg) =>
+        emit(1, 'docs', msg)
+      )
+      totalFacts += docFacts
+      if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+      // ── Phase 2: Stack ──
+      emit(2, 'stack', 'Analyzing tech stack…')
+      const stackFacts = await this.phaseStack(workspaceId, workspacePath, signal, (msg) =>
+        emit(2, 'stack', msg)
+      )
+      totalFacts += stackFacts
+      if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+      if (mode === 'deep-scan') {
+        // ── Phase 3-DS: Agent Exploration ──
+        emit(3, 'agent-exploration', 'Spawning exploration agent…')
+        const agentFacts = await this.phaseDeepScan(
+          workspaceId,
+          workspacePath,
+          preflight,
+          signal,
+          (msg) => emit(3, 'agent-exploration', msg)
+        )
+        totalFacts += agentFacts
+        if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+        // ── Phase 4-DS: Finalize ──
+        emit(4, 'finalize', 'Finalizing…')
+        await this.phaseFinalize(workspaceId, workspacePath, (msg) => emit(4, 'finalize', msg))
+      } else {
+        // ── Phase 3: Architecture ──
+        emit(3, 'architecture', 'Analyzing architectural backbone…')
+        const archFacts = await this.phaseArchitecture(
+          workspaceId,
+          workspacePath,
+          preflight,
+          signal,
+          (msg) => emit(3, 'architecture', msg)
+        )
+        totalFacts += archFacts
+        if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+        // ── Phase 4: History ──
+        emit(4, 'history', 'Mining git history…')
+        const histFacts = await this.phaseHistory(
+          workspaceId,
+          workspacePath,
+          preflight,
+          signal,
+          (msg) => emit(4, 'history', msg)
+        )
+        totalFacts += histFacts
+        if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+        // ── Phase 5: Structure ──
+        emit(5, 'structure', 'Detecting structural patterns…')
+        const structFacts = await this.phaseStructure(workspaceId, workspacePath, (msg) =>
+          emit(5, 'structure', msg)
+        )
+        totalFacts += structFacts
+        if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+        // ── Phase 6: Finalize ──
+        emit(6, 'finalize', 'Finalizing…')
+        await this.phaseFinalize(workspaceId, workspacePath, (msg) => emit(6, 'finalize', msg))
+      }
+
+      const finalIdx = phases.length - 1
+      emit(
+        finalIdx,
+        'finalize',
+        `Bootstrap complete — ${totalFacts} facts created`,
+        'done'
+      )
+
+      bsLog.info(`[startBootstrap] Job ${jobId} complete: ${totalFacts} facts (mode=${mode})`)
+      return { jobId, factsCreated: totalFacts }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      bsLog.error(`[startBootstrap] Job ${jobId} failed:`, err)
+      const finalIdx = phases.length - 1
+      emit(finalIdx, phases[finalIdx], `Error: ${msg}`, 'error')
+      return { jobId, factsCreated: totalFacts }
+    } finally {
+      this.activeJob = null
+    }
+  }
+
+  /**
+   * Cancel the active bootstrap job.
+   */
+  cancel(jobId: string): boolean {
+    if (this.activeJob && this.activeJob.jobId === jobId) {
+      this.activeJob.controller.abort()
+      bsLog.info(`[cancel] Job ${jobId} cancelled`)
+      return true
+    }
+    return false
+  }
+
+  /**
+   * Cancel any active bootstrap job.
+   */
+  cancelAll(): void {
+    if (this.activeJob) {
+      this.activeJob.controller.abort()
+      bsLog.info('[cancelAll] Active job cancelled')
+    }
+  }
+
+  get isRunning(): boolean {
+    return this.activeJob !== null
+  }
+
+  // ── Phase 0: Preflight ───────────────────────────────────────────────────
+
+  private async phasePreflight(
+    workspaceId: string,
+    workspacePath: string,
+    mode: BootstrapMode,
+    _signal: AbortSignal
+  ): Promise<{ hasIndex: boolean; lastCommit: string | null; headSha: string | null }> {
+    // Check code-graph index
+    const hasIndex = codeGraphService.hasPersistedIndex(workspaceId)
+
+    if (!hasIndex && mode !== 'deep-scan') {
+      bsLog.info('[preflight] No code-graph index — attempting to build one')
+      try {
+        await codeGraphService.indexWorkspace(workspaceId, workspacePath)
+        bsLog.info('[preflight] Code-graph index built successfully')
+      } catch (err) {
+        bsLog.warn('[preflight] Code-graph indexing failed — architecture phase will be limited:', err)
+      }
+    }
+
+    // Kick embedding provider readiness (non-blocking)
+    omlxEmbeddingProvider.ensureEmbeddingReady().catch(() => {
+      bsLog.info('[preflight] Embedding provider not ready — facts will be embeddingPending')
+    })
+
+    // Read incremental markers from workspace settings
+    const settings = workspaceRepository.getSettings(workspaceId) as Record<string, unknown>
+    const lastCommit = (settings.memoryBootstrapLastCommit as string) ?? null
+
+    // Get current HEAD SHA
+    let headSha: string | null = null
+    try {
+      headSha = execSync('git rev-parse HEAD', {
+        cwd: workspacePath,
+        encoding: 'utf-8',
+        timeout: 5000
+      }).trim()
+    } catch {
+      bsLog.info('[preflight] Not a git repo or git unavailable')
+    }
+
+    // On incremental mode, check if anything changed
+    if (mode === 'incremental' && lastCommit && headSha && lastCommit === headSha) {
+      bsLog.info('[preflight] HEAD unchanged since last bootstrap — incremental run will be minimal')
+    }
+
+    return {
+      hasIndex: codeGraphService.hasPersistedIndex(workspaceId),
+      lastCommit,
+      headSha
+    }
+  }
+
+  // ── Phase 1: Documentation ────────────────────────────────────────────────
+
+  private async phaseDocs(
+    workspaceId: string,
+    workspacePath: string,
+    signal: AbortSignal,
+    onMsg: (msg: string) => void
+  ): Promise<number> {
+    const docFiles = this.discoverDocs(workspacePath)
+    if (docFiles.length === 0) {
+      onMsg('No documentation files found')
+      return 0
+    }
+
+    onMsg(`Found ${docFiles.length} documentation files`)
+    let totalFacts = 0
+
+    for (const filePath of docFiles) {
+      if (signal.aborted) break
+
+      const relPath = relative(workspacePath, filePath)
+      onMsg(`Extracting from ${relPath}…`)
+
+      try {
+        const facts = await this.extractFromFile(
+          workspaceId, workspacePath, filePath, signal,
+          { sourceType: 'document', tags: ['bootstrap', 'docs'] }
+        )
+        totalFacts += facts
+      } catch (err) {
+        bsLog.warn(`[phaseDocs] Error on ${relPath}:`, err)
+      }
+    }
+
+    onMsg(`Documentation phase complete — ${totalFacts} facts`)
+    return totalFacts
+  }
+
+  // ── Phase 2: Stack / Manifests ────────────────────────────────────────────
+
+  private async phaseStack(
+    workspaceId: string,
+    workspacePath: string,
+    _signal: AbortSignal,
+    onMsg: (msg: string) => void
+  ): Promise<number> {
+    const manifestContent = this.collectManifests(workspacePath)
+    if (!manifestContent || manifestContent.length < 20) {
+      onMsg('No manifest files found')
+      return 0
+    }
+
+    onMsg('Extracting tech stack facts…')
+
+    try {
+      const facts = await memoryExtractionService.extractFromContent(
+        workspaceId,
+        workspacePath,
+        'project-manifests',
+        manifestContent,
+        undefined,
+        { sourceType: 'document', tags: ['bootstrap', 'stack'] }
+      )
+      onMsg(`Stack phase complete — ${facts} facts`)
+      return facts
+    } catch (err) {
+      bsLog.warn('[phaseStack] Extraction failed:', err)
+      onMsg('Stack extraction failed')
+      return 0
+    }
+  }
+
+  // ── Phase 3: Architecture ─────────────────────────────────────────────────
+
+  private async phaseArchitecture(
+    workspaceId: string,
+    workspacePath: string,
+    preflight: { hasIndex: boolean; lastCommit: string | null; headSha: string | null },
+    signal: AbortSignal,
+    onMsg: (msg: string) => void
+  ): Promise<number> {
+    if (!preflight.hasIndex) {
+      onMsg('Skipped — no code-graph index available')
+      return 0
+    }
+
+    // Get top-ranked files by PageRank
+    let topFiles = await codeGraphService.getTopRankedFiles(
+      workspaceId,
+      [],
+      MAX_ARCHITECTURE_FILES
+    )
+
+    // On incremental runs, filter to changed files only
+    if (preflight.lastCommit && preflight.headSha && preflight.lastCommit !== preflight.headSha) {
+      const changedFiles = this.getChangedFilesSinceCommit(workspacePath, preflight.lastCommit)
+      if (changedFiles.size > 0) {
+        const before = topFiles.length
+        topFiles = topFiles.filter((f) => changedFiles.has(f))
+        onMsg(`Incremental: ${topFiles.length}/${before} central files changed`)
+      }
+    }
+
+    if (topFiles.length === 0) {
+      onMsg('No central files to analyze')
+      return 0
+    }
+
+    onMsg(`Analyzing ${topFiles.length} central files by PageRank…`)
+    let totalFacts = 0
+
+    for (let i = 0; i < topFiles.length; i++) {
+      if (signal.aborted) break
+
+      const relFile = topFiles[i]
+      const absFile = join(workspacePath, relFile)
+      onMsg(`[${i + 1}/${topFiles.length}] ${relFile}`)
+
+      try {
+        const facts = await this.extractFromFile(
+          workspaceId, workspacePath, absFile, signal,
+          { sourceType: 'document', tags: ['bootstrap', 'architecture'] }
+        )
+        totalFacts += facts
+      } catch (err) {
+        bsLog.warn(`[phaseArchitecture] Error on ${relFile}:`, err)
+      }
+    }
+
+    onMsg(`Architecture phase complete — ${totalFacts} facts`)
+    return totalFacts
+  }
+
+  // ── Phase 4: History ──────────────────────────────────────────────────────
+
+  private async phaseHistory(
+    workspaceId: string,
+    workspacePath: string,
+    preflight: { hasIndex: boolean; lastCommit: string | null; headSha: string | null },
+    signal: AbortSignal,
+    onMsg: (msg: string) => void
+  ): Promise<number> {
+    let totalFacts = 0
+
+    // 4a. Hotspots — aggregate into 1–2 facts
+    if (preflight.hasIndex) {
+      onMsg('Analyzing hotspots (churn × coupling)…')
+      try {
+        const hotspots = codeGraphService.findHotspots(workspaceId, workspacePath, {
+          maxResults: MAX_HOTSPOT_FACTS
+        })
+
+        if (hotspots.length > 0) {
+          const hotspotList = hotspots
+            .map((h) => `${h.file} (refs=${h.referenceCount}, churn=${h.gitChurn}, score=${h.hotspotScore})`)
+            .join('\n  ')
+
+          await memoryEngineService.writeFact({
+            workspaceId,
+            category: 'reference',
+            title: 'High-risk hotspots (churn × coupling)',
+            content: `These files have the highest combined reference count and git churn, making them risky to modify:\n  ${hotspotList}`,
+            tags: ['bootstrap', 'history', 'hotspots'],
+            scopePaths: hotspots.map((h) => h.file),
+            sourceType: 'document',
+            sourceRef: 'bootstrap:history',
+            workspacePath
+          })
+          totalFacts++
+        }
+      } catch (err) {
+        bsLog.warn('[phaseHistory] Hotspot analysis failed:', err)
+      }
+    }
+
+    if (signal.aborted) return totalFacts
+
+    // 4b. Co-change pairs
+    onMsg('Mining co-change patterns…')
+    try {
+      const pairs = codeGraphService.findCoChangePairs(workspacePath, {
+        maxCommits: 200,
+        minCoChanges: 3,
+        maxResults: MAX_COCHANGE_RESULTS
+      })
+
+      if (pairs.length > 0) {
+        const pairList = pairs
+          .map((p) => `${p.fileA} ↔ ${p.fileB} (${p.coChangeCount} co-changes)`)
+          .join('\n  ')
+
+        await memoryEngineService.writeFact({
+          workspaceId,
+          category: 'reference',
+          title: 'Implicit coupling — files that change together',
+          content: `These file pairs are frequently committed together, suggesting logical coupling beyond imports:\n  ${pairList}`,
+          tags: ['bootstrap', 'history', 'coupling'],
+          scopePaths: pairs.flatMap((p) => [p.fileA, p.fileB]).slice(0, 20),
+          sourceType: 'document',
+          sourceRef: 'bootstrap:history',
+          workspacePath
+        })
+        totalFacts++
+      }
+    } catch (err) {
+      bsLog.warn('[phaseHistory] Co-change analysis failed:', err)
+    }
+
+    if (signal.aborted) return totalFacts
+
+    // 4c. Recent commits → extract conventions/decisions
+    onMsg('Extracting facts from recent commits…')
+    try {
+      const sinceArg = preflight.lastCommit ? `${preflight.lastCommit}..HEAD` : `-n ${MAX_COMMIT_SUBJECTS}`
+      const commitLog = execSync(
+        `git log ${sinceArg} --format="%s%n%b" --no-merges`,
+        { cwd: workspacePath, encoding: 'utf-8', timeout: 15_000, maxBuffer: 2 * 1024 * 1024 }
+      ).trim()
+
+      if (commitLog.length >= 50) {
+        const commitFacts = await memoryExtractionService.extractFromContent(
+          workspaceId,
+          workspacePath,
+          'recent-commits',
+          `## Recent git commit messages and bodies:\n\n${commitLog.substring(0, 30000)}`,
+          undefined,
+          { sourceType: 'commit', tags: ['bootstrap', 'history'] }
+        )
+        totalFacts += commitFacts
+      }
+    } catch (err) {
+      bsLog.warn('[phaseHistory] Commit log extraction failed:', err)
+    }
+
+    onMsg(`History phase complete — ${totalFacts} facts`)
+    return totalFacts
+  }
+
+  // ── Phase 5: Structural gotchas ───────────────────────────────────────────
+
+  private async phaseStructure(
+    workspaceId: string,
+    workspacePath: string,
+    onMsg: (msg: string) => void
+  ): Promise<number> {
+    let totalFacts = 0
+
+    // Circular dependencies
+    onMsg('Checking for circular dependencies…')
+    try {
+      const cycles = codeGraphService.findCircularDependencies(workspaceId, { maxCycles: 10 })
+
+      if (cycles.length > 0) {
+        const cycleList = cycles
+          .slice(0, 5)
+          .map((c) => c.join(' → '))
+          .join('\n  ')
+
+        await memoryEngineService.writeFact({
+          workspaceId,
+          category: 'gotcha',
+          title: `Circular dependencies detected (${cycles.length} cycles)`,
+          content: `The following circular import chains exist:\n  ${cycleList}${cycles.length > 5 ? `\n  …and ${cycles.length - 5} more` : ''}`,
+          tags: ['bootstrap', 'structure', 'circular-deps'],
+          scopePaths: [...new Set(cycles.flat())].slice(0, 20),
+          sourceType: 'document',
+          sourceRef: 'bootstrap:structure',
+          workspacePath
+        })
+        totalFacts++
+      }
+    } catch (err) {
+      bsLog.warn('[phaseStructure] Circular dependency check failed:', err)
+    }
+
+    onMsg(`Structure phase complete — ${totalFacts} facts`)
+    return totalFacts
+  }
+
+  // ── Phase 6: Finalize ─────────────────────────────────────────────────────
+
+  private async phaseFinalize(
+    workspaceId: string,
+    workspacePath: string,
+    onMsg: (msg: string) => void
+  ): Promise<void> {
+    // Backfill pending embeddings
+    onMsg('Backfilling pending embeddings…')
+    try {
+      const backfilled = await memoryEngineService.backfillAllPendingEmbeddings()
+      if (backfilled > 0) {
+        onMsg(`Backfilled ${backfilled} embeddings`)
+      }
+    } catch (err) {
+      bsLog.warn('[phaseFinalize] Embedding backfill failed:', err)
+    }
+
+    // Write incremental markers
+    let headSha: string | null = null
+    try {
+      headSha = execSync('git rev-parse HEAD', {
+        cwd: workspacePath,
+        encoding: 'utf-8',
+        timeout: 5000
+      }).trim()
+    } catch {
+      // not a git repo
+    }
+
+    try {
+      const current = workspaceRepository.getSettings(workspaceId) as Record<string, unknown>
+      workspaceRepository.updateSettings(workspaceId, {
+        ...current,
+        memoryBootstrapLastCommit: headSha,
+        memoryBootstrapLastRunAt: new Date().toISOString()
+      })
+      onMsg('Incremental markers saved')
+    } catch (err) {
+      bsLog.warn('[phaseFinalize] Failed to save incremental markers:', err)
+    }
+  }
+
+  // ── Deep Scan: Agent-driven exploration ───────────────────────────────────
+
+  private async phaseDeepScan(
+    workspaceId: string,
+    workspacePath: string,
+    preflight: { hasIndex: boolean; lastCommit: string | null; headSha: string | null },
+    signal: AbortSignal,
+    onMsg: (msg: string) => void
+  ): Promise<number> {
+    onMsg('Preparing agent exploration prompt…')
+
+    // Build context for the agent
+    let topFilesContext = ''
+    if (preflight.hasIndex) {
+      try {
+        const topFiles = await codeGraphService.getTopRankedFiles(workspaceId, [], 40)
+        topFilesContext = `\n\nTop 40 files by PageRank (most central/coupled):\n${topFiles.map((f, i) => `  ${i + 1}. ${f}`).join('\n')}`
+      } catch {
+        bsLog.warn('[phaseDeepScan] Failed to get top-ranked files')
+      }
+    }
+
+    // Gather existing facts to avoid duplication
+    let existingFactsSummary = ''
+    try {
+      const existing = memoryFactRepository.findByWorkspace(workspaceId)
+      if (existing.length > 0) {
+        const titles = existing.slice(0, 30).map((f) => `- ${f.title}`).join('\n')
+        existingFactsSummary = `\n\nFacts already recorded (avoid duplicates):\n${titles}${existing.length > 30 ? `\n…and ${existing.length - 30} more` : ''}`
+      }
+    } catch {
+      // ok
+    }
+
+    const explorationPrompt = buildDeepScanPrompt(topFilesContext, existingFactsSummary)
+
+    onMsg('Spawning Claude exploration agent…')
+
+    // Spawn Claude CLI with read-only permissions, memory tools available
+    const factsBefore = memoryFactRepository.countByWorkspace(workspaceId).active
+
+    try {
+      await this.spawnDeepScanAgent(workspacePath, explorationPrompt, signal, onMsg)
+    } catch (err) {
+      if (signal.aborted) {
+        onMsg('Agent exploration cancelled')
+        return 0
+      }
+      bsLog.warn('[phaseDeepScan] Agent exploration failed:', err)
+      onMsg('Agent exploration completed with errors')
+    }
+
+    const factsAfter = memoryFactRepository.countByWorkspace(workspaceId).active
+    const created = Math.max(0, factsAfter - factsBefore)
+
+    onMsg(`Agent exploration complete — ${created} new facts`)
+    return created
+  }
+
+  private spawnDeepScanAgent(
+    workspacePath: string,
+    prompt: string,
+    signal: AbortSignal,
+    onMsg: (msg: string) => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '-p', prompt,
+        '--output-format', 'text',
+        '--permission-mode', 'plan',
+        '--model', 'claude-sonnet-4-6',
+        '--max-turns', '30'
+      ]
+
+      const child = spawn('claude', args, {
+        cwd: workspacePath,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: DEEP_SCAN_TIMEOUT_MS,
+        env: { ...process.env, MCP_TIMEOUT: '30000' }
+      })
+
+      let stdoutBuf = ''
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        stdoutBuf += chunk.toString()
+        // Parse partial output for progress updates
+        const lines = stdoutBuf.split('\n')
+        if (lines.length > 1) {
+          for (let i = 0; i < lines.length - 1; i++) {
+            const line = lines[i].trim()
+            if (line.length > 10) {
+              onMsg(`Agent: ${line.substring(0, 120)}…`)
+            }
+          }
+          stdoutBuf = lines[lines.length - 1]
+        }
+      })
+
+      child.stderr?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString().trim()
+        if (text) {
+          bsLog.info(`[deepScan:stderr] ${text.substring(0, 200)}`)
+        }
+      })
+
+      const onAbort = (): void => {
+        child.kill('SIGTERM')
+        reject(new Error('Agent exploration cancelled'))
+      }
+
+      if (signal.aborted) {
+        child.kill('SIGTERM')
+        reject(new Error('Agent exploration cancelled'))
+        return
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true })
+
+      child.on('close', (code) => {
+        signal.removeEventListener('abort', onAbort)
+        if (code === 0 || code === null) {
+          resolve()
+        } else {
+          reject(new Error(`Claude CLI exited with code ${code}`))
+        }
+      })
+
+      child.on('error', (err) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(err)
+      })
+    })
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Discover documentation files in the workspace.
+   */
+  private discoverDocs(workspacePath: string): string[] {
+    const found: string[] = []
+
+    // Root-level doc files
+    for (const pattern of DOC_PATTERNS) {
+      const fullPath = join(workspacePath, pattern)
+      if (existsSync(fullPath)) {
+        found.push(fullPath)
+      }
+    }
+
+    // Root-level *.md (excluding already found)
+    try {
+      const rootEntries = readdirSync(workspacePath)
+      for (const entry of rootEntries) {
+        if (entry.endsWith('.md') && !found.some((f) => basename(f) === entry)) {
+          const fullPath = join(workspacePath, entry)
+          try {
+            if (statSync(fullPath).isFile()) found.push(fullPath)
+          } catch { /* skip */ }
+        }
+      }
+    } catch { /* skip */ }
+
+    // Doc directories
+    for (const dir of DOC_DIRS) {
+      const dirPath = join(workspacePath, dir)
+      this.walkForMd(dirPath, found, 0)
+    }
+
+    // ADR directories
+    try {
+      this.findAdrDirs(workspacePath, found, 0)
+    } catch { /* skip */ }
+
+    return [...new Set(found)] // deduplicate
+  }
+
+  private walkForMd(dirPath: string, files: string[], depth: number): void {
+    if (depth > 5 || files.length >= 100) return
+    if (!existsSync(dirPath)) return
+
+    try {
+      const entries = readdirSync(dirPath)
+      for (const entry of entries) {
+        if (IGNORE_DIRS.has(entry)) continue
+        const fullPath = join(dirPath, entry)
+        try {
+          const stat = statSync(fullPath)
+          if (stat.isDirectory()) {
+            this.walkForMd(fullPath, files, depth + 1)
+          } else if (stat.isFile() && /\.(md|txt|rst|adoc)$/i.test(entry)) {
+            files.push(fullPath)
+          }
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+  }
+
+  private findAdrDirs(dirPath: string, files: string[], depth: number): void {
+    if (depth > 3) return
+
+    try {
+      const entries = readdirSync(dirPath)
+      for (const entry of entries) {
+        if (IGNORE_DIRS.has(entry)) continue
+        const fullPath = join(dirPath, entry)
+        try {
+          const stat = statSync(fullPath)
+          if (stat.isDirectory()) {
+            if (/adr/i.test(entry)) {
+              this.walkForMd(fullPath, files, 0)
+            } else if (depth < 2) {
+              this.findAdrDirs(fullPath, files, depth + 1)
+            }
+          }
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+  }
+
+  /**
+   * Collect and concatenate manifest file contents for stack analysis.
+   */
+  private collectManifests(workspacePath: string): string {
+    const parts: string[] = []
+
+    for (const pattern of MANIFEST_FILES) {
+      if (pattern.includes('*')) {
+        // Glob-like: expand manually for workflow files
+        const dir = join(workspacePath, pattern.replace(/\/\*.*/, ''))
+        const ext = pattern.split('*.').pop() ?? ''
+        try {
+          if (existsSync(dir)) {
+            for (const entry of readdirSync(dir)) {
+              if (entry.endsWith(`.${ext}`)) {
+                const content = this.readCapped(join(dir, entry))
+                if (content) parts.push(`## ${pattern.replace('*', entry)}\n${content}`)
+              }
+            }
+          }
+        } catch { /* skip */ }
+      } else {
+        const fullPath = join(workspacePath, pattern)
+        const content = this.readCapped(fullPath)
+        if (content) parts.push(`## ${pattern}\n${content}`)
+      }
+    }
+
+    // Also detect schema file
+    const schemaPatterns = [
+      'src/main/db/schema.sql', 'schema.sql', 'db/schema.sql',
+      'prisma/schema.prisma', 'drizzle/schema.ts'
+    ]
+    for (const sp of schemaPatterns) {
+      const content = this.readCapped(join(workspacePath, sp), 10000)
+      if (content) {
+        parts.push(`## ${sp}\n${content}`)
+        break
+      }
+    }
+
+    // Migration directory listing
+    const migrationDirs = [
+      'src/main/db/migrations', 'migrations', 'db/migrations',
+      'prisma/migrations', 'drizzle/migrations'
+    ]
+    for (const md of migrationDirs) {
+      const dirPath = join(workspacePath, md)
+      try {
+        if (existsSync(dirPath)) {
+          const entries = readdirSync(dirPath).sort().slice(-20) // last 20 migrations
+          parts.push(`## ${md} (last 20 entries)\n${entries.join('\n')}`)
+          break
+        }
+      } catch { /* skip */ }
+    }
+
+    return parts.join('\n\n').substring(0, 50000)
+  }
+
+  /**
+   * Read a file with a size cap, returning null if missing or too large.
+   */
+  private readCapped(filePath: string, maxBytes: number = 5000): string | null {
+    try {
+      if (!existsSync(filePath)) return null
+      const stat = statSync(filePath)
+      if (!stat.isFile() || stat.size > maxBytes * 3) return null
+      const content = readFileSync(filePath, 'utf-8')
+      return content.substring(0, maxBytes)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Extract facts from a single file with hash-gating and chunking.
+   */
+  private async extractFromFile(
+    workspaceId: string,
+    workspacePath: string,
+    filePath: string,
+    signal: AbortSignal,
+    opts: { sourceType: 'document' | 'commit'; tags: string[] }
+  ): Promise<number> {
+    // Read the file
+    const readResult = await readDocument(filePath)
+    if (!readResult.ok || readResult.isImage) return 0
+
+    // Hash-gate: skip unchanged files
+    const contentHash = createHash('sha256').update(readResult.content).digest('hex')
+    const existingState = memoryFactRepository.getDocState(workspaceId, filePath)
+    if (existingState && existingState.contentHash === contentHash) {
+      return 0 // unchanged
+    }
+
+    // Chunk and extract
+    const strategy = detectStrategy(filePath)
+    const relPath = relative(workspacePath, filePath)
+    const chunks = chunkDocument(readResult.content, strategy, relPath)
+    if (chunks.length === 0) return 0
+
+    let factsFromFile = 0
+    const cappedChunks = chunks.slice(0, MAX_CHUNKS_PER_FILE)
+
+    for (const chunk of cappedChunks) {
+      if (signal.aborted) break
+
+      try {
+        const contentWithContext = chunk.breadcrumb
+          ? `[Context: ${chunk.breadcrumb}]\n\n${chunk.content}`
+          : chunk.content
+
+        const created = await memoryExtractionService.extractFromContent(
+          workspaceId,
+          workspacePath,
+          relPath,
+          contentWithContext,
+          undefined,
+          { sourceType: opts.sourceType, tags: opts.tags }
+        )
+        factsFromFile += created
+      } catch (err) {
+        bsLog.warn(`[extractFromFile] Chunk extraction failed for ${relPath}:`, err)
+      }
+    }
+
+    // Update doc state hash
+    memoryFactRepository.upsertDocState(workspaceId, filePath, contentHash)
+    return factsFromFile
+  }
+
+  /**
+   * Get files changed since a specific commit.
+   */
+  private getChangedFilesSinceCommit(workspacePath: string, sinceCommit: string): Set<string> {
+    try {
+      const output = execSync(`git diff --name-only ${sinceCommit}..HEAD`, {
+        cwd: workspacePath,
+        encoding: 'utf-8',
+        timeout: 10_000,
+        maxBuffer: 2 * 1024 * 1024
+      }).trim()
+
+      return new Set(output.split('\n').filter(Boolean))
+    } catch {
+      return new Set()
+    }
+  }
+
+  private finishCancelled(
+    jobId: string,
+    totalFacts: number,
+    emit: (
+      phaseIndex: number,
+      phaseLabel: BootstrapPhaseLabel,
+      message: string,
+      jobStatus: BootstrapProgress['jobStatus']
+    ) => void,
+    phases: BootstrapPhaseLabel[]
+  ): { jobId: string; factsCreated: number } {
+    emit(phases.length - 1, phases[phases.length - 1], 'Bootstrap cancelled', 'cancelled')
+    return { jobId, factsCreated: totalFacts }
+  }
+}
+
+// ── Deep Scan Prompt Builder ────────────────────────────────────────────────
+
+function buildDeepScanPrompt(topFilesContext: string, existingFactsSummary: string): string {
+  return `You are a codebase exploration agent. Your job is to systematically explore this project and record non-obvious architectural facts using the memory_record tool.
+
+## Instructions
+
+1. Start by reading the project's main entry points, configuration files, and README.
+2. Use the code-graph tools (graph_map, file_outline, find_callers, find_references) to understand the architecture.
+3. For each important discovery, call memory_record with:
+   - A clear, concise title (5-15 words)
+   - Actionable content (1-3 sentences)
+   - Appropriate category: "decision", "convention", "gotcha", "preference", or "reference"
+   - Relevant tags and scope paths
+
+## Focus Areas
+- Service boundaries and responsibilities
+- Data flow patterns (IPC, events, stores)
+- Configuration and environment conventions
+- Error handling patterns
+- Database schema and migration conventions
+- Testing patterns and infrastructure
+- Build and deployment pipeline
+- Shared utilities and helper patterns
+- Security conventions (validation, auth, input sanitization)
+- Naming conventions and code organization
+
+## Rules
+- Record max 30 facts — quality over quantity
+- Only non-obvious facts (skip things discoverable from a single file read)
+- Each fact must be self-contained and actionable
+- Use memory_search before recording to avoid duplicates
+- Focus on decisions, constraints, and gotchas — not descriptions
+${topFilesContext}
+${existingFactsSummary}
+
+Begin by reading the project root files, then explore the most central modules.`
+}
+
+export const memoryBootstrapService = new MemoryBootstrapService()

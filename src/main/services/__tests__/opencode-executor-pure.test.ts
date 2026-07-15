@@ -126,6 +126,13 @@ function isSessionComplete(event: Record<string, unknown>, sessionId: string, re
     if (status === 'error' && !retriesAvailable) return true
   }
 
+  // session.next.step.ended(stop) is deliberately NOT terminal — it is the end of
+  // a single generation step, not the agent loop. Only step.failed is terminal.
+  if (type === 'session.next.step.failed') {
+    if (retriesAvailable) return false
+    return true
+  }
+
   return false
 }
 
@@ -347,6 +354,24 @@ describe('isSessionComplete', () => {
   test('session_status_running_returns_false', () => {
     const event = { type: 'session.status', properties: { sessionID: 'sess-1', status: 'running' } }
     assert.ok(!isSessionComplete(event, 'sess-1'))
+  })
+
+  test('step_ended_stop_is_NOT_terminal', () => {
+    // Regression guard: a step ending with finish="stop" must NOT complete the
+    // session — it truncated the final answer text (e.g. JSON), spawned a zombie
+    // server session, and stalled the UI. Completion is driven by session.idle.
+    const event = { type: 'session.next.step.ended', properties: { sessionID: 'sess-1', finish: 'stop' } }
+    assert.ok(!isSessionComplete(event, 'sess-1'), 'step.ended(stop) must not be terminal')
+  })
+
+  test('step_failed_no_retries_returns_true', () => {
+    const event = { type: 'session.next.step.failed', properties: { sessionID: 'sess-1' } }
+    assert.ok(isSessionComplete(event, 'sess-1', false))
+  })
+
+  test('step_failed_with_retries_returns_false', () => {
+    const event = { type: 'session.next.step.failed', properties: { sessionID: 'sess-1' } }
+    assert.ok(!isSessionComplete(event, 'sess-1', true))
   })
 
   test('unknown_event_type_returns_false', () => {

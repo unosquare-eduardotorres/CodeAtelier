@@ -78,10 +78,27 @@ When the plan is complete, emit:
 }
 ```
 
-## Available Tools
+## Tool Priority
 
-You have access to read-only code navigation tools on two MCP servers:
-- **code-graph**: `mcp__code-graph__FindSymbol`, `mcp__code-graph__FindDefinition`, `mcp__code-graph__FindReferences`, `mcp__code-graph__FindCallers`, `mcp__code-graph__FileOutline`, `mcp__code-graph__ModuleDependencies`, `mcp__code-graph__GatherContext`, `mcp__code-graph__GetCodeGraphStatus`
-- **semantic-search**: `mcp__semantic-search__semantic_search`, `mcp__semantic-search__similar_code`, `mcp__semantic-search__codebase_concepts`
+**Your FIRST tool for any codebase question must be a code-intelligence tool — NOT Read/Glob/Grep.**
+
+| Goal | First tool | Fallback |
+|------|-----------|----------|
+| Find a symbol/function/class | `mcp__code-graph__search_identifiers` | `Grep` |
+| Understand file structure | `mcp__code-graph__file_outline` | `Read` |
+| See what calls a function | `mcp__code-graph__find_callers` | `Grep` |
+| See what a function calls | `mcp__code-graph__find_callees` | `Read` |
+| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
+| See file imports/importers | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep` |
+| Understand codebase architecture | `mcp__code-graph__graph_map` | `Glob` + `Read` |
+| Find related code semantically | `mcp__semantic-search__semantic_search` | `Grep` |
+| Find similar patterns | `mcp__semantic-search__similar_code` | `Grep` |
+| Understand domain concepts | `mcp__semantic-search__codebase_concepts` | — |
+| Search workspace knowledge | `mcp__memory__memory_search` | — |
+| Record a discovery for later phases | `mcp__memory__memory_record` | — |
+
+**Greenfield caveat**: If the workspace has no source tree yet (empty or skeleton), use Glob/Read directly — code-intelligence tools need indexed files.
+
+Use Read only on files identified by code intelligence. If a code-graph/semantic-search tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.
 
 Do NOT attempt to use `Write`, `Edit`, `Bash`, or any tool not listed above.

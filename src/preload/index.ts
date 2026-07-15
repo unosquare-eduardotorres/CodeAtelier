@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
 import type {
   Workspace,
@@ -50,6 +50,7 @@ import type {
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
   LLMProvider,
+  ModelRoleMap,
   CommunicationTone,
   UpdateConfig,
   SemanticSearchResult,
@@ -64,6 +65,7 @@ import type {
   MemoryContradiction,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
+  MemoryGraphData,
   ContradictionStatus,
   E2EScenarioSummary,
   E2EPreflightResult,
@@ -154,6 +156,7 @@ const api = {
     mode?: ConversationMode
     personaSpecialistId?: string
     llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
@@ -507,11 +510,73 @@ const api = {
   memoryEmbeddingStatus: (args?: { workspaceId?: string }): Promise<MemoryEmbeddingStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EMBEDDING_STATUS, args),
 
-  memoryEmbeddingBackfill: (): Promise<{ backfilled: number }> =>
+  memoryEmbeddingBackfill: (): Promise<{ backfilled: number; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EMBEDDING_BACKFILL),
+
+  onMemoryEmbeddingProgress: (
+    callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { processed: number; total: number; done: boolean; error?: string }
+    ): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.MEMORY_EMBEDDING_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_EMBEDDING_PROGRESS, handler)
+    }
+  },
+
+  // Dedup scan
+  memoryDedupScan: (args: { workspaceId: string }): Promise<{ pairsFound: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_SCAN, args),
+
+  // Memory graph
+  memoryGraphGet: (args: { workspaceId: string }): Promise<MemoryGraphData> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GRAPH_GET, args),
 
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }): Promise<{ created: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SAVE_MESSAGE, args),
+
+  // ── Memory Document Ingestion ──
+  memoryIngestSelectFiles: (): Promise<string[] | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_SELECT_FILES),
+
+  memoryIngestSelectFolder: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_SELECT_FOLDER),
+
+  memoryIngestDiscover: (args: { folderPath: string }): Promise<{ files: string[]; counts: Record<string, number>; truncated: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_DISCOVER, args),
+
+  memoryIngestDocuments: (args: { files: string[]; workspaceId: string; workspacePath: string }): Promise<{ jobId: string; factsCreated: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_DOCUMENTS, args),
+
+  memoryIngestCancel: (args: { jobId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_CANCEL, args),
+
+  onMemoryIngestProgress: (callback: (data: import('../shared/types').IngestionProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: any): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.MEMORY_INGEST_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_INGEST_PROGRESS, handler)
+    }
+  },
+
+  // ── Memory Bootstrap ──
+  memoryBootstrapStart: (
+    args: { workspaceId: string; workspacePath: string; mode?: import('../shared/types').BootstrapMode }
+  ): Promise<{ jobId: string; factsCreated: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_START, args),
+
+  memoryBootstrapCancel: (args: { jobId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_CANCEL, args),
+
+  onMemoryBootstrapProgress: (callback: (data: import('../shared/types').BootstrapProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: any): void => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, handler)
+    }
+  },
 
   // ── Memory Feed (retained) ──
   memorySelectDocument: (): Promise<string | null> =>
@@ -651,6 +716,11 @@ const api = {
         text: string
         index?: number
       }
+      turnLimit?: {
+        continuable: boolean
+        continuationsUsed: number
+        continuationsMax: number
+      }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -692,6 +762,11 @@ const api = {
           action: 'add' | 'complete' | 'remove' | 'update'
           text: string
           index?: number
+        }
+        turnLimit?: {
+          continuable: boolean
+          continuationsUsed: number
+          continuationsMax: number
         }
       }
     ): void => callback(data)
@@ -1041,6 +1116,10 @@ const api = {
   // ── Shell ──
   showItemInFolder: (filePath: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, filePath),
+
+  // ── File Utilities ──
+  /** Electron 32+ replacement for the removed File.path property */
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   // ── Checkpoints ──
   listCheckpoints: (args: {
@@ -2457,6 +2536,9 @@ const api = {
   blueprintCancel: (args: { workspaceId: string }): Promise<{ cancelled: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
 
+  blueprintDelete: (args: { id: string }): Promise<{ deleted: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_DELETE, args),
+
   blueprintGetConstitution: (args: {
     workspaceId: string
   }): Promise<{ constitutionMd: string | null; constitutionVersion: string } | null> =>
@@ -2614,6 +2696,8 @@ const api = {
       workspaceId: string
       phase: string
       planSummary: string
+      completion?: Record<string, unknown>
+      reviewMarkdown?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2623,6 +2707,8 @@ const api = {
         workspaceId: string
         phase: string
         planSummary: string
+        completion?: Record<string, unknown>
+        reviewMarkdown?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, handler)
@@ -2725,7 +2811,7 @@ const api = {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string } | null
+      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
       lastError: string | null
     }) => void
@@ -2747,7 +2833,7 @@ const api = {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string } | null
+    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
     lastError: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT, args),
@@ -2851,11 +2937,15 @@ const api = {
     scenarioIds?: string[]
     category?: string
     workspaceId?: string
+    forceTools?: boolean
   }): Promise<{ runId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.TESTING_RUN, args),
 
   testingRequeueFailed: (args: { runId: string; workspaceId?: string }): Promise<{ runId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.TESTING_REQUEUE_FAILED, args),
+
+  testingResumeRun: (args: { runId: string; workspaceId?: string }): Promise<{ runId: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TESTING_RESUME_RUN, args),
 
   testingCancel: (): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.TESTING_CANCEL),

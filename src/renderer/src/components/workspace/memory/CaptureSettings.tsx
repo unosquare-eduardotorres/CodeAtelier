@@ -19,12 +19,12 @@ function CaptureToggle({
   return (
     <label className="flex items-center justify-between gap-3 cursor-pointer">
       <div>
-        <div className="text-sm text-primary">{label}</div>
-        <div className="text-xs text-tertiary">{description}</div>
+        <div className="text-sm text-text-primary">{label}</div>
+        <div className="text-xs text-text-muted">{description}</div>
       </div>
       <div
         className={`relative w-9 h-5 rounded-full transition-colors ${
-          checked ? 'bg-accent' : 'bg-border'
+          checked ? 'bg-teal' : 'bg-surface-float border border-border-default'
         }`}
         onClick={() => onChange(!checked)}
       >
@@ -65,19 +65,19 @@ export default function CaptureSettings({
     <div className="space-y-4">
       <SettingsCard>
         <h3 className="text-sm font-medium text-text-primary">Document Feed</h3>
-        <p className="text-xs text-text-secondary mt-0.5">Extract facts from documents and regenerate CLAUDE.md</p>
+        <p className="text-xs text-text-secondary mt-0.5">Extract memories from documents and regenerate CLAUDE.md</p>
         <div className="flex gap-2 mt-3">
           <button
             onClick={onFeedDocument}
             disabled={feedStatus === 'running'}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-accent text-accent-foreground rounded-md hover:bg-accent/80 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20 disabled:opacity-50"
           >
             <Upload className="w-4 h-4" /> Feed Document
           </button>
           <button
             onClick={onRegenerateClaudeMd}
             disabled={feedStatus === 'running'}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-secondary text-primary rounded-md hover:bg-hover disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-surface-overlay text-text-primary rounded-md hover:bg-surface-float disabled:opacity-50"
           >
             <Sparkles className="w-4 h-4" /> Regenerate CLAUDE.md
           </button>
@@ -88,7 +88,7 @@ export default function CaptureSettings({
               <span className="text-info">{feedMessage}</span>
             )}
             {feedStatus === 'error' && (
-              <span className="text-error">{feedError}</span>
+              <span className="text-danger">{feedError}</span>
             )}
             {feedStatus === 'completed' && (
               <span className="text-success">{feedMessage}</span>
@@ -100,25 +100,43 @@ export default function CaptureSettings({
       {captureSettings && (
         <SettingsCard>
           <h3 className="text-sm font-medium text-text-primary">Automatic Capture</h3>
-          <p className="text-xs text-text-secondary mt-0.5">Control which sources automatically extract facts</p>
+          <p className="text-xs text-text-secondary mt-0.5">Control which sources automatically extract memories</p>
           <div className="space-y-3 mt-3">
             <CaptureToggle
               label="Session transcripts"
-              description="Extract facts from completed chat sessions"
+              description="Extract memories from completed chat sessions"
               checked={captureSettings.sessionCapture}
               onChange={(v) => onUpdateSettings(workspaceId, { sessionCapture: v })}
             />
             <CaptureToggle
               label="Commit changes"
-              description="Extract facts from git commits"
+              description="Extract memories from git commits"
               checked={captureSettings.commitCapture}
               onChange={(v) => onUpdateSettings(workspaceId, { commitCapture: v })}
             />
             <CaptureToggle
               label="Document watcher"
-              description="Watch docs for changes and extract facts"
+              description="Watch docs for changes and extract memories"
               checked={captureSettings.docCapture}
               onChange={(v) => onUpdateSettings(workspaceId, { docCapture: v })}
+            />
+            <CaptureToggle
+              label="Blueprint lifecycle"
+              description="Capture decisions from blueprint approvals, completions, and failures"
+              checked={captureSettings.captureBlueprints}
+              onChange={(v) => onUpdateSettings(workspaceId, { captureBlueprints: v })}
+            />
+            <CaptureToggle
+              label="Grill decisions"
+              description="Extract memories from grill evaluations and structured plans"
+              checked={captureSettings.captureGrill}
+              onChange={(v) => onUpdateSettings(workspaceId, { captureGrill: v })}
+            />
+            <CaptureToggle
+              label="Document attachments"
+              description="Extract memories when documents are attached to blueprints"
+              checked={captureSettings.captureDocumentsOnAttach}
+              onChange={(v) => onUpdateSettings(workspaceId, { captureDocumentsOnAttach: v })}
             />
           </div>
         </SettingsCard>

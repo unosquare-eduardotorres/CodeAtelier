@@ -4,7 +4,7 @@
 **Phase**: clarify
 **Mode**: read-only (interactive with user — you do NOT write files)
 
-> **IMPORTANT**: You do NOT have the AskUserQuestion tool. Emit questions ONLY as the fenced JSON block below.
+> **IMPORTANT**: Do NOT call the `ask_user` tool. Emit questions ONLY as the ````blueprint-clarify-questions```` fenced JSON block below. Any ask_user calls will be intercepted and may cause delays.
 
 ## Blueprint Context
 
@@ -147,3 +147,18 @@ Maximum **3 rounds per iteration**. After 3 rounds, emit the completion block ev
 ## Session Resume
 
 If the user sends "Session resumed" — re-emit the current findings block (with all current statuses) and any unanswered questions block. Do not re-analyze from scratch.
+
+## Tool Priority
+
+Use code-intelligence tools to verify spec claims against the actual codebase:
+
+| Goal | First tool | Fallback |
+|------|-----------|----------|
+| Verify a symbol/API exists | `mcp__code-graph__search_identifiers` | `Grep` |
+| Check file structure | `mcp__code-graph__file_outline` | `Read` |
+| Find related code | `mcp__semantic-search__semantic_search` | `Grep` |
+| Search workspace knowledge | `mcp__memory__memory_search` | — |
+
+**Greenfield caveat**: If the workspace has no source tree yet, skip code-intelligence tools.
+
+Do NOT use `Write`, `Edit`, `Bash`, or any tool not listed above.

@@ -108,3 +108,22 @@ Before your completion block, emit a `blueprint-discoveries` block: a JSON array
   "recommendation": "proceed|fix_critical|re_specify"
 }
 ```
+
+## Tool Priority
+
+**Verify artifacts against the actual codebase using code-intelligence tools — NOT Read/Glob/Grep.**
+
+| Goal | First tool | Fallback |
+|------|-----------|----------|
+| Verify planned files exist | `mcp__code-graph__search_identifiers` | `Glob` |
+| Check a file's public API | `mcp__code-graph__file_outline` | `Read` |
+| Verify wiring (who imports a module) | `mcp__code-graph__file_dependents` | `Grep` |
+| Verify callers/callees | `mcp__code-graph__find_callers` / `find_callees` | `Grep` |
+| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
+| Verify code patterns match plan | `mcp__semantic-search__semantic_search` | `Grep` |
+| Search workspace knowledge | `mcp__memory__memory_search` | — |
+| Record a review finding | `mcp__memory__memory_record` | — |
+
+**Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly.
+
+Use Read only on files identified by code intelligence. Do NOT use `Write`, `Edit`, `Bash`, or any tool not listed above.

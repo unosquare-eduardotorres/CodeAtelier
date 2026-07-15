@@ -16,6 +16,7 @@ import { skillLogger } from '../logger'
 import { skillRepository } from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { skillEnrichmentService } from './skill-enrichment.service'
+import { buildEnvWithPath } from './env-utils'
 
 interface QueueItem {
   operation: () => Promise<void>
@@ -448,16 +449,7 @@ Instructions:
       this.currentAbortController = new AbortController()
       const { signal } = this.currentAbortController
 
-      const env = { ...process.env }
-      delete env.CLAUDECODE
-
-      // Ensure claude CLI is findable
-      if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-        env.PATH = `/usr/local/bin:${env.PATH}`
-      }
-      if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
-        env.PATH = `/opt/homebrew/bin:${env.PATH}`
-      }
+      const env = buildEnvWithPath()
 
       const child = spawn(
         'claude',

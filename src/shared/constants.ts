@@ -176,6 +176,8 @@ export const IPC_CHANNELS = {
   // Memory embedding status
   MEMORY_EMBEDDING_STATUS: 'memory:embedding:status',
   MEMORY_EMBEDDING_BACKFILL: 'memory:embedding:backfill',
+  MEMORY_EMBEDDING_PROGRESS: 'memory:embedding:progress',
+  MEMORY_DEDUP_SCAN: 'memory:dedup:scan',
 
   // Memory feed (retained: doc feed + CLAUDE.md regeneration)
   MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
@@ -184,6 +186,22 @@ export const IPC_CHANNELS = {
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
   MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
+
+  // Memory document ingestion
+  MEMORY_INGEST_DOCUMENTS: 'memory:ingest:documents',
+  MEMORY_INGEST_CANCEL: 'memory:ingest:cancel',
+  MEMORY_INGEST_PROGRESS: 'memory:ingest:progress',
+  MEMORY_INGEST_DISCOVER: 'memory:ingest:discover',
+  MEMORY_INGEST_SELECT_FILES: 'memory:ingest:selectFiles',
+  MEMORY_INGEST_SELECT_FOLDER: 'memory:ingest:selectFolder',
+
+  // Memory bootstrap (project knowledge bootstrap)
+  MEMORY_BOOTSTRAP_START: 'memory:bootstrap:start',
+  MEMORY_BOOTSTRAP_CANCEL: 'memory:bootstrap:cancel',
+  MEMORY_BOOTSTRAP_PROGRESS: 'memory:bootstrap:progress',
+
+  // Memory graph (knowledge graph visualization)
+  MEMORY_GRAPH_GET: 'memory:graph:get',
 
   // Tokens
   TOKEN_GET_WORKSPACE_SUMMARY: 'token:getWorkspaceSummary',
@@ -592,6 +610,7 @@ export const IPC_CHANNELS = {
   TESTING_PREFLIGHT: 'testing:preflight',
   TESTING_RUN: 'testing:run',
   TESTING_REQUEUE_FAILED: 'testing:requeueFailed',
+  TESTING_RESUME_RUN: 'testing:resumeRun',
   TESTING_CANCEL: 'testing:cancel',
   TESTING_GET_RUNS: 'testing:getRuns',
   TESTING_GET_RUN_RESULTS: 'testing:getRunResults',
@@ -660,8 +679,8 @@ export const AVAILABLE_MODELS = [
     description: 'Fast & economical'
   },
   {
-    id: 'claude-sonnet-4-6',
-    label: 'Sonnet 4.6',
+    id: 'claude-sonnet-5',
+    label: 'Sonnet 5',
     tier: 'sonnet' as const,
     description: 'Balanced performance'
   },
@@ -670,6 +689,12 @@ export const AVAILABLE_MODELS = [
     label: 'Opus 4.8',
     tier: 'opus' as const,
     description: 'Most capable'
+  },
+  {
+    id: 'claude-fable-5',
+    label: 'Fable 5',
+    tier: 'fable' as const,
+    description: 'Frontier — long-horizon reasoning'
   }
 ] as const
 
@@ -677,12 +702,12 @@ export const AVAILABLE_MODELS = [
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
   'da-vinci': 'claude-opus-4-8',
   'da-vinci:plan': 'claude-opus-4-8',
-  'da-vinci:build': 'claude-sonnet-4-6',
+  'da-vinci:build': 'claude-sonnet-5',
   'project-specialist': 'claude-opus-4-8',
   'project-specialist:plan': 'claude-opus-4-8',
-  'project-specialist:build': 'claude-sonnet-4-6',
+  'project-specialist:build': 'claude-sonnet-5',
   'specialist:simple': 'claude-haiku-4-5-20251001',
-  'specialist:moderate': 'claude-sonnet-4-6',
+  'specialist:moderate': 'claude-sonnet-5',
   'specialist:complex': 'claude-opus-4-8',
   memoryFeed: 'claude-haiku-4-5-20251001',
   activation: 'claude-haiku-4-5-20251001',
@@ -696,11 +721,11 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
 
   // Blueprint phase actions
   'blueprint:specify': 'claude-opus-4-8',
-  'blueprint:clarify': 'claude-sonnet-4-6',
+  'blueprint:clarify': 'claude-sonnet-5',
   'blueprint:plan': 'claude-opus-4-8',
   'blueprint:tasks': 'claude-opus-4-8',
   'blueprint:review': 'claude-opus-4-8',
-  'blueprint:build': 'claude-sonnet-4-6',
+  'blueprint:build': 'claude-sonnet-5',
   'blueprint:verify': 'claude-opus-4-8',
 
   // Prompt optimization
@@ -836,13 +861,14 @@ export function resolveModelAction(
  * Haiku and older models need full explicit guardrailing.
  */
 export function resolvePromptVerbosity(model: string): import('./types').PromptVerbosity {
+  // Fable 5 — frontier model, lean prompts
+  if (model.startsWith('claude-fable-')) return 'lean'
   // Opus 4.8+ can follow compressed instructions reliably
   if (model === 'claude-opus-4-8') return 'lean'
   // Future-proof: any Opus newer than 4.8 also gets lean
   if (model.startsWith('claude-opus-') && model > 'claude-opus-4-8') return 'lean'
   // Sonnet 4.6+ follows lean instructions effectively — saves ~800-1200 tokens/turn
-  if (model === 'claude-sonnet-4-6') return 'lean'
-  if (model.startsWith('claude-sonnet-') && model > 'claude-sonnet-4-6') return 'lean'
+  if (model.startsWith('claude-sonnet-') && model >= 'claude-sonnet-4-6') return 'lean'
   return 'full'
 }
 
@@ -854,6 +880,8 @@ export function resolvePromptVerbosity(model: string): import('./types').PromptV
  */
 export const CONTEXT_1M_SUPPORTED_MODELS = [
   'claude-opus-4-8',
+  'claude-fable-5',
+  'claude-sonnet-5',
   'claude-sonnet-4-6',
   'claude-sonnet-4-5-20250514',
   'claude-sonnet-4-20250514'
@@ -1054,7 +1082,7 @@ export const MODEL_ACTIONS_META: Record<
  */
 export const THINKING_BUDGETS = {
   haiku: '5000',
-  sonnet: '10000',
+  sonnet: '', // empty = adaptive-only (Sonnet 5 removed budget_tokens — 400 error if passed)
   opus: '' // empty = adaptive-only (Opus 4.7+ removed budget_tokens — 400 error if passed)
 } as const
 
@@ -1616,7 +1644,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
       "Actively looks for what's wrong, what's missing, what will fail. Assumes the plan has a fatal flaw and tries to find it.",
     toolAccess: 'full',
     toolGuidance:
-      "Use `find_references` on every file in scope to find hidden callers the plan doesn't account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `todo_scanner` to find existing technical debt in affected areas."
+      "Use `find_references` on every file in scope to find hidden callers the plan doesn't account for. Use `coupling_analysis` to check if changes introduce tight coupling. Use `audit_scan` to find existing technical debt in affected areas."
   },
   'first-principles': {
     id: 'first-principles',
@@ -1656,7 +1684,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
       "Only cares about one thing: can this actually be done, and what's the fastest path? If the plan sounds brilliant but has no clear first step, says so.",
     toolAccess: 'full',
     toolGuidance:
-      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `test_coverage_map` to verify test claims.'
+      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `analyze_test_coverage` to verify test claims.'
   }
 } as const
 
@@ -1763,16 +1791,30 @@ export const MCP_TOOLS = {
     LIST_ISSUES: mcpTool('github-context', 'list_issues', 'GitHub · issues')
   }),
   CODE_ANALYSIS: mcpServer('code-analysis', {
-    TODO_SCANNER: mcpTool('code-analysis', 'todo_scanner', 'Analysis · todo_scanner'),
-    DEPENDENCY_HEALTH: mcpTool(
+    ANALYZE_COMPLEXITY: mcpTool(
       'code-analysis',
-      'dependency_health',
-      'Analysis · dependency_health'
+      'analyze_complexity',
+      'Analysis · analyze_complexity'
     ),
-    TEST_COVERAGE_MAP: mcpTool(
+    ANALYZE_DEPENDENCIES: mcpTool(
       'code-analysis',
-      'test_coverage_map',
-      'Analysis · test_coverage_map'
+      'analyze_dependencies',
+      'Analysis · analyze_dependencies'
+    ),
+    ANALYZE_TEST_COVERAGE: mcpTool(
+      'code-analysis',
+      'analyze_test_coverage',
+      'Analysis · analyze_test_coverage'
+    ),
+    FIND_CODE_SMELLS: mcpTool(
+      'code-analysis',
+      'find_code_smells',
+      'Analysis · find_code_smells'
+    ),
+    SUGGEST_REFACTORING: mcpTool(
+      'code-analysis',
+      'suggest_refactoring',
+      'Analysis · suggest_refactoring'
     ),
     RESOLVE_LIBRARY_ID: mcpTool(
       'code-analysis',
@@ -1787,11 +1829,6 @@ export const MCP_TOOLS = {
     ESLINT_CHECK: mcpTool('code-analysis', 'eslint_check', 'Analysis · eslint_check'),
     ESLINT_FIX: mcpTool('code-analysis', 'eslint_fix', 'Analysis · eslint_fix'),
     ESLINT_RULES: mcpTool('code-analysis', 'eslint_rules', 'Analysis · eslint_rules'),
-    ANALYZE_COMPLEXITY: mcpTool(
-      'code-analysis',
-      'analyze_complexity',
-      'Analysis · analyze_complexity'
-    ),
     AUDIT_SCAN: mcpTool('code-analysis', 'audit_scan', 'Analysis · audit_scan')
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {

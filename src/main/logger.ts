@@ -1,7 +1,7 @@
 import log from 'electron-log/main'
 
 // ── Configure log file behavior ──
-log.transports.file.maxSize = 5 * 1024 * 1024 // 5 MB per log file
+log.transports.file.maxSize = 20 * 1024 * 1024 // 20 MB per log file (bumped — 15+ min sessions rotate at 5MB)
 log.transports.file.format = '{y}-{m}-{d} {h}:{i}:{s}.{ms} [{level}] [{scope}] {text}'
 log.transports.console.format = '{h}:{i}:{s}.{ms} [{level}] [{scope}] {text}'
 
@@ -25,5 +25,6 @@ export const skillLogger = log.scope('Skill')
 export const deployLogger = log.scope('Deploy')
 export const specialistPoolLogger = log.scope('SpecialistPool')
 export const promptBuilderLogger = log.scope('PromptBuilder')
+export const crashLogger = log.scope('Crash')
 
 export default log

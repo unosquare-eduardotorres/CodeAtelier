@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, type JSX } from 'react'
 import { BookOpen, Plus, Send, SkipForward, AlertTriangle, X, PlayCircle } from 'lucide-react'
 import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
+import { rendererLog } from '@renderer/utils/logger'
+import { ConfirmDialog } from '@renderer/components/common'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
 import {
   BlueprintPhaseTimeline,
@@ -13,6 +15,7 @@ import BlueprintChatView, { BlueprintQuestionFooter } from './blueprints/Bluepri
 import BlueprintExecutionPanel from './blueprints/BlueprintExecutionPanel'
 import { BlueprintRunHeader } from './blueprints/BlueprintRunHeader'
 import { BlueprintDetailView } from './blueprints/detail/BlueprintDetailView'
+import { BlueprintInputView } from './blueprints/BlueprintInputView'
 import type { BlueprintPhaseType } from '../../../../shared/blueprint-types'
 
 // ── View States ──
@@ -70,7 +73,7 @@ function BlueprintActiveView({
   onProceedGate,
   onIterateClarify
 }: {
-  pendingApproval: { blueprintId: string; planSummary: string } | null
+  pendingApproval: { blueprintId: string; planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
   currentPhase: BlueprintPhaseType | null
   currentWave: { wave: number; taskCount: number } | null
   waveTasks: Record<string, import('../../../../shared/blueprint-types').BlueprintTaskStatus>
@@ -156,27 +159,13 @@ function BlueprintActiveView({
         onCancel={onCancel}
       />
 
-      {pendingApproval && (
-        <div
-          data-testid="blueprint-approval-gate"
-          className="bg-surface-raised rounded-xl border border-info/30 p-4"
-        >
-          <BlueprintApprovalGate
-            planSummary={pendingApproval.planSummary}
-            onApprove={onApprove}
-            onReject={onReject}
-            onCancel={onCancel}
-          />
-        </div>
-      )}
-
       <div
         data-testid="blueprint-phase-timeline"
         className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden flex-1 min-h-0 flex flex-col"
       >
         <div
-          className={`grid ${panelOpen ? '' : 'grid-cols-[200px_1fr]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
-          style={panelOpen ? { gridTemplateColumns: `200px 1fr ${panelWidth}px` } : undefined}
+          className={`grid ${panelOpen ? '' : 'grid-cols-[200px_minmax(0,1fr)]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
+          style={panelOpen ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` } : undefined}
         >
           <div className="p-3 overflow-y-auto min-h-0">
             <BlueprintPhaseTimeline
@@ -186,12 +175,29 @@ function BlueprintActiveView({
               phaseStartedAt={phaseStartedAt}
             />
           </div>
-          <div className="flex flex-col min-h-0">
+          <div className="flex flex-col min-h-0 min-w-0">
             <BlueprintChatView
               messages={chatMessages}
               isStreaming={isRunning && !clarifyGateReady && !clarifyQuestions && !clarifyAwaitingInput && !pendingApproval}
               footer={
                 <>
+                  {/* Approval gate card (review → build transition) */}
+                  {pendingApproval && (
+                    <div
+                      data-testid="blueprint-approval-gate"
+                      className="bg-surface-raised rounded-xl border border-info/30 p-4"
+                    >
+                      <BlueprintApprovalGate
+                        planSummary={pendingApproval.planSummary}
+                        completion={pendingApproval.completion}
+                        reviewMarkdown={pendingApproval.reviewMarkdown}
+                        onApprove={onApprove}
+                        onReject={onReject}
+                        onCancel={onCancel}
+                      />
+                    </div>
+                  )}
+
                   {/* Clarify gate card (completion arrived) */}
                   {clarifyGateReady && (
                     <BlueprintClarifyGateCard
@@ -347,6 +353,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     loadBlueprint,
     startBlueprint,
     cancelBlueprint,
+    deleteBlueprint,
     respondToApproval,
     sendClarifyAnswer,
     skipClarify,
@@ -361,9 +368,11 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   // ── Local state ──
   const [viewState, setViewState] = useState<ViewState>('landing')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [priority, setPriority] = useState<'P1' | 'P2' | 'P3'>('P2')
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; isActive: boolean } | null>(null)
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
+  // Prefill state for onboard flow (CreateProjectDialog → BlueprintPage handoff)
+  const [prefillTitle, setPrefillTitle] = useState('')
+  const [prefillDescription, setPrefillDescription] = useState('')
 
   // ── Load history + recover pipeline state on workspace change / app reopen ──
   useEffect(() => {
@@ -378,26 +387,71 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [workspaceId, loadHistory, loadPipelineStatus])
 
+  // ── Auto-start from pendingOnboard (CreateProjectDialog → BlueprintPage handoff) ──
+  const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
+  const clearPendingOnboard = useBlueprintStore((s) => s.clearPendingOnboard)
+  const clarifyBlueprintId = useBlueprintStore((s) => s.clarifyBlueprintId)
+
+  useEffect(() => {
+    if (
+      !pendingOnboard ||
+      pendingOnboard.workspaceId !== workspaceId ||
+      isRunning
+    ) {
+      return
+    }
+
+    // Consume the onboard payload immediately to prevent double-fire
+    const { title: onboardTitle, description: onboardDesc, referenceDocuments } = pendingOnboard
+    clearPendingOnboard()
+
+    if (onboardDesc.trim()) {
+      // Auto-start the blueprint pipeline — no extra click needed
+      startBlueprint({
+        workspaceId,
+        title: onboardTitle,
+        description: onboardDesc,
+        settingsJson: referenceDocuments.length > 0 ? { referenceDocuments } : undefined
+      }).catch(() => {
+        // Error already logged in store
+      })
+    } else {
+      // Edge case: empty description — prefill the input view instead
+      /* eslint-disable react-hooks/set-state-in-effect -- intentional prefill from external trigger */
+      setPrefillTitle(onboardTitle)
+      if (referenceDocuments.length > 0) {
+        setPrefillDescription(
+          `Reference documents attached in .context/: ${referenceDocuments.map((d) => d.name).join(', ')}`
+        )
+      }
+      setViewState('input')
+      /* eslint-enable react-hooks/set-state-in-effect */
+    }
+  }, [pendingOnboard, workspaceId, isRunning, clearPendingOnboard, startBlueprint])
+
   // ── Derive view state ──
   const effectiveView = getEffectiveView(viewState, isRunning, pendingApproval, selectedId)
 
   // ── Actions ──
-  const handleStart = useCallback(async () => {
-    if (!title.trim() || !workspaceId) return
+  const handleStart = useCallback(async (params: {
+    title: string
+    description?: string
+    settingsJson?: Record<string, unknown>
+  }) => {
+    if (!params.title.trim() || !workspaceId) return
     try {
       await startBlueprint({
         workspaceId,
-        title: title.trim(),
-        description: description.trim() || undefined,
-        priority
+        title: params.title,
+        description: params.description,
+        settingsJson: params.settingsJson
       })
-      setTitle('')
-      setDescription('')
-      setPriority('P2')
+      setPrefillTitle('')
+      setPrefillDescription('')
     } catch {
       // Error already logged in store
     }
-  }, [title, description, priority, workspaceId, startBlueprint])
+  }, [workspaceId, startBlueprint])
 
   const handleCancel = useCallback(async () => {
     if (!workspaceId) return
@@ -439,6 +493,23 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     setViewState('landing')
   }, [])
 
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget || !workspaceId) return
+    const { id } = deleteTarget
+    setDeleteTarget(null)
+    // Trigger exit animation
+    setDeletingIds((prev) => new Set(prev).add(id))
+    // Wait for animation, then actually delete
+    setTimeout(async () => {
+      await deleteBlueprint(id, workspaceId)
+      setDeletingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }, 260)
+  }, [deleteTarget, workspaceId, deleteBlueprint])
+
   // Derive pipeline start time from first phase start timestamp
   const pipelineStartedAt = (() => {
     const timestamps = Object.values(phaseStartTimestamps).filter(Boolean) as number[]
@@ -447,10 +518,12 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
 
   // Active view goes full-bleed; landing/input/detail stay narrow for readability
   const isFullBleed = effectiveView === 'active'
+  // B1: Input view gets wider max-w and flex-fill for full-height layout
+  const narrowMaxW = effectiveView === 'input' ? 'max-w-7xl' : 'max-w-3xl'
 
   return (
     <div data-testid="blueprint-page" className={`flex flex-col h-full ${isFullBleed ? '' : 'overflow-y-auto'}`}>
-      <div className={`w-full ${isFullBleed ? 'px-4 pt-4 pb-2 flex flex-col flex-1 min-h-0 gap-3' : 'p-6 space-y-6 max-w-3xl mx-auto'}`}>
+      <div className={`w-full ${isFullBleed ? 'px-4 pt-4 pb-2 flex flex-col flex-1 min-h-0 gap-3' : `p-6 space-y-6 ${narrowMaxW} mx-auto ${effectiveView === 'input' ? 'flex flex-col flex-1 min-h-0' : ''}`}`}>
         {/* Header — hidden during active view (status bar replaces it) */}
         {!isFullBleed && (
           <div className="flex items-center justify-between">
@@ -584,6 +657,12 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                       key={bp.id}
                       blueprint={bp}
                       onSelect={() => handleSelectBlueprint(bp.id)}
+                      onDelete={() => setDeleteTarget({
+                        id: bp.id,
+                        title: bp.title,
+                        isActive: isRunning && currentBlueprint?.id === bp.id
+                      })}
+                      isDeleting={deletingIds.has(bp.id)}
                     />
                   ))}
                 </div>
@@ -594,80 +673,12 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
 
         {/* ── Input View ── */}
         {effectiveView === 'input' && (
-          <div className="bg-surface-raised rounded-xl border border-border-subtle p-5 space-y-4">
-            <h4 className="text-sm font-semibold text-text-primary">New Blueprint</h4>
-
-            <div className="space-y-3">
-              {/* Title */}
-              <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1">Title</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g., Add user notification preferences page"
-                  className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
-                  autoFocus
-                />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1">
-                  Description <span className="text-text-muted">(optional)</span>
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Describe the feature in detail. Include requirements, constraints, and any relevant context..."
-                  rows={4}
-                  className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-accent resize-none"
-                />
-              </div>
-
-              {/* Priority */}
-              <div>
-                <label className="text-xs font-medium text-text-secondary block mb-1">
-                  Priority
-                </label>
-                <div className="flex gap-2">
-                  {(['P1', 'P2', 'P3'] as const).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setPriority(p)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                        priority === p
-                          ? 'bg-accent-muted text-accent border-accent/30'
-                          : 'bg-surface-base text-text-secondary border-border-subtle hover:bg-surface-hover'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
-              <button
-                type="button"
-                onClick={() => setViewState('landing')}
-                className="text-xs text-text-secondary hover:text-text-primary transition-colors"
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                onClick={handleStart}
-                disabled={!title.trim()}
-                className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-button-primary-bg hover:bg-button-primary-hover rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Start Pipeline
-              </button>
-            </div>
-          </div>
+          <BlueprintInputView
+            onStart={handleStart}
+            onBack={() => setViewState('landing')}
+            initialTitle={prefillTitle}
+            initialDescription={prefillDescription}
+          />
         )}
 
         {/* ── Active Pipeline View ── */}
@@ -698,23 +709,36 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             onReject={handleReject}
             onCancel={handleCancel}
             onSendClarifyAnswer={(message, answers) => {
-              if (currentBlueprint?.id && workspaceId) {
-                sendClarifyAnswer(currentBlueprint.id, workspaceId, message, answers)
+              const bpId = currentBlueprint?.id ?? clarifyBlueprintId
+              if (bpId && workspaceId) {
+                sendClarifyAnswer(bpId, workspaceId, message, answers)
+              } else {
+                rendererLog.error('[blueprint] Cannot submit answer — no blueprint id in scope')
+                useBlueprintStore.setState({ lastError: { blueprintId: '', message: 'Cannot submit answer — no blueprint id in scope' } })
               }
             }}
             onSkipClarify={() => {
-              if (currentBlueprint?.id) {
-                skipClarify(currentBlueprint.id)
+              const bpId = currentBlueprint?.id ?? clarifyBlueprintId
+              if (bpId) {
+                skipClarify(bpId)
+              } else {
+                rendererLog.error('[blueprint] Cannot skip clarify — no blueprint id in scope')
               }
             }}
             onProceedGate={() => {
-              if (currentBlueprint?.id && workspaceId) {
-                proceedClarifyGate(currentBlueprint.id, workspaceId)
+              const bpId = currentBlueprint?.id ?? clarifyBlueprintId
+              if (bpId && workspaceId) {
+                proceedClarifyGate(bpId, workspaceId)
+              } else {
+                rendererLog.error('[blueprint] Cannot proceed gate — no blueprint id in scope')
               }
             }}
             onIterateClarify={() => {
-              if (currentBlueprint?.id && workspaceId) {
-                iterateClarify(currentBlueprint.id, workspaceId)
+              const bpId = currentBlueprint?.id ?? clarifyBlueprintId
+              if (bpId && workspaceId) {
+                iterateClarify(bpId, workspaceId)
+              } else {
+                rendererLog.error('[blueprint] Cannot iterate clarify — no blueprint id in scope')
               }
             }}
           />
@@ -736,6 +760,21 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
           />
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      <ConfirmDialog
+        isOpen={deleteTarget !== null}
+        title="Delete Blueprint"
+        message={
+          deleteTarget?.isActive
+            ? 'The running pipeline will be cancelled first. This permanently removes the blueprint, its phases and tasks.'
+            : 'This permanently removes the blueprint, its phases and tasks.'
+        }
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

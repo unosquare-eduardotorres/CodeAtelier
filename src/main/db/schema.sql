@@ -149,9 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
 CREATE INDEX IF NOT EXISTS idx_conversation_specialists_conversation ON conversation_specialists(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_specialists_specialist ON conversation_specialists(specialist_id);
-CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation ON specialist_conversation_history(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_specialist_history_specialist ON specialist_conversation_history(specialist_id);
-CREATE INDEX IF NOT EXISTS idx_specialist_history_conversation_created ON specialist_conversation_history(conversation_id, created_at DESC);
+-- specialist_conversation_history indexes removed: table was dropped in migration v89
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
 

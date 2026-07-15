@@ -78,6 +78,22 @@ echo "▸ Step 1: Build (typecheck + electron-vite)"
 npm run build
 
 echo ""
+echo "▸ Step 1b: Bump patch version"
+# Persistent patch bump. --no-git-tag-version skips git commit/tag AND the
+# clean-working-tree check, updating package.json + package-lock.json in place.
+# The bumped package.json is captured by the Step 2d backup and restored by the
+# EXIT trap, so the new version survives the build (ready to commit later).
+# Escape hatch: SKIP_VERSION_BUMP=1 npm run build:mac  (re-build without bumping).
+if [ "${SKIP_VERSION_BUMP:-}" = "1" ]; then
+  echo "  SKIP_VERSION_BUMP=1 — keeping version $(node -p "require('./package.json').version")"
+else
+  OLD_VERSION="$(node -p "require('./package.json').version")"
+  npm version patch --no-git-tag-version >/dev/null
+  NEW_VERSION="$(node -p "require('./package.json').version")"
+  echo "  Version bumped: ${OLD_VERSION} → ${NEW_VERSION}"
+fi
+
+echo ""
 echo "▸ Step 2: Prune to production dependencies"
 npm prune --omit=dev
 PRUNED=true

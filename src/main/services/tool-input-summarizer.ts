@@ -162,9 +162,9 @@ const STRATEGIES: Record<string, Strategy> = {
   },
 
   // MCP tools: Code Analysis
-  [MCP_TOOLS.CODE_ANALYSIS.TODO_SCANNER.name]: { type: 'static', value: 'scan TODOs' },
-  [MCP_TOOLS.CODE_ANALYSIS.DEPENDENCY_HEALTH.name]: { type: 'static', value: 'dependency health' },
-  [MCP_TOOLS.CODE_ANALYSIS.TEST_COVERAGE_MAP.name]: { type: 'static', value: 'test coverage map' },
+  [MCP_TOOLS.CODE_ANALYSIS.FIND_CODE_SMELLS.name]: { type: 'static', value: 'find code smells' },
+  [MCP_TOOLS.CODE_ANALYSIS.ANALYZE_DEPENDENCIES.name]: { type: 'static', value: 'analyze dependencies' },
+  [MCP_TOOLS.CODE_ANALYSIS.ANALYZE_TEST_COVERAGE.name]: { type: 'static', value: 'test coverage map' },
 
   // MCP tools: Semantic Search
   [MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name]: {

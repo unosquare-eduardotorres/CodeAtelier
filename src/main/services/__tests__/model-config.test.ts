@@ -9,8 +9,8 @@ describe('ModelConfigService', () => {
       assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:plan'], 'claude-opus-4-8')
     })
 
-    test('da-vinci:build defaults to sonnet-4-6', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:build'], 'claude-sonnet-4-6')
+    test('da-vinci:build defaults to sonnet-5', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['da-vinci:build'], 'claude-sonnet-5')
     })
 
     test('da-vinci (base) defaults to opus-4-8', () => {

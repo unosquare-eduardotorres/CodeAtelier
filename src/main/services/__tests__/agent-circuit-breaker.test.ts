@@ -49,7 +49,6 @@ describe('AgentCircuitBreaker', () => {
     })
     assert.equal(result.broken, false)
     assert.equal(result.shouldTerminate, false)
-    assert.equal(result.errorChunk, undefined)
   })
 
   test('detects_gratuitous_tool_use_when_500_chars_accumulated', () => {
@@ -79,11 +78,11 @@ describe('AgentCircuitBreaker', () => {
     assert.equal(result.broken, false)
   })
 
-  test('breaks_circuit_at_plan_mode_limit_50', () => {
+  test('breaks_circuit_at_plan_mode_limit_100_with_continuable_break', () => {
     const { breaker } = createCircuitBreaker()
-    pumpToolCalls(breaker, 49, { isBuildMode: false })
+    pumpToolCalls(breaker, 99, { isBuildMode: false })
     assert.equal(breaker.isBroken, false)
-    // 50th call triggers the break
+    // 100th call triggers the break
     const result = breaker.onToolUse({
       isBuildMode: false,
       accumulatedTextLength: 0,
@@ -91,16 +90,15 @@ describe('AgentCircuitBreaker', () => {
     })
     assert.equal(result.broken, true)
     assert.equal(result.shouldTerminate, true)
-    assert.ok(result.errorChunk, 'errorChunk should be present')
-    assert.equal(result.errorChunk!.type, 'error')
+    assert.equal(result.isContinuableBreak, true, 'should be a continuable break, not a hard error')
     assert.equal(breaker.isBroken, true)
   })
 
-  test('breaks_circuit_at_build_mode_limit_80', () => {
+  test('breaks_circuit_at_build_mode_limit_150_with_continuable_break', () => {
     const { breaker } = createCircuitBreaker()
-    pumpToolCalls(breaker, 79, { isBuildMode: true })
+    pumpToolCalls(breaker, 149, { isBuildMode: true })
     assert.equal(breaker.isBroken, false)
-    // 80th call triggers the break
+    // 150th call triggers the break
     const result = breaker.onToolUse({
       isBuildMode: true,
       accumulatedTextLength: 0,
@@ -108,55 +106,53 @@ describe('AgentCircuitBreaker', () => {
     })
     assert.equal(result.broken, true)
     assert.equal(result.shouldTerminate, true)
-    assert.ok(result.errorChunk, 'errorChunk should be present')
+    assert.equal(result.isContinuableBreak, true, 'should be a continuable break, not a hard error')
     assert.equal(breaker.isBroken, true)
   })
 
-  test('error_message_differs_for_plan_vs_build', () => {
+  test('all_circuit_breaks_are_continuable_no_error_chunks', () => {
+    // Plan mode break
     const { breaker: planBreaker } = createCircuitBreaker()
-    pumpToolCalls(planBreaker, 49, { isBuildMode: false })
+    pumpToolCalls(planBreaker, 99, { isBuildMode: false })
     const planResult = planBreaker.onToolUse({
       isBuildMode: false,
       accumulatedTextLength: 0,
       conversationId: 'c1'
     })
+    assert.equal(planResult.isContinuableBreak, true)
 
+    // Build mode break
     const { breaker: buildBreaker } = createCircuitBreaker()
-    pumpToolCalls(buildBreaker, 79, { isBuildMode: true })
+    pumpToolCalls(buildBreaker, 149, { isBuildMode: true })
     const buildResult = buildBreaker.onToolUse({
       isBuildMode: true,
       accumulatedTextLength: 0,
       conversationId: 'c1'
     })
-
-    const planError = (planResult.errorChunk as { error: string }).error
-    const buildError = (buildResult.errorChunk as { error: string }).error
-    assert.ok(planError.includes('Build mode'), 'Plan error should mention Build mode')
-    assert.ok(buildError.includes('smaller steps'), 'Build error should mention smaller steps')
-    assert.notEqual(planError, buildError, 'Error messages should differ')
+    assert.equal(buildResult.isContinuableBreak, true)
   })
 
   test('reset_clears_count_and_broken_state', () => {
     const { breaker } = createCircuitBreaker()
-    pumpToolCalls(breaker, 50, { isBuildMode: false })
+    pumpToolCalls(breaker, 100, { isBuildMode: false })
     assert.equal(breaker.isBroken, true)
-    assert.equal(breaker.count, 50)
+    assert.equal(breaker.count, 100)
     breaker.reset()
     assert.equal(breaker.count, 0)
     assert.equal(breaker.isBroken, false)
   })
 
   test('does_not_break_at_limit_minus_one', () => {
-    // Plan mode: 49 calls should NOT break
+    // Plan mode: 99 calls should NOT break
     const { breaker: planBreaker } = createCircuitBreaker()
-    pumpToolCalls(planBreaker, 49, { isBuildMode: false })
+    pumpToolCalls(planBreaker, 99, { isBuildMode: false })
     assert.equal(planBreaker.isBroken, false)
-    assert.equal(planBreaker.count, 49)
+    assert.equal(planBreaker.count, 99)
 
-    // Build mode: 79 calls should NOT break
+    // Build mode: 149 calls should NOT break
     const { breaker: buildBreaker } = createCircuitBreaker()
-    pumpToolCalls(buildBreaker, 79, { isBuildMode: true })
+    pumpToolCalls(buildBreaker, 149, { isBuildMode: true })
     assert.equal(buildBreaker.isBroken, false)
-    assert.equal(buildBreaker.count, 79)
+    assert.equal(buildBreaker.count, 149)
   })
 })

@@ -115,7 +115,9 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
           ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
           : []),
         ...MCP_TOOLS.GIT_CONTEXT._ALL_NAMES,
-        ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+        ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
+        // Memory tools — let MPA phases search/record workspace knowledge (parity with blueprints)
+        ...(ctx.workspaceId ? MCP_TOOLS.MEMORY._ALL_NAMES : [])
       ],
       disallowedTools: [
         'Write',

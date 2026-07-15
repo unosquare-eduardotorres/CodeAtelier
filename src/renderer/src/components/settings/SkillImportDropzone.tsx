@@ -25,9 +25,9 @@ export default function SkillImportDropzone(): React.JSX.Element {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length === 0) return
-      const file = acceptedFiles[0] as File & { path: string }
-      if (file.path) {
-        handleImport(file.path)
+      const filePath = window.api.getPathForFile(acceptedFiles[0])
+      if (filePath) {
+        handleImport(filePath)
       }
     },
     [handleImport]

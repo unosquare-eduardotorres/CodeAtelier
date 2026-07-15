@@ -8,10 +8,10 @@
  *   4. Category pass rates
  *   5. Results table
  *
- * Clicking a result row opens ResultDetailDrawer (slide-over).
+ * Clicking a result row calls onOpenDetail to drill into the full-page detail view.
  */
 
-import { useState, useMemo, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
 import {
   CheckCircle2,
   XCircle,
@@ -32,8 +32,7 @@ import type {
 import type { ScenarioDelta } from '../TestingPage'
 import RunSummaryBar from './RunSummaryBar'
 import RunHistory from './RunHistory'
-import ResultDetailDrawer from './ResultDetailDrawer'
-import type { DrawerTarget } from './ResultDetailDrawer'
+import type { DetailTarget } from './ResultDetailView'
 import PassRateTrendChart from './charts/PassRateTrendChart'
 import RunCompositionChart from './charts/RunCompositionChart'
 import CategoryPassRateChart from './charts/CategoryPassRateChart'
@@ -52,7 +51,9 @@ interface RunsViewProps {
   onSelectRun: (id: string) => void
   onBaselineChange: (runId: string | null) => void
   onRequeueFailed: (runId: string) => void
+  onResumeRun: (runId: string) => void
   onCancel: () => void
+  onOpenDetail: (target: DetailTarget) => void
 }
 
 // ── Helpers ──
@@ -94,20 +95,21 @@ export default function RunsView({
   onSelectRun,
   onBaselineChange,
   onRequeueFailed,
-  onCancel
+  onResumeRun,
+  onCancel,
+  onOpenDetail
 }: RunsViewProps): React.JSX.Element {
-  const [drawerTarget, setDrawerTarget] = useState<DrawerTarget | null>(null)
-
-  const openDrawer = useCallback(
+  const handleRowClick = useCallback(
     (result: E2EResultSummary, title: string) => {
-      setDrawerTarget({
+      onOpenDetail({
         resultId: result.id,
         title,
         status: result.status,
-        durationMs: result.durationMs
+        durationMs: result.durationMs,
+        from: 'runs'
       })
     },
-    []
+    [onOpenDetail]
   )
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null
@@ -133,6 +135,7 @@ export default function RunsView({
           preflightOk={preflightOk}
           onSelectRun={onSelectRun}
           onRequeueFailed={onRequeueFailed}
+          onResumeRun={onResumeRun}
           onCancel={onCancel}
         />
 
@@ -202,7 +205,7 @@ export default function RunsView({
                     <button
                       key={result.id}
                       type="button"
-                      onClick={() => openDrawer(result, title)}
+                      onClick={() => handleRowClick(result, title)}
                       className="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-surface-raised/50 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-muted"
                     >
                       <div className="flex items-center gap-2 min-w-0">
@@ -254,12 +257,6 @@ export default function RunsView({
           </>
         )}
       </div>
-
-      {/* Slide-over drawer */}
-      <ResultDetailDrawer
-        target={drawerTarget}
-        onClose={() => setDrawerTarget(null)}
-      />
     </>
   )
 }

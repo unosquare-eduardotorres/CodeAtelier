@@ -1,9 +1,8 @@
-// @ts-nocheck — TODO: fix after blueprint refactoring
 /**
  * URL auto-detection utility for blueprint descriptions.
  *
  * Extracts URLs from text and converts them to ReferenceDocument entries.
- * Used by the BlueprintPage input view to auto-detect pasted URLs.
+ * Used by the BlueprintInputView to auto-detect pasted URLs.
  */
 
 import type { ReferenceDocument } from '../../../../../shared/blueprint-types'

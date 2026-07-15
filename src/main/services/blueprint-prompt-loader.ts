@@ -78,30 +78,144 @@ const AGENT_ENHANCEMENT_FILES: Partial<Record<BlueprintPhaseType, string>> = {
 
 // ── Artifact Formatting ──
 
-function formatArtifacts(artifacts: BlueprintArtifact[]): string {
+// Fields to keep when projecting plan JSON (drops verbose description prose)
+const PLAN_PROJECTION_KEYS = new Set([
+  'summary', 'techStack', 'mustHaves', 'existingPatterns', 'keyLinks',
+  'phases', 'items', 'id', 'title', 'name', 'files', 'scope'
+])
+
+// Fields to keep when projecting tasks JSON
+const TASKS_PROJECTION_KEYS = new Set([
+  'id', 'title', 'wave', 'files', 'scope', 'status', 'taskId',
+  'userStory', 'filePathsJson', 'description'
+])
+
+/** Per-phase char budget for the formatted artifacts block. */
+export const ARTIFACT_BUDGET_CHARS = 30_000
+
+/** Max number of consolidated discovery entries before truncation. */
+const MAX_DISCOVERY_ENTRIES = 30
+
+/**
+ * Project only the allowed keys from an object (shallow, one level + recurse into arrays).
+ * Returns a new object with only the allowed fields.
+ */
+function projectFields(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    if (allowed.has(key)) {
+      const val = obj[key]
+      // Recurse into arrays of objects (e.g. plan.items[], tasks[])
+      if (Array.isArray(val)) {
+        result[key] = val.map((item) =>
+          typeof item === 'object' && item !== null && !Array.isArray(item)
+            ? projectFields(item as Record<string, unknown>, allowed)
+            : item
+        )
+      } else {
+        result[key] = val
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * Format a list of artifacts into a markdown string for prompt injection.
+ *
+ * Design principles (context compaction):
+ *   1. Prefer contentMd over contentJson — skip JSON dump when markdown exists
+ *   2. Use compact JSON (no pretty-printing) for ~30-40% savings
+ *   3. Project only needed fields for plan/tasks JSON
+ *   4. Consolidate all discovery entries into one deduplicated list
+ *   5. Enforce a char budget with graceful truncation
+ */
+export function formatArtifacts(
+  artifacts: BlueprintArtifact[],
+  budgetChars: number = ARTIFACT_BUDGET_CHARS
+): string {
   if (!artifacts.length) return '(No previous artifacts available.)'
 
-  return artifacts
-    .map((a) => {
-      // BP-DISC-03: Render discoveries artifacts as compact bullet lists
-      if (a.type === 'discoveries' && a.contentJson) {
-        const { phase, entries } = a.contentJson as { phase?: string; entries?: string[] }
-        if (Array.isArray(entries) && entries.length > 0) {
-          const heading = `### Discoveries (${phase ?? 'unknown'})`
-          const bullets = entries.map((e) => `- ${e}`).join('\n')
-          return `${heading}\n${bullets}`
-        }
-        return '' // empty discoveries — skip
-      }
+  // Stage 3: Consolidate all discovery entries into one merged block
+  const nonDiscoveryArtifacts: BlueprintArtifact[] = []
+  const allDiscoveryEntries: string[] = []
 
-      const parts: string[] = [`### Artifact: ${a.type}`]
-      if (a.filePath) parts.push(`**Path**: ${a.filePath}`)
-      if (a.contentMd) parts.push(a.contentMd)
-      if (a.contentJson) parts.push('```json\n' + JSON.stringify(a.contentJson, null, 2) + '\n```')
-      return parts.join('\n')
-    })
-    .filter((s) => s.length > 0)
-    .join('\n\n---\n\n')
+  for (const a of artifacts) {
+    if (a.type === 'discoveries' && a.contentJson) {
+      const { entries } = a.contentJson as { entries?: string[] }
+      if (Array.isArray(entries)) {
+        for (const e of entries) {
+          if (!allDiscoveryEntries.includes(e)) {
+            allDiscoveryEntries.push(e)
+          }
+        }
+      }
+    } else {
+      nonDiscoveryArtifacts.push(a)
+    }
+  }
+
+  // Render non-discovery artifacts
+  const rendered: string[] = []
+  for (const a of nonDiscoveryArtifacts) {
+    rendered.push(renderSingleArtifact(a))
+  }
+
+  // Render consolidated discoveries block
+  if (allDiscoveryEntries.length > 0) {
+    const capped = allDiscoveryEntries.length > MAX_DISCOVERY_ENTRIES
+    const entries = capped
+      ? allDiscoveryEntries.slice(-MAX_DISCOVERY_ENTRIES)
+      : allDiscoveryEntries
+    const bullets = entries.map((e) => `- ${e}`).join('\n')
+    const omitted = allDiscoveryEntries.length - entries.length
+    const suffix = capped
+      ? `\n\n_(${omitted} older discoveries omitted — use memory_search to retrieve)_`
+      : ''
+    rendered.push(`### Discoveries (consolidated)\n${bullets}${suffix}`)
+  }
+
+  const filtered = rendered.filter((s) => s.length > 0)
+
+  // Stage 4: Budget cap with graceful truncation
+  let total = 0
+  const budgeted: string[] = []
+  for (let i = 0; i < filtered.length; i++) {
+    const entry = filtered[i]
+    if (total + entry.length > budgetChars && budgeted.length > 0) {
+      const remaining = filtered.length - i
+      budgeted.push(
+        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or memory_search for full content)_`
+      )
+      break
+    }
+    budgeted.push(entry)
+    total += entry.length
+  }
+
+  return budgeted.join('\n\n---\n\n')
+}
+
+/** Render a single non-discovery artifact to markdown. */
+function renderSingleArtifact(a: BlueprintArtifact): string {
+  const parts: string[] = [`### Artifact: ${a.type}`]
+  if (a.filePath) parts.push(`**Path**: ${a.filePath}`)
+
+  // Prefer contentMd — skip JSON dump when markdown summary exists
+  if (a.contentMd) {
+    parts.push(a.contentMd)
+  } else if (a.contentJson) {
+    // Field projection for known large artifact types
+    let json = a.contentJson
+    if (a.type === 'plan') {
+      json = projectFields(json, PLAN_PROJECTION_KEYS)
+    } else if (a.type === 'tasks') {
+      json = projectFields(json, TASKS_PROJECTION_KEYS)
+    }
+    // Compact JSON (no pretty-printing) for ~30-40% savings
+    parts.push('```json\n' + JSON.stringify(json) + '\n```')
+  }
+  return parts.join('\n')
 }
 
 // ── Main Prompt Builder ──

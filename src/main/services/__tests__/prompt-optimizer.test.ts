@@ -107,13 +107,13 @@ describe('PromptOptimizerService', () => {
       })
     })
 
-    test('returns "local-llm" when provider is local-llm', () => {
+    test('returns null (proceeds) when provider is local-llm (R6-B1: guard removed)', () => {
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const result = promptOptimizerService.checkGuards({
           text: LONG_PROMPT,
           workspaceId: 'ws-test'
         })
-        assert.equal(result, 'local-llm')
+        assert.equal(result, null, 'local-llm should no longer be guarded')
       })
     })
 
@@ -191,15 +191,21 @@ describe('PromptOptimizerService', () => {
       )
     })
 
-    test('skips for local-llm provider', async () => {
+    test('proceeds for local-llm provider (R6-B1: guard removed, optimize routes to local path)', async () => {
+      // When local-llm is the provider, optimize() should attempt the local path.
+      // With the _localRunner seam set, it exercises the local code path.
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
-        const runner = withRunner('should not reach here')
+        const svc = promptOptimizerService as unknown as AnyService
+        const origLocal = svc._localRunner
+        svc._localRunner = async () => ({
+          text: '```optimized-prompt\nClearer version of the prompt\n```'
+        })
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
-          assert.equal(result.changed, false)
-          assert.equal(result.skippedReason, 'local-llm')
+          assert.equal(result.changed, true)
+          assert.equal(result.optimizedText, 'Clearer version of the prompt')
         } finally {
-          runner.restore()
+          svc._localRunner = origLocal
         }
       })
     })
@@ -309,6 +315,220 @@ describe('PromptOptimizerService', () => {
           assert.equal(result.skippedReason, 'empty-output')
         } finally {
           runner.restore()
+        }
+      })
+    })
+  })
+
+  // ── Fence-variant parsing (local-model resilience) ──
+
+  describe('optimize — fence variants', () => {
+    test('parses plain ``` fence (no info string) as fallback', async () => {
+      const optimized = 'Review the auth middleware for JWT token validation vulnerabilities.'
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner(`\`\`\`\n${optimized}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, true)
+          assert.equal(result.optimizedText, optimized)
+          assert.equal(result.skippedReason, undefined)
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+
+    test('parses <think> block + generic fence from local model', async () => {
+      const optimized = 'Improved prompt after thinking'
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const svc = promptOptimizerService as unknown as AnyService
+        const origLocal = svc._localRunner
+        svc._localRunner = async () => ({
+          text: `<think>Let me analyze this...</think>\n\`\`\`\n${optimized}\n\`\`\``
+        })
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, true)
+          assert.equal(result.optimizedText, optimized)
+        } finally {
+          svc._localRunner = origLocal
+        }
+      })
+    })
+
+    test('raw text with no fence still returns parse-error', async () => {
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner('Here is a better version of your prompt without any fences at all')
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'parse-error')
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+
+    test('multiple generic fences reject (ambiguous) — falls to parse-error', async () => {
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner('\`\`\`\nBlock one\n\`\`\`\n\nSome text\n\`\`\`\nBlock two\n\`\`\`')
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'parse-error')
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+
+    test('NO_CHANGES with trailing prose returns changed=false, no skippedReason', async () => {
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner('NO_CHANGES — the prompt is already clear and actionable.')
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.optimizedText, LONG_PROMPT)
+          assert.equal(result.skippedReason, undefined)
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+  })
+
+  // ── resolveLocalModel ──
+
+  describe('resolveLocalModel', () => {
+    test('default assignment (no modelRoles) returns localCfg.localModel, not a Claude model', () => {
+      return withSettings(
+        { ...DEFAULT_SETTINGS, llmProvider: 'local-llm' },
+        async () => {
+          const result = promptOptimizerService.resolveLocalModel('ws-test', {
+            localModel: 'Qwen3.6-35B-A3B-MLX-8bit'
+          })
+          assert.equal(result, 'Qwen3.6-35B-A3B-MLX-8bit')
+          assert.ok(
+            !result.startsWith('claude-'),
+            `Expected local model, got Claude model: ${result}`
+          )
+        }
+      )
+    })
+
+    test('explicit local role in modelRoles returns the role modelId', () => {
+      return withSettings(
+        {
+          ...DEFAULT_SETTINGS,
+          llmProvider: 'local-llm',
+          modelRoles: {
+            'prompt:optimize': { provider: 'local-llm', modelId: 'my-local' }
+          }
+        },
+        async () => {
+          const result = promptOptimizerService.resolveLocalModel('ws-test', {
+            localModel: 'fallback-model'
+          })
+          assert.equal(result, 'my-local')
+        }
+      )
+    })
+
+    test('no localModel configured falls back to qwen3-coder', () => {
+      return withSettings(
+        { ...DEFAULT_SETTINGS, llmProvider: 'local-llm' },
+        async () => {
+          const result = promptOptimizerService.resolveLocalModel('ws-test', {})
+          assert.equal(result, 'qwen3-coder')
+        }
+      )
+    })
+  })
+
+  // ── R6-B4: Local LLM path tests via _localRunner seam ──
+
+  describe('optimize — local LLM path', () => {
+    /** Set _localRunner on the service. Returns restore function. */
+    function withLocalRunner(
+      response: string | Error
+    ): { restore: () => void } {
+      const svc = promptOptimizerService as unknown as AnyService
+      const orig = svc._localRunner
+      if (response instanceof Error) {
+        svc._localRunner = async () => { throw response }
+      } else {
+        svc._localRunner = async () => ({ text: response })
+      }
+      return { restore: () => { svc._localRunner = orig } }
+    }
+
+    test('parses fence block from local model', async () => {
+      const optimized = 'Review the auth middleware for JWT vulnerabilities including expiry handling.'
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const lr = withLocalRunner(`\`\`\`optimized-prompt\n${optimized}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, true)
+          assert.equal(result.optimizedText, optimized)
+        } finally {
+          lr.restore()
+        }
+      })
+    })
+
+    test('strips <think> blocks from local model reasoning leakage', async () => {
+      const optimized = 'Improved prompt text'
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const lr = withLocalRunner(
+          '<think>Let me think about this...</think>\n```optimized-prompt\n' + optimized + '\n```'
+        )
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, true)
+          assert.equal(result.optimizedText, optimized)
+        } finally {
+          lr.restore()
+        }
+      })
+    })
+
+    test('empty local response falls back to original prompt', async () => {
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const lr = withLocalRunner('')
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'error')
+          assert.equal(result.optimizedText, LONG_PROMPT)
+        } finally {
+          lr.restore()
+        }
+      })
+    })
+
+    test('local runner error falls back to original prompt', async () => {
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const lr = withLocalRunner(new Error('Connection refused'))
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'error')
+          assert.equal(result.optimizedText, LONG_PROMPT)
+        } finally {
+          lr.restore()
+        }
+      })
+    })
+
+    test('NO_CHANGES sentinel from local model returns original', async () => {
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const lr = withLocalRunner('NO_CHANGES')
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.optimizedText, LONG_PROMPT)
+        } finally {
+          lr.restore()
         }
       })
     })

@@ -255,6 +255,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../ipc/__tests__/ipc-audit-handlers.test',
   '../ipc/__tests__/ipc-crud-deep.test',
   '../mcp-servers/__tests__/mcp-server-tools-deep.test',
+  '../mcp-servers/__tests__/mcp-tool-bodies.test',
   // ─── OpenCode error pipeline (normalizer → processor end-to-end) ───
   '../services/__tests__/opencode-error-pipeline.test',
   // ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
@@ -292,10 +293,42 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/memory-retrieval.test',
   '../services/__tests__/memory-extraction.test',
   '../services/__tests__/memory-doc-watcher.test',
+  // ─── Memory Graph (knowledge graph edge derivation) ───
+  '../services/__tests__/memory-graph.test',
   // ─── E2E Testing Infrastructure ───
   '../services/__tests__/scenario-catalog.test',
   '../services/__tests__/e2e-assertions.test',
   '../services/__tests__/e2e-runner.test',
+  '../services/__tests__/e2e-contracts.test',
+  // ─── Blueprint document loader ───
+  '../services/__tests__/blueprint-document-loader.test',
+  // ─── Phase 18: Coverage Mega-Push IV — giant services deep + MCP tool bodies ───
+  '../services/__tests__/giant-services-deep.test',
+  '../services/__tests__/adapter-completion-round2.test',
+  '../services/__tests__/coverage-mega-push-phase18.test',
+  '../services/__tests__/coverage-push-phase18b.test',
+  // ─── Blueprint clarify ask_user bridge ───
+  '../services/__tests__/blueprint-clarify-askuser.test',
+  // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
+  '../services/__tests__/memory-extraction-content.test',
+  '../services/__tests__/blueprint-memory-hooks.test',
+  '../services/__tests__/grill-memory-sync.test',
+  // ─── Blueprint MCP tool availability fix ───
+  '../services/__tests__/mcp-skip-servers.test',
+  // ─── Document Ingestion (reader, chunker, orchestration service) ───
+  '../services/__tests__/document-chunker.test',
+  '../services/__tests__/document-reader.test',
+  '../services/__tests__/memory-ingestion.test',
+  '../services/__tests__/memory-bootstrap.test',
+  // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
+  '../services/__tests__/local-plan-state-fk-guard.test',
+  // ─── Phase 19 deep coverage ───
+  '../services/__tests__/session-stream-deep-phase19.test',
+  '../services/__tests__/executor-deep-phase19.test',
+  '../services/__tests__/blueprint-services-deep.test',
+  '../services/__tests__/orchestrator-pipeline-deep.test',
+  '../services/__tests__/memory-vector-deep.test',
+  '../services/__tests__/mcp-servers-deep.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

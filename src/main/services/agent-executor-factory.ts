@@ -12,6 +12,7 @@
 import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
 import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
+import { deriveSkipServers } from './mcp-skip-servers'
 
 import type { ConversationMode } from '../../shared/types'
 import {
@@ -374,17 +375,30 @@ export class AgentExecutorFactory {
       abortController,
       agentId: this.s.adapter.agentId,
       effort: this.resolveEffort(resolvedModel),
-      betas: supports1M ? [AgentExecutorFactory.CONTEXT_1M_BETA] : undefined,
+      // Fable 5 has native 1M context — no beta header needed. Sonnet/Opus use the beta.
+      betas: supports1M && !resolvedModel.includes('fable')
+        ? [AgentExecutorFactory.CONTEXT_1M_BETA]
+        : undefined,
       // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
-      // Haiku → no fallback (it's the cheapest; falling back to Sonnet increases cost).
+      // Fable → Opus fallback (refusal/availability per Anthropic docs).
       // Opus → Sonnet fallback (appropriate cost reduction).
-      // Sonnet → no fallback (it IS the fallback target).
-      fallbackModel: resolvedModel.includes('opus') ? 'claude-sonnet-4-6' : undefined,
+      // Sonnet/Haiku → no fallback.
+      fallbackModel: resolvedModel.includes('fable')
+        ? 'claude-opus-4-8'
+        : resolvedModel.includes('opus') ? 'claude-sonnet-5' : undefined,
       additionalDirectories,
       contextWindowSize: sdkContextWindowSize,
       autoCompactEnabled: true,
-      // Wire compaction window into the CLI's process env (see resolveClaudeCompactionEnv).
-      envOverrides: compactionEnv,
+      // Wire compaction window + MCP timeout into the CLI's process env.
+      // Blueprint sessions get an extended MCP server startup timeout (30s vs
+      // the default ~10s) because they spawn 4-5 MCP servers simultaneously and
+      // the packaged-app cold start is slower than dev.
+      envOverrides: {
+        ...compactionEnv,
+        ...(this.s.adapter.role.startsWith('blueprint-')
+          ? { MCP_TIMEOUT: '30000' }
+          : {})
+      },
       continueSession: false,
       mcpConfigPath,
       goal: params.goal,
@@ -413,6 +427,12 @@ export class AgentExecutorFactory {
         socketPath = this.s.ipcBridge.getSocketPath() ?? undefined
       }
 
+      // Derive servers to skip: if the adapter defines an explicit allowedTools
+      // list, any server whose tools are entirely absent can be skipped.
+      // Blueprint sessions use this to avoid spawning 7 servers when only 4-5
+      // are needed — reducing the MCP cold-start connection race.
+      const skipServers = deriveSkipServers(_params.mcpResult.allowedTools)
+
       const configPath = this.s.mcpConfigWriter.writeConfig({
         workspacePath: this.s.workspacePath!,
         workspaceId: this.s.workspaceId,
@@ -420,7 +440,8 @@ export class AgentExecutorFactory {
         mode: this.s.currentMode,
         featureFlags,
         controlCallbacks,
-        ipcSocketPath: socketPath
+        ipcSocketPath: socketPath,
+        skipServers
       })
 
       this.s.log.info(`[buildCLIMcpConfigPath] MCP config written: ${configPath}`)
@@ -436,15 +457,20 @@ export class AgentExecutorFactory {
   /**
    * Map app-level ConversationMode to CLI --permission-mode values.
    *   plan   → 'plan'              (read-only + read-only shell)
-   *   build  → 'auto'              (AI safety classifier)
+   *   build  → 'acceptEdits'       (auto-approves working-dir file edits + common fs Bash)
    *   danger → 'bypassPermissions' (unrestricted)
+   *
+   * `acceptEdits` is preferred over `auto` for build mode because `auto`
+   * requires account/model/provider support and silently falls back to
+   * `default` (interactive prompts → blocked in our stream-json session)
+   * when unavailable. `acceptEdits` is deterministic and needs no gating.
    */
-  private resolveCliPermissionMode(mode: ConversationMode): 'plan' | 'auto' | 'bypassPermissions' {
+  private resolveCliPermissionMode(mode: ConversationMode): 'plan' | 'acceptEdits' | 'bypassPermissions' {
     switch (mode) {
       case 'danger':
         return 'bypassPermissions'
       case 'build':
-        return 'auto'
+        return 'acceptEdits'
       default:
         return 'plan'
     }

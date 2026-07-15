@@ -34,7 +34,7 @@ import { getBuildSummary, getVerifySummary } from './phase-summaries'
 // ── Helpers ──
 
 function findArtifact(phase: BlueprintPhase, ...types: string[]): BlueprintArtifact | undefined {
-  return phase.artifactsJson?.find((a) => types.includes(a.type))
+  return phase.artifactsJson?.findLast((a) => types.includes(a.type))
 }
 
 function findAllArtifacts(phase: BlueprintPhase, ...types: string[]): BlueprintArtifact[] {
@@ -102,14 +102,14 @@ function ClarifyContent({ phase }: { phase: BlueprintPhase }): JSX.Element {
                       {String(q.question ?? q.text ?? '')}
                     </span>
                   </div>
-                  {q.answer && (
+                  {q.answer ? (
                     <div className="flex items-start gap-2 pl-5">
                       <User size={12} className="text-accent mt-0.5 flex-shrink-0" />
                       <span className="text-xs text-text-secondary">
                         {String(q.answer)}
                       </span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               ))}
             </div>

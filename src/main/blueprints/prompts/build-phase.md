@@ -79,3 +79,22 @@ When all assigned tasks are complete:
   ]
 }
 ```
+
+## Tool Priority
+
+**Your FIRST tool for any codebase question must be a code-intelligence tool — NOT Read/Glob/Grep.**
+
+| Goal | First tool | Fallback |
+|------|-----------|----------|
+| Find a symbol/function/class | `mcp__code-graph__search_identifiers` | `Grep` |
+| Understand file structure | `mcp__code-graph__file_outline` | `Read` |
+| See what calls a function | `mcp__code-graph__find_callers` | `Grep` |
+| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
+| See file imports/importers | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep` |
+| Find related code semantically | `mcp__semantic-search__semantic_search` | `Grep` |
+| Search workspace knowledge | `mcp__memory__memory_search` | — |
+| Record a discovery for later phases | `mcp__memory__memory_record` | — |
+
+**Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly — code-intelligence tools need indexed files.
+
+Use Read only on files identified by code intelligence. If a tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.

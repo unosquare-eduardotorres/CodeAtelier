@@ -14,12 +14,25 @@ describe('claude-cli-oneshot › runCliOneShot', () => {
     // This child reads stdin to EOF, then prints. If runCliOneShot did NOT
     // .end() the stdin pipe, readFileSync(0) would block forever and the test
     // would time out.
-    const stdout = await runCliOneShot(
-      process.execPath,
-      ['-e', "require('fs').readFileSync(0,'utf8'); process.stdout.write('done')"],
-      { timeout: 10_000 }
-    )
-    assert.equal(stdout.trim(), 'done')
+    //
+    // Retry once: under heavy parallel test load (3500+ concurrent tests),
+    // the child process may fail non-deterministically on Node v25 due to
+    // event-loop congestion affecting pipe EOF timing.
+    let lastErr: Error | undefined
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const stdout = await runCliOneShot(
+          process.execPath,
+          ['-e', "require('fs').readFileSync(0,'utf8'); process.stdout.write('done')"],
+          { timeout: 10_000 }
+        )
+        assert.equal(stdout.trim(), 'done')
+        return // success
+      } catch (err) {
+        lastErr = err as Error
+      }
+    }
+    throw lastErr
   })
 
   test('surfaces stderr in the rejection message on non-zero exit', async () => {

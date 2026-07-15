@@ -19,7 +19,13 @@ export const ASK_QUESTION_PROMPT = `[Use ask_user for clarifying questions with 
 /** Unified — lean-eligible models (Sonnet 4.6+, Opus 4.8+) and Haiku share this block. */
 export const ASK_QUESTION_PROMPT_LEAN = ASK_QUESTION_PROMPT
 
-export const MEMORY_TOOLS_PROMPT = `[Memory tools: memory_search (lookup by topic before assuming), memory_record (save decisions/conventions/gotchas/preferences/references — also when user says "save/remember this"), memory_flag (confirm or contradict existing facts). Search before assuming; record on decision; flag on contradiction.]`
+export const MEMORY_TOOLS_PROMPT = `## Memory Protocol
+1. **Search before assuming** — call memory_search before adopting conventions, naming patterns, or architectural decisions. If results exist, follow them.
+2. **Record after deciding** — call memory_record when you establish a decision, convention, gotcha, preference, or reference. Also when the user says "save this" or "remember this". One fact per call; keep it concise and declarative.
+3. **Flag contradictions** — call memory_flag(intent="contradict") when your code or findings disagree with an existing fact. Never silently ignore a stale fact.
+4. **Confirm when reused** — call memory_flag(intent="confirm") when you rely on an existing fact and it proves accurate. This strengthens the fact’s confidence tier.
+
+Tools: memory_search (topic lookup), memory_record (save new facts), memory_flag (confirm or contradict existing facts).`
 
 /** Backward-compat aliases */
 export const MEMORY_PROTOCOL_PROMPT = MEMORY_TOOLS_PROMPT
@@ -60,7 +66,7 @@ export const GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN = GITHUB_CONTEXT_GUIDANCE_PROMP
 
 export const CODE_ANALYSIS_GUIDANCE_PROMPT = `## Code Analysis
 
-todo_scanner for tech debt, test_coverage_map for untested files, dependency_health for package audits.`
+audit_scan for tech debt + complexity + dead code (combined). analyze_test_coverage for untested files, analyze_dependencies for package audits.`
 
 /** Unified — FQDNs are already in tool schemas. */
 export const CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN = CODE_ANALYSIS_GUIDANCE_PROMPT
@@ -235,7 +241,29 @@ Set \`type\`: bug (problemSummary, rootCauses, verification), feature (currentSt
 Plans must reference real file paths. Bug/investigation plans: include \`verification\` criteria. Complex (>5 files): use \`phases\` with complexity/risk.
 
 ### Diagrams
-Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD. No yellow/pink/orange/lime fills.
+Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD.
+
+Style rules for flowcharts — include these classDef lines and apply classes to nodes:
+\`\`\`mermaid
+classDef decision fill:#0d1117,stroke:#73daca,stroke-width:2px,color:#c0caf5
+classDef process fill:#0d1117,stroke:#73daca,stroke-width:1.5px,color:#c0caf5
+classDef agent fill:#0d1117,stroke:#c4873a,stroke-width:2px,color:#e0af68
+classDef person fill:#1a3d2a,stroke:#4ade80,stroke-width:2px,color:#4ade80
+classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
+classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
+\`\`\`
+
+Use Lucide icons in node labels via \`@{ icon, label, form }\` syntax for key nodes:
+- Person/role → \`icon: "lucide:user"\`, form: \`"rounded"\`
+- Agent/bot → \`icon: "lucide:bot"\`, form: \`"rounded"\`
+- Decision/branch → diamond shape \`{Decision}\` + decision class
+- Database → \`icon: "lucide:database"\`, form: \`"rounded"\`
+- File/code → \`icon: "lucide:file-code"\`, form: \`"square"\`
+- Settings/config → \`icon: "lucide:settings"\`, form: \`"circle"\`
+- API/network → \`icon: "lucide:globe"\`, form: \`"rounded"\`
+- Warning/error → \`icon: "lucide:alert-triangle"\`, form: \`"rounded"\`
+
+No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
 
 ### Operational Requests
 Redirect: "That requires Build mode — toggle it in the chat header and I'll run it for you."
@@ -314,7 +342,29 @@ Read 2–5 files → if a decision blocks the plan, call **ask_user** FIRST and 
 Set \`type\`: bug (problemSummary, rootCause), feature (currentState, phases), refactor (currentState, phases), audit (findings), investigation (rootCauses).
 
 ### Diagrams
-Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD. No yellow/pink/orange/lime fills.
+Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD.
+
+Style rules for flowcharts — include these classDef lines and apply classes to nodes:
+\`\`\`mermaid
+classDef decision fill:#0d1117,stroke:#73daca,stroke-width:2px,color:#c0caf5
+classDef process fill:#0d1117,stroke:#73daca,stroke-width:1.5px,color:#c0caf5
+classDef agent fill:#0d1117,stroke:#c4873a,stroke-width:2px,color:#e0af68
+classDef person fill:#1a3d2a,stroke:#4ade80,stroke-width:2px,color:#4ade80
+classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
+classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
+\`\`\`
+
+Use Lucide icons in node labels via \`@{ icon, label, form }\` syntax for key nodes:
+- Person/role → \`icon: "lucide:user"\`, form: \`"rounded"\`
+- Agent/bot → \`icon: "lucide:bot"\`, form: \`"rounded"\`
+- Decision/branch → diamond shape \`{Decision}\` + decision class
+- Database → \`icon: "lucide:database"\`, form: \`"rounded"\`
+- File/code → \`icon: "lucide:file-code"\`, form: \`"square"\`
+- Settings/config → \`icon: "lucide:settings"\`, form: \`"circle"\`
+- API/network → \`icon: "lucide:globe"\`, form: \`"rounded"\`
+- Warning/error → \`icon: "lucide:alert-triangle"\`, form: \`"rounded"\`
+
+No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
 
 ### Phased Plans
 Complex changes (>5 files): use \`phases\` with complexity 1-10, file count, risk level.

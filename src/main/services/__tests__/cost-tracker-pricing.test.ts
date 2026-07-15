@@ -23,6 +23,13 @@ describe('CostTracker — pricing edge cases', () => {
     assert.ok(result > opusCost, 'Fable 5 should be more expensive than Opus 4.8')
   })
 
+  test('sonnet-5 → standard pricing ($3/$15)', () => {
+    // Sonnet 5: inputPer1M=3.0, outputPer1M=15.0
+    // 1M input = 3.0 * 100 = 300 cents, 1M output = 15.0 * 100 = 1500 cents
+    const result = estimateCostCents(1_000_000, 1_000_000, 'claude-sonnet-5')
+    assert.equal(result, 1800)
+  })
+
   test('legacy opus-4-20250514 → higher pricing than opus-4-8', () => {
     // Legacy opus-4-20250514: input=15.0, output=75.0 (much higher)
     const legacyCost = estimateCostCents(1_000_000, 1_000_000, 'claude-opus-4-20250514')

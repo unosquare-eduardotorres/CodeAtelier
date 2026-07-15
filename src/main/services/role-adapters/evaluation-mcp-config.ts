@@ -2,10 +2,11 @@
  * Shared read-only MCP tool configuration for evaluation-role adapters.
  *
  * Grill, Greenfield Grill, and Council Member adapters all use the same
- * read-only tool suite. This module centralises the allow/disallow lists
- * so changes to the MCP tool registry only need updating in one place.
+ * read-only tool suite. All tool lists are derived from the canonical
+ * MCP_TOOLS registry in shared/constants.ts — no hardcoded tool names.
  */
 
+import { MCP_TOOLS } from '../../../shared/constants'
 import type { AdapterMcpResult } from '../agent-session.types'
 
 export interface EvaluationToolFlags {
@@ -35,52 +36,11 @@ const EVALUATION_DISALLOWED_TOOLS = [
   'TaskUpdate'
 ] as const
 
-/** Code graph tools (mounted when repomap is enabled + workspace present) */
-const CODE_GRAPH_TOOLS = [
-  'mcp__code-graph__graph_map',
-  'mcp__code-graph__search_identifiers',
-  'mcp__code-graph__find_dead_code',
-  'mcp__code-graph__file_outline',
-  'mcp__code-graph__find_callers',
-  'mcp__code-graph__find_callees',
-  'mcp__code-graph__find_references',
-  'mcp__code-graph__file_dependencies',
-  'mcp__code-graph__file_dependents',
-  'mcp__code-graph__symbol_hotspots',
-  'mcp__code-graph__coupling_analysis',
-  'mcp__code-graph__circular_dependencies',
-  'mcp__code-graph__module_boundary_health'
-] as const
-
-/** Semantic search tools (mounted when enabled + workspace present) */
-const SEMANTIC_SEARCH_TOOLS = [
-  'mcp__semantic-search__semantic_search',
-  'mcp__semantic-search__similar_code',
-  'mcp__semantic-search__codebase_concepts'
-] as const
-
-/** Git context tools (included for Claude, skipped for local LLMs) */
-const GIT_CONTEXT_TOOLS = [
-  'mcp__git-context__git_log',
-  'mcp__git-context__git_diff',
-  'mcp__git-context__git_blame'
-] as const
-
-/** Code analysis tools (always included) */
-const CODE_ANALYSIS_TOOLS = [
-  'mcp__code-analysis__todo_scanner',
-  'mcp__code-analysis__dependency_health',
-  'mcp__code-analysis__test_coverage_map',
-  'mcp__code-analysis__eslint_check',
-  'mcp__code-analysis__eslint_fix',
-  'mcp__code-analysis__eslint_rules'
-] as const
-
 // ── Public API ───────────────────────────────────────────────────────────
 
 /**
- * Build the read-only MCP tool config for evaluation adapters.
- * All adapters share the same pattern: read/search + optional code-graph/semantic/git.
+ * Build the read-only MCP tool config for evaluation adapters (Grill, Audit, Council).
+ * All tool lists derived from canonical MCP_TOOLS — no hardcoded tool names.
  */
 export function buildReadOnlyToolConfig(flags: EvaluationToolFlags): AdapterMcpResult {
   const allowedTools: string[] = [
@@ -89,10 +49,12 @@ export function buildReadOnlyToolConfig(flags: EvaluationToolFlags): AdapterMcpR
     'Grep',
     'WebSearch',
     'WebFetch',
-    ...(flags.repomapEnabled && flags.hasWorkspace ? CODE_GRAPH_TOOLS : []),
-    ...(flags.semanticSearchEnabled && flags.hasWorkspace ? SEMANTIC_SEARCH_TOOLS : []),
-    ...(flags.includeGitContext ? GIT_CONTEXT_TOOLS : []),
-    ...CODE_ANALYSIS_TOOLS
+    ...(flags.repomapEnabled && flags.hasWorkspace ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES : []),
+    ...(flags.semanticSearchEnabled && flags.hasWorkspace ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES : []),
+    ...(flags.includeGitContext ? MCP_TOOLS.GIT_CONTEXT._ALL_NAMES : []),
+    ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
+    // Memory tools — evaluators can search/record/flag workspace knowledge
+    ...(flags.hasWorkspace ? MCP_TOOLS.MEMORY._ALL_NAMES : [])
   ]
 
   return {

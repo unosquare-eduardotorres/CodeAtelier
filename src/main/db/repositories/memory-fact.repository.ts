@@ -158,7 +158,7 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   /** Full-text keyword search (title, content, tags). */
   search(workspaceId: string, query: string, limit = 50): MemoryFact[] {
-    const like = `%${query}%`
+    const like = `%${query.slice(0, 500)}%`
     const rows = this.db()
       .prepare(
         `SELECT * FROM memory_facts

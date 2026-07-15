@@ -8,8 +8,8 @@
  *
  * The 16 settings tabs are organized into two groups:
  *   Tools:         health, goals, council, ideas, plans, blueprints
- *   Configuration: specialist, team, repository, code-intelligence,
- *                  integrations, models, documents, memory, tokens, events
+ *   Configuration: specialist, team, repository, brain (memory), code-intelligence,
+ *                  integrations, models, documents, tokens, events
  */
 import type { Page } from '@playwright/test'
 
@@ -46,7 +46,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   'code-intelligence': 'Code Intelligence',
   integrations: 'Integrations',
   team: 'Team',
-  memory: 'Memory',
+  memory: 'Brain',
   documents: 'Documents',
   tokens: 'Tokens',
   events: 'Events'

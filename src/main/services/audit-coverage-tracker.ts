@@ -10,6 +10,7 @@
  */
 
 import type { StreamChunk } from './agent-base.service'
+import { MCP_TOOLS } from '../../shared/constants'
 
 export interface AuditCoverageStats {
   filesInspected: string[]
@@ -20,7 +21,9 @@ export interface AuditCoverageStats {
 
 /** Tools whose invocation implies a file was inspected. */
 const READ_TOOLS = new Set([
+  // Built-in SDK tools
   'Read',
+  // Legacy short-name tools (pre-MCP prefix)
   'file_outline',
   'find_callers',
   'find_callees',
@@ -30,28 +33,10 @@ const READ_TOOLS = new Set([
   'find_all_callees',
   'class_hierarchy',
   'module_dependencies',
-  // MCP code-graph tools (prefixed form)
-  'mcp__code-graph__file_outline',
-  'mcp__code-graph__find_callers',
-  'mcp__code-graph__find_callees',
-  'mcp__code-graph__find_references',
-  'mcp__code-graph__file_dependencies',
-  'mcp__code-graph__file_dependents',
-  'mcp__code-graph__graph_map',
-  'mcp__code-graph__search_identifiers',
-  'mcp__code-graph__find_dead_code',
-  'mcp__code-graph__symbol_hotspots',
-  'mcp__code-graph__coupling_analysis',
-  'mcp__code-graph__circular_dependencies',
-  'mcp__code-graph__module_boundary_health',
-  // Code analysis MCP tools
-  'mcp__code-analysis__todo_scanner',
-  'mcp__code-analysis__dependency_health',
-  'mcp__code-analysis__test_coverage_map',
-  // Semantic search
-  'mcp__semantic-search__semantic_search',
-  'mcp__semantic-search__similar_code',
-  'mcp__semantic-search__codebase_concepts'
+  // MCP tools — derived from canonical registry
+  ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
+  ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
+  ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES,
 ])
 
 export class AuditCoverageTracker {

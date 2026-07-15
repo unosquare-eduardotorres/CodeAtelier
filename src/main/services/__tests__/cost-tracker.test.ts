@@ -79,6 +79,8 @@ describe('CostTracker — MODEL_PRICING', () => {
   test('MODEL_PRICING_contains_expected_models', () => {
     const expectedModels = [
       'claude-haiku-4-5-20251001',
+      'claude-sonnet-5',
+      'claude-fable-5',
       'claude-sonnet-4-6',
       'claude-opus-4-8',
       'claude-opus-4-7',

@@ -34,7 +34,7 @@ const CATEGORY_META: Record<
   },
   reference: {
     label: 'Reference',
-    color: 'bg-tertiary text-secondary',
+    color: 'bg-surface-float text-text-secondary border border-border-subtle',
     description: 'Pointers to docs and files',
     example: '"Auth flow documented in docs/auth-architecture.md"'
   }
@@ -61,10 +61,10 @@ export default function CategoryBadge({ category }: CategoryBadgeProps): React.J
       </span>
 
       {showTooltip && (
-        <div className="absolute bottom-full left-0 mb-2 z-50 w-56 px-3 py-2 text-xs bg-surface-float border border-border rounded-md shadow-lg text-secondary pointer-events-none">
-          <p className="font-medium text-primary mb-1">{meta.label}</p>
+        <div className="absolute bottom-full left-0 mb-2 z-50 w-56 px-3 py-2 text-xs bg-surface-float border border-border-default rounded-md shadow-lg text-text-secondary pointer-events-none">
+          <p className="font-medium text-text-primary mb-1">{meta.label}</p>
           <p>{meta.description}</p>
-          <p className="mt-1 text-tertiary italic">{meta.example}</p>
+          <p className="mt-1 text-text-muted italic">{meta.example}</p>
         </div>
       )}
     </div>

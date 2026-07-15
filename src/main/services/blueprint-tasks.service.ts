@@ -10,7 +10,7 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintTasksAdapter } from './role-adapters/blueprint/blueprint-tasks.adapter'
 import { buildTasksGoalCondition } from './blueprint-goal-conditions'
@@ -59,6 +59,7 @@ export class BlueprintTasksService extends EventEmitter {
     let session: AgentSessionService | null = null
     // BP-CHAIN-TASKS-REVIEW: Method-local (not instance field) to avoid race across concurrent workspaces.
     let pendingReviewDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
+    let cleanupAskUser: (() => void) | undefined
 
     try {
       // 1. Pipeline + DB state
@@ -106,6 +107,10 @@ export class BlueprintTasksService extends EventEmitter {
       session.on('statusUpdate', (status: AgentStatus) => {
         this.safeEmit('status', { workspaceId, status })
       })
+
+      // B4-FIX: Auto-respond to ask_user calls — tasks is non-interactive
+      cleanupAskUser = wireAskUserAutoResponder(session, 'TASKS')
+
       // 6. Start session + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
@@ -235,6 +240,7 @@ export class BlueprintTasksService extends EventEmitter {
         ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
+      cleanupAskUser?.()
       if (session) {
         await session.stop()
       }

@@ -9,7 +9,7 @@ import type { ClarifyQuestion, ClarifyQuestionsBlock } from '../../../../../shar
 
 interface BlueprintClarifyQuestionsProps {
   questions: ClarifyQuestionsBlock
-  onSubmit: (formattedAnswer: string) => void
+  onSubmit: (formattedAnswer: string) => void | Promise<void>
   onSkip: () => void
 }
 
@@ -56,8 +56,9 @@ export function BlueprintClarifyQuestions({
     if (submitting) return
     setSubmitting(true)
 
+    let result: void | Promise<void>
     if (freeTextMode) {
-      onSubmit(freeText.trim())
+      result = onSubmit(freeText.trim())
     } else {
       // Format structured answer from selections
       const lines: string[] = []
@@ -69,8 +70,10 @@ export function BlueprintClarifyQuestions({
           lines.push(`**${q.header}**: (skipped)`)
         }
       }
-      onSubmit(lines.join('\n'))
+      result = onSubmit(lines.join('\n'))
     }
+    // Un-stick: reset submitting whether onSubmit succeeds or fails
+    Promise.resolve(result).finally(() => setSubmitting(false))
   }, [submitting, freeTextMode, freeText, questions.questions, selections, onSubmit])
 
   const handleKeyDown = useCallback(

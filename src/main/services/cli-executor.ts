@@ -660,7 +660,8 @@ export class CLIExecutor {
         `permissionMode=${args[args.indexOf('--permission-mode') + 1] ?? 'unset'}`
     )
 
-    // EXEC-02: Guard spawn() — throws synchronously (ENOENT) if 'claude' is not in PATH
+    // EXEC-02: Guard spawn() — throws synchronously (ENOENT/ENOEXEC) if 'claude'
+    // is not in PATH or is not a valid executable.
     try {
       this.cliProcess = spawn('claude', args, {
         cwd: options.cwd,
@@ -670,9 +671,16 @@ export class CLIExecutor {
       })
     } catch (err) {
       this.cliProcess = null
-      this.lastStderrError = `Failed to spawn claude CLI: ${(err as Error).message}`
+      const code = (err as NodeJS.ErrnoException).code
+      const message = (err as Error).message
+      this.lastStderrError = `Failed to spawn claude CLI: ${message}`
+      if (code === 'ENOEXEC') {
+        throw new Error(
+          `Resolved 'claude' is not executable (wrong arch/format or missing shebang). Details: ${message}`
+        )
+      }
       throw new Error(
-        `Claude CLI not found — ensure 'claude' is installed and in PATH. Details: ${(err as Error).message}`
+        `Claude CLI not found — ensure 'claude' is installed and in PATH. Details: ${message}`
       )
     }
 

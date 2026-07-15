@@ -80,10 +80,12 @@ test.describe('Model Configuration', () => {
     await expect(claudeCard).toBeVisible()
     await expect(omlxCard).toBeVisible()
 
-    // Exactly one should have the "Default" chip
-    const providerText = await providerCards.textContent() ?? ''
-    const hasDefaultChip = /default/i.test(providerText)
-    expect(hasDefaultChip).toBeTruthy()
+    // Both cards should be visible as connection cards (no "Default" chip)
+    const claudeText = await claudeCard.textContent() ?? ''
+    const omlxText = await omlxCard.textContent() ?? ''
+    // Verify cards show provider names
+    expect(claudeText).toContain('Claude')
+    expect(omlxText).toContain('oMLX')
   })
 
   test('claude config shows model role pickers', async ({ electronPage: page }) => {

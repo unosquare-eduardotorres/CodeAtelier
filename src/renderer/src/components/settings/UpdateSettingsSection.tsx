@@ -58,7 +58,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
   }, [localGithubOwner, localGithubRepo, config.githubOwner, config.githubRepo])
 
   return (
-    <div className="bg-surface-overlay border border-border-subtle rounded-lg p-5 shadow-sm space-y-5">
+    <div data-testid="update-settings-section" className="bg-surface-overlay border border-border-subtle rounded-lg p-5 shadow-sm space-y-5">
       {/* Header with version + check button */}
       <div className="flex items-center justify-between">
         <div>
@@ -85,6 +85,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
         </p>
         <div className="flex gap-3">
           <button
+            data-testid="update-source-drive-btn"
             onClick={() => handleSourceChange('drive')}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
               config.source === 'drive'
@@ -96,6 +97,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
             Cloud Drive
           </button>
           <button
+            data-testid="update-source-github-btn"
             onClick={() => handleSourceChange('github')}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
               config.source === 'github'
@@ -115,6 +117,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
           <label className="text-xs font-medium text-text-primary">Drive Path</label>
           <div className="flex gap-2">
             <input
+              data-testid="update-drive-path-input"
               type="text"
               value={localDrivePath}
               onChange={(e) => setLocalDrivePath(e.target.value)}
@@ -123,6 +126,7 @@ export default function UpdateSettingsSection(): React.JSX.Element {
               className="flex-1 px-3 py-1.5 text-xs bg-surface-base border border-border-subtle rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50"
             />
             <button
+              data-testid="update-browse-btn"
               onClick={handleBrowseDrivePath}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-border-subtle text-text-secondary hover:bg-surface-base transition-colors"
             >

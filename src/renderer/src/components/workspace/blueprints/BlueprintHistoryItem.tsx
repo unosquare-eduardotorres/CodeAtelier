@@ -1,24 +1,37 @@
 import type { JSX } from 'react'
-import { Clock, ChevronRight } from 'lucide-react'
+import { Clock, ChevronRight, Trash2 } from 'lucide-react'
 import { StatusBadge } from './StatusBadge'
 import { formatTimeAgo, stripMarkdownInline } from './utils'
 import type { Blueprint } from '../../../../../shared/blueprint-types'
 
 export default function BlueprintHistoryItem({
   blueprint,
-  onSelect
+  onSelect,
+  onDelete,
+  isDeleting
 }: {
   blueprint: Blueprint
   onSelect: () => void
+  onDelete?: () => void
+  isDeleting?: boolean
 }): JSX.Element {
   const created = new Date(blueprint.createdAt)
   const timeAgo = formatTimeAgo(created)
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
-      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-surface-base border border-border-subtle hover:border-accent/30 hover:bg-surface-hover transition-colors text-left"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
+      className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg bg-surface-base border border-border-subtle hover:border-accent/30 hover:bg-surface-hover transition-all text-left cursor-pointer ${
+        isDeleting ? 'animate-[bp-item-out_250ms_ease-in_forwards] overflow-hidden' : ''
+      }`}
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
@@ -31,11 +44,24 @@ export default function BlueprintHistoryItem({
         <div className="flex items-center gap-2 mt-1">
           <Clock size={10} className="text-text-muted" />
           <span className="text-[10px] text-text-muted">{timeAgo}</span>
-          <span className="text-[10px] text-text-muted">·</span>
-          <span className="text-[10px] text-text-muted capitalize">{blueprint.priority}</span>
+
         </div>
       </div>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-text-muted hover:text-danger hover:bg-danger-muted transition-all flex-shrink-0"
+          aria-label={`Delete blueprint "${blueprint.title}"`}
+          title="Delete"
+        >
+          <Trash2 size={14} />
+        </button>
+      )}
       <ChevronRight size={14} className="text-text-muted flex-shrink-0" />
-    </button>
+    </div>
   )
 }

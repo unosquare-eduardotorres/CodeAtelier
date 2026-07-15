@@ -27,6 +27,12 @@ export interface RecoveryNudgeOptions {
   toolCallCount: number
   /** Names of the last tool(s) called (for context-specific recovery prompt) */
   lastToolNames?: string[]
+  /**
+   * When true, skip the CLI executor turn entirely and fall through to the
+   * fallback message. Used for local-LLM sessions that must never spawn the
+   * Claude CLI.
+   */
+  skipCliTurn?: boolean
   /** Callback to capture new session ID from recovery response */
   onSessionCapture: (sessionId: string) => void
   /** Callback to emit stream chunks to the renderer */
@@ -146,80 +152,88 @@ export class RecoveryNudgeService {
     let recovered = false
     let recoveredText = ''
 
-    // Build context-specific recovery prompt when tool names are available
-    const toolContext = opts.lastToolNames?.length
-      ? ` Your previous call(s) used ${opts.lastToolNames.join(', ')}.`
-      : ''
+    // Local-LLM sessions must never spawn the Claude CLI — skip the executor
+    // turn entirely and fall straight through to the fallback message.
+    if (opts.skipCliTurn) {
+      this.log.info(
+        `[PIPELINE:recovery-nudge-skip-cli] local provider — bypassing CLI turn for conversationId=${opts.conversationId}`
+      )
+    } else {
+      // Build context-specific recovery prompt when tool names are available
+      const toolContext = opts.lastToolNames?.length
+        ? ` Your previous call(s) used ${opts.lastToolNames.join(', ')}.`
+        : ''
 
-    // Defence-in-depth: 2-minute per-chunk watchdog prevents an unbounded
-    // recovery turn from wedging the session (same timeout as plan-tool-recovery).
-    const RECOVERY_TIMEOUT_MS = 120_000
+      // Defence-in-depth: 2-minute per-chunk watchdog prevents an unbounded
+      // recovery turn from wedging the session (same timeout as plan-tool-recovery).
+      const RECOVERY_TIMEOUT_MS = 120_000
 
-    try {
-      const rawIter = opts.cliExecutor.execute({
-        prompt: (() => {
-          const action = opts.isBuildMode ? 'found or executed' : 'found'
-          const source = opts.isBuildMode ? 'read or ran' : 'read'
-          return `[System: Your previous response ended after tool calls without providing a summary to the user.${toolContext} Please summarize what you ${action} in 2-5 sentences. Do NOT use any tools — just summarize from what you already ${source}.]`
-        })(),
-        systemPrompt: opts.systemPrompt,
-        model: opts.model,
-        cwd: opts.workspacePath,
-        permissionMode: opts.isBuildMode ? 'bypassPermissions' : 'plan',
-        allowedTools: [], // No tools — text summary only
-        disallowedTools: [
-          'Agent',
-          'Task',
-          'local_agent',
-          'ToolSearch',
-          'ExitPlanMode',
-          'AskUserQuestion'
-        ],
-        maxTurns: 1,
-        resume: opts.sessionId,
-        agentId: DA_VINCI_AGENT_ID,
-        // Recovery is lightweight summarization — omit thinking entirely.
-        effort: 'low'
-      })
+      try {
+        const rawIter = opts.cliExecutor.execute({
+          prompt: (() => {
+            const action = opts.isBuildMode ? 'found or executed' : 'found'
+            const source = opts.isBuildMode ? 'read or ran' : 'read'
+            return `[System: Your previous response ended after tool calls without providing a summary to the user.${toolContext} Please summarize what you ${action} in 2-5 sentences. Do NOT use any tools — just summarize from what you already ${source}.]`
+          })(),
+          systemPrompt: opts.systemPrompt,
+          model: opts.model,
+          cwd: opts.workspacePath,
+          permissionMode: opts.isBuildMode ? 'bypassPermissions' : 'plan',
+          allowedTools: [], // No tools — text summary only
+          disallowedTools: [
+            'Agent',
+            'Task',
+            'local_agent',
+            'ToolSearch',
+            'ExitPlanMode',
+            'AskUserQuestion'
+          ],
+          maxTurns: 1,
+          resume: opts.sessionId,
+          agentId: DA_VINCI_AGENT_ID,
+          // Recovery is lightweight summarization — omit thinking entirely.
+          effort: 'low'
+        })
 
-      for await (const chunk of this.withChunkTimeout(rawIter, RECOVERY_TIMEOUT_MS, 'recovery-nudge')) {
-        if ('_meta' in chunk && chunk._meta) {
-          const meta = chunk._meta as ExecutorResult
-          if (meta.sessionId && opts.conversationId) {
-            opts.onSessionCapture(meta.sessionId)
-            try {
-              conversationRepository.updateSessionId(opts.conversationId, meta.sessionId)
-            } catch {
-              /* ignore */
+        for await (const chunk of this.withChunkTimeout(rawIter, RECOVERY_TIMEOUT_MS, 'recovery-nudge')) {
+          if ('_meta' in chunk && chunk._meta) {
+            const meta = chunk._meta as ExecutorResult
+            if (meta.sessionId && opts.conversationId) {
+              opts.onSessionCapture(meta.sessionId)
+              try {
+                conversationRepository.updateSessionId(opts.conversationId, meta.sessionId)
+              } catch {
+                /* ignore */
+              }
             }
+            opts.onTokens(meta.tokenUsage.input + meta.tokenUsage.output)
+            usageTrackerService.recordUsage({
+              feature: 'recovery_nudge',
+              model: opts.model,
+              workspaceId: opts.workspaceId ?? null,
+              conversationId: opts.conversationId,
+              tokens: {
+                input: meta.tokenUsage.input,
+                output: meta.tokenUsage.output,
+                cacheRead: meta.tokenUsage.cacheReadInputTokens,
+                cacheCreation: meta.tokenUsage.cacheCreationInputTokens
+              }
+            })
+          } else if (chunk.type === 'text' && chunk.content) {
+            recovered = true
+            recoveredText += chunk.content
+            opts.onChunk(chunk)
           }
-          opts.onTokens(meta.tokenUsage.input + meta.tokenUsage.output)
-          usageTrackerService.recordUsage({
-            feature: 'recovery_nudge',
-            model: opts.model,
-            workspaceId: opts.workspaceId ?? null,
-            conversationId: opts.conversationId,
-            tokens: {
-              input: meta.tokenUsage.input,
-              output: meta.tokenUsage.output,
-              cacheRead: meta.tokenUsage.cacheReadInputTokens,
-              cacheCreation: meta.tokenUsage.cacheCreationInputTokens
-            }
-          })
-        } else if (chunk.type === 'text' && chunk.content) {
-          recovered = true
-          recoveredText += chunk.content
-          opts.onChunk(chunk)
         }
-      }
 
-      if (recovered) {
-        this.log.info(
-          `[PIPELINE:silent-tool-recovery] Successfully recovered summary for conversationId=${opts.conversationId}`
-        )
+        if (recovered) {
+          this.log.info(
+            `[PIPELINE:silent-tool-recovery] Successfully recovered summary for conversationId=${opts.conversationId}`
+          )
+        }
+      } catch (err) {
+        this.log.error('[PIPELINE:recovery-nudge-failed]', err)
       }
-    } catch (err) {
-      this.log.error('[PIPELINE:recovery-nudge-failed]', err)
     }
 
     if (!recovered) {

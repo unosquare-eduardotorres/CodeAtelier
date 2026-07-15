@@ -1,224 +1,322 @@
 /**
- * ModelPicker — two-step provider → model selector for new chat creation.
+ * ModelPicker — routing summary + optional per-conversation customization.
  *
- * Emits (provider, modelId) directly — no preset indirection.
- * Claude model selection stores overrides via workspace modelOverrides;
- * local model selection uses the workspace-configured local model.
+ * Shows the workspace routing summary (Plan / Build / Background models).
+ * "Customize" expander reveals per-conversation overrides via grouped selects.
+ * Provider is derived from routing — no explicit provider selection.
  */
 
-import { useMemo } from 'react'
-import { Monitor, Settings } from 'lucide-react'
-import { AVAILABLE_MODELS } from '../../../../shared/constants'
-import type { LLMProvider, PlatformInfo } from '../../../../shared/types'
-import type { LocalModelInfo } from './useWorkspaceModelInfo'
+import { useState, useMemo } from 'react'
+import { ChevronDown, ChevronRight, Settings, AlertCircle } from 'lucide-react'
+import {
+  AVAILABLE_MODELS,
+  DEFAULT_MODEL_CONFIG
+} from '../../../../shared/constants'
+import type {
+  LLMProvider,
+  ModelAction,
+  ModelRoleAssignment,
+  ModelRoleMap
+} from '../../../../shared/types'
 
-interface ModelPickerProps {
-  /** Currently selected provider */
-  provider: LLMProvider
-  /** Currently selected Claude model ID (e.g. 'claude-opus-4-8') */
-  selectedModelId: string | null
-  /** Local model info from workspace settings */
-  localModelInfo: LocalModelInfo | null
-  /** Platform info for Apple Silicon detection */
-  platformInfo: PlatformInfo | null
-  /** Called when user changes selection */
-  onChange: (provider: LLMProvider, modelId: string | null) => void
+// ── Types ──
+
+export interface ModelPickerProps {
+  /** Workspace-level model roles (from settings) */
+  workspaceModelRoles: ModelRoleMap
+  /** Workspace-level Claude model overrides (legacy) */
+  claudeModelOverrides: Record<string, string>
+  /** Workspace-level provider (derived from routing) */
+  workspaceProvider: LLMProvider
+  /** oMLX chat-capable models */
+  omlxModels: string[]
+  /** Per-conversation routing overrides — persisted on conversation creation */
+  overrides: Partial<ModelRoleMap>
+  /** Called when user changes per-conversation overrides */
+  onOverridesChange: (overrides: Partial<ModelRoleMap>) => void
   /** Compact mode for sidebar modal */
   compact?: boolean
 }
 
-// ── Provider definitions ──
+// ── Helpers ──
 
-type ProviderOption = {
-  value: LLMProvider
+interface ModelOption {
+  id: string
   label: string
-  icon: string
-  backendFilter?: string
+  provider: LLMProvider
+  group: 'claude' | 'local'
 }
 
-const PROVIDER_OPTIONS: ProviderOption[] = [
-  { value: 'claude', label: 'Claude', icon: '☁️' },
-  { value: 'local-llm', label: 'Ollama', icon: '🦙', backendFilter: 'ollama' },
-  { value: 'local-llm', label: 'oMLX', icon: '🐧', backendFilter: 'omlx' }
-]
+function buildModelOptions(omlxModels: string[]): ModelOption[] {
+  const options: ModelOption[] = AVAILABLE_MODELS.map((m) => ({
+    id: m.id,
+    label: m.label,
+    provider: 'claude' as const,
+    group: 'claude' as const
+  }))
+  for (const model of omlxModels) {
+    options.push({
+      id: model,
+      label: model,
+      provider: 'local-llm',
+      group: 'local'
+    })
+  }
+  return options
+}
 
-/** Default Claude model when none is selected */
-const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8'
+/** Resolve the effective model for a role from overrides → workspace roles → defaults */
+function resolveModel(
+  action: ModelAction,
+  overrides: Partial<ModelRoleMap>,
+  workspaceRoles: ModelRoleMap,
+  claudeOverrides: Record<string, string>,
+  workspaceProvider: LLMProvider
+): { modelId: string; provider: LLMProvider } {
+  // Per-conversation override takes precedence
+  const override = overrides[action]
+  if (override) return { modelId: override.modelId, provider: override.provider }
+
+  // Workspace model roles
+  const wsRole = workspaceRoles[action]
+  if (wsRole) return { modelId: wsRole.modelId, provider: wsRole.provider }
+
+  // Legacy Claude overrides
+  const legacyOverride = claudeOverrides[action]
+  if (legacyOverride) return { modelId: legacyOverride, provider: workspaceProvider }
+
+  // Default
+  return {
+    modelId: DEFAULT_MODEL_CONFIG[action] ?? 'claude-opus-4-8',
+    provider: 'claude'
+  }
+}
+
+/** Get a human-friendly label for a model ID */
+function modelLabel(modelId: string): string {
+  const claude = AVAILABLE_MODELS.find((m) => m.id === modelId)
+  if (claude) return claude.label
+  // Local models: show as-is but truncate long names
+  return modelId.length > 30 ? `${modelId.slice(0, 27)}…` : modelId
+}
+
+// ── Routing summary roles ──
+
+const SUMMARY_ROLES = [
+  { label: 'Plan', action: 'da-vinci:plan' as ModelAction },
+  { label: 'Build', action: 'da-vinci:build' as ModelAction },
+  { label: 'Background', action: 'haiku' as ModelAction }
+]
 
 // ── Component ──
 
 export function ModelPicker({
-  provider,
-  selectedModelId,
-  localModelInfo,
-  platformInfo,
-  onChange,
+  workspaceModelRoles,
+  claudeModelOverrides,
+  workspaceProvider,
+  omlxModels,
+  overrides,
+  onOverridesChange,
   compact
 }: ModelPickerProps): React.JSX.Element {
-  // Determine which local backend is currently configured
-  const localBackend = localModelInfo?.backend ?? 'ollama'
-  const localModelName = localModelInfo?.model ?? 'unknown'
+  const [expanded, setExpanded] = useState(false)
+  const modelOptions = useMemo(() => buildModelOptions(omlxModels), [omlxModels])
+  const claudeOptions = useMemo(() => modelOptions.filter((o) => o.group === 'claude'), [modelOptions])
+  const localOptions = useMemo(() => modelOptions.filter((o) => o.group === 'local'), [modelOptions])
 
-  // Filter visible providers based on workspace config
-  const visibleProviders = useMemo(() => {
-    const result: ProviderOption[] = [PROVIDER_OPTIONS[0]] // Claude always visible
+  // Resolved effective models for summary
+  const resolved = useMemo(
+    () =>
+      SUMMARY_ROLES.map((role) => ({
+        ...role,
+        ...resolveModel(role.action, overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider)
+      })),
+    [overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider]
+  )
 
-    const hasOllama = localModelInfo && localBackend === 'ollama'
-    const hasOmlx =
-      localModelInfo &&
-      localBackend === 'omlx' &&
-      platformInfo?.isAppleSilicon
+  // Check if plan and build use different providers (cross-provider warning)
+  const hasMixedProviders = useMemo(() => {
+    const planProvider = resolved.find((r) => r.action === 'da-vinci:plan')?.provider
+    const buildProvider = resolved.find((r) => r.action === 'da-vinci:build')?.provider
+    return planProvider && buildProvider && planProvider !== buildProvider
+  }, [resolved])
 
-    if (hasOllama) result.push(PROVIDER_OPTIONS[1])
-    if (hasOmlx) result.push(PROVIDER_OPTIONS[2])
+  const hasOverrides = Object.keys(overrides).length > 0
 
-    // If local-llm is configured but backend doesn't match known labels,
-    // show generic "Local LLM" option
-    if (!hasOllama && !hasOmlx && localModelInfo) {
-      result.push({
-        value: 'local-llm',
-        label: 'Local LLM',
-        icon: '🖥️'
-      })
+  const handleAssign = (action: ModelAction, modelId: string): void => {
+    const opt = modelOptions.find((o) => o.id === modelId)
+    if (!opt) return
+
+    const assignment: ModelRoleAssignment = {
+      provider: opt.provider,
+      modelId: opt.id,
+      ...(opt.provider === 'local-llm' ? { localBackend: 'omlx' as const } : {})
     }
 
-    return result
-  }, [localModelInfo, localBackend, platformInfo])
-
-  // Derive active model ID
-  const activeModelId = useMemo(() => {
-    if (provider !== 'claude') return null
-    return selectedModelId ?? DEFAULT_CLAUDE_MODEL
-  }, [provider, selectedModelId])
-
-  // ── Handlers ──
-
-  const handleProviderChange = (p: LLMProvider): void => {
-    if (p === 'claude') {
-      onChange('claude', activeModelId ?? DEFAULT_CLAUDE_MODEL)
-    } else {
-      onChange('local-llm', null)
-    }
+    // Set this and related actions (e.g. da-vinci:plan → project-specialist:plan)
+    const updated = { ...overrides, [action]: assignment }
+    onOverridesChange(updated)
   }
 
-  const handleModelChange = (modelId: string): void => {
-    onChange('claude', modelId)
+  const handleClearOverrides = (): void => {
+    onOverridesChange({})
   }
+
+  // ── Routing Summary (always visible) ──
+  const summary = (
+    <div className="flex items-center gap-1.5 flex-wrap text-xs text-text-secondary">
+      {resolved.map((role, i) => (
+        <span key={role.action} className="inline-flex items-center gap-1">
+          {i > 0 && <span className="text-text-muted mx-0.5">·</span>}
+          <span className="text-text-muted">{role.label}:</span>
+          <span className="text-text-primary font-medium">{modelLabel(role.modelId)}</span>
+        </span>
+      ))}
+      {hasOverrides && (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-primary-muted text-primary-text text-xs font-medium ml-1">
+          Custom
+        </span>
+      )}
+    </div>
+  )
 
   // ── Compact mode (sidebar modal) ──
-
   if (compact) {
     return (
       <div data-testid="model-picker-compact">
-        <label className="block text-sm font-medium text-text-primary mb-1.5">Default chat model</label>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Claude model pills */}
-          {AVAILABLE_MODELS.slice().reverse().map((m) => (
-            <button
-              key={m.id}
-              onClick={() => handleModelChange(m.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-                focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  provider === 'claude' && activeModelId === m.id
-                    ? 'bg-primary-muted text-primary-text border border-primary/20'
-                    : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-                }`}
-            >
-              ☁️ {m.label}
-            </button>
-          ))}
-          {/* Local model pill (if configured) */}
-          {visibleProviders.some((p) => p.value === 'local-llm') && (
-            <button
-              onClick={() => handleProviderChange('local-llm')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-                focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  provider === 'local-llm'
-                    ? 'bg-primary-muted text-primary-text border border-primary/20'
-                    : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-                }`}
-            >
-              {localBackend === 'omlx' ? '🐧' : '🦙'} {localModelName}
-            </button>
-          )}
-        </div>
+        <label className="block text-sm font-medium text-text-primary mb-1.5">Model routing</label>
+        {summary}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary transition-colors mt-2"
+        >
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {expanded ? 'Hide' : 'Customize'} for this conversation
+        </button>
+        {expanded && (
+          <div className="mt-2 space-y-1.5">
+            {SUMMARY_ROLES.map((role) => {
+              const effective = resolveModel(role.action, overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider)
+              return (
+                <div key={role.action} className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-text-secondary">{role.label}</span>
+                  <select
+                    value={effective.modelId}
+                    onChange={(e) => handleAssign(role.action, e.target.value)}
+                    className="bg-surface-base border border-border-subtle rounded-lg px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 max-w-[200px]"
+                    aria-label={`${role.label} model`}
+                  >
+                    <optgroup label="Claude">
+                      {claudeOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </optgroup>
+                    {localOptions.length > 0 && (
+                      <optgroup label="Local (oMLX)">
+                        {localOptions.map((opt) => (
+                          <option key={opt.id} value={opt.id}>{opt.id}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+              )
+            })}
+            {hasMixedProviders && (
+              <div className="flex items-start gap-2 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20 mt-1.5">
+                <AlertCircle size={12} className="text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-300">
+                  <span className="font-medium">Mixed providers</span> — all actions will use the
+                  Plan model&apos;s provider.
+                </p>
+              </div>
+            )}
+            {hasOverrides && (
+              <button
+                onClick={handleClearOverrides}
+                className="text-xs text-text-muted hover:text-text-secondary transition-colors"
+              >
+                Reset to workspace defaults
+              </button>
+            )}
+          </div>
+        )}
       </div>
     )
   }
 
   // ── Full mode (NewChatPage) ──
-
   return (
     <div className="w-full mb-5" data-testid="model-picker">
-      <label className="block text-sm font-medium text-text-primary mb-1.5">Default chat model</label>
+      <label className="block text-sm font-medium text-text-primary mb-1.5">Model routing</label>
 
-      {/* Row 1 — Provider pills */}
-      <div className="flex items-center gap-2 bg-surface-overlay rounded-lg p-1 border border-border-subtle w-fit mb-2">
-        {visibleProviders.map((opt, i) => {
-          const isActive =
-            opt.value === provider &&
-            (opt.value === 'claude' || opt.backendFilter === localBackend || !opt.backendFilter)
-          return (
-            <button
-              key={`${opt.value}-${i}`}
-              onClick={() => handleProviderChange(opt.value)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors
-                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  isActive
-                    ? 'bg-primary-muted text-primary-text border border-primary/30'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-            >
-              <span>{opt.icon}</span>
-              {opt.label}
-            </button>
-          )
-        })}
-      </div>
+      {/* Routing Summary */}
+      {summary}
 
-      {/* Row 2 — Model pills (Claude) or local model info */}
-      {provider === 'claude' ? (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {AVAILABLE_MODELS.slice().reverse().map((m) => {
-            const isActive = activeModelId === m.id
-            const isOpus = m.tier === 'opus'
+      {/* Customize expander */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary transition-colors mt-2"
+      >
+        <Settings size={11} />
+        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        {expanded ? 'Hide customization' : 'Customize for this conversation'}
+      </button>
+
+      {expanded && (
+        <div className="mt-3 space-y-2 bg-surface-overlay border border-border-subtle rounded-lg p-3">
+          <p className="text-xs text-text-muted mb-2">
+            Per-conversation overrides — changes here only affect this conversation.
+          </p>
+          {SUMMARY_ROLES.map((role) => {
+            const effective = resolveModel(role.action, overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider)
             return (
-              <button
-                key={m.id}
-                onClick={() => handleModelChange(m.id)}
-                className={`flex flex-col items-center px-4 py-2 rounded-md text-xs font-medium transition-colors
-                  focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                    isActive
-                      ? 'bg-primary-muted text-primary-text border border-primary/20'
-                      : 'text-text-secondary hover:bg-surface-overlay border border-transparent'
-                  }`}
-              >
-                <span className="flex items-center gap-1">
-                  {m.label}
-                  {isOpus && <span className="text-warning text-[10px]">★</span>}
-                </span>
-                <span className="text-[10px] text-text-muted mt-0.5">{m.description}</span>
-              </button>
+              <div key={role.action} className="flex items-center justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-text-primary">{role.label}</span>
+                </div>
+                <select
+                  value={effective.modelId}
+                  onChange={(e) => handleAssign(role.action, e.target.value)}
+                  className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 shrink-0 max-w-xs"
+                  aria-label={`${role.label} model`}
+                >
+                  <optgroup label="Claude">
+                    {claudeOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </optgroup>
+                  {localOptions.length > 0 && (
+                    <optgroup label="Local (oMLX)">
+                      {localOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>{opt.id}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
             )
           })}
-        </div>
-      ) : (
-        <div className="flex items-center gap-2 text-xs text-text-secondary px-1 py-1.5">
-          <Monitor size={14} className="text-text-muted" />
-          <span>
-            Currently configured:{' '}
-            <span className="text-text-primary font-medium">{localModelName}</span>
-          </span>
-          <button
-            onClick={() => {
-              // Navigate to workspace settings
-              window.dispatchEvent(new CustomEvent('navigate-workspace-settings', { detail: 'model-config' }))
-            }}
-            className="flex items-center gap-1 text-primary hover:text-primary-hover transition-colors ml-2"
-          >
-            <Settings size={12} />
-            Change in settings
-          </button>
+
+          {/* Cross-provider warning */}
+          {hasMixedProviders && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 mt-2">
+              <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-300">
+                <span className="font-medium">Mixed providers</span> — all actions will use the
+                Plan model&apos;s provider in the same conversation.
+              </p>
+            </div>
+          )}
+
+          {hasOverrides && (
+            <button
+              onClick={handleClearOverrides}
+              className="text-xs text-text-muted hover:text-text-secondary transition-colors mt-1"
+            >
+              Reset to workspace defaults
+            </button>
+          )}
         </div>
       )}
     </div>

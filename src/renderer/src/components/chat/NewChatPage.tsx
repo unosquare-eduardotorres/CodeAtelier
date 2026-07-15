@@ -19,8 +19,9 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { GithubIcon } from '../common/icons/GithubIcon'
 import { useProfileStore, useWorkspaceStore, useAuditStore } from '@renderer/store'
+import { useClipboardImagePaste, IMAGE_REGEX } from '@renderer/hooks'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../../../shared/types'
 import {
   COMMUNICATION_TONES,
   EXTERNAL_MCP_INTEGRATIONS,
@@ -44,6 +45,7 @@ interface NewChatPageProps {
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
@@ -180,10 +182,10 @@ export default function NewChatPage({
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
   const {
-    llmProvider,
-    setLlmProvider,
-    localModelInfo,
-    platformInfo
+    modelRoles: workspaceModelRoles,
+    claudeModelOverrides,
+    derivedProvider,
+    omlxModels
   } = useWorkspaceModelInfo(activeWorkspace?.id)
   const {
     availableIntegrations,
@@ -193,14 +195,20 @@ export default function NewChatPage({
     mcpOverrides,
     setMcpOverrides
   } = useMcpSettings(activeWorkspace)
-  const [selectedModelId, setSelectedModelId] = useState<string | null>('claude-opus-4-8')
-
-  const handleModelChange = useCallback((provider: LLMProvider, modelId: string | null) => {
-    setLlmProvider(provider)
-    setSelectedModelId(modelId)
-  }, [setLlmProvider])
+  const [routingOverrides, setRoutingOverrides] = useState<Partial<ModelRoleMap>>({})
   const [mcpSubTab, setMcpSubTab] = useState<McpSubTab>('external')
   const titleInputRef = useRef<HTMLInputElement>(null)
+
+  // Clipboard image paste from the Description field. The textarea is a sibling
+  // of AttachmentDropzone, so its paste events never reach the dropzone handler.
+  const handleImageSaved = useCallback((filePath: string) => {
+    setAttachments((prev) => [...prev, filePath])
+  }, [])
+  const handleDescriptionPaste = useClipboardImagePaste({
+    conversationId: 'unsorted',
+    imageCount: attachments.filter((p) => IMAGE_REGEX.test(p)).length,
+    onImageSaved: handleImageSaved
+  })
 
   // Auto-focus title input on mount
   useEffect(() => {
@@ -234,6 +242,9 @@ export default function NewChatPage({
 
     const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
 
+    // Derive provider from routing overrides or workspace routing
+    const effectiveProvider = routingOverrides['da-vinci:plan']?.provider ?? derivedProvider
+
     onCreateChat({
       title: trimmedTitle,
       description: description.trim() || undefined,
@@ -241,7 +252,8 @@ export default function NewChatPage({
       communicationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
-      llmProvider,
+      llmProvider: effectiveProvider,
+      routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined,
       mcpOverrides: mcpOverridesPayload,
     })
   }, [
@@ -251,7 +263,8 @@ export default function NewChatPage({
     communicationTone,
     attachments,
     useIsolatedBranch,
-    llmProvider,
+    derivedProvider,
+    routingOverrides,
     mcpOverrides,
     availableLocalMcps,
     availableIntegrations,
@@ -352,14 +365,15 @@ export default function NewChatPage({
           }
         />
 
-        {/* Model Picker */}
+        {/* Model Routing */}
         {activeWorkspace && (
           <ModelPicker
-            provider={llmProvider}
-            selectedModelId={selectedModelId}
-            localModelInfo={localModelInfo}
-            platformInfo={platformInfo}
-            onChange={handleModelChange}
+            workspaceModelRoles={workspaceModelRoles}
+            claudeModelOverrides={claudeModelOverrides}
+            workspaceProvider={derivedProvider}
+            omlxModels={omlxModels}
+            overrides={routingOverrides}
+            onOverridesChange={setRoutingOverrides}
           />
         )}
 
@@ -379,13 +393,16 @@ export default function NewChatPage({
             data-testid="new-chat-description"
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, DESCRIPTION_MAX))}
+            onPaste={handleDescriptionPaste}
             placeholder="Describe what needs to be done, acceptance criteria, technical requirements, etc."
             rows={4}
             className="w-full px-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary placeholder-text-muted outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 transition-colors resize-y min-h-[80px] max-h-[200px]"
             maxLength={DESCRIPTION_MAX}
           />
           <div className="flex items-center justify-between mt-1">
-            <span className="text-xs text-text-muted">Supports @path file references</span>
+            <span className="text-xs text-text-muted">
+              Supports @path file references · paste images to attach
+            </span>
             <span className="text-xs text-text-muted">
               {description.length.toLocaleString()}/{DESCRIPTION_MAX.toLocaleString()}
             </span>

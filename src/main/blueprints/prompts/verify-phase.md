@@ -65,9 +65,15 @@ List items requiring manual verification: visual correctness, end-to-end flows, 
 
 MISSING/STUB artifacts or HOLLOW key links or critical anti-patterns → **gaps_found**. Human verification items → **human_needed**. All pass → **passed**.
 
+| overallStatus | recommendation | remediationTasks |
+|---|---|---|
+| `passed` | `ship` | omit |
+| `gaps_found` | `fix_gaps` | **required** (non-empty) |
+| `human_needed` | `manual_review` | omit |
+
 ## Completion
 
-When `recommendation: "fix_gaps"`, include a `remediationTasks` array with concrete tasks to fix the identified gaps. Each task should be self-contained and reference specific files.
+**IMPORTANT**: When `overallStatus` is `"gaps_found"`, you MUST include a non-empty `remediationTasks` array with concrete, self-contained tasks to fix every identified gap. Each task must have a unique `"R001"`-style ID, a clear description of what to fix, and the specific file paths involved. Without remediation tasks, the pipeline cannot auto-fix the gaps.
 
 ```blueprint-phase-complete
 {
@@ -101,4 +107,25 @@ When `recommendation: "fix_gaps"`, include a `remediationTasks` array with concr
 }
 ```
 
-Note: `remediationTasks` is only required when `recommendation` is `"fix_gaps"`. Omit it for `"ship"` and `"manual_review"`.
+Note: `remediationTasks` is REQUIRED when `overallStatus` is `"gaps_found"`. Omit it only for `"ship"` (passed) and `"manual_review"` (human_needed).
+
+## Tool Priority
+
+**Verify artifacts using code-intelligence tools — NOT Read/Glob/Grep.** The verification methodology above requires checking existence, wiring, and data flow. Code-intelligence tools give you this directly.
+
+| Goal | First tool | Fallback |
+|------|-----------|----------|
+| Check if planned files/symbols exist | `mcp__code-graph__search_identifiers` | `Glob` |
+| Check a file's exports and structure | `mcp__code-graph__file_outline` | `Read` |
+| Verify wiring (Level 3: who imports a module) | `mcp__code-graph__file_dependents` | `Grep` |
+| Verify callers exist (is a function used?) | `mcp__code-graph__find_callers` | `Grep` |
+| Verify data flow through call chain | `mcp__code-graph__find_callees` | `Read` |
+| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
+| Check module dependencies | `mcp__code-graph__file_dependencies` | `Read` |
+| Find similar implementations | `mcp__semantic-search__similar_code` | `Grep` |
+| Search workspace knowledge | `mcp__memory__memory_search` | — |
+| Record a verification finding | `mcp__memory__memory_record` | — |
+
+**Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly.
+
+Use Read only on files identified by code intelligence. Do NOT use `Write`, `Edit`, `Bash`, or any tool not listed above.

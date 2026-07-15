@@ -167,22 +167,13 @@ describe('G1 regression: handleAssign override cleanup', () => {
     }
 
     const action = 'da-vinci:plan' as const
-    const assignment = null
 
     const updated = { ...modelRoles }
     const updatedOverrides = { ...claudeModelOverrides }
 
-    if (assignment) {
-      updated[action] = assignment
-      if (assignment.provider === 'claude') {
-        updatedOverrides[action] = assignment.modelId
-      } else {
-        delete updatedOverrides[action]
-      }
-    } else {
-      delete updated[action]
-      delete updatedOverrides[action]
-    }
+    // Simulate clearing an assignment (null path)
+    delete updated[action]
+    delete updatedOverrides[action]
 
     assert.equal(updated['da-vinci:plan'], undefined)
     assert.equal(updatedOverrides['da-vinci:plan'], undefined)

@@ -33,6 +33,69 @@ const TRANSIENT_PATTERNS = [
   /timeout/i
 ]
 
+/**
+ * R7: Route inline <think>...</think> blocks to thinking chunks.
+ * Local LLMs (Qwen, DeepSeek) emit chain-of-thought wrapped in <think> tags
+ * inside regular text deltas. This function splits text on tag boundaries,
+ * routing content inside tags to 'thinking' chunks and content outside to 'text'.
+ *
+ * Handles: whole-tag-per-delta, tag split across deltas, mixed content.
+ */
+function routeThinkTags(text: string, state: NormalizerState): StreamChunk[] {
+  const chunks: StreamChunk[] = []
+  let remaining = text
+
+  while (remaining.length > 0) {
+    if (state.inThinkBlock) {
+      // Currently inside a <think> block — look for </think>
+      const closeIdx = remaining.indexOf('</think>')
+      if (closeIdx === -1) {
+        // Entire remaining text is thinking content
+        chunks.push({ type: 'thinking', content: remaining })
+        state.lastPartType = 'thinking'
+        remaining = ''
+      } else {
+        // Emit thinking content before the close tag
+        const thinkContent = remaining.slice(0, closeIdx)
+        if (thinkContent) {
+          chunks.push({ type: 'thinking', content: thinkContent })
+          state.lastPartType = 'thinking'
+        }
+        state.inThinkBlock = false
+        remaining = remaining.slice(closeIdx + '</think>'.length)
+      }
+    } else {
+      // Not in a think block — look for <think>
+      const openIdx = remaining.indexOf('<think>')
+      if (openIdx === -1) {
+        // No think tag — emit as regular text with boundary detection
+        if (state.lastPartType === 'thinking' && state.hasPriorText) {
+          chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+        }
+        chunks.push({ type: 'text', content: remaining })
+        state.lastPartType = 'text'
+        state.hasPriorText = true
+        remaining = ''
+      } else {
+        // Emit text before the open tag
+        const beforeThink = remaining.slice(0, openIdx)
+        if (beforeThink) {
+          if (state.lastPartType === 'thinking' && state.hasPriorText) {
+            chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
+          }
+          chunks.push({ type: 'text', content: beforeThink })
+          state.lastPartType = 'text'
+          state.hasPriorText = true
+        }
+        state.inThinkBlock = true
+        remaining = remaining.slice(openIdx + '<think>'.length)
+      }
+    }
+  }
+
+  return chunks
+}
+
 /** Token usage tracker passed into normalizeEvent */
 export interface ExecutorTokenUsage {
   input: number
@@ -58,6 +121,8 @@ export interface NormalizerState {
   emittedToolUse?: Set<string>
   /** R5: Dedupe — callIDs for which we already emitted tool_result */
   emittedToolResult?: Set<string>
+  /** R7: Whether we're inside an inline <think>...</think> block (local LLM reasoning) */
+  inThinkBlock?: boolean
 }
 
 type EventProperties = Record<string, unknown>
@@ -71,7 +136,7 @@ type EventHandler = (
 
 // ── Per-part-type sub-handlers for message.part.updated ──
 
-/** Handle text part — includes thinking→text turn boundary detection (F16). */
+/** Handle text part — includes thinking→text turn boundary detection (F16) + inline <think> routing (R7). */
 function handleTextPart(part: Record<string, unknown>, state: NormalizerState): StreamChunk[] {
   const text = part.content as string | undefined
   if (!text) return []
@@ -82,16 +147,8 @@ function handleTextPart(part: Record<string, unknown>, state: NormalizerState): 
     return []
   }
 
-  const chunks: StreamChunk[] = []
-  // F16: Emit turn_boundary when transitioning from thinking→text
-  // so the renderer shows visual separation between thinking and response.
-  if (state.lastPartType === 'thinking' && state.hasPriorText) {
-    chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
-  }
-  chunks.push({ type: 'text', content: text })
-  state.lastPartType = 'text'
-  state.hasPriorText = true
-  return chunks
+  // R7: Route inline <think> blocks to thinking chunks (local LLMs like Qwen)
+  return routeThinkTags(text, state)
 }
 
 /** Handle tool-invocation part — call, partial (streaming args), and result sub-states. */
@@ -194,22 +251,21 @@ function handleToolPart(part: Record<string, unknown>, state: NormalizerState): 
   if (!state.emittedToolResult) state.emittedToolResult = new Set()
 
   // ── tool_use (first sighting with input) ──
-  // Emit on 'running', 'completed', or 'error' (or 'pending' when input is present).
-  if (!state.emittedToolUse.has(callID)) {
+  // R6-A2: Only emit on 'running', 'completed', or 'error'. 'pending' snapshots have
+  // incomplete/empty args that would permanently capture {} as the tool input.
+  if (!state.emittedToolUse.has(callID) && status !== 'pending') {
     const input = toolState.input as Record<string, unknown> | string | undefined
     const hasInput = input !== undefined && input !== null
-    if (status !== 'pending' || hasInput) {
-      state.emittedToolUse.add(callID)
-      state.lastPartType = 'tool'
-      chunks.push({
-        type: 'tool_use',
-        toolName,
-        toolId: callID,
-        toolInput: hasInput
-          ? (typeof input === 'string' ? input : JSON.stringify(input))
-          : undefined
-      })
-    }
+    state.emittedToolUse.add(callID)
+    state.lastPartType = 'tool'
+    chunks.push({
+      type: 'tool_use',
+      toolName,
+      toolId: callID,
+      toolInput: hasInput
+        ? (typeof input === 'string' ? input : JSON.stringify(input))
+        : undefined
+    })
   }
 
   // ── tool_result (on completed / error) ──
@@ -290,15 +346,8 @@ function handleMessagePartDelta(
       openCodeLog.debug('[opencode] Filtered control signal in text delta: %s', delta.slice(0, 60))
       return []
     }
-    // Same boundary detection as handleTextPart (F16)
-    const chunks: StreamChunk[] = []
-    if (state.lastPartType === 'thinking' && state.hasPriorText) {
-      chunks.push({ type: 'turn_boundary', content: `thinking-split-${Date.now()}` })
-    }
-    chunks.push({ type: 'text', content: delta })
-    state.lastPartType = 'text'
-    state.hasPriorText = true
-    return chunks
+    // R7: Route inline <think> blocks to thinking chunks (local LLMs like Qwen)
+    return routeThinkTags(delta, state)
   }
 
   if (field === 'reasoning' || field === 'thinking') {
@@ -356,7 +405,7 @@ function handleSessionUpdated(
       usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
   }
 
-  // GAP-12: Emit per-turn context usage updates (gated by 2% minimum delta).
+  // GAP-12: Emit per-turn context usage updates.
   // Context consumption = fresh input + cache reads + cache writes, matching
   // Claude Code / agent-stream-processor. Using usage.inputTokens alone misses
   // cached tokens (often the bulk of the window) and under-reported usage.
@@ -366,18 +415,15 @@ function handleSessionUpdated(
     (usage?.cacheCreationInputTokens ?? 0)
   if (contextTokens > 0 && usage?.contextWindowSize) {
     const percentage = Math.round((contextTokens / usage.contextWindowSize) * 100)
-    const lastPct = state.lastContextPercentage ?? 0
-    if (Math.abs(percentage - lastPct) >= 2) {
-      state.lastContextPercentage = percentage
-      chunks.push({
-        type: 'context_usage_update',
-        contextUsageUpdate: {
-          inputTokens: contextTokens,
-          contextWindowSize: usage.contextWindowSize,
-          percentage
-        }
-      })
-    }
+    state.lastContextPercentage = percentage
+    chunks.push({
+      type: 'context_usage_update',
+      contextUsageUpdate: {
+        inputTokens: contextTokens,
+        contextWindowSize: usage.contextWindowSize,
+        percentage
+      }
+    })
   }
 
   // 6C-2: Track finishReason for terminal status mapping
@@ -404,12 +450,21 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
 
   // The SDK sends error as an object: { name: string, data: { message: string, ... } }.
   // Coerce to a string for downstream consumers that pattern-match on error messages.
-  const error: string =
+  // R8: If the coerced string is empty/whitespace, fall back to JSON.stringify(rawError)
+  // then a descriptive placeholder. This surfaces real provider errors (e.g. OpenCode
+  // omlx vision rejection) that previously produced '' ?? fallback → empty error text.
+  let error: string =
     typeof rawError === 'string'
       ? rawError
       : (rawError as any)?.data?.message ??
         (rawError as any)?.message ??
-        JSON.stringify(rawError)
+        ''
+  if (!error || !error.trim()) {
+    error = JSON.stringify(rawError)
+    if (!error || error === '{}' || error === '""') {
+      error = 'OpenCode session error (no message)'
+    }
+  }
 
   // GAP-11: Classify transient vs permanent errors. Transient errors emit
   // api_retry instead of error, giving the UI a more accurate status indicator.
@@ -485,6 +540,11 @@ function handleSessionIdle(
   _tokenUsage: ExecutorTokenUsage,
   state: NormalizerState
 ): StreamChunk[] {
+  // R6-A1: Clear dedupe sets on idle for bounded memory. A new agent turn will
+  // produce fresh callIDs, so stale entries never match and just waste memory.
+  if (state.emittedToolUse) state.emittedToolUse.clear()
+  if (state.emittedToolResult) state.emittedToolResult.clear()
+
   const chunks: StreamChunk[] = [{ type: 'status', content: 'idle' }]
 
   // Note: 'idle' status is suppressed by SUPPRESSED_STATUS_VALUES in chunk-router.ts.
@@ -797,6 +857,150 @@ function noopHandler(): StreamChunk[] {
   return []
 }
 
+/** Track whether we've logged the first-sighting raw shape for each V2 tool event type. */
+const v2ToolFirstSighting = { called: false, success: false, failed: false }
+
+/**
+ * session.next.tool.called — V2 event bus.
+ * Emits `tool_use`, deduped via `state.emittedToolUse` (shared with handleToolPart
+ * so V1+V2 double-fire never duplicates).
+ *
+ * Property names are parsed defensively — exact V2 payload shape may vary.
+ */
+function handleV2ToolCalled(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  if (!v2ToolFirstSighting.called) {
+    v2ToolFirstSighting.called = true
+    openCodeLog.info('[opencode] V2 tool.called first sighting — raw properties:', JSON.stringify(properties).slice(0, 500))
+  }
+
+  const toolName = (properties.tool ?? properties.name ?? properties.toolName ?? 'unknown') as string
+  const callID = (properties.callID ?? properties.id ?? properties.toolCallId) as string | undefined
+  if (!callID) return []
+
+  // Lazily initialise dedupe sets
+  if (!state.emittedToolUse) state.emittedToolUse = new Set()
+  if (state.emittedToolUse.has(callID)) return []
+  state.emittedToolUse.add(callID)
+  state.lastPartType = 'tool'
+
+  const rawInput = (properties.input ?? properties.args) as Record<string, unknown> | string | undefined
+  let toolInput: string | undefined
+  if (rawInput != null) {
+    toolInput = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
+  }
+
+  return [{ type: 'tool_use', toolName, toolId: callID, toolInput }]
+}
+
+/**
+ * session.next.tool.success — V2 event bus.
+ * Emits `tool_result` + `tool_use_summary`, deduped via `state.emittedToolResult`.
+ */
+function handleV2ToolSuccess(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  if (!v2ToolFirstSighting.success) {
+    v2ToolFirstSighting.success = true
+    openCodeLog.info('[opencode] V2 tool.success first sighting — raw properties:', JSON.stringify(properties).slice(0, 500))
+  }
+
+  const toolName = (properties.tool ?? properties.name ?? properties.toolName ?? 'unknown') as string
+  const callID = (properties.callID ?? properties.id ?? properties.toolCallId) as string | undefined
+  if (!callID) return []
+
+  if (!state.emittedToolResult) state.emittedToolResult = new Set()
+  if (state.emittedToolResult.has(callID)) return []
+  state.emittedToolResult.add(callID)
+
+  // Also ensure tool_use was emitted (V2-only path — V1 may not have fired)
+  if (!state.emittedToolUse) state.emittedToolUse = new Set()
+  const chunks: StreamChunk[] = []
+  if (!state.emittedToolUse.has(callID)) {
+    state.emittedToolUse.add(callID)
+    state.lastPartType = 'tool'
+    const rawInput = (properties.input ?? properties.args) as Record<string, unknown> | string | undefined
+    let toolInput: string | undefined
+    if (rawInput != null) {
+      toolInput = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
+    }
+    chunks.push({ type: 'tool_use', toolName, toolId: callID, toolInput })
+  }
+
+  const output = (properties.output ?? properties.result) as string | unknown | undefined
+  const resultStr = typeof output === 'string' ? output : JSON.stringify(output ?? '')
+
+  chunks.push({ type: 'tool_result', toolName, toolId: callID, content: resultStr })
+
+  // Generate a human-readable summary
+  const resultSummaryObj = extractResultSummary(toolName, resultStr)
+  let inputSummary: string | undefined
+  const rawInput = (properties.input ?? properties.args) as Record<string, unknown> | undefined
+  if (rawInput && typeof rawInput === 'object') {
+    inputSummary = summarizeToolInput(toolName, rawInput)
+  }
+  if (resultSummaryObj?.result || inputSummary) {
+    chunks.push({
+      type: 'tool_use_summary',
+      toolName,
+      toolId: callID,
+      content: [
+        inputSummary ? `Input: ${inputSummary}` : '',
+        resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
+      ].filter(Boolean).join(' — ')
+    })
+  }
+
+  return chunks
+}
+
+/**
+ * session.next.tool.failed — V2 event bus.
+ * Emits `tool_result` with error payload, deduped via `state.emittedToolResult`.
+ */
+function handleV2ToolFailed(
+  properties: EventProperties,
+  _sessionId: string,
+  _tokenUsage: ExecutorTokenUsage,
+  state: NormalizerState
+): StreamChunk[] {
+  if (!v2ToolFirstSighting.failed) {
+    v2ToolFirstSighting.failed = true
+    openCodeLog.info('[opencode] V2 tool.failed first sighting — raw properties:', JSON.stringify(properties).slice(0, 500))
+  }
+
+  const toolName = (properties.tool ?? properties.name ?? properties.toolName ?? 'unknown') as string
+  const callID = (properties.callID ?? properties.id ?? properties.toolCallId) as string | undefined
+  if (!callID) return []
+
+  if (!state.emittedToolResult) state.emittedToolResult = new Set()
+  if (state.emittedToolResult.has(callID)) return []
+  state.emittedToolResult.add(callID)
+
+  // Also ensure tool_use was emitted
+  if (!state.emittedToolUse) state.emittedToolUse = new Set()
+  const chunks: StreamChunk[] = []
+  if (!state.emittedToolUse.has(callID)) {
+    state.emittedToolUse.add(callID)
+    state.lastPartType = 'tool'
+    chunks.push({ type: 'tool_use', toolName, toolId: callID })
+  }
+
+  const errorMsg = (properties.error ?? properties.message ?? 'Tool execution failed') as string
+  const resultStr = typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg)
+
+  chunks.push({ type: 'tool_result', toolName, toolId: callID, content: resultStr })
+
+  return chunks
+}
+
 /**
  * session.next.agent.switched — emits status chunk with agent name.
  * The 'agent_switched:' prefix is suppressed from chat rendering by
@@ -877,10 +1081,10 @@ const EVENT_HANDLERS: Record<string, EventHandler> = {
   'session.next.tool.input.started': noopHandler as EventHandler,
   'session.next.tool.input.delta': noopHandler as EventHandler,
   'session.next.tool.input.ended': noopHandler as EventHandler,
-  'session.next.tool.called': noopHandler as EventHandler,
+  'session.next.tool.called': handleV2ToolCalled,
   'session.next.tool.progress': noopHandler as EventHandler,
-  'session.next.tool.success': noopHandler as EventHandler,
-  'session.next.tool.failed': noopHandler as EventHandler,
+  'session.next.tool.success': handleV2ToolSuccess,
+  'session.next.tool.failed': handleV2ToolFailed,
   'session.next.step.started': noopHandler as EventHandler,
   'session.next.step.ended': handleStepEnded as EventHandler,
   'session.next.step.failed': noopHandler as EventHandler,

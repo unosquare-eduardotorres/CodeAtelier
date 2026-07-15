@@ -112,8 +112,8 @@ function makePhaseContext(overrides: Partial<PhaseContext> = {}): PhaseContext {
   }
 }
 
-describe('formatArtifacts — discoveries rendering', () => {
-  test('discoveries artifact renders as bullet list', () => {
+describe('formatArtifacts — discoveries rendering (consolidated)', () => {
+  test('discoveries artifact renders as consolidated bullet list', () => {
     const artifacts: BlueprintArtifact[] = [
       {
         type: 'discoveries',
@@ -124,12 +124,12 @@ describe('formatArtifacts — discoveries rendering', () => {
       }
     ]
     const prompt = buildPhaseSystemPrompt('build', makePhaseContext({ previousArtifacts: artifacts }))
-    assert.ok(prompt.includes('### Discoveries (plan)'), 'Should have discoveries heading')
+    assert.ok(prompt.includes('### Discoveries (consolidated)'), 'Should have consolidated discoveries heading')
     assert.ok(prompt.includes('- Auth in session.ts'), 'Should render first entry as bullet')
     assert.ok(prompt.includes('- DB re-exports from index'), 'Should render second entry as bullet')
   })
 
-  test('mixed artifact list renders discoveries as bullets and others normally', () => {
+  test('mixed artifact list renders discoveries consolidated and others normally', () => {
     const artifacts: BlueprintArtifact[] = [
       { type: 'spec', contentMd: '# Spec content' },
       {
@@ -144,7 +144,7 @@ describe('formatArtifacts — discoveries rendering', () => {
     const prompt = buildPhaseSystemPrompt('build', makePhaseContext({ previousArtifacts: artifacts }))
     assert.ok(prompt.includes('### Artifact: spec'), 'Should render spec artifact normally')
     assert.ok(prompt.includes('### Artifact: plan'), 'Should render plan artifact normally')
-    assert.ok(prompt.includes('### Discoveries (specify)'), 'Should render discoveries as bullets')
+    assert.ok(prompt.includes('### Discoveries (consolidated)'), 'Should render discoveries consolidated')
     assert.ok(prompt.includes('- Found entry point in main.ts'), 'Should have bullet entry')
     // Discoveries should NOT have "### Artifact: discoveries"
     assert.ok(!prompt.includes('### Artifact: discoveries'), 'Should NOT use generic artifact heading')

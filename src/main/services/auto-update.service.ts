@@ -1,6 +1,6 @@
 import { autoUpdater } from 'electron-updater'
 import type { BrowserWindow } from 'electron'
-import log from '../logger'
+import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { appPreferenceRepository } from '../db/repositories'
 import type { UpdateConfig, UpdateSourceProvider } from '../../shared/types'

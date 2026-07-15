@@ -1,6 +1,6 @@
 {
   "name": "code-atelier",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Code Atelier — Where Craft Meets Code",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
+    "@iconify-json/lucide": "^1.2.117",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.15.3",
     "better-sqlite3": "^12.11.1",

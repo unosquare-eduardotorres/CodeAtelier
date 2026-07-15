@@ -293,6 +293,33 @@ export class MpaCampaignService extends EventEmitter {
       totalGoals: state.goals.length
     })
 
+    // MEM-MPA-01: Write campaign outcome as a decision fact.
+    // Captures which goals succeeded/failed and overall status.
+    import('./memory-engine.service').then(async ({ memoryEngineService }) => {
+      try {
+        const { workspaceRepository } = await import('../db/repositories')
+        const wsSettings = workspaceRepository.getSettings(state.workspaceId)
+        if ((wsSettings as any).memoryCaptureBlueprints === false) return
+
+        const goalLines = state.goals.map((g) =>
+          `- ${g.goal.title}: ${g.status}${g.runId ? ` (run: ${g.runId})` : ''}`
+        ).join('\n')
+
+        await memoryEngineService.writeFact({
+          workspaceId: state.workspaceId,
+          category: 'decision',
+          title: `MPA campaign ${finalStatus}: ${state.title.substring(0, 80)}`,
+          content: `Campaign finished with status **${finalStatus}** (${completedGoals}/${state.goals.length} goals completed).\n\n### Goals\n${goalLines}`,
+          tags: ['mpa', 'campaign', finalStatus],
+          sourceType: 'blueprint',
+          sourceRef: state.id,
+          workspacePath: state.workspacePath
+        })
+      } catch (memErr) {
+        campaignLog.warn('[campaign] Failed to write campaign memory fact:', memErr)
+      }
+    }).catch(() => { /* non-critical */ })
+
     this.campaigns.delete(state.workspaceId)
   }
 }

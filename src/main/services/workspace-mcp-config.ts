@@ -61,6 +61,8 @@ export interface McpConfigResult {
   mcpServers?: Record<string, McpServerConfig>
   allowedTools?: string[]
   disallowedTools: string[]
+  /** Whether code-analysis tools are available — drives prompt guidance gating */
+  codeAnalysisEnabled: boolean
 }
 
 /**
@@ -396,6 +398,7 @@ function buildLocalProviderMcpConfig(opts: {
     ...(mcpServers ? { mcpServers } : {}),
     allowedTools: localAllowed,
     disallowedTools: [...disallowed, ...smallTierDisallowed, ...(planBuiltinDisallowed ?? [])],
+    codeAnalysisEnabled,
     planBuiltinDisallowed
   }
 }
@@ -415,9 +418,19 @@ function buildClaudeProviderMcpConfig(opts: {
   const { repomapEnabled, semanticSearchEnabled, githubConfigured } = featureFlags
   const localActive = featureFlags.localMcpActive
 
+  // ── Claude Write/Edit exposure ──
+  // Claude Code gates plan-mode writes via --permission-mode plan (read-only at
+  // runtime), so we keep Write/Edit EXPOSED in every mode. This lets the live
+  // set_permission_mode(plan→auto/acceptEdits) switch unlock edits without a
+  // respawn — matching Claude Code's native "approve plan → start editing" flow.
+  // The local-LLM path is unaffected (uses buildLocalProviderMcpConfig instead).
+  const claudeDisallowed = disallowed.filter((t) => t !== 'Write' && t !== 'Edit')
+  const claudeBaseAllowed =
+    baseAllowed === undefined ? undefined : [...baseAllowed, 'Write', 'Edit']
+
   // ── Allowed Tools ──
-  // Build-mode has no allow-list (baseAllowed=undefined). Plan-mode appends
-  // conditional MCP tool names to the base allow-list.
+  // Build-mode has no allow-list (claudeBaseAllowed=undefined). Plan-mode appends
+  // conditional MCP tool names to the base allow-list (now including Write/Edit).
   const conditionalTools = [
     // Code graph MCP tools (workspace flag AND per-chat toggle)
     ...(repomapEnabled && workspaceId && isLocalMcpEnabled('code-graph', localActive)
@@ -469,7 +482,7 @@ function buildClaudeProviderMcpConfig(opts: {
     // Memory tools — always on (all tiers)
     ...MCP_TOOLS.MEMORY._ALL_NAMES
   ]
-  const allowedTools = resolveToolAllowlist(baseAllowed, conditionalTools)
+  const allowedTools = resolveToolAllowlist(claudeBaseAllowed, conditionalTools)
 
   // ── External MCP Servers (stdio) ──
   // Conditionally mounted based on per-message flags from the conversation MCP overrides.
@@ -486,7 +499,8 @@ function buildClaudeProviderMcpConfig(opts: {
   return {
     ...(mcpServers ? { mcpServers } : {}),
     allowedTools,
-    disallowedTools: disallowed
+    disallowedTools: claudeDisallowed,
+    codeAnalysisEnabled: true
   }
 }
 

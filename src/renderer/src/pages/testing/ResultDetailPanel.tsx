@@ -1,8 +1,7 @@
 /**
  * ResultDetailPanel — inline transcript + assertion rendering (no overlay).
  *
- * Extracted from ResultDetailDrawer. Used inline in ScenarioCatalog (accordion)
- * and RunsView (expanded row).
+ * Used in ResultDetailView (drill-in page), ScenarioCatalog, and RunsView.
  */
 
 import { useEffect, useState, useMemo } from 'react'
@@ -386,7 +385,7 @@ function MergedTranscriptRow({ entry }: { entry: MergedTranscriptEntry }): React
               <div>
                 <span className="text-xs text-text-muted font-medium block mb-1">Arguments</span>
                 <pre className="whitespace-pre-wrap text-xs text-text-secondary leading-relaxed">
-                  {JSON.stringify(entry.toolArgs, null, 2).slice(0, 800)}
+                  {JSON.stringify(entry.toolArgs, null, 2).slice(0, 2000)}
                 </pre>
               </div>
             )}
@@ -394,8 +393,8 @@ function MergedTranscriptRow({ entry }: { entry: MergedTranscriptEntry }): React
               <div>
                 <span className="text-xs text-text-muted font-medium block mb-1">Result</span>
                 <pre className="whitespace-pre-wrap text-xs text-text-secondary leading-relaxed">
-                  {entry.toolResult.length > 800
-                    ? entry.toolResult.slice(0, 800) + '…'
+                  {entry.toolResult.length > 2000
+                    ? entry.toolResult.slice(0, 2000) + '…'
                     : entry.toolResult}
                 </pre>
               </div>
@@ -425,8 +424,8 @@ function MergedTranscriptRow({ entry }: { entry: MergedTranscriptEntry }): React
       </div>
       {entry.content && (
         <pre className="whitespace-pre-wrap text-text-body leading-relaxed">
-          {entry.content.length > 1500
-            ? entry.content.slice(0, 1500) + '…'
+          {entry.content.length > 4000
+            ? entry.content.slice(0, 4000) + '…'
             : entry.content}
         </pre>
       )}

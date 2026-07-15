@@ -240,22 +240,7 @@ describe('BaseRoleAdapter — applyLocalLlmTimeout', () => {
   })
 })
 
-describe('BaseRoleAdapter — invalidateToneCache', () => {
-  test('clears cached tone value without error', () => {
-    const adapter = new TestAdapter()
-    // No error should be thrown
-    adapter._invalidateToneCache()
-    assert.ok(true, 'invalidateToneCache completes without error')
-  })
 
-  test('calling invalidateToneCache multiple times is safe', () => {
-    const adapter = new TestAdapter()
-    adapter._invalidateToneCache()
-    adapter._invalidateToneCache()
-    adapter._invalidateToneCache()
-    assert.ok(true, 'multiple calls are safe')
-  })
-})
 
 describe('BaseRoleAdapter — getIncludeGitContext', () => {
   test('default returns true', () => {
@@ -264,41 +249,7 @@ describe('BaseRoleAdapter — getIncludeGitContext', () => {
   })
 })
 
-// ── Lifecycle defaults ──────────────────────────────────────────────
 
-describe('BaseRoleAdapter — lifecycle defaults', () => {
-  test('onSessionStart is a no-op (does not throw)', async () => {
-    const adapter = new TestAdapter()
-    await adapter.onSessionStart({
-      workspacePath: '/tmp',
-      workspaceId: null,
-      conversationId: null
-    })
-    assert.ok(true)
-  })
-
-  test('onSessionStop is a no-op (does not throw)', () => {
-    const adapter = new TestAdapter()
-    adapter.onSessionStop()
-    assert.ok(true)
-  })
-
-  test('onConversationSwitch is a no-op (does not throw)', () => {
-    const adapter = new TestAdapter()
-    adapter.onConversationSwitch('conv-123')
-    assert.ok(true)
-  })
-
-  test('refreshFeatureFlags is a no-op (does not throw)', () => {
-    const adapter = new TestAdapter()
-    adapter.refreshFeatureFlags({
-      workspacePath: '/tmp',
-      workspaceId: null,
-      conversationId: null
-    })
-    assert.ok(true)
-  })
-})
 
 // ── buildControlCallbacks ───────────────────────────────────────────
 
@@ -312,17 +263,6 @@ describe('BaseRoleAdapter — buildControlCallbacks', () => {
     })
     assert.equal(typeof callbacks.onPlan, 'function')
     assert.equal(typeof callbacks.onAskUser, 'function')
-  })
-
-  test('onPlan callback can be called without error', () => {
-    const adapter = new TestAdapter()
-    const callbacks = adapter.buildControlCallbacks({
-      conversationId: 'c-1',
-      emit: () => {},
-      getAccumulatedText: () => ''
-    })
-    callbacks.onPlan({} as any)
-    assert.ok(true)
   })
 
   test('onAskUser callback can be called without error', () => {

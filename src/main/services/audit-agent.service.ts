@@ -184,6 +184,38 @@ export class AuditAgentService extends EventEmitter {
     state.running = false
     state.abortController = null
     this.emit('complete', { overallScore } satisfies AuditCompletePayload)
+
+    // MEM-AUDIT-01: Write high/critical findings as gotcha facts.
+    // Non-blocking — import and write in background.
+    try {
+      const highFindings = completedResults.flatMap((r) =>
+        r.findings.filter((f) => f.severity === 'high' || f.severity === 'critical')
+      )
+      if (highFindings.length > 0) {
+        const { memoryEngineService } = await import('./memory-engine.service')
+        const { workspaceRepository } = await import('../db/repositories')
+        const wsSettings = workspaceRepository.getSettings(params.workspaceId)
+        if ((wsSettings as any).memoryCaptureBlueprints !== false) {
+          for (const finding of highFindings.slice(0, 10)) {
+            await memoryEngineService.writeFact({
+              workspaceId: params.workspaceId,
+              category: 'gotcha',
+              title: `Audit: ${finding.title}`,
+              content: `${finding.description}${finding.recommendation ? `\n\n**Recommendation**: ${finding.recommendation}` : ''}`,
+              tags: ['audit', finding.severity],
+              scopePaths: finding.filePath ? [finding.filePath] : [],
+              sourceType: 'blueprint',
+              sourceRef: `audit:${params.workspaceId}`,
+              workspacePath: params.workspacePath
+            }).catch((err) => {
+              auditLog.warn(`[audit] Failed to write finding fact: ${err}`)
+            })
+          }
+        }
+      }
+    } catch (memErr) {
+      auditLog.warn('[audit] Failed to write audit memory facts:', memErr)
+    }
   }
 
   /** Cancel the running audit for a specific workspace (or all if no workspaceId). */

@@ -6,6 +6,12 @@
  * Communicates with the knowledge engine via direct service imports
  * (runs in the Electron main process context, not as a standalone child).
  *
+ * Architecture:
+ *   Tool schemas are registered synchronously (cheap — zod + handler refs),
+ *   then transport is connected immediately so the MCP handshake completes fast.
+ *   Heavy service imports are deferred to a memoized ensureReady() called on
+ *   first tool invocation, with a background warm-up kicked off after connect.
+ *
  * Environment variables:
  *   WORKSPACE_ID — Workspace UUID for scoped fact queries
  *   DB_PATH      — Electron userData dir (for standalone node execution)
@@ -23,11 +29,33 @@ const server = new McpServer(
   { capabilities: { tools: {} } }
 )
 
-async function registerTools(): Promise<void> {
-  const { memoryRetrievalService } = await import('../services/memory-retrieval.service')
-  const { memoryEngineService } = await import('../services/memory-engine.service')
-  const { memoryFactRepository } = await import('../db/repositories/memory-fact.repository')
+// ── Lazy service initialization ─────────────────────────────────────────
 
+type Services = {
+  memoryRetrievalService: typeof import('../services/memory-retrieval.service').memoryRetrievalService
+  memoryEngineService: typeof import('../services/memory-engine.service').memoryEngineService
+  memoryFactRepository: typeof import('../db/repositories/memory-fact.repository').memoryFactRepository
+}
+
+let readyPromise: Promise<Services> | null = null
+
+/** Memoized lazy init — safe to call from every handler; only loads once. */
+function ensureReady(): Promise<Services> {
+  if (!readyPromise) {
+    readyPromise = (async (): Promise<Services> => {
+      const { memoryRetrievalService } = await import('../services/memory-retrieval.service')
+      const { memoryEngineService } = await import('../services/memory-engine.service')
+      const { memoryFactRepository } = await import('../db/repositories/memory-fact.repository')
+      console.error('[memory-server] Services initialized')
+      return { memoryRetrievalService, memoryEngineService, memoryFactRepository }
+    })()
+  }
+  return readyPromise
+}
+
+// ── Tool schema registration (synchronous — no heavy imports) ───────────
+
+function registerToolSchemas(): void {
   // ── memory_search ─────────────────────────────────────────────────────
   server.tool(
     'memory_search',
@@ -48,6 +76,7 @@ async function registerTools(): Promise<void> {
         .describe('Number of results to return')
     },
     async (args) => {
+      const { memoryRetrievalService } = await ensureReady()
       const results = await memoryRetrievalService.retrieve(
         WORKSPACE_ID,
         args.query,
@@ -94,6 +123,7 @@ async function registerTools(): Promise<void> {
         .describe('If true, fact is cross-workspace (for user preferences/corrections)')
     },
     async (args) => {
+      const { memoryEngineService } = await ensureReady()
       const fact = await memoryEngineService.writeFact({
         workspaceId: args.global ? null : WORKSPACE_ID || null,
         category: args.category,
@@ -130,6 +160,7 @@ async function registerTools(): Promise<void> {
         .describe('Explanation of why you are confirming or contradicting this fact')
     },
     async (args) => {
+      const { memoryEngineService, memoryFactRepository } = await ensureReady()
       const existing = memoryFactRepository.findById(args.factId) as
         | import('../../shared/types').MemoryFact
         | undefined
@@ -140,7 +171,7 @@ async function registerTools(): Promise<void> {
       }
 
       if (args.intent === 'confirm') {
-        const confirmed = memoryFactRepository.confirmFact(args.factId)
+        const confirmed = memoryEngineService.confirmFactWithPromotion(args.factId)
         const tierLabel = ['Observed', 'Confirmed', 'Established', 'Wisdom'][confirmed.tier]
         return {
           content: [
@@ -195,10 +226,14 @@ async function registerTools(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await registerTools()
+  registerToolSchemas()
   const transport = new StdioServerTransport()
   await server.connect(transport)
   console.error(`[memory-server] Started (workspace=${WORKSPACE_ID})`)
+  // Warm up services in the background — non-blocking
+  void ensureReady().catch((err) =>
+    console.error('[memory-server] Background warm-up failed:', err)
+  )
 }
 
 main().catch((err) => {

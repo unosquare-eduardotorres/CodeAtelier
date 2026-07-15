@@ -36,17 +36,6 @@ import { BLUEPRINT_PHASE_ORDER } from '../../../shared/blueprint-types'
 
 // ── Tests ──
 
-describe('Shared Types — module evaluation', () => {
-  test('types_module_is_importable', () => {
-    // The import above exercises the module. This test verifies it didn't throw.
-    assert.ok(true)
-  })
-
-  test('mpa_types_module_is_importable', () => {
-    assert.ok(true)
-  })
-})
-
 describe('Shared Constants — runtime verification', () => {
   test('IPC_CHANNELS_is_non_empty_object', () => {
     assert.equal(typeof IPC_CHANNELS, 'object')

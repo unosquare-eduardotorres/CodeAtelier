@@ -86,6 +86,16 @@ export class LocalPlanStateService {
     const db = getDatabase()
     const { conversationId, workspaceId, originalRequest, discoveredContext, planText } = params
 
+    // Guard: skip save when the conversation doesn't exist in the DB.
+    // Grill/audit sessions use synthetic conversation IDs (e.g. "grill-requirements-*")
+    // that are never inserted into the conversations table — attempting an INSERT here
+    // would violate the FOREIGN KEY constraint on local_plan_state.conversation_id.
+    const convExists = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(conversationId)
+    if (!convExists) {
+      log.debug(`[plan-state] conversation ${conversationId} not persisted — skipping plan-state save`)
+      return
+    }
+
     // Check if state already exists for this conversation
     const existing = db
       .prepare('SELECT id, continuation_count FROM local_plan_state WHERE conversation_id = ?')

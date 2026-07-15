@@ -142,12 +142,12 @@ export function splitContentBlocks(
   const blocks = Array.from(input)
   const text = blocks
     .filter((b) => b.type === 'text')
-    .map((b) => (b as { text: string }).text)
+    .map((b) => (b as unknown as { text: string }).text)
     .join('\n')
   const images = blocks
     .filter((b) => b.type === 'image')
     .map((b) => {
-      const src = (b as { source: { media_type: string; data: string } }).source
+      const src = (b as unknown as { source: { media_type: string; data: string } }).source
       return { base64: src.data, mimeType: src.media_type, fileName: 'pasted-image' }
     })
   return { text, images: images.length > 0 ? images : undefined }
@@ -779,9 +779,10 @@ export class AgentSessionService extends AgentBaseService {
     if (this.executorBackend === 'cli') {
       // CLI interactive mode: send control message to change permission mode mid-session.
       // No restart needed — the control protocol supports set_permission_mode.
+      // acceptEdits: auto-approves working-dir file edits + common fs Bash (deterministic, no account gating).
       const cliPermMap: Record<ConversationMode, string> = {
         plan: 'plan',
-        build: 'auto',
+        build: 'acceptEdits',
         danger: 'bypassPermissions'
       }
       const cliMode = cliPermMap[mode] ?? 'plan'
@@ -833,9 +834,14 @@ export class AgentSessionService extends AgentBaseService {
     // Local LLMs: compaction is not available (no session resume).
     // Signal the UI to suggest a new conversation instead.
     // Read provider from conversation DB to avoid workspace-default cross-contamination.
-    const compactConv = this.currentConversationId
-      ? conversationRepository.findById(this.currentConversationId)
-      : null
+    let compactConv: ReturnType<typeof conversationRepository.findById> | undefined
+    try {
+      compactConv = this.currentConversationId
+        ? conversationRepository.findById(this.currentConversationId)
+        : undefined
+    } catch {
+      // DB unavailable (e.g. better-sqlite3 ABI mismatch in test env) — fall back to session provider
+    }
     const compactProvider = (compactConv?.llmProvider as LLMProvider) ?? this.llmProvider
     if (compactProvider === 'local-llm' && this.executorBackend !== 'opencode') {
       this.log.info('[compaction] Local LLM — compaction unavailable, suggesting new conversation')
@@ -1208,7 +1214,7 @@ export class AgentSessionService extends AgentBaseService {
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
         case 'opencode': {
-          const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput)
+          const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>)
           executorStream = this.executeOpenCodeStream({
             prompt: ocPrompt,
             images: ocImages,
@@ -1267,7 +1273,6 @@ export class AgentSessionService extends AgentBaseService {
           })
           if (action === 'break') break
           if (action === 'continue') continue
-          if (action === 'return') return
         }
       }
 
@@ -1807,7 +1812,7 @@ export class AgentSessionService extends AgentBaseService {
       streamState: StreamLoopState
       contextTier?: ContextWindowTier
     }
-  ): 'next' | 'break' | 'continue' | 'return' {
+  ): 'next' | 'break' | 'continue' {
     return this.streamProcessor.processContentChunk(chunk, ctx)
   }
 

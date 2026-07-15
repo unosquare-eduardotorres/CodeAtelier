@@ -60,7 +60,7 @@ export function* normalizeMessage(
     return
   }
 
-  // ── system.init — capture session ID + log MCP server status ──
+  // ── system.init — capture session ID + log MCP server status + tool counts ──
   if (msg.type === 'system' && msg.subtype === 'init') {
     state.sessionId = msg.session_id as string | undefined
 
@@ -85,6 +85,16 @@ export function* normalizeMessage(
       if (failed.length === 0) {
         executorLog.info(`[init] All ${mcpServers.length} MCP server(s) connected`)
       }
+    }
+
+    // Log tool availability — makes "model had N custom tools this session" greppable.
+    // The tools array is provided by newer CLI versions on system.init.
+    const initTools = msg.tools as Array<{ name: string }> | undefined
+    if (initTools?.length) {
+      const mcpToolCount = initTools.filter((t) => t.name?.startsWith('mcp__')).length
+      executorLog.info(
+        `[init:tools] totalTools=${initTools.length} mcpTools=${mcpToolCount}`
+      )
     }
 
     return

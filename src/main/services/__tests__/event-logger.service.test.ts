@@ -36,11 +36,7 @@ function trySetupEventLoggerDb(): {
 
 const env = trySetupEventLoggerDb()
 
-if (!env) {
-  describe('EventLoggerService (skipped — native module unavailable)', () => {
-    test('placeholder', () => {}, { skipReason: 'no DB' })
-  })
-} else {
+if (env) {
   const { eventLoggerService } = require('../event-logger.service')
   const { eventRepository } = require('../../db/repositories/event.repository')
   const { db, wsId, convId } = env

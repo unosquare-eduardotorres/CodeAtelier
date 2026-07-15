@@ -13,13 +13,12 @@
  * Target: ~1,800 lines of migration up() bodies in db/index.ts
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { test, describe } from '../../../services/__tests__/test-harness'
 
 interface MigrationEnv {
   Database: typeof import('better-sqlite3')
   migrations: import('../../index').Migration[]
+  SCHEMA_SQL: string
 }
 
 function trySetup(): MigrationEnv | null {
@@ -27,8 +26,8 @@ function trySetup(): MigrationEnv | null {
     process.env.NODE_ENV = 'test'
     const Database = require('better-sqlite3')
     new Database(':memory:').close()
-    const { migrations } = require('../../index')
-    return { Database, migrations }
+    const { migrations, SCHEMA_SQL } = require('../../index')
+    return { Database, migrations, SCHEMA_SQL }
   } catch (err) {
     console.log(
       `\n⚠ better-sqlite3 native module not available — migration-replay tests skipped.`
@@ -45,17 +44,16 @@ if (!env) {
     test('skipped', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { Database, migrations } = env
+  const { Database, migrations, SCHEMA_SQL } = env
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
+  /** Creates DB from inline BASE_SCHEMA_SQL (v0 state), same as createTestDb(). */
   function createSchemaDb(): InstanceType<typeof import('better-sqlite3')> {
     const db = new Database(':memory:')
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
-    const schemaPath = join(__dirname, '../../schema.sql')
-    const schema = readFileSync(schemaPath, 'utf-8')
-    db.exec(schema)
+    db.exec(SCHEMA_SQL)
     return db
   }
 
@@ -119,16 +117,16 @@ if (!env) {
   // ── Test Suite ──────────────────────────────────────────────────────────
 
   describe('Migration Replay — full chain from schema.sql', () => {
-    test('all_107_migrations_run_without_error_on_schema_db', () => {
+    test('all_116_migrations_run_without_error_on_schema_db', () => {
       const db = createSchemaDb()
       try {
         // Schema.sql creates all tables with latest columns, so most
         // migrations are no-ops or tolerated duplicate-column errors.
-        const { applied, skipped } = runBatch(db, 1, 107)
-        assert.ok(applied + skipped === 107, `Expected 107, got ${applied + skipped}`)
+        const { applied, skipped } = runBatch(db, 1, 116)
+        assert.ok(applied + skipped === 116, `Expected 116, got ${applied + skipped}`)
 
         const version = db.pragma('user_version', { simple: true }) as number
-        assert.equal(version, 107)
+        assert.equal(version, 116)
       } finally {
         db.close()
       }
@@ -137,17 +135,18 @@ if (!env) {
     test('schema_tables_intact_after_all_migrations', () => {
       const db = createSchemaDb()
       try {
-        runBatch(db, 1, 107)
+        runBatch(db, 1, 116)
 
         const tables = getTableNames(db)
         const required = [
           'workspaces', 'conversations', 'messages', 'specialists', 'skills',
-          'agent_sessions', 'turn_usage', 'events', 'memories', 'ideas',
+          'agent_sessions', 'turn_usage', 'events', 'ideas',
           'checkpoints', 'grill_sessions', 'app_preferences',
           'audit_runs', 'audit_results', 'mpa_runs', 'mpa_phases', 'mpa_artifacts',
           'council_sessions', 'blueprints', 'blueprint_phases', 'blueprint_tasks',
           'plans', 'usage_log', 'llm_presets', 'library_docs', 'library_docs_fts',
-          'mpa_campaigns', 'mpa_campaign_goals'
+          'mpa_campaigns',
+          'memory_facts', 'memory_contradictions', 'memory_doc_state'
         ]
         for (const table of required) {
           assert.ok(tables.includes(table), `Table "${table}" should exist after full replay`)
@@ -214,7 +213,7 @@ if (!env) {
         assert.ok(specCols.includes('agent_id'), 'specialists.agent_id exists')
 
         const skillCols = getColumnNames(db, 'skills')
-        assert.ok(skillCols.includes('specialist_id'), 'skills.specialist_id exists')
+        assert.ok(skillCols.includes('name'), 'skills.name exists')
       } finally {
         db.close()
       }
@@ -334,16 +333,16 @@ if (!env) {
     })
   })
 
-  describe('Migration Replay — Batch 101-107 (blueprints + plans + latest)', () => {
-    test('batch_101_107_exercises_blueprint_and_plan_infrastructure', () => {
+  describe('Migration Replay — Batch 101-116 (blueprints + plans + latest)', () => {
+    test('batch_101_116_exercises_blueprint_and_plan_infrastructure', () => {
       const db = createSchemaDb()
       try {
         runBatch(db, 1, 100)
-        const { applied, skipped } = runBatch(db, 101, 107)
-        assert.ok(applied + skipped === 7, `Expected 7 migrations`)
+        const { applied, skipped } = runBatch(db, 101, 116)
+        assert.ok(applied + skipped === 16, `Expected 16 migrations`)
 
         const version = db.pragma('user_version', { simple: true }) as number
-        assert.equal(version, 107)
+        assert.equal(version, 116)
 
         const tables = getTableNames(db)
         // v101: mpa_campaigns
@@ -407,10 +406,12 @@ if (!env) {
 
       const db = createSchemaDb()
       try {
+        // Run prerequisites (v93 creates mpa_runs needed for FK)
+        runBatch(db, 1, 100)
         db.transaction(() => migration.up(db))()
         const tables = getTableNames(db)
         assert.ok(tables.includes('mpa_campaigns'))
-        assert.ok(tables.includes('mpa_campaign_goals'))
+        assert.ok(tables.includes('mpa_campaigns'))
       } finally {
         db.close()
       }
@@ -422,6 +423,8 @@ if (!env) {
 
       const db = createSchemaDb()
       try {
+        // Run prerequisites (v93 creates mpa_runs needed by v103 FKs)
+        runBatch(db, 1, 102)
         db.transaction(() => migration.up(db))()
         const tables = getTableNames(db)
         assert.ok(tables.includes('blueprints'))
@@ -489,16 +492,24 @@ if (!env) {
 
       const db = createSchemaDb()
       try {
+        // Run prerequisites (v103 creates blueprint_tasks)
+        runBatch(db, 1, 106)
         db.transaction(() => migration.up(db))()
 
         // Should be able to insert a task with 'skipped' status
         db.prepare(`
-          INSERT INTO blueprint_phases (id, blueprint_id, phase_type, status)
+          INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 'test', '/tmp')
+        `).run()
+        db.prepare(`
+          INSERT INTO blueprints (id, workspace_id, title, status) VALUES ('bp-1', 'ws-1', 'BP', 'draft')
+        `).run()
+        db.prepare(`
+          INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
           VALUES ('ph-1', 'bp-1', 'plan', 'pending')
         `).run()
         db.prepare(`
-          INSERT INTO blueprint_tasks (id, phase_id, title, status)
-          VALUES ('t-1', 'ph-1', 'Test Task', 'skipped')
+          INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description, status)
+          VALUES ('t-1', 'bp-1', 'task-1', 'Test Task', 'skipped')
         `).run()
         const row = db.prepare('SELECT status FROM blueprint_tasks WHERE id = ?').get('t-1') as {
           status: string
@@ -514,7 +525,7 @@ if (!env) {
     test('usage_log_row_round_trips_after_full_replay', () => {
       const db = createSchemaDb()
       try {
-        runBatch(db, 1, 107)
+        runBatch(db, 1, 116)
 
         db.prepare(`
           INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
@@ -536,7 +547,7 @@ if (!env) {
     test('blueprints_row_round_trips_after_full_replay', () => {
       const db = createSchemaDb()
       try {
-        runBatch(db, 1, 107)
+        runBatch(db, 1, 116)
 
         db.prepare(`
           INSERT INTO workspaces (id, name, repo_path)
@@ -562,7 +573,7 @@ if (!env) {
     test('council_sessions_row_round_trips', () => {
       const db = createSchemaDb()
       try {
-        runBatch(db, 1, 107)
+        runBatch(db, 1, 116)
 
         db.prepare(`
           INSERT INTO workspaces (id, name, repo_path)
@@ -570,16 +581,16 @@ if (!env) {
         `).run()
 
         db.prepare(`
-          INSERT INTO council_sessions (id, workspace_id, topic, status, phase)
-          VALUES ('cs-1', 'ws-1', 'Test Topic', 'active', 'deliberation')
+          INSERT INTO council_sessions (id, workspace_id, input_type, input_content, status, phase)
+          VALUES ('cs-1', 'ws-1', 'plan', 'Test Topic', 'running', 'framing')
         `).run()
 
         const row = db.prepare('SELECT * FROM council_sessions WHERE id = ?').get('cs-1') as Record<
           string,
           unknown
         >
-        assert.equal(row.topic, 'Test Topic')
-        assert.equal(row.phase, 'deliberation')
+        assert.equal(row.input_content, 'Test Topic')
+        assert.equal(row.phase, 'framing')
       } finally {
         db.close()
       }
@@ -588,11 +599,16 @@ if (!env) {
     test('llm_presets_row_round_trips', () => {
       const db = createSchemaDb()
       try {
-        runBatch(db, 1, 107)
+        runBatch(db, 1, 116)
 
         db.prepare(`
-          INSERT INTO llm_presets (id, name, is_builtin, config_json)
-          VALUES ('p-1', 'Test Preset', 0, '{"model":"test"}')
+          INSERT INTO workspaces (id, name, repo_path)
+          VALUES ('ws-1', 'test', '/tmp/test')
+        `).run()
+
+        db.prepare(`
+          INSERT INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json)
+          VALUES ('p-1', 'ws-1', 'Test Preset', 0, '{"model":"test"}')
         `).run()
 
         const row = db.prepare('SELECT * FROM llm_presets WHERE id = ?').get('p-1') as Record<
@@ -600,7 +616,7 @@ if (!env) {
           unknown
         >
         assert.equal(row.name, 'Test Preset')
-        assert.equal(row.is_builtin, 0)
+        assert.equal(row.is_built_in, 0)
       } finally {
         db.close()
       }
@@ -627,7 +643,7 @@ if (!env) {
     })
 
     test('migration_count_matches_schema_version', () => {
-      assert.equal(migrations.length, 107)
+      assert.equal(migrations.length, 116)
     })
   })
 }

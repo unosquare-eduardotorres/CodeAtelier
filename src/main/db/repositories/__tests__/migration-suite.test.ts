@@ -54,16 +54,27 @@ if (!env) {
     return rows.map((r) => r.name).sort()
   }
 
-  // Helper: create a fresh DB from schema.sql
+  // Helper: create a fresh DB from BASE_SCHEMA_SQL + migration replay (mirrors production)
   function createSchemaDb(): import('better-sqlite3').Database {
-    const { readFileSync } = require('node:fs')
-    const { join } = require('node:path')
     const db = new Database(':memory:')
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
-    const schemaPath = join(__dirname, '../../schema.sql')
-    const schema = readFileSync(schemaPath, 'utf-8')
-    db.exec(schema)
+    const { SCHEMA_SQL } = require('../../index')
+    db.exec(SCHEMA_SQL)
+    // Run all migrations for full fresh-install shape
+    for (const migration of migrations) {
+      try {
+        db.transaction(() => {
+          migration.up(db)
+          db.pragma(`user_version = ${migration.version}`)
+        })()
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        if (msg.includes('duplicate column') || msg.includes('already exists')) {
+          db.pragma(`user_version = ${migration.version}`)
+        }
+      }
+    }
     return db
   }
 
@@ -178,7 +189,7 @@ if (!env) {
           'turn_usage',
           'bugs',
           'events',
-          'memories',
+          'memory_facts',
           'ideas',
           'checkpoints',
           'app_preferences',

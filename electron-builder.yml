@@ -31,13 +31,12 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
-  hardenedRuntime: true
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
-  extendInfo:
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  notarize: true
+  # NOTE: hardened runtime + notarization disabled due to incompatibility with
+  # better-sqlite3 .node binaries (errSecInternalComponent on dist codesign).
+  # App is still signed; hardened runtime is optional for DMG distribution.
+  # See: https://github.com/electron/electron/issues/32910
+  hardenedRuntime: false
+  notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
   background: build/background.png

@@ -7,11 +7,20 @@ import type {
   MemoryFactCategory,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
-  MemorySourceType
+  MemorySourceType,
+  IngestionProgress,
+  BootstrapProgress,
+  BootstrapMode
 } from '../../../shared/types'
 
 type FeedSource = MemorySourceType | 'claude-md' | 'codebase' | 'document'
 type FeedStatus = 'idle' | 'running' | 'completed' | 'error'
+
+interface BackfillProgress {
+  running: boolean
+  processed: number
+  total: number
+}
 
 interface MemoryState {
   // Fact state
@@ -20,6 +29,8 @@ interface MemoryState {
   searchQuery: string
   embeddingStatus: MemoryEmbeddingStatus | null
   captureSettings: MemoryCaptureSettings | null
+  backfillProgress: BackfillProgress | null
+  backfillError: string | null
 
   // Feed state
   feedStatus: FeedStatus
@@ -51,7 +62,11 @@ interface MemoryState {
 
   // Embedding actions
   loadEmbeddingStatus: (workspaceId: string) => Promise<void>
-  triggerBackfill: () => Promise<void>
+  triggerBackfill: (workspaceId: string) => Promise<void>
+  clearBackfillError: () => void
+
+  // Dedup
+  scanForDuplicates: (workspaceId: string) => Promise<{ pairsFound: number }>
 
   // Search
   setSearchQuery: (query: string) => void
@@ -61,6 +76,22 @@ interface MemoryState {
   startFeed: (source: FeedSource) => void
   cancelFeed: () => void
   dismissFeed: () => void
+
+  // Ingestion state
+  ingestion: IngestionProgress | null
+  ingestionCleanup: (() => void) | null
+  startIngestion: (workspaceId: string, workspacePath: string, files: string[]) => Promise<void>
+  cancelIngestion: () => void
+  dismissIngestion: () => void
+  onIngestionProgress: (progress: IngestionProgress) => void
+
+  // Bootstrap state
+  bootstrap: BootstrapProgress | null
+  bootstrapCleanup: (() => void) | null
+  startBootstrap: (workspaceId: string, workspacePath: string, mode?: BootstrapMode) => Promise<void>
+  cancelBootstrap: () => void
+  dismissBootstrap: () => void
+  onBootstrapProgress: (progress: BootstrapProgress) => void
 }
 
 export const useMemoryStore = create<MemoryState>((set) => ({
@@ -69,10 +100,16 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   searchQuery: '',
   embeddingStatus: null,
   captureSettings: null,
+  backfillProgress: null,
+  backfillError: null,
   feedStatus: 'idle',
   feedSource: null,
   feedMessage: null,
   feedError: null,
+  ingestion: null,
+  ingestionCleanup: null,
+  bootstrap: null,
+  bootstrapCleanup: null,
 
   // ── Fact actions ──
 
@@ -208,11 +245,56 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     }
   },
 
-  triggerBackfill: async () => {
+  triggerBackfill: async (workspaceId) => {
+    let unsubscribe: (() => void) | null = null
     try {
-      await window.api.memoryEmbeddingBackfill()
+      set({ backfillProgress: { running: true, processed: 0, total: 0 }, backfillError: null })
+
+      // Subscribe to progress events
+      unsubscribe = window.api.onMemoryEmbeddingProgress((data) => {
+        if (data.done) {
+          if (data.error) {
+            // Provider init or backfill failed — surface the real message
+            set({ backfillProgress: null, backfillError: data.error })
+          } else {
+            // Success — refresh status, then clear progress after 2s
+            useMemoryStore.getState().loadEmbeddingStatus(workspaceId)
+            setTimeout(() => set({ backfillProgress: null }), 2000)
+          }
+          unsubscribe?.()
+          unsubscribe = null
+        } else {
+          set({ backfillProgress: { running: true, processed: data.processed, total: data.total } })
+        }
+      })
+
+      const result = await window.api.memoryEmbeddingBackfill()
+      // Belt-and-braces: if the invoke returned an error but no progress event fired
+      if (result.error && !useMemoryStore.getState().backfillError) {
+        set({ backfillProgress: null, backfillError: result.error })
+      }
     } catch (error) {
       rendererLog.error('Failed to trigger backfill:', error)
+      set({ backfillProgress: null, backfillError: 'Embedding backfill failed unexpectedly' })
+    } finally {
+      // Ensure listener is always cleaned up
+      unsubscribe?.()
+    }
+  },
+
+  clearBackfillError: () => set({ backfillError: null }),
+
+  // ── Dedup ──
+
+  scanForDuplicates: async (workspaceId) => {
+    try {
+      const result = await window.api.memoryDedupScan({ workspaceId })
+      // Refresh contradictions to show newly found duplicates
+      await useMemoryStore.getState().loadContradictions()
+      return result
+    } catch (error) {
+      rendererLog.error('Failed to scan for duplicates:', error)
+      return { pairsFound: 0 }
     }
   },
 
@@ -243,5 +325,92 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   dismissFeed: () => {
     set({ feedStatus: 'idle', feedSource: null, feedMessage: null, feedError: null })
+  },
+
+  // ── Document Ingestion ──
+
+  startIngestion: async (workspaceId, workspacePath, files) => {
+    // Subscribe to progress events
+    const cleanup = window.api.onMemoryIngestProgress((progress: IngestionProgress) => {
+      useMemoryStore.getState().onIngestionProgress(progress)
+    })
+    set({ ingestionCleanup: cleanup })
+
+    try {
+      await window.api.memoryIngestDocuments({ files, workspaceId, workspacePath })
+    } catch (error) {
+      rendererLog.error('Ingestion failed:', error)
+    }
+
+    // Refresh facts after ingestion
+    await useMemoryStore.getState().loadFacts(workspaceId)
+  },
+
+  onIngestionProgress: (progress) => {
+    set({ ingestion: progress })
+    if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
+      // Clean up listener after job completes
+      const { ingestionCleanup } = useMemoryStore.getState()
+      ingestionCleanup?.()
+      set({ ingestionCleanup: null })
+    }
+  },
+
+  cancelIngestion: () => {
+    const { ingestion, ingestionCleanup } = useMemoryStore.getState()
+    if (ingestion?.jobId) {
+      window.api.memoryIngestCancel({ jobId: ingestion.jobId }).catch(() => {})
+    }
+    ingestionCleanup?.()
+    set({ ingestion: null, ingestionCleanup: null })
+  },
+
+  dismissIngestion: () => {
+    const { ingestionCleanup } = useMemoryStore.getState()
+    ingestionCleanup?.()
+    set({ ingestion: null, ingestionCleanup: null })
+  },
+
+  // ── Project Knowledge Bootstrap ──
+
+  startBootstrap: async (workspaceId, workspacePath, mode = 'full') => {
+    // Subscribe to progress events
+    const cleanup = window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
+      useMemoryStore.getState().onBootstrapProgress(progress)
+    })
+    set({ bootstrapCleanup: cleanup })
+
+    try {
+      await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode })
+    } catch (error) {
+      rendererLog.error('Bootstrap failed:', error)
+    }
+
+    // Refresh facts after bootstrap
+    await useMemoryStore.getState().loadFacts(workspaceId)
+  },
+
+  onBootstrapProgress: (progress) => {
+    set({ bootstrap: progress })
+    if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
+      const { bootstrapCleanup } = useMemoryStore.getState()
+      bootstrapCleanup?.()
+      set({ bootstrapCleanup: null })
+    }
+  },
+
+  cancelBootstrap: () => {
+    const { bootstrap, bootstrapCleanup } = useMemoryStore.getState()
+    if (bootstrap?.jobId) {
+      window.api.memoryBootstrapCancel({ jobId: bootstrap.jobId }).catch(() => {})
+    }
+    bootstrapCleanup?.()
+    set({ bootstrap: null, bootstrapCleanup: null })
+  },
+
+  dismissBootstrap: () => {
+    const { bootstrapCleanup } = useMemoryStore.getState()
+    bootstrapCleanup?.()
+    set({ bootstrap: null, bootstrapCleanup: null })
   }
 }))

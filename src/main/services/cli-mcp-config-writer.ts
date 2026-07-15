@@ -62,6 +62,13 @@ export interface CliMcpConfigWriterOptions {
    * control-actions MCP server communicates via IPC socket instead.
    */
   controlCallbacks?: unknown
+  /**
+   * Server IDs to omit from the generated config. Blueprint sessions use this
+   * to skip spawning servers whose tools aren't in allowedTools (e.g.
+   * 'checkpoint-context', 'control-actions', 'github-context') — reducing
+   * cold-start contention that causes the MCP connection race.
+   */
+  skipServers?: string[]
 }
 
 // ── Writer ──
@@ -265,6 +272,17 @@ export class CliMcpConfigWriter {
           ...(Object.keys(env).length > 0 ? { env } : {})
         }
         configLog.info(`[cli-mcp-config] Mounted external MCP: ${integration.id}`)
+      }
+    }
+
+    // Remove explicitly skipped servers (blueprint sessions skip servers
+    // whose tools aren't in allowedTools — fewer cold-start processes).
+    if (opts.skipServers?.length) {
+      for (const serverId of opts.skipServers) {
+        if (servers[serverId]) {
+          delete servers[serverId]
+          configLog.info(`[cli-mcp-config] Skipped (not in allowedTools): ${serverId}`)
+        }
       }
     }
 

@@ -19,6 +19,7 @@ export class BlueprintSpecifyAdapter extends BlueprintBaseAdapter {
   private readonly description: string
   private readonly grillDecisions?: GrillDecisionForBlueprint[]
   private readonly phaseContext: PhaseContext
+  private readonly referenceDocsBlock?: string
 
   constructor(params: {
     workspaceId: string
@@ -26,11 +27,13 @@ export class BlueprintSpecifyAdapter extends BlueprintBaseAdapter {
     description: string
     grillDecisions?: GrillDecisionForBlueprint[]
     phaseContext: PhaseContext
+    referenceDocsBlock?: string
   }) {
     super({ workspaceId: params.workspaceId, blueprintId: params.blueprintId })
     this.description = params.description
     this.grillDecisions = params.grillDecisions
     this.phaseContext = params.phaseContext
+    this.referenceDocsBlock = params.referenceDocsBlock
     this.agentId = `blueprint-specify-${params.blueprintId}`
   }
 
@@ -57,6 +60,15 @@ export class BlueprintSpecifyAdapter extends BlueprintBaseAdapter {
         ...this.grillDecisions.map(
           (d) => `- **${d.header}**: ${d.selectedOption}\n  _Reason_: ${d.reason}`
         )
+      )
+    }
+
+    if (this.referenceDocsBlock) {
+      parts.push(
+        '',
+        '## Reference Documents (attached by user)',
+        '',
+        this.referenceDocsBlock
       )
     }
 

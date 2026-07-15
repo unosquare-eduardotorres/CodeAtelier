@@ -15,10 +15,13 @@ import type { CouncilReview, CouncilPeerReview, CouncilFramedInput } from '../..
 import type {
   AdapterPromptContext,
   AdapterPromptResult,
-  AdapterSessionLifecycleCtx
+  AdapterSessionLifecycleCtx,
+  AdapterMcpContext,
+  AdapterMcpResult
 } from '../agent-session.types'
 import { resolvePromptVerbosity } from '../../../shared/constants'
 import { BaseRoleAdapter, type McpStrategy } from './base.adapter'
+import { buildNoToolsConfig } from './evaluation-mcp-config'
 
 export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
   readonly role = 'council-chairman' as const
@@ -76,7 +79,16 @@ export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
   }
 
   protected override getMcpStrategy(): McpStrategy {
-    return 'none'
+    return 'custom'
+  }
+
+  /** Chairman gets memory_search only — read-only synthesis enrichment from workspace knowledge. */
+  protected override buildCustomMcpConfig(_ctx: AdapterMcpContext): AdapterMcpResult {
+    const base = buildNoToolsConfig()
+    return {
+      allowedTools: ['mcp__memory__memory_search'],
+      disallowedTools: base.disallowedTools
+    }
   }
 
   override onSessionStop(): void {

@@ -28,7 +28,7 @@ import { COUNCIL_ADVISOR_ROLES } from '../../../shared/constants'
 
 // ── Per-advisor stream state ────────────────────────────────────────────
 
-interface AdvisorStreamState {
+export interface AdvisorStreamState {
   segments: StreamSegment[]
   currentContent: string
   currentToolActivities: ToolActivity[]

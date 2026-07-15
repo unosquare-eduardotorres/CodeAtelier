@@ -1,4 +1,3 @@
-// @ts-nocheck — TODO: fix after blueprint refactoring
 /**
  * CreateProjectDialog — single-screen modal for creating a blank project.
  *
@@ -7,8 +6,8 @@
  * opens the workspace (which auto-navigates to Blueprints tab).
  */
 
-import { useState, useCallback, useMemo } from 'react'
-import { X, FolderOpen, Sparkles, Loader2 } from 'lucide-react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
+import { X, FolderOpen, Sparkles, Loader2, AlertTriangle, Lightbulb } from 'lucide-react'
 import { AttachmentDropzone } from '@renderer/components/chat'
 import { useBlueprintStore } from '@renderer/store/blueprint.store'
 
@@ -74,19 +73,16 @@ function useCreateProject(onCreated: (id: string) => void) {
 
       await window.api.initRepo({ workspaceId: workspace.id })
 
+      // Build reference documents with workspace-file type so the loader
+      // resolves paths relative to the workspace (with traversal guard)
       const referenceDocuments = attachments.map((a) => {
         const name = a.split(/[\\/]/).pop() || a
-        return { type: 'file' as const, path: `.context/${name}`, name }
+        return { type: 'workspace-file' as const, path: `.context/${name}`, name }
       })
 
-      if (referenceDocuments.length > 0) {
-        await window.api.workspaceAddReferenceDocs({
-          workspaceId: workspace.id,
-          documents: referenceDocuments
-        })
-      }
-
+      // Set pending onboard with workspaceId so the handoff can't fire on the wrong workspace
       useBlueprintStore.getState().setPendingOnboard({
+        workspaceId: workspace.id,
         title: projectName.trim(),
         description: description.trim(),
         referenceDocuments
@@ -125,14 +121,26 @@ export default function CreateProjectDialog({
     isValid, resolvedPath, handleCreate, handleSelectFolder
   } = useCreateProject(onCreated)
 
+  // Escape key closes (disabled while creating)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !isCreating) onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isCreating, onClose])
+
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isCreating) onClose()
       }}
     >
-      <div className="w-full max-w-lg bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden" data-testid="create-project-dialog">
+      <div
+        className="w-full max-w-lg bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-300 motion-reduce:animate-none"
+        data-testid="create-project-dialog"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
           <div className="flex items-center gap-2.5">
@@ -158,8 +166,9 @@ export default function CreateProjectDialog({
         <div className="px-6 py-5 space-y-4">
           {/* Error banner */}
           {error && (
-            <div className="px-3 py-2 rounded-lg bg-danger-muted border border-danger/30">
-              <p className="text-xs text-danger">❌ {error}</p>
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-danger-muted border border-danger/30">
+              <AlertTriangle size={14} className="text-danger flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-danger">{error}</p>
             </div>
           )}
 
@@ -242,6 +251,16 @@ export default function CreateProjectDialog({
             </AttachmentDropzone>
             <p className="text-xs text-text-muted">
               Drop reference docs, mockups, or specs to include as context
+            </p>
+          </div>
+
+          {/* Recommendation tip */}
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-primary-muted border border-primary/20">
+            <Lightbulb size={14} className="text-primary-text flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-text-secondary leading-relaxed">
+              <span className="font-medium text-text-primary">Tip:</span> for best results, draft
+              a short plan in Claude first — goals, key features, tech choices — save it as PLAN.md
+              and attach it here. It will seed the Blueprint pipeline.
             </p>
           </div>
         </div>

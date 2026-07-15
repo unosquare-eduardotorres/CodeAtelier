@@ -35,9 +35,22 @@ class MermaidService {
 
     this.mermaid.initialize({
       startOnLoad: false,
-      theme: 'dark',
+      theme: 'base',
       securityLevel: 'strict',
-      fontFamily: 'ui-monospace, monospace'
+      fontFamily: "'Inter', 'JetBrains Mono', sans-serif",
+      themeVariables: {
+        primaryColor: '#0d1117',
+        primaryTextColor: '#c0caf5',
+        primaryBorderColor: '#73daca',
+        lineColor: '#73daca',
+        secondaryColor: '#0d1117',
+        tertiaryColor: '#0d1117',
+        background: 'transparent',
+        mainBkg: '#0d1117',
+        nodeBorder: '#73daca',
+        fontFamily: "'Inter', sans-serif",
+        fontSize: '13px',
+      }
     })
     this.initialized = true
   }

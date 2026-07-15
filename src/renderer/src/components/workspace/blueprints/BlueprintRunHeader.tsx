@@ -20,7 +20,6 @@ import {
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
 import { formatPhaseDuration } from '@renderer/store/blueprint.store'
 import type { BlueprintPhaseType } from '../../../../../shared/blueprint-types'
-import type { BlueprintTaskStatus } from '../../../../../shared/blueprint-types'
 
 // ── Phase order for step counter ──
 
@@ -78,7 +77,7 @@ export function BlueprintRunHeader({
   currentPhase,
   blueprintTitle,
   pipelineStartedAt,
-  phaseDurations,
+  phaseDurations: _phaseDurations,
   phaseStartedAt,
   pendingApproval,
   tasksDone,

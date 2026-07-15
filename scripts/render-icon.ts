@@ -238,6 +238,10 @@ async function main(): Promise<void> {
   fs.copyFileSync(t1_1024, path.join(ROOT, 'resources', 'icon.png'))
   console.log('  ✓ resources/icon.png (T1 @ 1024px with squircle)')
 
+  // 5b. Copy T1 masked 1024px → build/icon.png (Linux electron-builder icon)
+  fs.copyFileSync(t1_1024, path.join(ROOT, 'build', 'icon.png'))
+  console.log('  ✓ build/icon.png (T1 @ 1024px with squircle)')
+
   // 6. Resize T1 masked → docs/CodeAtelier/icon_512x512.png
   const docsIconPath = path.join(ROOT, 'docs', 'CodeAtelier', 'icon_512x512.png')
   fs.mkdirSync(path.dirname(docsIconPath), { recursive: true })

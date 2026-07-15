@@ -45,6 +45,21 @@ export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-
 
 const bpLog = log.scope('blueprint')
 
+// ── Phase-aware artifact relevance map ──
+// Controls which artifact *types* each phase receives from prior phases.
+// Eliminates the 146–214KB prompt bloat from blindly accumulating all artifacts.
+
+/** @internal Exported for testing */
+export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> = {
+  specify: new Set(),                                              // first phase — no prior artifacts
+  clarify: new Set(['spec']),                                      // needs spec to ask about
+  plan:    new Set(['spec']),                                      // clarify merges resolutions into spec in-place (finalizeClarifyPhase)
+  tasks:   new Set(['spec', 'plan']),                              // needs spec + plan to decompose
+  review:  new Set(['spec', 'plan', 'tasks', 'discoveries']),      // cross-artifact analysis needs all three
+  build:   new Set(['plan', 'tasks', 'discoveries']),              // + current wave's tasks (injected separately)
+  verify:  new Set(['spec', 'plan', 'build', 'discoveries']),      // NOT full tasks JSON — uses build report
+}
+
 // ── Helpers ──
 
 /** Validate and extract grill decisions from an unknown settingsJson value. */
@@ -76,7 +91,7 @@ interface BlueprintPipelineState {
   abortController: AbortController | null
   // M2: Additional fields for snapshot sync
   phaseStartedAt: number | null
-  pendingApproval: { planSummary: string } | null
+  pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
   lastError: string | null
   waveState: {
     wave: number
@@ -191,7 +206,7 @@ export class BlueprintService extends EventEmitter {
   }
 
   /** Set pending approval state (from review service). */
-  setPendingApproval(workspaceId: string, approval: { planSummary: string } | null): void {
+  setPendingApproval(workspaceId: string, approval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null): void {
     const state = this.getOrCreatePipeline(workspaceId)
     state.pendingApproval = approval
     this.publishSnapshot(workspaceId)
@@ -724,7 +739,19 @@ export class BlueprintService extends EventEmitter {
     const isRetryable = blueprint.status === 'failed' || blueprint.status === 'cancelled'
     const isOrphaned = MID_PIPELINE_STATUSES.has(blueprint.status) && !this.isRunning(blueprint.workspaceId)
 
-    if (!isRetryable && !isOrphaned) {
+    // BP-COMPLETE-RETRY: Allow retrying 'complete' blueprints when verification
+    // found gaps — user wants another build pass.
+    const isCompletedWithGaps = blueprint.status === 'complete' && (() => {
+      const verifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
+      if (!verifyPhaseRec) return false
+      const verifyArt = verifyPhaseRec.artifactsJson?.findLast(
+        (a) => a.type === 'verify' || a.type === 'verification'
+      )
+      const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
+      return overall === 'gaps_found'
+    })()
+
+    if (!isRetryable && !isOrphaned && !isCompletedWithGaps) {
       if (MID_PIPELINE_STATUSES.has(blueprint.status) && this.isRunning(blueprint.workspaceId)) {
         throw new Error(
           `Cannot retry blueprint ${blueprintId} — pipeline is currently active for workspace ${blueprint.workspaceId}`
@@ -740,13 +767,45 @@ export class BlueprintService extends EventEmitter {
     // Phase resolution: failed > currentPhase (if pending or active) > first pending
     // BP-ORPHAN-01: Include 'active' status — crash orphan rows with active status
     // are reset to pending and used for retry.
-    const targetPhase =
+    let targetPhase =
       phases.find((p) => p.status === 'failed') ??
       phases.find((p) => p.phase === blueprint.currentPhase && (p.status === 'pending' || p.status === 'active')) ??
       phases.find((p) => p.status === 'pending')
 
+    // BP-COMPLETE-RETRY: For completed blueprints with gaps, the verify phase
+    // is 'complete' (not failed/pending) — resolve it explicitly.
+    if (!targetPhase && isCompletedWithGaps) {
+      targetPhase = phases.find((p) => p.phase === 'verify')
+    }
+
     if (!targetPhase) {
       throw new Error(`No retryable phase found for blueprint ${blueprintId}`)
+    }
+
+    // BP-GAPS-RETRY: When retrying a failed/complete verify phase with gaps_found,
+    // target the build phase instead — re-verifying unfixed code is useless.
+    if (targetPhase.phase === 'verify') {
+      const verifyArtifact = targetPhase.artifactsJson?.findLast(
+        (a) => a.type === 'verify' || a.type === 'verification'
+      )
+      const overallStatus = (verifyArtifact?.contentJson as Record<string, unknown>)?.overallStatus
+      if (overallStatus === 'gaps_found') {
+        // Check if remediation tasks exist (appended by verify service or fallback)
+        const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+        const hasRemediationTasks = tasks.some((t) => t.taskId.startsWith('R') && t.status !== 'complete')
+        if (hasRemediationTasks) {
+          bpLog.info(
+            `[retryPhase] gaps_found with pending remediation tasks — targeting build instead of verify`
+          )
+          // Reset verify to pending (it will re-run after build completes)
+          blueprintPhaseRepository.updateStatus(targetPhase.id, 'pending')
+          // Find build phase and target it
+          const buildPhaseRecord = phases.find((p) => p.phase === 'build')
+          if (buildPhaseRecord) {
+            targetPhase = buildPhaseRecord
+          }
+        }
+      }
     }
 
     // Reset the target phase to pending (clears timestamps)
@@ -800,7 +859,10 @@ export class BlueprintService extends EventEmitter {
 
   /**
    * Assemble the full context needed for a phase's system prompt.
-   * Collects blueprint metadata, constitution, and all artifacts from prior phases.
+   * Collects blueprint metadata, constitution, and phase-relevant artifacts from prior phases.
+   *
+   * Uses PHASE_ARTIFACT_RELEVANCE to inject only the artifact types each phase needs,
+   * instead of blindly accumulating all prior artifacts (which caused 146–214KB prompts).
    */
   assemblePhaseContext(blueprintId: string, phase: BlueprintPhaseType): PhaseContext {
     const blueprint = blueprintRepository.findById(blueprintId)
@@ -810,13 +872,18 @@ export class BlueprintService extends EventEmitter {
 
     const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
 
-    // Collect artifacts from all completed prior phases
+    // Collect only phase-relevant artifacts from prior phases
     const currentIdx = BLUEPRINT_PHASE_ORDER.indexOf(phase)
+    const relevantTypes = PHASE_ARTIFACT_RELEVANCE[phase]
     const previousArtifacts: BlueprintArtifact[] = []
     for (const p of phases) {
       const pIdx = BLUEPRINT_PHASE_ORDER.indexOf(p.phase)
       if (pIdx < currentIdx && p.artifactsJson.length > 0) {
-        previousArtifacts.push(...p.artifactsJson)
+        for (const artifact of p.artifactsJson) {
+          if (relevantTypes.has(artifact.type)) {
+            previousArtifacts.push(artifact)
+          }
+        }
       }
     }
 

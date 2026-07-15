@@ -1,4 +1,6 @@
 import log, { dbLogger } from './logger'
+import { startVitals, stopVitals, setVitalsProviders, vitalsLog } from './main-vitals'
+import { openCodeExecutor } from './services/opencode-executor'
 import {
   app,
   shell,
@@ -12,6 +14,7 @@ import {
   crashReporter
 } from 'electron'
 import { join } from 'node:path'
+import { execSync } from 'node:child_process'
 import os from 'node:os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -195,6 +198,10 @@ function createSplashWindow(): void {
   })
 }
 
+// Hoisted: used by the MACOS-DOCK close interceptor inside createWindow()
+// and the before-quit handler below.
+let isQuitting = false
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -219,6 +226,19 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // MACOS-DOCK: On macOS, intercept the close button to hide-to-dock instead of
+  // destroying the window. This prevents `window-all-closed` from firing and
+  // quitting the app while background work (e2e tests, blueprints, etc.) is running.
+  // The actual quit is triggered via Cmd+Q / menu → Quit / app.quit().
+  if (process.platform === 'darwin') {
+    mainWindow.on('close', (event) => {
+      if (!isQuitting) {
+        event.preventDefault()
+        mainWindow?.hide()
+      }
+    })
+  }
 
   const splashStartTime = Date.now()
   const MINIMUM_SPLASH_DURATION = 3000 // 3s minimum for brand feel
@@ -289,6 +309,31 @@ function createWindow(): void {
     } catch {
       // Invalid URL, ignore
     }
+  })
+
+  // ── Renderer crash/hang observability ──
+  // Without these handlers, a renderer crash or freeze is completely silent.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log.error(
+      `[Renderer] Process gone — reason: ${details.reason}, exitCode: ${details.exitCode}`
+    )
+    // Write renderer crash info to vitals for crash-diagnosis
+    vitalsLog.error(
+      `[RENDERER-GONE] reason=${details.reason} exitCode=${details.exitCode} detail="" rss_mb=${Math.round(process.memoryUsage().rss / 1024 / 1024)}`
+    )
+    // If the renderer died (not a clean exit), attempt to reload the window
+    if (details.reason !== 'clean-exit' && mainWindow && !mainWindow.isDestroyed()) {
+      log.info('[Renderer] Attempting to reload window after crash')
+      mainWindow.webContents.reload()
+    }
+  })
+
+  mainWindow.webContents.on('unresponsive', () => {
+    log.warn('[Renderer] Window became unresponsive (possible V8 wedge or long JS task)')
+  })
+
+  mainWindow.webContents.on('responsive', () => {
+    log.info('[Renderer] Window became responsive again')
   })
 
   // ── Initialize database with error handling (#14) ──
@@ -427,11 +472,20 @@ app.whenReady().then(() => {
     log.debug('Memory decay sweep error (non-fatal):', e)
   }
 
+  // ── Embedding: auto-load model at startup (delayed, non-fatal) ──
+  setTimeout(() => {
+    import('./services/omlx-embedding.service').then(({ omlxEmbeddingProvider }) =>
+      omlxEmbeddingProvider.ensureEmbeddingReady().catch((e) =>
+        log.debug('Startup embedding auto-load (non-fatal):', e)
+      )
+    )
+  }, 5000)
+
   // ── Code Atelier: Force dark mode always ──
   nativeTheme.themeSource = 'dark'
 
-  // Set dock icon on macOS (BrowserWindow icon option is ignored on macOS)
-  if (process.platform === 'darwin' && app.dock) {
+  // Set dock icon on macOS (dev only — packaged app uses bundle icon.icns)
+  if (process.platform === 'darwin' && app.dock && !app.isPackaged) {
     app.dock.setIcon(icon)
   }
 
@@ -452,6 +506,24 @@ app.whenReady().then(() => {
     submitURL: '',
     uploadToServer: false
   })
+
+  // ── Vitals heartbeat: diagnoses abrupt deaths (Force Quit / kill / volume loss)
+  // that leave no crash report, minidump, or graceful-shutdown trace. Writes an
+  // fsync'd "last alive" line + memory/session/retry gauges to logs/vitals.log. ──
+  setVitalsProviders({
+    activeOpenCodeSessions: () => openCodeExecutor.getVitals().activeSessions,
+    pendingRetryTimers: () => openCodeExecutor.getVitals().retriesInFlight,
+    childProcessCount: () => {
+      try {
+        // Quick ls of child processes (child.pid files from spawn)
+        const output = execSync('pgrep -c -P $$ || true', { encoding: 'utf-8', timeout: 2000 }).trim()
+        return parseInt(output, 10) || 0
+      } catch {
+        return 0
+      }
+    }
+  })
+  startVitals()
 
   // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
   cleanupStalePromptFiles()
@@ -526,90 +598,145 @@ app.whenReady().then(() => {
   createWindow()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    } else if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show() // re-show the hide-to-dock window
+    }
   })
 })
 
 app.on('window-all-closed', () => {
-  // Quit on all platforms — including macOS.
-  // Code Atelier runs background CLI processes that should be cleaned up
-  // via the before-quit handler rather than lingering in the dock.
-  app.quit()
+  // On macOS, the hide-to-dock interceptor (MACOS-DOCK) prevents the last window
+  // from being destroyed, so this event should only fire on non-macOS platforms.
+  // If it fires on macOS, something bypassed the interceptor — quit cleanly.
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
 })
 
-let isQuitting = false
 app.on('before-quit', async (event) => {
   if (isQuitting) return
   event.preventDefault()
   isQuitting = true
 
-  // Cleanup skill service (cancel in-progress Opus calls, discard queue)
+  // E2E-GUARD: If an E2E test run is in progress, cancel it before shutdown.
+  // No blocking wait needed — recoverOrphanedRuns() + the runner's finally block
+  // already finalize an interrupted run on next launch.
   try {
-    await skillService.shutdown()
+    const { e2eRunnerService } = await import('./services/e2e-testing/e2e-runner.service')
+    if (e2eRunnerService.isRunning()) {
+      log.warn('[before-quit] E2E test run in progress — cancelling before shutdown')
+      e2eRunnerService.cancel()
+    }
   } catch (e) {
-    log.debug('Skill service shutdown error (expected during quit):', e)
+    log.debug('[before-quit] E2E runner check failed (non-fatal):', e)
   }
 
-  // Cleanup ALL running workspace sessions (multi-session concurrent support)
-  try {
-    await chatAgentService.stopAll()
-  } catch (e) {
-    log.debug('Chat session shutdown error (expected during quit):', e)
+  // QUIT-FAILSAFE: Unconditional 5s failsafe — even if the cleanup below throws
+  // or a wedged renderer never acks window-close, the process WILL terminate.
+  const failsafe = setTimeout(() => {
+    log.warn('[before-quit] Failsafe triggered — force-exiting after 5s')
+    app.exit(1)
+  }, 5000)
+  failsafe.unref()
+
+  // Run all cleanup under a 4s timeout (must finish before the 5s failsafe).
+  // Each shutdown is individually try/caught so one failure doesn't block others.
+  const cleanup = async (): Promise<void> => {
+    // Stop the vitals heartbeat first so a clean quit is distinguishable from a
+    // hard kill in vitals.log (a graceful exit ends with an EXIT line, not a
+    // silently truncated heartbeat).
+    stopVitals()
+
+    // Cleanup skill service (cancel in-progress Opus calls, discard queue)
+    try {
+      await skillService.shutdown()
+    } catch (e) {
+      log.debug('Skill service shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup ALL running workspace sessions (multi-session concurrent support)
+    try {
+      await chatAgentService.stopAll()
+    } catch (e) {
+      log.debug('Chat session shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup grill evaluations
+    try {
+      await grillAgentService.shutdown()
+    } catch (e) {
+      log.debug('Grill shutdown error (expected during quit):', e)
+    }
+
+    // GRILL-SHUTDOWN-01: Flush pending grill persistence buffers and clear timers
+    // before DB closes. Without this, scheduled flush timers fire after DB closes.
+    try {
+      grillPersistenceController.clearTracking()
+    } catch (e) {
+      log.debug('Grill persistence cleanup error (expected during quit):', e)
+    }
+
+    // Cleanup audit operations
+    try {
+      await auditAgentService.shutdown()
+    } catch (e) {
+      log.debug('Audit shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup MPA pipelines
+    try {
+      await mpaOrchestrationService.shutdown()
+    } catch (e) {
+      log.debug('MPA shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup council evaluations
+    try {
+      await councilService.shutdown()
+    } catch (e) {
+      log.debug('Council shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup memory feed (cancel in-progress claude -p summarizer)
+    try {
+      memoryExtractionService.shutdown()
+    } catch (e) {
+      log.debug('Memory feed shutdown error (expected during quit):', e)
+    }
+
+    // Stop all file watchers for Code Graph / Semantic Search
+    fileWatcherService.stopAll()
+
+    // Reset the oMLX embedding provider state on quit
+    try {
+      omlxEmbeddingProvider.dispose()
+    } catch (e) {
+      log.debug('oMLX embedding dispose error (expected during quit):', e)
+    }
+
+    // Close database last — WAL checkpoint must happen while the process is alive
+    closeDatabase()
   }
 
-  // Cleanup grill evaluations
+  // Race the cleanup against a 4s timeout (defense-in-depth; the 5s failsafe
+  // is the hard backstop if Promise.race itself somehow hangs).
   try {
-    await grillAgentService.shutdown()
+    await Promise.race([
+      cleanup(),
+      new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, 4000)
+        t.unref()
+      })
+    ])
   } catch (e) {
-    log.debug('Grill shutdown error (expected during quit):', e)
+    log.warn('[before-quit] Cleanup threw:', e)
   }
 
-  // GRILL-SHUTDOWN-01: Flush pending grill persistence buffers and clear timers
-  // before DB closes. Without this, scheduled flush timers fire after DB closes.
-  try {
-    grillPersistenceController.clearTracking()
-  } catch (e) {
-    log.debug('Grill persistence cleanup error (expected during quit):', e)
-  }
-
-  // Cleanup audit operations
-  try {
-    await auditAgentService.shutdown()
-  } catch (e) {
-    log.debug('Audit shutdown error (expected during quit):', e)
-  }
-
-  // Cleanup MPA pipelines
-  try {
-    await mpaOrchestrationService.shutdown()
-  } catch (e) {
-    log.debug('MPA shutdown error (expected during quit):', e)
-  }
-
-  // Cleanup council evaluations
-  try {
-    await councilService.shutdown()
-  } catch (e) {
-    log.debug('Council shutdown error (expected during quit):', e)
-  }
-
-  // Cleanup memory feed (cancel in-progress claude -p summarizer)
-  try {
-    memoryExtractionService.shutdown()
-  } catch (e) {
-    log.debug('Memory feed shutdown error (expected during quit):', e)
-  }
-
-  // Stop all file watchers for Code Graph / Semantic Search
-  fileWatcherService.stopAll()
-
-  // Reset the oMLX embedding provider state on quit
-  try {
-    omlxEmbeddingProvider.dispose()
-  } catch (e) {
-    log.debug('oMLX embedding dispose error (expected during quit):', e)
-  }
-
-  closeDatabase()
-  app.quit()
+  // Force-exit: app.exit(0) terminates all child processes (renderer, GPU,
+  // utility) immediately — bypasses the cooperative window-close ack that
+  // can strand the process when the renderer is wedged.
+  clearTimeout(failsafe)
+  app.exit(0)
 })

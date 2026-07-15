@@ -25,8 +25,26 @@ import { registerChunkTap, unregisterChunkTap } from '../../ipc/chat-shared'
 import { modelConfigService, buildConversationModelSnapshot } from '../model-config.service'
 import { omlxManager } from '../omlx-manager.service'
 import { fixtureManager } from './fixture-manager'
-import { getScenarioById, getImplementedScenarios, SCENARIO_CATALOG, stepText, stepAttachments, stepModeSwitch, stepAbortAfterMs, stepCompactAfter, stepSetEffort, stepSetTone, scenarioRequiresTools } from './scenario-catalog'
+import {
+  getScenarioById,
+  getNonHeavyImplementedScenarios,
+  SCENARIO_CATALOG,
+  stepText,
+  stepAttachments,
+  stepModeSwitch,
+  stepAbortAfterMs,
+  stepCompactAfter,
+  stepSetEffort,
+  stepSetTone,
+  stepNewConversation,
+  stepResumeAtStep,
+  stepFillerChars,
+  scenarioRequiresTools,
+  scenarioRequiresVision
+} from './scenario-catalog'
 import { runAssertions } from './e2e-assertions'
+import { streamPrompt as _streamPromptHelper, chunkToTranscriptEntry, generateFillerWithNeedle } from './stream-helper'
+import { SERVICE_RUNNERS, createStreamPromptHelper } from './service-runners/index'
 import type { E2EScenario } from './scenario-catalog'
 import type { StreamChunk } from '../index'
 import electronLog from 'electron-log/main'
@@ -182,58 +200,130 @@ export async function preflight(workspaceId?: string): Promise<E2EPreflightResul
 
     // Tool-capability probe: send a tiny tools-enabled completion to check structured tool_calls.
     // Default to true — only set false when we get a definitive negative response.
-    // This avoids false-negatives from timeouts/cold-starts blocking legitimate tool scenarios.
+    // R7: Retry once (2 attempts, 2s gap) to mitigate cold-start flakes.
     let supportsTools = true
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+    const MAX_PROBE_ATTEMPTS = 2
+    const PROBE_RETRY_DELAY_MS = 2_000
+    for (let attempt = 1; attempt <= MAX_PROBE_ATTEMPTS; attempt++) {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
-      const probeBody = {
-        model: modelId,
-        messages: [
-          { role: 'system', content: 'You must use the calculator tool to answer. Do not respond with text.' },
-          { role: 'user', content: 'What is 2+2? Use the calculator tool.' }
-        ],
-        tools: [{
-          type: 'function' as const,
-          function: {
-            name: 'calculator',
-            description: 'A simple calculator that evaluates math expressions',
-            parameters: {
-              type: 'object',
-              properties: { expression: { type: 'string', description: 'Math expression to evaluate' } },
-              required: ['expression']
+        const probeBody = {
+          model: modelId,
+          messages: [
+            { role: 'system', content: 'You must use the calculator tool to answer. Do not respond with text.' },
+            { role: 'user', content: 'What is 2+2? Use the calculator tool.' }
+          ],
+          tools: [{
+            type: 'function' as const,
+            function: {
+              name: 'calculator',
+              description: 'A simple calculator that evaluates math expressions',
+              parameters: {
+                type: 'object',
+                properties: { expression: { type: 'string', description: 'Math expression to evaluate' } },
+                required: ['expression']
+              }
             }
-          }
-        }],
-        tool_choice: 'auto',
-        max_tokens: 1024,
-        temperature: 0
-      }
-
-      const probeRes = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(probeBody),
-        signal: AbortSignal.timeout(60_000) // 60s — local models can be slow on first inference
-      })
-
-      if (probeRes.ok) {
-        const probeJson = await probeRes.json() as {
-          choices?: { message?: { tool_calls?: unknown[] } }[]
+          }],
+          tool_choice: 'auto',
+          max_tokens: 1024,
+          temperature: 0
         }
-        const toolCalls = probeJson.choices?.[0]?.message?.tool_calls
-        supportsTools = Array.isArray(toolCalls) && toolCalls.length > 0
-        log.info(`[preflight] Tool probe: supportsTools=${supportsTools}`, toolCalls ? `(${toolCalls.length} calls)` : '(none)')
-      } else {
-        log.warn(`[preflight] Tool probe HTTP ${probeRes.status} — assuming tools supported (optimistic)`)
+
+        const probeRes = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(probeBody),
+          signal: AbortSignal.timeout(60_000) // 60s — local models can be slow on first inference
+        })
+
+        if (probeRes.ok) {
+          const rawBody = await probeRes.text()
+          log.info(`[preflight] Tool probe attempt ${attempt} raw response (truncated):`, rawBody.slice(0, 500))
+          let probeJson: { choices?: { message?: { tool_calls?: unknown[] } }[] }
+          try { probeJson = JSON.parse(rawBody) } catch { probeJson = {} }
+          const toolCalls = probeJson.choices?.[0]?.message?.tool_calls
+          supportsTools = Array.isArray(toolCalls) && toolCalls.length > 0
+          log.info(`[preflight] Tool probe attempt ${attempt}: supportsTools=${supportsTools}`, toolCalls ? `(${toolCalls.length} calls)` : '(none)')
+
+          if (supportsTools) break // Definitive positive — no need to retry
+
+          // Definitive negative on last attempt — accept the result
+          if (attempt < MAX_PROBE_ATTEMPTS) {
+            log.info(`[preflight] Tool probe returned false on attempt ${attempt} — retrying in ${PROBE_RETRY_DELAY_MS}ms`)
+            await new Promise((r) => setTimeout(r, PROBE_RETRY_DELAY_MS))
+            continue
+          }
+        } else {
+          log.warn(`[preflight] Tool probe HTTP ${probeRes.status} (attempt ${attempt}) — assuming tools supported (optimistic)`)
+          break // HTTP error — don't retry, assume optimistic
+        }
+      } catch (err) {
+        log.warn(`[preflight] Tool probe failed (attempt ${attempt}):`, (err as Error).message)
+        if (attempt < MAX_PROBE_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, PROBE_RETRY_DELAY_MS))
+          continue
+        }
+        // Last attempt failed — assume optimistic
+        break
       }
-    } catch (err) {
-      log.warn(`[preflight] Tool probe failed — assuming tools supported (optimistic):`, (err as Error).message)
     }
 
-    log.info(`[preflight] OK — model: ${modelId}, supportsTools: ${supportsTools}, total models: ${status.models.length}`)
-    return { ok: true, modelId, supportsTools }
+    // Vision-capability probe: check if the model supports image_url content parts.
+    // R7: Name heuristic first, then a tiny image probe.
+    let supportsVision = false
+    const VL_PATTERN = /vl|vision/i
+    if (VL_PATTERN.test(modelId)) {
+      supportsVision = true
+      log.info(`[preflight] Vision detected via name heuristic: ${modelId}`)
+    } else {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+
+        // Tiny 1x1 red PNG (base64, 68 bytes)
+        const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=='
+        const visionBody = {
+          model: modelId,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: 'What color is this pixel?' },
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } }
+            ]
+          }],
+          max_tokens: 32,
+          temperature: 0
+        }
+
+        const visionRes = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(visionBody),
+          signal: AbortSignal.timeout(30_000)
+        })
+
+        if (visionRes.ok) {
+          supportsVision = true
+          log.info('[preflight] Vision probe: model accepted image_url — supportsVision=true')
+        } else {
+          const errText = await visionRes.text().catch(() => '')
+          // Definitive image-related errors → text-only
+          const isImageError = /image|vision|multimodal|unsupported.*content/i.test(errText)
+          supportsVision = !isImageError
+          log.info(`[preflight] Vision probe HTTP ${visionRes.status}: supportsVision=${supportsVision}`, errText.slice(0, 200))
+        }
+      } catch (err) {
+        // Timeout / network — optimistically assume no vision (safer: don't send images to text-only)
+        supportsVision = false
+        log.info('[preflight] Vision probe failed — assuming text-only:', (err as Error).message)
+      }
+    }
+
+    log.info(`[preflight] OK — model: ${modelId}, supportsTools: ${supportsTools}, supportsVision: ${supportsVision}, total models: ${status.models.length}`)
+    return { ok: true, modelId, supportsTools, supportsVision }
   } catch (err) {
     const msg = (err as Error).message
     return {
@@ -267,8 +357,31 @@ export class E2ERunnerService {
     scenarioIds?: string[]
     category?: string
     workspaceId?: string
+    /** When true, skip the supportsTools auto-skip gate entirely (probe tests native
+     * oMLX tool_calls but OpenCode may drive tools differently). */
+    forceTools?: boolean
   }): Promise<string> {
     if (this.running) throw new Error('A test run is already in progress')
+
+    // Clear the OpenCode SDK session database before each E2E run.
+    // The SDK stores sessions in XDG_DATA_HOME/opencode/ and doesn't
+    // auto-migrate when the binary updates — stale schemas cause "no such column"
+    // errors that fail every scenario. Deleting it forces a clean recreation.
+    try {
+      const { tmpdir, homedir } = await import('node:os')
+      const { existsSync, rmSync } = await import('node:fs')
+      // Clean the entire opencode/ directory under the isolated data home and fallback locations.
+      // OpenCode stores its SQLite at <XDG_DATA_HOME>/opencode/opencode.db (not directly under
+      // XDG_DATA_HOME). Deleting the whole directory ensures WAL/SHM files and schema-drifted DBs
+      // are all removed — prevents "no such column: replacement_seq" across binary updates.
+      const isolatedDataHome = join(tmpdir(), 'agentstudio-opencode-xdg')
+      for (const base of [isolatedDataHome, join(homedir(), '.local', 'share')]) {
+        const dir = join(base, 'opencode')
+        if (existsSync(dir)) { rmSync(dir, { recursive: true, force: true }); log.info(`[run] Cleared OpenCode data dir: ${dir}`) }
+      }
+    } catch (err) {
+      log.warn('[run] Failed to clear OpenCode data dir (non-fatal):', (err as Error).message)
+    }
 
     // Preflight check — pass caller's workspace for API key resolution
     const sourceWorkspaceId = opts?.workspaceId
@@ -286,7 +399,8 @@ export class E2ERunnerService {
         (s) => s.category === opts.category && s.status === 'implemented'
       )
     } else {
-      scenarios = getImplementedScenarios()
+      // "Run All" excludes heavy scenarios — run them per-category or individually
+      scenarios = getNonHeavyImplementedScenarios()
     }
 
     if (scenarios.length === 0) throw new Error('No runnable scenarios found')
@@ -326,8 +440,11 @@ export class E2ERunnerService {
     this.running = true
     this.cancelled = false
 
-    // Start sequential execution in background (pass supportsTools for auto-skip)
-    this.executeQueue(run.id, scenarios, results.map((r) => r.id), workspace.id, pf.supportsTools ?? false).catch(
+    // Start sequential execution in background (pass supportsTools for auto-skip).
+    // R7: forceTools overrides the auto-skip gate — when true, always treat tools as supported.
+    const effectiveSupportsTools = opts?.forceTools ? true : (pf.supportsTools ?? false)
+    const effectiveSupportsVision = pf.supportsVision ?? false
+    this.executeQueue(run.id, scenarios, results.map((r) => r.id), workspace.id, effectiveSupportsTools, effectiveSupportsVision).catch(
       (err) => {
         log.error('Run queue failed:', err)
         e2eTestRunRepository.updateStatus(run.id, 'completed')
@@ -359,6 +476,32 @@ export class E2ERunnerService {
   }
 
   /**
+   * Resume a run that was interrupted (orphaned in 'running'/'cancelled' with queued/error results).
+   * Re-runs only the incomplete scenarios (queued or error from crash) as a NEW run,
+   * preserving the results that already passed/failed in the original.
+   */
+  async resumeRun(runId: string, workspaceId?: string): Promise<string> {
+    const originalRun = e2eTestRunRepository.findById(runId)
+    if (!originalRun) throw new Error(`Run ${runId} not found`)
+
+    // Find scenarios that need re-running (queued = never started, error = crashed mid-execution)
+    const results = e2eTestResultRepository.findByRun(runId)
+    const incompleteScenarioIds = results
+      .filter((r) => r.status === 'queued' || r.status === 'error')
+      .map((r) => r.scenarioId)
+
+    if (incompleteScenarioIds.length === 0) {
+      throw new Error('No incomplete scenarios to resume — all scenarios finished')
+    }
+
+    const effectiveWorkspaceId = workspaceId ?? originalRun.workspaceId
+    log.info(
+      `[resumeRun] Resuming ${incompleteScenarioIds.length} incomplete scenarios from run ${runId}`
+    )
+    return this.run({ scenarioIds: incompleteScenarioIds, workspaceId: effectiveWorkspaceId })
+  }
+
+  /**
    * Cancel the current run.
    */
   cancel(): void {
@@ -377,7 +520,8 @@ export class E2ERunnerService {
     scenarios: E2EScenario[],
     resultIds: string[],
     workspaceId: string,
-    supportsTools: boolean
+    supportsTools: boolean,
+    supportsVision: boolean
   ): Promise<void> {
     try {
       for (let i = 0; i < scenarios.length; i++) {
@@ -402,6 +546,17 @@ export class E2ERunnerService {
           e2eTestResultRepository.updateStatus(resultId, 'skipped', {
             durationMs: 0,
             failureReason: 'Auto-skipped: model/backend does not emit structured tool_calls'
+          })
+          this.emitProgress(runId, scenario.id, 'skipped')
+          continue
+        }
+
+        // R7: Auto-skip vision scenarios when the model is text-only
+        if (!supportsVision && scenarioRequiresVision(scenario)) {
+          log.info(`[executeQueue] Skipping vision scenario ${scenario.id} — model is text-only`)
+          e2eTestResultRepository.updateStatus(resultId, 'skipped', {
+            durationMs: 0,
+            failureReason: 'Auto-skipped: model is text-only (no vision encoder)'
           })
           this.emitProgress(runId, scenario.id, 'skipped')
           continue
@@ -433,6 +588,27 @@ export class E2ERunnerService {
     }
   }
 
+  /**
+   * Create a fresh conversation for the given workspace and scenario.
+   * Returns the conversation ID.
+   */
+  private createConversation(workspaceId: string, scenario: E2EScenario): string {
+    const snapshot = buildConversationModelSnapshot(workspaceId, 'local-llm')
+    const conversation = conversationRepository.create(
+      workspaceId,
+      `E2E: ${scenario.title}`,
+      scenario.mode,
+      undefined, // personaSpecialistId
+      'local-llm', // llmProvider
+      undefined, // mcpOverrides
+      undefined, // communicationTone
+      undefined, // type
+      snapshot
+    )
+    conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
+    return conversation.id
+  }
+
   private async executeScenario(
     runId: string,
     scenario: E2EScenario,
@@ -449,55 +625,101 @@ export class E2ERunnerService {
       // Reset fixture
       await fixtureManager.resetFixture()
 
-      // Build model config snapshot — frozen at creation time (M6)
-      const snapshot = buildConversationModelSnapshot(workspaceId, 'local-llm')
+      // Per-scenario prompt optimization toggle (default off for determinism)
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
+      workspaceRepository.updateSettings(workspaceId, {
+        ...wsSettings,
+        promptOptimizationEnabled: scenario.promptOptimization === true
+      })
 
-      // Create conversation with snapshot (matches conversation-crud.ipc.ts pattern)
-      const conversation = conversationRepository.create(
-        workspaceId,
-        `E2E: ${scenario.title}`,
-        scenario.mode,
-        undefined, // personaSpecialistId
-        'local-llm', // llmProvider
-        undefined, // mcpOverrides
-        undefined, // communicationTone
-        undefined, // type
-        snapshot
-      )
-      conversationId = conversation.id
+      // Create initial conversation
+      conversationId = this.createConversation(workspaceId, scenario)
 
-      // Initialize conversation specialist defaults
-      conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
+      // ── Service Runner Dispatch ──
+      if (scenario.runner) {
+        const runner = SERVICE_RUNNERS[scenario.runner]
+        if (!runner) {
+          throw new Error(`No service runner found for key: ${scenario.runner}`)
+        }
 
-      // Execute prompts sequentially, collecting transcript
+        const abortController = new AbortController()
+        this.currentAbort = () => abortController.abort()
+
+        const fixturePath = fixtureManager.getFixturePath()
+        const ctx = {
+          workspaceId,
+          workspacePath: fixturePath,
+          modelId: wsSettings.localModel as string ?? 'unknown',
+          conversationId,
+          signal: abortController.signal,
+          streamPrompt: createStreamPromptHelper(conversationId, scenario.timeoutMs)
+        }
+
+        const fullTranscript = await runner(ctx)
+        this.currentAbort = null
+
+        return this.finalizeScenario(runId, scenario, resultId, startTime, fullTranscript, conversationId)
+      }
+
+      // ── Chat-Based Scenario Execution ──
       const fullTranscript: E2ETranscriptEntry[] = []
       const fixturePath = fixtureManager.getFixturePath()
+      const stepMessageIds: string[] = [] // for resumeAtStep directive
 
-      for (const step of scenario.prompts) {
-        const text = stepText(step)
+      for (let stepIdx = 0; stepIdx < scenario.prompts.length; stepIdx++) {
+        const step = scenario.prompts[stepIdx]
+        let text = stepText(step)
         const attachmentRels = stepAttachments(step)
         const modeSwitch = stepModeSwitch(step)
         const abortAfterMs = stepAbortAfterMs(step)
         const compactAfter = stepCompactAfter(step)
         const effort = stepSetEffort(step)
         const tone = stepSetTone(step)
+        const newConversation = stepNewConversation(step)
+        const resumeAtStepIdx = stepResumeAtStep(step)
+        const fillerChars = stepFillerChars(step)
 
-        // Apply mode switch before streaming (updates conversation mode)
+        // ── New Conversation directive ──
+        if (newConversation) {
+          conversationId = this.createConversation(workspaceId, scenario)
+          log.info(`[executeScenario] New conversation created: ${conversationId}`)
+        }
+
+        // ── Resume At Step directive ──
+        if (resumeAtStepIdx !== undefined && resumeAtStepIdx < stepMessageIds.length) {
+          const messageId = stepMessageIds[resumeAtStepIdx]
+          if (messageId) {
+            try {
+              await chatAgentService.resumeAt(messageId)
+              log.info(`[executeScenario] Resumed at step ${resumeAtStepIdx} (messageId: ${messageId})`)
+            } catch (err) {
+              log.warn(`[executeScenario] resumeAt failed:`, (err as Error).message)
+            }
+          }
+        }
+
+        // ── Filler Chars directive (needle-in-haystack) ──
+        if (fillerChars && fillerChars > 0) {
+          const filler = generateFillerWithNeedle(fillerChars)
+          text = filler + text
+        }
+
+        // Apply mode switch before streaming
         if (modeSwitch) {
           conversationRepository.updateMode(conversationId, modeSwitch)
         }
 
-        // Apply effort level before streaming
+        // Apply effort level
         if (effort) {
           conversationRepository.updateEffort(conversationId, effort)
         }
 
-        // Apply tone before streaming
+        // Apply tone
         if (tone) {
           conversationRepository.updateTone(conversationId, tone === 'default' ? null : tone)
         }
 
-        // Resolve attachment paths relative to fixture root
+        // Resolve attachment paths
         const attachments = attachmentRels.length > 0
           ? attachmentRels.map((rel) => join(fixturePath, rel))
           : undefined
@@ -511,59 +733,23 @@ export class E2ERunnerService {
         )
         fullTranscript.push(...transcript)
 
-        // Post-step compaction (invokes chatAgentService.compact())
+        // Track message ID for resumeAtStep
+        // The user message is the first entry in the transcript for this step
+        const userMsg = transcript.find((e) => e.role === 'user' && e.type === 'text')
+        stepMessageIds.push(userMsg ? `step-${stepIdx}` : '')
+
+        // Post-step compaction
         if (compactAfter) {
           try {
             await chatAgentService.compact(false)
-            fullTranscript.push({
-              role: 'system',
-              type: 'status',
-              content: 'compaction: ok',
-              timestamp: Date.now()
-            })
+            fullTranscript.push({ role: 'system', type: 'status', content: 'compaction: ok', timestamp: Date.now() })
           } catch (err) {
-            fullTranscript.push({
-              role: 'system',
-              type: 'status',
-              content: `compaction: failed — ${(err as Error).message}`,
-              timestamp: Date.now()
-            })
+            fullTranscript.push({ role: 'system', type: 'status', content: `compaction: failed — ${(err as Error).message}`, timestamp: Date.now() })
           }
         }
       }
 
-      // G4: Check cancellation after prompts — mark skipped, not failed
-      if (this.cancelled) {
-        e2eTestResultRepository.updateStatus(resultId, 'skipped', {
-          durationMs: Date.now() - startTime,
-          transcriptJson: fullTranscript,
-          conversationId: conversationId ?? undefined
-        })
-        this.emitProgress(runId, scenario.id, 'skipped')
-        return
-      }
-
-      // Run assertions
-      const assertionResults = runAssertions(scenario.assertions, fullTranscript)
-      const allPassed = assertionResults.every((a) => a.passed)
-
-      const status: E2EResultStatus = allPassed ? 'passed' : 'failed'
-      const failureReason = allPassed
-        ? null
-        : assertionResults
-            .filter((a) => !a.passed)
-            .map((a) => `${a.name}: ${a.reason}`)
-            .join('; ')
-
-      e2eTestResultRepository.updateStatus(resultId, status, {
-        durationMs: Date.now() - startTime,
-        failureReason: failureReason ?? undefined,
-        assertionResults,
-        transcriptJson: fullTranscript,
-        conversationId: conversationId ?? undefined
-      })
-
-      this.emitProgress(runId, scenario.id, status)
+      return this.finalizeScenario(runId, scenario, resultId, startTime, fullTranscript, conversationId)
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       log.error(`Scenario ${scenario.id} error:`, errMsg)
@@ -576,6 +762,58 @@ export class E2ERunnerService {
 
       this.emitProgress(runId, scenario.id, 'error')
     }
+  }
+
+  /**
+   * Shared finalization: run assertions, apply known-issue fallback, persist, emit progress.
+   */
+  private finalizeScenario(
+    runId: string,
+    scenario: E2EScenario,
+    resultId: string,
+    startTime: number,
+    fullTranscript: E2ETranscriptEntry[],
+    conversationId: string | null
+  ): void {
+    // G4: Check cancellation after execution
+    if (this.cancelled) {
+      e2eTestResultRepository.updateStatus(resultId, 'skipped', {
+        durationMs: Date.now() - startTime,
+        transcriptJson: fullTranscript,
+        conversationId: conversationId ?? undefined
+      })
+      this.emitProgress(runId, scenario.id, 'skipped')
+      return
+    }
+
+    // Run assertions
+    const assertionResults = runAssertions(scenario.assertions, fullTranscript)
+    const allPassed = assertionResults.every((a) => a.passed)
+
+    let status: E2EResultStatus = allPassed ? 'passed' : 'failed'
+    let failureReason: string | null = allPassed
+      ? null
+      : assertionResults
+          .filter((a) => !a.passed)
+          .map((a) => `${a.name}: ${a.reason}`)
+          .join('; ')
+
+    // Known-issue fallback
+    if (status === 'failed' && scenario.knownIssue) {
+      log.info(`[finalizeScenario] Known issue — recording as skipped: ${scenario.id} (${scenario.knownIssue})`)
+      status = 'skipped'
+      failureReason = `Known issue: ${scenario.knownIssue} — ${failureReason}`
+    }
+
+    e2eTestResultRepository.updateStatus(resultId, status, {
+      durationMs: Date.now() - startTime,
+      failureReason: failureReason ?? undefined,
+      assertionResults,
+      transcriptJson: fullTranscript,
+      conversationId: conversationId ?? undefined
+    })
+
+    this.emitProgress(runId, scenario.id, status)
   }
 
   private async streamPrompt(
@@ -600,6 +838,17 @@ export class E2ERunnerService {
     let abortTimerId: ReturnType<typeof setTimeout> | undefined
     let firstTextSeen = false
 
+    // R8: Abort helper — works even before handle resolves by falling back to
+    // chatStreamService.stop(). Set as currentAbort immediately so cancel() works.
+    const abortStream = (): void => {
+      if (handle) {
+        handle.abort()
+      } else {
+        void chatStreamService.stop().catch(() => {})
+      }
+    }
+    this.currentAbort = abortStream
+
     // Register chunk tap — filter by requestId to avoid cross-talk (M8)
     registerChunkTap(CHUNK_TAP_KEY, (requestId: string | undefined, chunk: StreamChunk) => {
       // Drop chunks from other requests if both IDs are known
@@ -611,10 +860,8 @@ export class E2ERunnerService {
       if (abortAfterMs && !firstTextSeen && chunk.type === 'text') {
         firstTextSeen = true
         abortTimerId = setTimeout(() => {
-          if (handle) {
-            log.info(`[streamPrompt] abortAfterMs=${abortAfterMs} triggered — aborting stream`)
-            handle.abort()
-          }
+          log.info(`[streamPrompt] abortAfterMs=${abortAfterMs} triggered — aborting stream`)
+          abortStream()
         }, abortAfterMs)
       }
     })
@@ -643,27 +890,45 @@ export class E2ERunnerService {
     let timerId: ReturnType<typeof setTimeout> | undefined
 
     try {
-      // Start the stream (with optional attachments for vision scenarios)
-      handle = await chatStreamService.stream(conversationId, text, attachments)
-      ourRequestId = handle.requestId
-      this.currentAbort = () => handle!.abort()
-
-      // Race: stream completion vs timeout (G6: clear timer to avoid leak)
       const GRACE_MS = 5_000
+
+      // R8: Don't await stream() before arming the timeout. Hold the promise,
+      // attach a .then() to capture the handle when it resolves, and race the
+      // *promise itself* against the timeout. This ensures abort/timeout work
+      // even while stream() is still setting up (dispatchToAgent etc).
+      const streamPromise = chatStreamService.stream(conversationId, text, attachments)
+      streamPromise
+        .then((h) => {
+          handle = h
+          ourRequestId = h.requestId
+        })
+        .catch(() => {})
+
+      // Race: stream setup + completion vs timeout
       const timeoutPromise = new Promise<'timeout'>((resolve) => {
         timerId = setTimeout(() => resolve('timeout'), timeoutMs)
       })
 
-      const result = await Promise.race([handle.done.then(() => 'done' as const), timeoutPromise])
+      const result = await Promise.race([
+        streamPromise
+          .then((h) => h.done)
+          .then(() => 'done' as const)
+          .catch(() => 'done' as const),
+        timeoutPromise
+      ])
 
       if (result === 'timeout') {
-        // Abort the stream before rejecting so the lock disposer runs
-        handle.abort()
+        // Abort the stream (handle-aware via abortStream helper)
+        abortStream()
         // Wait briefly for the abort to settle and release the stream lock
-        await Promise.race([
-          handle.done.catch(() => {}),
-          new Promise<void>((r) => setTimeout(r, GRACE_MS))
-        ])
+        if (handle) {
+          await Promise.race([
+            (handle as { done: Promise<void> }).done.catch(() => {}),
+            new Promise<void>((r) => setTimeout(r, GRACE_MS))
+          ])
+        } else {
+          await new Promise<void>((r) => setTimeout(r, GRACE_MS))
+        }
 
         transcript.push({
           role: 'system',
@@ -709,111 +974,6 @@ export class E2ERunnerService {
 
       this.mainWindow?.webContents.send(IPC_CHANNELS.TESTING_PROGRESS, event)
     }
-  }
-}
-
-// ── Chunk-to-Transcript Mapper ──
-
-function chunkToTranscriptEntry(chunk: StreamChunk): E2ETranscriptEntry | null {
-  const now = Date.now()
-
-  switch (chunk.type) {
-    case 'text':
-      return {
-        role: 'assistant',
-        type: 'text',
-        content: chunk.content ?? '',
-        timestamp: now
-      }
-    case 'thinking':
-      return {
-        role: 'assistant',
-        type: 'thinking',
-        content: chunk.content ?? '',
-        timestamp: now
-      }
-    case 'tool_use': {
-      // StreamChunk has toolName/toolInput as optional strings
-      let parsedArgs: Record<string, unknown> | undefined
-      if (chunk.toolInput) {
-        try { parsedArgs = JSON.parse(chunk.toolInput) } catch { /* ignore */ }
-      }
-      return {
-        role: 'assistant',
-        type: 'tool_use',
-        toolName: chunk.toolName,
-        toolArgs: parsedArgs,
-        timestamp: now
-      }
-    }
-    case 'tool_result':
-      return {
-        role: 'assistant',
-        type: 'tool_result',
-        toolName: chunk.toolName,
-        toolResult: chunk.content ?? '',
-        timestamp: now
-      }
-    case 'error':
-      return {
-        role: 'system',
-        type: 'error',
-        content: chunk.content ?? 'Unknown error',
-        timestamp: now
-      }
-    case 'status':
-      return {
-        role: 'system',
-        type: 'status',
-        content: chunk.content ?? '',
-        timestamp: now
-      }
-    case 'compact_boundary':
-      return {
-        role: 'system',
-        type: 'status',
-        content: 'compact_boundary: ' + (chunk.content ?? ''),
-        timestamp: now
-      }
-    case 'context_usage_update':
-      return {
-        role: 'system',
-        type: 'status',
-        content: 'context_usage_update',
-        timestamp: now
-      }
-    case 'permission_request':
-      return {
-        role: 'system',
-        type: 'status',
-        content: 'permission_request: ' + (chunk.toolName ?? 'unknown'),
-        timestamp: now
-      }
-    case 'todo_update':
-      return {
-        role: 'system',
-        type: 'status',
-        content: 'todo_update',
-        timestamp: now
-      }
-    case 'turn_boundary':
-      return {
-        role: 'system',
-        type: 'status',
-        content: 'turn_boundary',
-        timestamp: now
-      }
-    default:
-      // Generic fallback — map all remaining chunk types (tool_progress, subagent_*,
-      // rate_limit, api_retry, files_persisted, hook_lifecycle, session_state,
-      // auth_status, tool_use_summary, session_recovery, structured_output,
-      // lsp_diagnostics, prompt_suggestion) to status entries.
-      return {
-        role: 'system',
-        type: 'status',
-        content: chunk.type + (chunk.toolName ? `: ${chunk.toolName}` : '') + (chunk.content ? ` — ${chunk.content.slice(0, 200)}` : ''),
-        timestamp: now
-      }
   }
 }
 

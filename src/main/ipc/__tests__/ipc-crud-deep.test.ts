@@ -64,40 +64,6 @@ describe('Conversation CRUD IPC — validation', () => {
     assert.ok(!VALID_COMMUNICATION_TONES.includes('invalid-tone' as any))
   })
 
-  test('CHAT_DELETE_CONVERSATION_pattern', () => {
-    const ch = IPC_CHANNELS.CHAT_DELETE_CONVERSATION
-    const args = requireObject({ conversationId: 'conv-1' }, ch)
-    requireString(args, 'conversationId', ch)
-    assert.ok(true)
-  })
-
-  test('CHAT_RENAME_CONVERSATION_pattern', () => {
-    const ch = IPC_CHANNELS.CHAT_RENAME
-    const args = requireObject({ conversationId: 'conv-1', title: 'New Title' }, ch)
-    requireString(args, 'conversationId', ch)
-    requireString(args, 'title', ch)
-    assert.ok(true)
-  })
-})
-
-// ── §2: Chat-mode IPC patterns ──────────────────────────────────────────
-
-describe('Chat-mode IPC — validation', () => {
-  test('CHAT_UPDATE_MODE_validation', () => {
-    const ch = IPC_CHANNELS.CHAT_UPDATE_MODE
-    const args = requireObject({ conversationId: 'conv-1', mode: 'build' }, ch)
-    requireString(args, 'conversationId', ch)
-    requireString(args, 'mode', ch)
-    assert.ok(true)
-  })
-
-  test('CHAT_UPDATE_EFFORT_validation', () => {
-    const ch = IPC_CHANNELS.CHAT_UPDATE_EFFORT
-    const args = requireObject({ conversationId: 'conv-1', effort: 'high' }, ch)
-    requireString(args, 'conversationId', ch)
-    requireString(args, 'effort', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §4: Council IPC patterns ────────────────────────────────────────────
@@ -109,31 +75,6 @@ describe('Council IPC — validation', () => {
     assert.ok(IPC_CHANNELS.COUNCIL_GET_SESSION)
   })
 
-  test('COUNCIL_START_validation', () => {
-    const ch = IPC_CHANNELS.COUNCIL_START
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      topic: 'Architecture Review',
-      inputType: 'workspace'
-    }, ch)
-    requireString(args, 'workspaceId', ch)
-    requireString(args, 'topic', ch)
-    assert.ok(true)
-  })
-
-  test('COUNCIL_CANCEL_validation', () => {
-    const ch = IPC_CHANNELS.COUNCIL_CANCEL
-    const args = requireObject({ workspaceId: 'ws-1' }, ch)
-    requireString(args, 'workspaceId', ch)
-    assert.ok(true)
-  })
-
-  test('COUNCIL_GET_SESSION_validation', () => {
-    const ch = IPC_CHANNELS.COUNCIL_GET_SESSION
-    const args = requireObject({ sessionId: 'cs-1' }, ch)
-    requireString(args, 'sessionId', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §5: Checkpoint IPC patterns ─────────────────────────────────────────
@@ -144,19 +85,6 @@ describe('Checkpoint IPC — validation', () => {
     assert.ok(IPC_CHANNELS.CHECKPOINT_RESTORE)
   })
 
-  test('CHECKPOINT_LIST_validation', () => {
-    const ch = IPC_CHANNELS.CHECKPOINT_LIST
-    const args = requireObject({ conversationId: 'conv-1' }, ch)
-    requireString(args, 'conversationId', ch)
-    assert.ok(true)
-  })
-
-  test('CHECKPOINT_RESTORE_validation', () => {
-    const ch = IPC_CHANNELS.CHECKPOINT_RESTORE
-    const args = requireObject({ checkpointId: 'cp-1' }, ch)
-    requireString(args, 'checkpointId', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §6: Idea IPC patterns ───────────────────────────────────────────────
@@ -169,24 +97,6 @@ describe('Idea IPC — validation', () => {
     assert.ok(IPC_CHANNELS.IDEA_UPDATE)
   })
 
-  test('IDEA_CREATE_validation', () => {
-    const ch = IPC_CHANNELS.IDEA_CREATE
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      title: 'New Feature Idea',
-      description: 'A cool feature'
-    }, ch)
-    requireString(args, 'workspaceId', ch)
-    requireString(args, 'title', ch)
-    assert.ok(true)
-  })
-
-  test('IDEA_DELETE_validation', () => {
-    const ch = IPC_CHANNELS.IDEA_DELETE
-    const args = requireObject({ ideaId: 'idea-1' }, ch)
-    requireString(args, 'ideaId', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §7: Plan IPC patterns ───────────────────────────────────────────────
@@ -198,26 +108,6 @@ describe('Plan IPC — validation', () => {
     assert.ok(IPC_CHANNELS.PLAN_DELETE)
   })
 
-  test('PLAN_LIST_validation', () => {
-    const ch = IPC_CHANNELS.PLAN_GET_ALL
-    const args = requireObject({ workspaceId: 'ws-1' }, ch)
-    requireString(args, 'workspaceId', ch)
-    assert.ok(true)
-  })
-
-  test('PLAN_GET_validation', () => {
-    const ch = IPC_CHANNELS.PLAN_GET_BY_ID
-    const args = requireObject({ planId: 'plan-1' }, ch)
-    requireString(args, 'planId', ch)
-    assert.ok(true)
-  })
-
-  test('PLAN_DELETE_validation', () => {
-    const ch = IPC_CHANNELS.PLAN_DELETE
-    const args = requireObject({ planId: 'plan-1' }, ch)
-    requireString(args, 'planId', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §8: Permission IPC patterns ─────────────────────────────────────────
@@ -247,10 +137,6 @@ describe('SDK-control IPC — validation', () => {
     assert.ok(IPC_CHANNELS.SDK_SESSION_STATE)
   })
 
-  test('SDK_INSTALL_STATUS_validation', () => {
-    // No args needed for status check (just sender validation)
-    assert.ok(true)
-  })
 })
 
 // ── §10: Session IPC patterns ───────────────────────────────────────────
@@ -262,19 +148,6 @@ describe('Session IPC — validation', () => {
     assert.ok(IPC_CHANNELS.SESSION_GET_MESSAGES)
   })
 
-  test('SESSION_LIST_validation', () => {
-    const ch = IPC_CHANNELS.SESSION_LIST
-    const args = requireObject({ workspaceId: 'ws-1' }, ch)
-    requireString(args, 'workspaceId', ch)
-    assert.ok(true)
-  })
-
-  test('SESSION_GET_validation', () => {
-    const ch = IPC_CHANNELS.SESSION_GET_INFO
-    const args = requireObject({ sessionId: 'sess-1' }, ch)
-    requireString(args, 'sessionId', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §11: Project IPC patterns ───────────────────────────────────────────
@@ -286,12 +159,6 @@ describe('Project IPC — validation', () => {
     assert.ok(IPC_CHANNELS.PROJECT_CREATE)
   })
 
-  test('PROJECT_SPECIALIST_GET_validation', () => {
-    const ch = IPC_CHANNELS.PROJECT_SPECIALIST_GET
-    const args = requireObject({ workspaceId: 'ws-1' }, ch)
-    requireString(args, 'workspaceId', ch)
-    assert.ok(true)
-  })
 })
 
 // ── §12: Agent lifecycle patterns ───────────────────────────────────────

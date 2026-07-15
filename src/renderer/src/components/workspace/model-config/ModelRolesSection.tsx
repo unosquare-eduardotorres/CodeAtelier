@@ -10,7 +10,7 @@
  */
 
 import { useState, useMemo, useCallback } from 'react'
-import { ChevronDown, ChevronRight, Layers, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { ChevronDown, ChevronRight, Layers, CheckCircle2, AlertTriangle, AlertCircle } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import {
   AVAILABLE_MODELS,
@@ -33,6 +33,10 @@ export interface ModelRolesSectionProps {
   omlxModels: string[]
   /** Instant-persist callback: persists both roles + overrides immediately */
   onModelRolesChange: (roles: ModelRoleMap, overrides: Record<string, string>) => void
+  /** Workspace-level fallback model */
+  fallbackModel: string | undefined
+  /** Instant-persist callback for fallback model */
+  onFallbackModelChange: (modelId: string) => void
 }
 
 // ─── Role Definitions ────────────────────────────────────
@@ -222,7 +226,7 @@ function RoleRow({
         )}
       </select>
       {isUnavailable && (
-        <AlertTriangle size={14} className="text-amber-400 shrink-0" title="Model not found on current server" />
+        <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
       )}
     </div>
   )
@@ -235,7 +239,9 @@ export default function ModelRolesSection({
   claudeModelOverrides,
   workspaceProvider,
   omlxModels,
-  onModelRolesChange
+  onModelRolesChange,
+  fallbackModel,
+  onFallbackModelChange
 }: ModelRolesSectionProps): React.JSX.Element {
   const [blueprintExpanded, setBlueprintExpanded] = useState(false)
 
@@ -262,11 +268,26 @@ export default function ModelRolesSection({
     return DEFAULT_MODEL_CONFIG['blueprint:specify'] ?? 'claude-opus-4-8'
   }, [modelRoles, claudeModelOverrides])
 
+  // Cross-provider warning: plan and build use different providers
+  const crossProviderWarning = useMemo(() => {
+    const planProvider = modelRoles['da-vinci:plan']?.provider
+    const buildProvider = modelRoles['da-vinci:build']?.provider
+    if (planProvider && buildProvider && planProvider !== buildProvider) {
+      return planProvider === 'claude' ? 'Claude' : 'Local LLM'
+    }
+    return null
+  }, [modelRoles])
+
   // Check if selected blueprint model is unavailable
   const blueprintProvider = modelRoles['blueprint:specify']?.provider
   const claudeOptions = useMemo(() => modelOptions.filter((o) => o.group === 'claude'), [modelOptions])
   const localOptions = useMemo(() => modelOptions.filter((o) => o.group === 'local'), [modelOptions])
   const isBlueprintUnavailable = blueprintProvider === 'local-llm' && !localOptions.some((o) => o.id === blueprintPrimaryModel)
+
+  // Check if selected fallback model is unavailable
+  const isFallbackUnavailable = !!fallbackModel &&
+    !claudeOptions.some((o) => o.id === fallbackModel) &&
+    !localOptions.some((o) => o.id === fallbackModel)
 
   /** Assign a model to multiple actions — builds overrides and calls instant-persist */
   const handleAssign = useCallback(
@@ -384,7 +405,7 @@ export default function ModelRolesSection({
                 )}
               </select>
               {isBlueprintUnavailable && (
-                <AlertTriangle size={14} className="text-amber-400 shrink-0" title="Model not found on current server" />
+                <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
               )}
             </div>
           </div>
@@ -414,6 +435,55 @@ export default function ModelRolesSection({
               ))}
             </div>
           )}
+        </SettingsCard>
+      </div>
+
+      {/* ── Cross-provider warning ── */}
+      {crossProviderWarning && (
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+          <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-300">
+            <span className="font-medium">Mixed providers</span> — all actions will use the
+            Plan model&apos;s provider ({crossProviderWarning}) in the same conversation. Full cross-provider
+            support coming soon.
+          </p>
+        </div>
+      )}
+
+      {/* ── Fallback Model ── */}
+      <div>
+        <h4 className="text-xs font-medium text-text-secondary mb-2">Fallback</h4>
+        <SettingsCard>
+          <div className="flex items-center justify-between gap-4 py-2">
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-medium text-text-primary">Fallback model</h4>
+              <p className="text-xs text-text-secondary truncate">
+                Used when an assigned model is unavailable
+              </p>
+            </div>
+            <select
+              value={fallbackModel ?? DEFAULT_MODEL_CONFIG['da-vinci']}
+              onChange={(e) => onFallbackModelChange(e.target.value)}
+              aria-label="Fallback model"
+              className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 shrink-0 max-w-xs"
+            >
+              <optgroup label="Claude">
+                {claudeOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </optgroup>
+              {(localOptions.length > 0 || isFallbackUnavailable) && (
+                <optgroup label="Local (oMLX)">
+                  {localOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>{opt.id}</option>
+                  ))}
+                  {isFallbackUnavailable && (
+                    <option value={fallbackModel}>⚠ {fallbackModel} (unavailable)</option>
+                  )}
+                </optgroup>
+              )}
+            </select>
+          </div>
         </SettingsCard>
       </div>
 

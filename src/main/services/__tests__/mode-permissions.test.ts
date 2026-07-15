@@ -41,6 +41,22 @@ describe('buildModePermissions', () => {
     const p = buildModePermissions('weird' as unknown as 'plan')
     assert.deepEqual(p.baseAllowed, ['Read', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch'])
   })
+
+  // ── Documentation: Claude overlay contract ──
+  // buildModePermissions returns the *pre-permission-gate* base lists.
+  // The Claude builder (buildClaudeProviderMcpConfig) overlays Write/Edit
+  // exposure because Claude Code gates plan-mode writes at runtime via
+  // --permission-mode plan, not via spawn-time allow/disallow lists.
+  // The local-LLM builder uses these lists as-is.
+  test('plan mode base lists are the pre-gate values (Claude overlays Write/Edit separately)', () => {
+    const p = buildModePermissions('plan')
+    // Write/Edit are in the disallowed list here — the Claude path removes them.
+    assert.ok(p.disallowed.includes('Write'), 'base disallowed includes Write (Claude strips it)')
+    assert.ok(p.disallowed.includes('Edit'), 'base disallowed includes Edit (Claude strips it)')
+    // Write/Edit are NOT in the allowed list here — the Claude path adds them.
+    assert.ok(!p.baseAllowed!.includes('Write'), 'base allowed excludes Write (Claude adds it)')
+    assert.ok(!p.baseAllowed!.includes('Edit'), 'base allowed excludes Edit (Claude adds it)')
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

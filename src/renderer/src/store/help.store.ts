@@ -59,9 +59,9 @@ export const HELP_SECTIONS: HelpSectionMeta[] = [
   },
   {
     id: 'memory',
-    title: 'Memory',
-    icon: 'Brain',
-    description: 'How Auto Memory keeps your AI agents informed',
+    title: 'Brain',
+    icon: 'Waypoints',
+    description: 'How the Brain keeps your AI agents informed',
     order: 5
   },
   {

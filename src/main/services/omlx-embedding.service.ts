@@ -173,6 +173,69 @@ class OmlxEmbeddingProvider extends EventEmitter {
     }
   }
 
+  /**
+   * Ensure embedding is ready — auto-loads the model if downloaded but not loaded,
+   * auto-starts oMLX if installed but not running (macOS only).
+   *
+   * Called at app startup (delayed, non-fatal) and by the backfill handler.
+   * Returns true if the provider is ready to embed.
+   */
+  async ensureEmbeddingReady(baseUrl?: string, apiKey?: string): Promise<boolean> {
+    if (this._isReady) return true
+
+    const url = baseUrl ?? (this.baseUrl || 'http://127.0.0.1:8000')
+    if (apiKey !== undefined) this.apiKey = apiKey
+
+    try {
+      // 1. Check if oMLX is running
+      let status = await omlxManager.checkStatus(url, this.apiKey)
+
+      // 2. If not running, attempt auto-start (macOS)
+      if (!status.running) {
+        if (process.platform === 'darwin') {
+          log.info('[OmlxEmbedding] oMLX not running — attempting auto-start…')
+          const started = await omlxManager.startOmlx()
+          if (!started) {
+            log.info('[OmlxEmbedding] Auto-start failed or oMLX not installed')
+            return false
+          }
+          // Re-check status after start
+          status = await omlxManager.checkStatus(url, this.apiKey)
+          if (!status.running) return false
+        } else {
+          return false
+        }
+      }
+
+      // 3. Find an embedding model
+      const embeddingModel = status.allModels?.find(
+        (m) => m.modelType === 'embedding'
+      )
+      if (!embeddingModel) {
+        // No embedding model downloaded at all
+        return false
+      }
+
+      // 4. If downloaded but not loaded, auto-load it
+      if (!embeddingModel.loaded) {
+        log.info(`[OmlxEmbedding] Model ${embeddingModel.id} downloaded but not loaded — loading…`)
+        try {
+          await omlxManager.loadModel(embeddingModel.id, url, this.apiKey)
+        } catch (loadErr) {
+          log.warn(`[OmlxEmbedding] Auto-load failed: ${(loadErr as Error).message}`)
+          return false
+        }
+      }
+
+      // 5. Initialize the provider
+      await this.initialize(url, this.apiKey)
+      return true
+    } catch (err) {
+      log.info(`[OmlxEmbedding] ensureEmbeddingReady failed: ${(err as Error).message}`)
+      return false
+    }
+  }
+
   /** Force a re-check of oMLX status — use after user restarts oMLX. */
   async reinitialize(): Promise<void> {
     this._isReady = false

@@ -8,7 +8,7 @@
  *    of inactivity (tested with a short timeout override)
  */
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync, createSpy } from './test-harness'
+import { test, describe, summaryAsync } from './test-harness'
 
 // ── Recovery gating condition (extracted logic, no real services needed) ──
 
@@ -19,13 +19,15 @@ function shouldAttemptPlanRecovery(params: {
   currentMode: string
   controlToolStatePlan: boolean
   timedOut: boolean
+  llmProvider?: string
 }): boolean {
   return (
     params.supportsEmitPlanRecovery &&
     params.planModeToolBlock &&
     params.currentMode === 'plan' &&
     !params.controlToolStatePlan &&
-    !params.timedOut
+    !params.timedOut &&
+    params.llmProvider !== 'local-llm'
   )
 }
 
@@ -94,6 +96,30 @@ describe('Plan-Tool-Recovery Gating', () => {
       timedOut: false
     })
     assert.equal(result, false)
+  })
+
+  test('Recovery skipped for local-llm provider even when all other conditions met', () => {
+    const result = shouldAttemptPlanRecovery({
+      supportsEmitPlanRecovery: true,
+      planModeToolBlock: true,
+      currentMode: 'plan',
+      controlToolStatePlan: false,
+      timedOut: false,
+      llmProvider: 'local-llm'
+    })
+    assert.equal(result, false, 'local-llm must never attempt plan-tool-recovery via CLI')
+  })
+
+  test('Recovery allowed for claude provider when all conditions met', () => {
+    const result = shouldAttemptPlanRecovery({
+      supportsEmitPlanRecovery: true,
+      planModeToolBlock: true,
+      currentMode: 'plan',
+      controlToolStatePlan: false,
+      timedOut: false,
+      llmProvider: 'claude'
+    })
+    assert.equal(result, true, 'claude provider should still attempt recovery')
   })
 })
 

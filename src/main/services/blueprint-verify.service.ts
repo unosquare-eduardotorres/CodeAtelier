@@ -18,7 +18,7 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintVerifyAdapter } from './role-adapters/blueprint/blueprint-verify.adapter'
 import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
@@ -28,6 +28,10 @@ import {
   blueprintRepository,
   blueprintPhaseRepository
 } from '../db/repositories/blueprint.repository'
+import { blueprintTaskRepository } from '../db/repositories/blueprint.repository'
+import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
+import { workspaceRepository } from '../db/repositories'
+import { memoryExtractionService } from './memory-extraction.service'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -66,6 +70,7 @@ export class BlueprintVerifyService extends EventEmitter {
     let onChunk: ((chunk: StreamChunk) => void) | null = null
     let onStatus: ((status: AgentStatus) => void) | null = null
     let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let cleanupAskUser: (() => void) | undefined
 
     try {
       // BP-VERIFY-CANCEL-STATUS-CHECK-01 + BP-VERIFY-NULL-BLUEPRINT-01:
@@ -124,6 +129,9 @@ export class BlueprintVerifyService extends EventEmitter {
       }
       session.on('chunk', onChunk)
       session.on('statusUpdate', onStatus)
+
+      // B4-FIX: Auto-respond to ask_user calls — verify is non-interactive
+      cleanupAskUser = wireAskUserAutoResponder(session, 'VERIFY')
 
       // 6. Start session in READ-ONLY mode + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
@@ -196,7 +204,7 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 9. Remediation check — when gaps_found with actionable tasks, auto-fix
       // BP-REMEDIATION-01: Parse remediationTasks from completion block.
-      const remediationTasks = Array.isArray(completion?.remediationTasks)
+      let remediationTasks = Array.isArray(completion?.remediationTasks)
         ? (completion.remediationTasks as Array<{
             taskId: string
             description: string
@@ -204,6 +212,19 @@ export class BlueprintVerifyService extends EventEmitter {
             dependsOn?: string[]
           }>)
         : []
+
+      // BP-REMEDIATION-FALLBACK: When agent reports gaps but doesn't provide
+      // structured remediation tasks, auto-generate them from the completion data.
+      if (overallStatus === 'gaps_found' && remediationTasks.length === 0) {
+        const generated = this.generateFallbackRemediationTasks(completion ?? null, text, blueprintId)
+        if (generated.length > 0) {
+          bpLog.info(
+            `[startVerifyPhase] Agent omitted remediationTasks — auto-generated ${generated.length} from findings`
+          )
+          remediationTasks = [...remediationTasks, ...generated]
+        }
+      }
+
       const currentBlueprint = blueprintRepository.findById(blueprintId)
       const currentSettings = currentBlueprint?.settingsJson ?? {}
       const remediationRound = (currentSettings.remediationRound as number) ?? 0
@@ -287,6 +308,13 @@ export class BlueprintVerifyService extends EventEmitter {
           status: verifyPhaseStatus,
           completion
         } satisfies BlueprintPhaseCompletePayload)
+
+        // MEM-BP-COMPLETE-01: Enqueue memory extraction for completed/failed blueprint.
+        // Non-blocking — runs after all DB and event work is done.
+        this.enqueueBlueprintMemoryExtraction(
+          blueprintId, workspaceId, workspacePath,
+          (overallStatus === 'passed' || overallStatus === 'human_needed') ? 'complete' : 'failed'
+        )
       }
 
       if (verifyPhase) {
@@ -333,7 +361,14 @@ export class BlueprintVerifyService extends EventEmitter {
         error: errorMsg,
         ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
+
+      // MEM-BP-COMPLETE-01: Also extract from failed blueprints — failures are
+      // valuable gotcha facts. Skip if auto-retrying (extraction on final outcome only).
+      if (!autoRetrying) {
+        this.enqueueBlueprintMemoryExtraction(blueprintId, workspaceId, workspacePath, 'failed')
+      }
     } finally {
+      cleanupAskUser?.()
       if (session) {
         if (onChunk) session.removeListener('chunk', onChunk)
         if (onStatus) session.removeListener('statusUpdate', onStatus)
@@ -347,6 +382,155 @@ export class BlueprintVerifyService extends EventEmitter {
         }
       }
       blueprintService.markPipelineStopped(workspaceId)
+    }
+  }
+
+  // ── Remediation fallback ──────────────────────────────────────────────
+
+  /**
+   * BP-REMEDIATION-FALLBACK: Generate remediation tasks from verify findings
+   * when the agent fails to include them in the completion block.
+   *
+   * Extracts MISSING/STUB/ORPHANED artifact names and broken key links from
+   * either the structured completion JSON or the raw markdown text.
+   */
+  private generateFallbackRemediationTasks(
+    completion: Record<string, unknown> | null,
+    text: string,
+    blueprintId: string
+  ): Array<{ taskId: string; description: string; files: string[] }> {
+    const tasks: Array<{ taskId: string; description: string; files: string[] }> = []
+
+    // BP-COLLISION-SAFE: Start seq after the highest existing R-task number
+    // to prevent taskId collisions on second remediation round.
+    const existingTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+    const maxExistingR = existingTasks
+      .filter((t) => /^R\d+$/.test(t.taskId))
+      .reduce((max, t) => Math.max(max, parseInt(t.taskId.slice(1), 10)), 0)
+    let seq = maxExistingR + 1
+
+    // Strategy 1: Parse structured completion fields
+    if (completion) {
+      // Extract findings array if present
+      const findings = completion.findings as Array<Record<string, unknown>> | undefined
+      if (Array.isArray(findings)) {
+        for (const finding of findings) {
+          const desc = String(finding.description ?? finding.issue ?? '')
+          const files = Array.isArray(finding.files) ? finding.files.map(String) : []
+          if (desc) {
+            tasks.push({
+              taskId: `R${String(seq++).padStart(3, '0')}`,
+              description: `Fix: ${desc}`,
+              files
+            })
+          }
+        }
+      }
+      // If artifacts object has missing/stub/orphaned counts but no findings array
+      if (tasks.length === 0) {
+        const artifacts = completion.artifacts as Record<string, unknown> | undefined
+        if (artifacts) {
+          const missing = (artifacts.missing as number) ?? 0
+          const stub = (artifacts.stub as number) ?? 0
+          const orphaned = (artifacts.orphaned as number) ?? 0
+          if (missing + stub + orphaned > 0) {
+            tasks.push({
+              taskId: `R${String(seq++).padStart(3, '0')}`,
+              description: `Fix verification gaps: ${missing} missing, ${stub} stub, ${orphaned} orphaned artifacts. Review the verify phase report and implement the missing functionality.`,
+              files: []
+            })
+          }
+        }
+      }
+    }
+
+    // Strategy 2: Regex fallback — extract file paths from MISSING/STUB/ORPHANED lines
+    if (tasks.length === 0 && text) {
+      const gapPattern = /(?:MISSING|STUB|ORPHANED|✗|⚠️)\s*[—–-]\s*(?:`([^`]+)`|(\S+\.\w+))/gi
+      const gapFiles = new Set<string>()
+      let match: RegExpExecArray | null
+      while ((match = gapPattern.exec(text)) !== null) {
+        const file = match[1] || match[2]
+        if (file) gapFiles.add(file)
+      }
+      if (gapFiles.size > 0) {
+        tasks.push({
+          taskId: `R${String(seq++).padStart(3, '0')}`,
+          description: `Fix ${gapFiles.size} artifact gap(s) identified during verification: ${[...gapFiles].slice(0, 10).join(', ')}${gapFiles.size > 10 ? '...' : ''}`,
+          files: [...gapFiles].slice(0, 20)
+        })
+      }
+    }
+
+    // Strategy 3: Last resort — single generic task from the full report
+    if (tasks.length === 0 && text.length > 100) {
+      tasks.push({
+        taskId: `R${String(seq++).padStart(3, '0')}`,
+        description: 'Fix all gaps identified in the verification report. Review the verify phase output and implement missing or incomplete functionality.',
+        files: []
+      })
+    }
+
+    return tasks
+  }
+
+  // ── Memory extraction helper ───────────────────────────────────────────
+
+  /**
+   * Enqueue blueprint memory extraction (non-blocking). Assembles context from
+   * phases, tasks, and clarify Q&A, then delegates to memoryExtractionService.
+   * Gated behind captureBlueprints setting.
+   */
+  private enqueueBlueprintMemoryExtraction(
+    blueprintId: string,
+    workspaceId: string,
+    workspacePath: string,
+    status: 'complete' | 'failed'
+  ): void {
+    try {
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
+      if ((wsSettings as any).memoryCaptureBlueprints === false) return
+
+      const blueprint = blueprintRepository.findById(blueprintId)
+      if (!blueprint) return
+
+      const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
+      const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+
+      // Extract clarify Q&A from blueprint events
+      let clarifyQA: Array<{ question: string; answer: string }> | undefined
+      try {
+        const events = blueprintEventRepository.findByBlueprint(blueprintId)
+        const qaEvents = events.filter((e: any) => e.type === 'qa' || e.type === 'user')
+        if (qaEvents.length > 0) {
+          clarifyQA = qaEvents.map((e: any) => ({
+            question: e.content?.question ?? e.content ?? '',
+            answer: e.content?.answer ?? ''
+          })).filter((qa: any) => qa.question)
+        }
+      } catch {
+        // Events may not exist — fine
+      }
+
+      memoryExtractionService.enqueueBlueprintExtraction({
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        title: blueprint.title,
+        status,
+        phases: phases.map((p: any) => ({
+          phase: p.phase,
+          artifacts: p.artifactsJson ?? p.artifacts ?? []
+        })),
+        tasks: tasks.map((t: any) => ({
+          taskId: t.taskId,
+          description: t.description,
+          status: t.status
+        })),
+        clarifyQA
+      })
+    } catch (err) {
+      bpLog.warn(`[enqueueBlueprintMemoryExtraction] Failed to enqueue: ${err}`)
     }
   }
 

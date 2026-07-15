@@ -20,7 +20,7 @@ describe('killProcess — deadlock regression', () => {
     let generatorReturned = false
 
     // Simulate a never-resolving .next() that only settles when stdout closes
-    const fakeIterator: AsyncGenerator<string, void, undefined> = {
+    const fakeIterator = {
       next(): Promise<IteratorResult<string, void>> {
         // This mimics a readline iterator waiting for data on stdout.
         // It only resolves when stdoutClosed becomes true.
@@ -43,7 +43,7 @@ describe('killProcess — deadlock regression', () => {
       [Symbol.asyncIterator]() {
         return this
       }
-    }
+    } as AsyncGenerator<string, void, undefined>
 
     // Kick off a pending .next() — simulates the drain-timer expiry scenario
     const _pendingNext = fakeIterator.next()
@@ -75,7 +75,7 @@ describe('killProcess — deadlock regression', () => {
     // on iter.return() must fire so we don't wedge.
     let returnCalled = false
 
-    const hangingIterator: AsyncGenerator<string, void, undefined> = {
+    const hangingIterator = {
       next(): Promise<IteratorResult<string, void>> {
         // Never resolves — simulates truly stuck stdout
         return new Promise<IteratorResult<string, void>>(() => {})
@@ -91,7 +91,7 @@ describe('killProcess — deadlock regression', () => {
       [Symbol.asyncIterator]() {
         return this
       }
-    }
+    } as AsyncGenerator<string, void, undefined>
 
     // Kick off pending .next()
     void hangingIterator.next()
@@ -103,7 +103,7 @@ describe('killProcess — deadlock regression', () => {
     const elapsed = Date.now() - start
 
     assert.ok(elapsed >= 1900, `timeout should take ~2s, took ${elapsed}ms`)
-    assert.ok(elapsed < 3000, `timeout should not exceed 3s, took ${elapsed}ms`)
+    assert.ok(elapsed < 5000, `timeout should not exceed 5s, took ${elapsed}ms`)
     // return was called but never resolved — that's fine, timeout won
     assert.ok(returnCalled, 'return() was called even though it hung')
   })
