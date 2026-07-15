@@ -748,7 +748,7 @@ export class BlueprintService extends EventEmitter {
         (a) => a.type === 'verify' || a.type === 'verification'
       )
       const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
-      return overall === 'gaps_found'
+      return overall === 'gaps_found' || overall === 'human_needed'
     })()
 
     if (!isRetryable && !isOrphaned && !isCompletedWithGaps) {

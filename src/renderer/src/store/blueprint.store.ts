@@ -314,7 +314,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         pendingApproval: null,
         currentWave: null,
         waveTasks: {},
-        orphanedBlueprint: null
+        orphanedBlueprint: null,
+        lastError: null
       })
 
       // Auto-start the specify phase
@@ -324,7 +325,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       })
     } catch (error) {
       rendererLog.error('Failed to start blueprint:', error)
-      set({ isRunning: false, activeWorkspaceId: null })
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      set({
+        isRunning: false,
+        activeWorkspaceId: null,
+        lastError: { blueprintId: '', message: errorMsg }
+      })
       throw error
     }
   },
