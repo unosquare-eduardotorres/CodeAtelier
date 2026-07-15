@@ -20,6 +20,20 @@ export function unregisterChunkTap(key: string): void {
 }
 
 /**
+ * R6-B2: Notify chunk-tap listeners directly (bypasses renderer routing).
+ * Used by prompt optimizer to make optimization visible in E2E transcripts.
+ * No-op when no taps are registered (normal app operation).
+ */
+export function notifyChunkTaps(requestId: string | undefined, chunk: StreamChunk): void {
+  if (chunkTapListeners.size === 0) return
+  for (const cb of chunkTapListeners.values()) {
+    try {
+      cb(requestId, chunk)
+    } catch { /* tap errors must not break streaming */ }
+  }
+}
+
+/**
  * Shared helper to forward a StreamChunk to the renderer.
  * Delegates to the ChunkRouter dispatch table (see chunk-router.ts).
  */

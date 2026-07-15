@@ -96,6 +96,56 @@ test.describe('Token Details Modal', () => {
     }
   })
 
+  test('modal header shows descriptive title', async ({ electronPage: page }) => {
+    const ready = await ensureWorkspaceReady(page)
+    if (!ready) { test.skip(); return }
+    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+
+    const modal = page.locator('[data-testid="token-details-modal"]')
+    await expect(modal).toBeVisible()
+
+    // Modal should have a descriptive title
+    const titleText = modal.getByText(/token|usage|context/i).first()
+    await expect(titleText).toBeVisible({ timeout: 3_000 })
+  })
+
+  test('context window section shows formatted token counts', async ({ electronPage: page }) => {
+    const ready = await ensureWorkspaceReady(page)
+    if (!ready) { test.skip(); return }
+    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+
+    const liveCounters = page.locator('[data-testid="token-live-counters"]')
+    const hasCounters = await liveCounters.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasCounters) { test.skip(); return }
+
+    // Should contain elements with tabular-nums class for numeric formatting
+    const tabularNums = liveCounters.locator('.tabular-nums')
+    expect(await tabularNums.count()).toBeGreaterThan(0)
+  })
+
+  test('re-opening modal after close works correctly', async ({ electronPage: page }) => {
+    const ready = await ensureWorkspaceReady(page)
+    if (!ready) { test.skip(); return }
+    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+
+    const modal = page.locator('[data-testid="token-details-modal"]')
+    await expect(modal).toBeVisible()
+
+    // Close via button
+    const closeBtn = page.locator('[data-testid="token-close-btn"]')
+    const hasClose = await closeBtn.isVisible({ timeout: 2_000 }).catch(() => false)
+    if (!hasClose) { test.skip(); return }
+
+    await closeBtn.click()
+    await page.waitForTimeout(500)
+    await expect(modal).toBeHidden({ timeout: 3_000 })
+
+    // Re-open — modal should become visible again
+    if (await openTokenDetailsModal(page)) {
+      await expect(modal).toBeVisible({ timeout: 3_000 })
+    }
+  })
+
   test('empty state when no usage recorded', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }

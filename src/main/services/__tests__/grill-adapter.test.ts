@@ -130,14 +130,6 @@ describe('GrillRoleAdapter', () => {
     assert.ok(allowedTools.includes('Read'))
   })
 
-  test('onSessionStop_is_safe_to_call_twice', () => {
-    const adapter = createAdapter()
-    adapter.onSessionStop()
-    adapter.onSessionStop()
-    // No crash
-    assert.ok(true)
-  })
-
   // persistMemory removed — memory tools now on dedicated memory MCP server
 
   // ── Different tracks ──

@@ -51,6 +51,8 @@ export interface PromptFeatureFlags {
   includeCheckpoint?: boolean
   /** External MCPs active for this chat (e.g. { maestro: true }) — drives prompt guidance injection */
   externalMcpActive?: Record<string, boolean>
+  /** Whether code-analysis tools are mounted (default true). Set false for small-tier local LLMs. */
+  codeAnalysisEnabled?: boolean
 }
 
 // ── Data-driven guidance configuration ──
@@ -76,8 +78,8 @@ const GUIDANCE_SECTIONS: GuidanceSection[] = [
   { marker: '## Git Context', flag: (f) => f.includeGitContext !== false, prompt: GIT_CONTEXT_GUIDANCE_PROMPT },
   { marker: '## Checkpoint Tools', flag: (f) => f.includeCheckpoint !== false, prompt: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT },
   { marker: '## GitHub Tools', flag: (f) => f.githubConfigured, prompt: GITHUB_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## Code Analysis', flag: () => true, prompt: CODE_ANALYSIS_GUIDANCE_PROMPT },
-  { marker: '## Library Doc', flag: () => true, prompt: LIBRARY_DOCS_GUIDANCE_PROMPT },
+  { marker: '## Code Analysis', flag: (f) => f.codeAnalysisEnabled !== false, prompt: CODE_ANALYSIS_GUIDANCE_PROMPT },
+  { marker: '## Library Doc', flag: (f) => f.codeAnalysisEnabled !== false, prompt: LIBRARY_DOCS_GUIDANCE_PROMPT },
   { marker: '## Maestro', flag: (f) => !!f.externalMcpActive?.['maestro'], prompt: MAESTRO_GUIDANCE_PROMPT },
   // ESLint: only entry where lean differs (full includes "Warnings OK; errors are NOT")
   { marker: '## ESLint', flag: () => true, prompt: ESLINT_GUIDANCE_PROMPT, leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN }

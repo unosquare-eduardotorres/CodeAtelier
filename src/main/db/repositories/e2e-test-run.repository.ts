@@ -104,6 +104,54 @@ export class E2ETestRunRepository extends BaseRepository<E2ETestRunRow, E2ETestR
       )
       .run(totals.passed, totals.failed, totals.skipped, totals.error, id)
   }
+
+  /**
+   * Recover orphaned runs left in 'running' state from a prior crash/kill.
+   * Marks orphaned runs as 'cancelled' and their queued/running results as 'error'.
+   * Returns the number of orphaned runs recovered.
+   */
+  recoverOrphanedRuns(): number {
+    const db = this.db()
+    const orphanedRuns = db
+      .prepare(`SELECT id FROM e2e_test_runs WHERE status = 'running'`)
+      .all() as { id: string }[]
+
+    if (orphanedRuns.length === 0) return 0
+
+    const markResults = db.prepare(
+      `UPDATE e2e_test_results
+       SET status = 'error',
+           failure_reason = 'Orphaned: app was terminated during execution'
+       WHERE run_id = ? AND status IN ('queued', 'running')`
+    )
+    const markRun = db.prepare(
+      `UPDATE e2e_test_runs
+       SET status = 'cancelled', finished_at = datetime('now')
+       WHERE id = ?`
+    )
+
+    for (const { id } of orphanedRuns) {
+      markResults.run(id)
+      // Recompute totals from actual result statuses
+      const counts = db
+        .prepare(
+          `SELECT status, COUNT(*) as cnt FROM e2e_test_results WHERE run_id = ? GROUP BY status`
+        )
+        .all(id) as { status: string; cnt: number }[]
+      const totals = { passed: 0, failed: 0, skipped: 0, error: 0 }
+      for (const c of counts) {
+        if (c.status in totals) totals[c.status as keyof typeof totals] = c.cnt
+      }
+      db.prepare(
+        `UPDATE e2e_test_runs
+         SET total_passed = ?, total_failed = ?, total_skipped = ?, total_error = ?
+         WHERE id = ?`
+      ).run(totals.passed, totals.failed, totals.skipped, totals.error, id)
+      markRun.run(id)
+    }
+
+    return orphanedRuns.length
+  }
 }
 
 export const e2eTestRunRepository = new E2ETestRunRepository()

@@ -1,4 +1,3 @@
-// @ts-nocheck — TODO: fix after blueprint refactoring
 /**
  * ReferenceDocList — grouped, collapsible list of attached reference documents.
  *
@@ -7,21 +6,16 @@
  * Used in both the blueprint input form (editable) and detail view (readonly).
  */
 
-import { useState } from 'react'
-import { FileText, FolderOpen, Link2, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { useState, type JSX } from 'react'
+import { FileText, Link2, X, ChevronDown, ChevronRight } from 'lucide-react'
 import type { ReferenceDocument } from '../../../../../shared/blueprint-types'
+import { getRefDocIcon } from './file-icons'
 
 interface ReferenceDocListProps {
   documents: ReferenceDocument[]
   onRemove?: (index: number) => void
   readonly?: boolean
 }
-
-const TYPE_CONFIG = {
-  file: { icon: FileText, color: 'text-blue-400' },
-  'workspace-file': { icon: FolderOpen, color: 'text-amber-400' },
-  url: { icon: Link2, color: 'text-purple-400' }
-} as const
 
 const GROUP_CONFIG = {
   files: {
@@ -39,7 +33,7 @@ export default function ReferenceDocList({
   documents,
   onRemove,
   readonly = false
-}: ReferenceDocListProps): React.JSX.Element | null {
+}: ReferenceDocListProps): JSX.Element | null {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   if (documents.length === 0) return null
@@ -86,15 +80,15 @@ export default function ReferenceDocList({
             {/* Chips */}
             <div className="flex flex-wrap gap-1.5">
               {visible.map(({ doc, index }) => {
-                const chipConfig = TYPE_CONFIG[doc.type]
-                const Icon = chipConfig.icon
+                const iconResult = getRefDocIcon(doc.name || doc.path, doc.type)
+                const Icon = iconResult.icon
                 return (
                   <span
                     key={`${doc.type}-${doc.path}-${index}`}
                     className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-base border border-border-subtle text-xs group"
                     title={doc.path}
                   >
-                    <Icon size={12} className={`flex-shrink-0 ${chipConfig.color}`} />
+                    <Icon size={12} className={`flex-shrink-0 ${iconResult.color}`} />
                     <span className="max-w-[220px] truncate text-text-secondary">{doc.name}</span>
                     {!readonly && onRemove && (
                       <button

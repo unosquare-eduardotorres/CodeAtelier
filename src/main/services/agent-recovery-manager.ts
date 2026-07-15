@@ -18,7 +18,7 @@ import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import type { DiscoveredContext } from './local-plan-state.service'
 
-// N8: Single source of truth for the turn-limit-exhausted message
+// N8: Single source of truth for the turn-limit-exhausted message (text fallback)
 const TURN_LIMIT_EXHAUSTED_MSG =
   '\n\n---\n\n' +
   "⏱️ **Turn limit reached** — I've used all available turns for this interaction. " +
@@ -231,18 +231,25 @@ export class AgentRecoveryManager {
       return 'handled'
     }
 
-    // All auto-continuations exhausted
+    // All auto-continuations exhausted — emit a structured turn_limit chunk
+    // so the renderer can show a one-click Continue button.
     if (
       streamState.lastTerminalReason === 'max_turns' &&
       this.s.maxTurnsContinuations >= SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
       this.s.log.info(
         `[PIPELINE:max-turns-exhausted] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
-          `continuations used — emitting graceful wrap-up for conversationId=${conversationId}`
+          `continuations used — emitting turn_limit chunk for conversationId=${conversationId}`
       )
+      // Emit structured chunk for the renderer's Continue button
       this.s.emit('chunk', {
-        type: 'text',
-        content: TURN_LIMIT_EXHAUSTED_MSG
+        type: 'turn_limit',
+        content: TURN_LIMIT_EXHAUSTED_MSG,
+        turnLimit: {
+          continuable: true,
+          continuationsUsed: this.s.maxTurnsContinuations,
+          continuationsMax: SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
+        }
       } as StreamChunk)
     }
 
@@ -265,13 +272,15 @@ export class AgentRecoveryManager {
     // so the user still gets a plan card.  Gated by adapter capability so
     // blueprint / grill / audit / council sessions (which also run in plan
     // mode) are never hijacked by a pointless recovery turn.
+    // Also skipped for local-LLM — there is no emit_plan-via-Claude path for local.
     let planRecoveryAttempted = false
     if (
       this.s.adapter.supportsEmitPlanRecovery &&
       streamState.planModeToolBlock &&
       this.s.currentMode === 'plan' &&
       !this.s.controlToolState.plan &&
-      !timedOut
+      !timedOut &&
+      this.s.llmProvider !== 'local-llm'
     ) {
       try {
         const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
@@ -298,6 +307,12 @@ export class AgentRecoveryManager {
       } catch (err) {
         this.s.log.warn('[PIPELINE:plan-recovery-failed] Non-critical:', err)
       }
+    } else if (
+      this.s.adapter.supportsEmitPlanRecovery &&
+      streamState.planModeToolBlock &&
+      this.s.llmProvider === 'local-llm'
+    ) {
+      this.s.log.info('[PIPELINE:plan-tool-recovery-skipped] local provider')
     }
 
     // Nudge: attempt recovery if tool calls occurred without trailing text
@@ -331,6 +346,7 @@ export class AgentRecoveryManager {
           isBuildMode
         ),
         isBuildMode,
+        skipCliTurn: this.s.llmProvider === 'local-llm',
         sessionId: this.s.sessionMap.get(conversationId),
         conversationId,
         workspaceId: this.s.workspaceId,
@@ -625,11 +641,16 @@ export class AgentRecoveryManager {
     if (isMaxTurns) {
       this.s.log.info(
         `[PIPELINE:max-turns-exhausted-error] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
-          'continuations used (error path) — emitting graceful wrap-up'
+          'continuations used (error path) — emitting turn_limit chunk'
       )
       this.s.emit('chunk', {
-        type: 'text',
-        content: TURN_LIMIT_EXHAUSTED_MSG
+        type: 'turn_limit',
+        content: TURN_LIMIT_EXHAUSTED_MSG,
+        turnLimit: {
+          continuable: true,
+          continuationsUsed: this.s.maxTurnsContinuations,
+          continuationsMax: SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
+        }
       } as StreamChunk)
       this.emitIdleComplete()
       return

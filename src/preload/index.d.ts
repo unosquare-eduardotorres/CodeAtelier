@@ -54,6 +54,7 @@ import type {
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
   LLMProvider,
+  ModelRoleMap,
   CommunicationTone,
   UpdateConfig,
   GrillDecision,
@@ -67,6 +68,10 @@ import type {
   MemoryContradiction,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
+  MemoryGraphData,
+  IngestionProgress,
+  BootstrapProgress,
+  BootstrapMode,
   ContradictionStatus,
   E2EScenarioSummary,
   E2EPreflightResult,
@@ -133,6 +138,7 @@ interface Api {
     mode?: ConversationMode
     personaSpecialistId?: string
     llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
   }) => Promise<Conversation>
@@ -315,8 +321,24 @@ interface Api {
   memoryCaptureSettingsGet: (args: { workspaceId: string }) => Promise<MemoryCaptureSettings>
   memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }) => Promise<void>
   memoryEmbeddingStatus: (args?: { workspaceId?: string }) => Promise<MemoryEmbeddingStatus>
-  memoryEmbeddingBackfill: () => Promise<{ backfilled: number }>
+  memoryEmbeddingBackfill: () => Promise<{ backfilled: number; error?: string }>
+  onMemoryEmbeddingProgress: (callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void) => () => void
+  memoryDedupScan: (args: { workspaceId: string }) => Promise<{ pairsFound: number }>
+  memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
+
+  // Memory Document Ingestion
+  memoryIngestSelectFiles: () => Promise<string[] | null>
+  memoryIngestSelectFolder: () => Promise<string | null>
+  memoryIngestDiscover: (args: { folderPath: string }) => Promise<{ files: string[]; counts: Record<string, number>; truncated: boolean }>
+  memoryIngestDocuments: (args: { files: string[]; workspaceId: string; workspacePath: string }) => Promise<{ jobId: string; factsCreated: number }>
+  memoryIngestCancel: (args: { jobId: string }) => Promise<boolean>
+  onMemoryIngestProgress: (callback: (data: IngestionProgress) => void) => () => void
+
+  // Memory Bootstrap
+  memoryBootstrapStart: (args: { workspaceId: string; workspacePath: string; mode?: BootstrapMode }) => Promise<{ jobId: string; factsCreated: number }>
+  memoryBootstrapCancel: (args: { jobId: string }) => Promise<boolean>
+  onMemoryBootstrapProgress: (callback: (data: BootstrapProgress) => void) => () => void
 
   // Memory Feed (retained)
   memorySelectDocument: () => Promise<string | null>
@@ -410,6 +432,11 @@ interface Api {
         action: 'add' | 'complete' | 'remove' | 'update'
         text: string
         index?: number
+      }
+      turnLimit?: {
+        continuable: boolean
+        continuationsUsed: number
+        continuationsMax: number
       }
     }) => void
   ) => () => void
@@ -579,6 +606,10 @@ interface Api {
 
   // Shell
   showItemInFolder: (filePath: string) => Promise<void>
+
+  // File Utilities
+  /** Electron 32+ replacement for the removed File.path property */
+  getPathForFile: (file: File) => string
 
   // Checkpoints
   listCheckpoints: (args: {
@@ -1233,6 +1264,7 @@ interface Api {
   blueprintGetDetails: (args: { id: string }) => Promise<unknown>
   blueprintList: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
   blueprintCancel: (args: { workspaceId: string }) => Promise<{ cancelled: boolean }>
+  blueprintDelete: (args: { id: string }) => Promise<{ deleted: boolean }>
   blueprintGetConstitution: (args: {
     workspaceId: string
   }) => Promise<{ constitutionMd: string | null; constitutionVersion: string } | null>
@@ -1306,6 +1338,8 @@ interface Api {
       workspaceId: string
       phase: string
       planSummary: string
+      completion?: Record<string, unknown>
+      reviewMarkdown?: string
     }) => void
   ) => () => void
   onBlueprintWaveStart: (
@@ -1350,7 +1384,7 @@ interface Api {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string } | null
+      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
       lastError: string | null
     }) => void
@@ -1367,7 +1401,7 @@ interface Api {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string } | null
+    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
     lastError: string | null
   }>
@@ -1451,6 +1485,7 @@ interface Api {
   testingPreflight: (args?: { workspaceId?: string }) => Promise<E2EPreflightResult>
   testingRun: (args?: { scenarioIds?: string[]; category?: string; workspaceId?: string }) => Promise<{ runId: string }>
   testingRequeueFailed: (args: { runId: string; workspaceId?: string }) => Promise<{ runId: string }>
+  testingResumeRun: (args: { runId: string; workspaceId?: string }) => Promise<{ runId: string }>
   testingCancel: () => Promise<void>
   testingGetRuns: (args?: { workspaceId?: string }) => Promise<E2ERunSummary[]>
   testingGetRunResults: (args: { runId: string }) => Promise<E2EResultSummary[]>

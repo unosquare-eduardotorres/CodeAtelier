@@ -74,7 +74,7 @@ describe('buildPhaseSystemPrompt — fallback paths', () => {
       ...baseContext,
       previousArtifacts: [
         { type: 'spec' as const, contentMd: '# Specification\nBuild a widget.' },
-        { type: 'plan' as const, filePath: '/plan.md', contentJson: { steps: ['a', 'b'] } }
+        { type: 'plan' as const, filePath: '/plan.md', contentJson: { summary: 'Two steps', techStack: ['React'] } }
       ]
     }
     const prompt = buildPhaseSystemPrompt('build', contextWithArtifacts)
@@ -82,7 +82,7 @@ describe('buildPhaseSystemPrompt — fallback paths', () => {
     assert.ok(prompt.includes('Build a widget.'), 'contentMd included')
     assert.ok(prompt.includes('### Artifact: plan'), 'plan artifact formatted')
     assert.ok(prompt.includes('**Path**: /plan.md'), 'filePath included')
-    assert.ok(prompt.includes('"steps"'), 'contentJson serialized')
+    assert.ok(prompt.includes('"summary"'), 'contentJson serialized (compact)')
   })
 
   test('tasks phase generates valid prompt with completion block', () => {

@@ -40,11 +40,16 @@ export interface ModelConfigState {
   connectionPersisted: ConnectionDraft
   isConnectionDirty: boolean
   // Persisted workspace settings (instant-save)
+  /** @deprecated Use derivedProvider — kept for backward compat during Phase 1 */
   defaultProvider: LLMProvider
+  /** Provider derived from routing: reads plan action's provider from modelRoles */
+  derivedProvider: LLMProvider
   executorBackend: ExecutorBackend
   localModel: string
   modelRoles: ModelRoleMap
   claudeModelOverrides: Record<string, string>
+  /** Workspace-level fallback model used when an assigned model is unavailable */
+  fallbackModel: string | undefined
   // Workspace preferences (instant-save, not part of draft)
   costPreference: CostPreference
   fastMode: boolean
@@ -74,10 +79,10 @@ export interface ModelConfigActions {
   saveConnection: () => Promise<void>
   discardConnection: () => void
   // Instant-persist actions
-  handleSetDefaultProvider: (provider: LLMProvider) => Promise<void>
   handleExecutorBackendChange: (backend: ExecutorBackend) => Promise<void>
   handleLocalModelSelect: (modelId: string) => Promise<void>
   handleModelRolesChange: (roles: ModelRoleMap, overrides: Record<string, string>) => Promise<void>
+  handleFallbackModelChange: (modelId: string) => Promise<void>
   // oMLX model management
   handleLoadOmlxModel: (modelId: string) => Promise<void>
   handleUnloadOmlxModel: (modelId: string) => Promise<void>
@@ -322,6 +327,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   const [localModel, setLocalModel] = useState('qwen3.6:35b-a3b-coding-nvfp4')
   const [modelRoles, setModelRoles] = useState<ModelRoleMap>({})
   const [claudeModelOverrides, setClaudeModelOverrides] = useState<Record<string, string>>({})
+  const [fallbackModel, setFallbackModel] = useState<string | undefined>(undefined)
 
   // ── Platform + Claude CLI ──
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
@@ -383,6 +389,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         )
         setModelRoles((settings.modelRoles as ModelRoleMap) ?? {})
         setClaudeModelOverrides((settings.modelOverrides as Record<string, string>) ?? {})
+        setFallbackModel((settings.fallbackModel as string) ?? undefined)
 
         // Connection draft — if legacy backend is ollama, use oMLX defaults
         const savedBackend = settings.localLlmBackend as string | undefined
@@ -449,27 +456,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     addToast({ message: 'Connection changes discarded', type: 'info' })
   }, [connectionPersisted, addToast])
 
-  // ── Instant-persist: default provider ──
-  const handleSetDefaultProvider = useCallback(
-    async (provider: LLMProvider) => {
-      if (!activeWorkspace) return
-      setDefaultProvider(provider)
-      await persistWorkspaceSetting(activeWorkspace.id, {
-        llmProvider: provider,
-        // Always persist omlx backend when switching to local
-        ...(provider === 'local-llm' ? { localLlmBackend: 'omlx' } : {})
-      })
-      addToast({
-        message: `Default provider set to ${provider === 'claude' ? 'Claude' : 'oMLX'}`,
-        type: 'success'
-      })
-      if (provider === 'local-llm') {
-        testConnection(undefined, undefined, true)
-      }
-    },
-    [activeWorkspace, addToast, testConnection]
-  )
-
   // ── Instant-persist: executor backend ──
   const handleExecutorBackendChange = useCallback(
     async (backend: ExecutorBackend) => {
@@ -490,16 +476,35 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     [activeWorkspace]
   )
 
-  // ── Instant-persist: model roles ──
+  // ── Instant-persist: model roles (also derives + persists llmProvider for backend compat) ──
   const handleModelRolesChange = useCallback(
     async (roles: ModelRoleMap, overrides: Record<string, string>) => {
       if (!activeWorkspace) return
       setModelRoles(roles)
       setClaudeModelOverrides(overrides)
+
+      // Derive provider from plan action's provider for backend compatibility
+      const planRole = roles['da-vinci:plan']
+      const derived: LLMProvider = planRole?.provider ?? 'claude'
+      setDefaultProvider(derived)
+
       await persistWorkspaceSetting(activeWorkspace.id, {
         modelRoles: roles,
-        modelOverrides: overrides
+        modelOverrides: overrides,
+        // Keep backend llmProvider in sync with routing
+        llmProvider: derived,
+        ...(derived === 'local-llm' ? { localLlmBackend: 'omlx' } : {})
       })
+    },
+    [activeWorkspace]
+  )
+
+  // ── Instant-persist: fallback model ──
+  const handleFallbackModelChange = useCallback(
+    async (modelId: string) => {
+      if (!activeWorkspace) return
+      setFallbackModel(modelId)
+      await persistWorkspaceSetting(activeWorkspace.id, { fallbackModel: modelId })
     },
     [activeWorkspace]
   )
@@ -572,6 +577,12 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     return models.filter((m) => !/embed|bge|rerank/i.test(m))
   }, [localStatus])
 
+  // Derive provider from routing — reads plan action's provider from modelRoles
+  const derivedProvider: LLMProvider = useMemo(() => {
+    const planRole = modelRoles['da-vinci:plan']
+    return planRole?.provider ?? defaultProvider
+  }, [modelRoles, defaultProvider])
+
   const isRemoteServer =
     connectionDraft.localHost !== '127.0.0.1' && connectionDraft.localHost !== 'localhost'
   const localBaseUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}`
@@ -583,10 +594,12 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     connectionPersisted,
     isConnectionDirty,
     defaultProvider,
+    derivedProvider,
     executorBackend,
     localModel,
     modelRoles,
     claudeModelOverrides,
+    fallbackModel,
     costPreference: wsSettings.costPreference,
     fastMode: wsSettings.fastMode,
     budgetCapUsd: wsSettings.budgetCapUsd,
@@ -607,10 +620,10 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     setLocalContextWindow,
     saveConnection,
     discardConnection,
-    handleSetDefaultProvider,
     handleExecutorBackendChange,
     handleLocalModelSelect,
     handleModelRolesChange,
+    handleFallbackModelChange,
     handleLoadOmlxModel,
     handleUnloadOmlxModel,
     handleCostPreferenceChange: wsSettings.handleCostPreferenceChange,

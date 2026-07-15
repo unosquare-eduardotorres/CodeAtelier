@@ -63,7 +63,7 @@ function fallbackSummary(phase: BlueprintPhase): PhaseSummary {
 
 /** Find a specific artifact by type, optional-chaining safe */
 function findArtifact(phase: BlueprintPhase, type: string): BlueprintArtifact | undefined {
-  return phase.artifactsJson?.find((a) => a.type === type)
+  return phase.artifactsJson?.findLast((a) => a.type === type)
 }
 
 // ── Specify ──

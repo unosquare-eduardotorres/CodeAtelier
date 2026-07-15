@@ -72,6 +72,11 @@ interface OpenCodeConfig {
           tool_call?: boolean
           attachment?: boolean
           reasoning?: boolean
+          /** Input/output modalities — required for OpenCode to send images to VLMs */
+          modalities?: {
+            input: string[]
+            output: string[]
+          }
         }
       >
     }
@@ -596,6 +601,12 @@ export class OpenCodeConfigWriter {
                 tool_call: true,
                 attachment: true,
                 reasoning: true,
+                // Declare vision modalities so OpenCode sends image parts to VLMs
+                // instead of stripping them or converting to text placeholders.
+                modalities: {
+                  input: ['text', 'image'],
+                  output: ['text']
+                },
                 limit:
                   contextTier && contextWindowConfident
                     ? {

@@ -126,6 +126,41 @@ describe('Token savings estimation for small tier', () => {
   })
 })
 
+describe('Context tier — code-analysis tool gating', () => {
+  test('small tier excludes code-analysis tools (including library docs)', () => {
+    const tier = resolveContextTier(32_768) // small
+    assert.equal(tier, 'small')
+    // Small tier gate: tier !== 'small' → false → code-analysis excluded
+    const shouldMountCodeAnalysis = tier !== 'small'
+    assert.equal(shouldMountCodeAnalysis, false)
+  })
+
+  test('medium tier includes code-analysis tools', () => {
+    const tier = resolveContextTier(131_072)
+    assert.equal(tier, 'medium')
+    // Medium tier passes the tier !== 'small' gate in workspace-mcp-config.ts
+    assert.notEqual(tier as ContextWindowTier, 'small')
+  })
+
+  test('library docs tools are part of code-analysis server', () => {
+    assert.ok(
+      MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES.includes(MCP_TOOLS.CODE_ANALYSIS.RESOLVE_LIBRARY_ID.name),
+      'resolve_library_id should be in CODE_ANALYSIS._ALL_NAMES'
+    )
+    assert.ok(
+      MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES.includes(MCP_TOOLS.CODE_ANALYSIS.QUERY_LIBRARY_DOCS.name),
+      'query_library_docs should be in CODE_ANALYSIS._ALL_NAMES'
+    )
+  })
+
+  test('audit_scan is part of code-analysis server', () => {
+    assert.ok(
+      MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES.includes(MCP_TOOLS.CODE_ANALYSIS.AUDIT_SCAN.name),
+      'audit_scan should be in CODE_ANALYSIS._ALL_NAMES'
+    )
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

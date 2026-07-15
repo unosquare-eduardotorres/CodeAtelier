@@ -12,24 +12,60 @@ interface MermaidDiagramProps {
  * Reads computed CSS custom properties to build Mermaid themeVariables.
  * This ensures diagrams match the active app theme.
  */
-function buildMermaidThemeVars(): Record<string, string> {
+function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
   const cs = getComputedStyle(document.documentElement)
-  const v = (name: string): string => cs.getPropertyValue(name).trim()
+  const v = (name: string, fallback: string): string => cs.getPropertyValue(name).trim() || fallback
+
+  if (isLight) {
+    // Porcelain (light) theme — minimal overrides
+    return {
+      primaryColor: '#f8f9fa',
+      primaryTextColor: '#1a1a2e',
+      primaryBorderColor: '#64748b',
+      lineColor: '#64748b',
+      secondaryColor: '#f1f5f9',
+      tertiaryColor: '#e2e8f0',
+      background: '#ffffff',
+      mainBkg: '#f8f9fa',
+      nodeBorder: '#94a3b8',
+      fontFamily: "'Inter', sans-serif",
+      fontSize: '13px',
+    }
+  }
+
+  // Dark themes (code-atelier, developer, glass)
+  const surfaceBase = v('--color-surface-base', '#0d1117')
+  const teal = v('--color-teal', '#73daca')
+  const textPrimary = v('--color-text-primary', '#c0caf5')
+  const textSecondary = v('--color-text-secondary', '#787c99')
+  const borderSubtle = v('--color-border-subtle', 'rgba(148, 163, 184, 0.08)')
+
   return {
-    primaryColor: v('--color-surface-float'),
-    primaryTextColor: v('--color-text-primary'),
-    primaryBorderColor: v('--color-border-default'),
-    lineColor: v('--color-primary'),
-    secondaryColor: v('--color-panel-navy'),
-    tertiaryColor: v('--color-surface-overlay'),
-    noteBkgColor: v('--color-panel-navy'),
-    noteTextColor: v('--color-text-secondary'),
-    actorBkg: v('--color-surface-float'),
-    actorBorder: v('--color-border-default'),
-    actorTextColor: v('--color-text-primary'),
-    signalColor: v('--color-primary'),
-    labelBoxBkgColor: v('--color-surface-overlay'),
-    labelTextColor: v('--color-text-primary')
+    // Very dark fills — nodes appear as outlined shapes, not filled blocks
+    primaryColor: surfaceBase,
+    primaryTextColor: textPrimary,
+    primaryBorderColor: teal,
+    lineColor: teal,
+    secondaryColor: surfaceBase,
+    tertiaryColor: surfaceBase,
+    background: 'transparent',
+    mainBkg: surfaceBase,
+    nodeBorder: teal,
+    clusterBkg: 'rgba(13, 17, 23, 0.5)',
+    clusterBorder: borderSubtle,
+    titleColor: textPrimary,
+    edgeLabelBackground: 'transparent',
+    noteBkgColor: surfaceBase,
+    noteTextColor: textSecondary,
+    noteBorderColor: borderSubtle,
+    actorBkg: surfaceBase,
+    actorBorder: teal,
+    actorTextColor: textPrimary,
+    signalColor: teal,
+    labelBoxBkgColor: 'transparent',
+    labelTextColor: textSecondary,
+    fontFamily: "'Inter', 'JetBrains Mono', sans-serif",
+    fontSize: '13px',
   }
 }
 
@@ -56,19 +92,33 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
 
   if (mermaidReady) return mermaidReady
 
-  mermaidReady = import('mermaid').then((mod) => {
+  mermaidReady = import('mermaid').then(async (mod) => {
     const m = (mod.default as unknown as { default: typeof mod.default }).default ?? mod.default
 
-    // Detect if the current theme is light (porcelain) for mermaid base theme
     const isLight = themeId === 'porcelain'
 
     m.initialize({
       startOnLoad: false,
-      theme: isLight ? 'default' : 'dark',
+      theme: 'base',
       securityLevel: 'loose', // 'strict' blocks gitGraph and some other diagram types
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      themeVariables: buildMermaidThemeVars()
+      fontFamily: "'Inter', 'JetBrains Mono', sans-serif",
+      themeVariables: buildMermaidThemeVars(isLight),
+      flowchart: {
+        curve: 'basis',
+        padding: 16,
+        nodeSpacing: 30,
+        rankSpacing: 50,
+      }
     })
+
+    // Register Lucide icon pack for use in diagrams
+    m.registerIconPacks([
+      {
+        name: 'lucide',
+        loader: () => import('@iconify-json/lucide').then((module) => module.icons),
+      },
+    ])
+
     mermaidInstance = m
     lastThemeId = themeId
     return m
@@ -341,10 +391,11 @@ export default function MermaidDiagram({
       {/* Interactive viewport — pan & zoom */}
       <div
         ref={viewportRef}
-        className="overflow-hidden bg-surface-base rounded-lg"
+        className="overflow-hidden rounded-lg"
         style={{
           cursor: isDragging ? 'grabbing' : 'grab',
-          minHeight: '200px'
+          minHeight: '200px',
+          backgroundColor: 'var(--color-surface-base)',
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

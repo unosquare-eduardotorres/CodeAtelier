@@ -1,13 +1,13 @@
 /**
- * useWorkspaceModelInfo — shared hook for loading provider, local model info,
- * and platform info from workspace settings.
+ * useWorkspaceModelInfo — shared hook for loading model routing info,
+ * local model info, and platform info from workspace settings.
  *
  * Used by both NewChatPage and NewConversationModal so they can render
  * the ModelPicker with consistent data.
  */
 
-import { useState, useEffect, useRef } from 'react'
-import type { LLMProvider, PlatformInfo } from '../../../../shared/types'
+import { useState, useEffect } from 'react'
+import type { LLMProvider, ModelRoleMap, PlatformInfo } from '../../../../shared/types'
 
 export interface LocalModelInfo {
   backend: string
@@ -15,15 +15,23 @@ export interface LocalModelInfo {
 }
 
 export function useWorkspaceModelInfo(workspaceId: string | undefined): {
+  /** @deprecated Use derivedProvider — kept for backend compat */
   llmProvider: LLMProvider
-  setLlmProvider: (p: LLMProvider) => void
-  /** The workspace-level default provider (from DB settings). Use for reset-to-default. */
-  defaultLlmProvider: LLMProvider
+  /** Workspace-level model roles (from settings) */
+  modelRoles: ModelRoleMap
+  /** Workspace-level Claude model overrides (legacy) */
+  claudeModelOverrides: Record<string, string>
+  /** Provider derived from routing (plan action's provider) */
+  derivedProvider: LLMProvider
+  /** oMLX chat-capable model names */
+  omlxModels: string[]
   localModelInfo: LocalModelInfo | null
   platformInfo: PlatformInfo | null
 } {
   const [llmProvider, setLlmProvider] = useState<LLMProvider>('claude')
-  const defaultLlmProviderRef = useRef<LLMProvider>('claude')
+  const [modelRoles, setModelRoles] = useState<ModelRoleMap>({})
+  const [claudeModelOverrides, setClaudeModelOverrides] = useState<Record<string, string>>({})
+  const [omlxModels, setOmlxModels] = useState<string[]>([])
   const [localModelInfo, setLocalModelInfo] = useState<LocalModelInfo | null>(null)
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
 
@@ -36,11 +44,28 @@ export function useWorkspaceModelInfo(workspaceId: string | undefined): {
         if (cancelled) return
         const provider = (s.llmProvider as LLMProvider) ?? 'claude'
         setLlmProvider(provider)
-        defaultLlmProviderRef.current = provider
+        setModelRoles((s.modelRoles as ModelRoleMap) ?? {})
+        setClaudeModelOverrides((s.modelOverrides as Record<string, string>) ?? {})
+        const backend = (s.localLlmBackend as string) ?? 'ollama'
         setLocalModelInfo({
-          backend: (s.localLlmBackend as string) ?? 'ollama',
+          backend,
           model: (s.localModel as string) ?? (s.ollamaModel as string) ?? 'unknown'
         })
+
+        // Attempt silent oMLX model list fetch for chat creation dropdowns
+        if (backend === 'omlx') {
+          const host = (s.localHost as string) ?? '127.0.0.1'
+          const port = (s.localPort as number) ?? 8000
+          window.api.omlxCheckStatus({ baseUrl: `http://${host}:${port}`, apiKey: (s.localApiKey as string) || undefined })
+            .then((status) => {
+              if (!cancelled && status.running) {
+                // Filter out embedding/reranker models by name heuristic
+                const chatModels = status.models.filter((m: string) => !/embed|bge|rerank/i.test(m))
+                setOmlxModels(chatModels)
+              }
+            })
+            .catch(() => { /* silent — oMLX may not be running */ })
+        }
       })
       .catch((err) => {
         console.warn('[useWorkspaceModelInfo] Failed to load workspace settings:', err)
@@ -56,10 +81,16 @@ export function useWorkspaceModelInfo(workspaceId: string | undefined): {
     return () => { cancelled = true }
   }, [workspaceId])
 
+  // Derive provider from routing — reads plan action's provider from modelRoles
+  const planRole = modelRoles['da-vinci:plan']
+  const derivedProvider: LLMProvider = planRole?.provider ?? llmProvider
+
   return {
     llmProvider,
-    setLlmProvider,
-    defaultLlmProvider: defaultLlmProviderRef.current,
+    modelRoles,
+    claudeModelOverrides,
+    derivedProvider,
+    omlxModels,
     localModelInfo,
     platformInfo
   }

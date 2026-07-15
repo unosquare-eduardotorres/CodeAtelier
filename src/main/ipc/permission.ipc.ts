@@ -8,13 +8,13 @@
 
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import baseLog from '../logger'
+import log from 'electron-log/main'
 import { chatAgentService } from '../services'
 import { mpaOrchestrationService } from '../services/mpa-orchestration.service'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString } from './validate-args'
 
-const log = baseLog.scope('permission-ipc')
+const permLog = log.scope('permission-ipc')
 
 export function registerPermissionIpc(): void {
   ipcMain.handle(IPC_CHANNELS.PERMISSION_RESPONSE, async (event, rawArgs: unknown) => {
@@ -33,7 +33,7 @@ export function registerPermissionIpc(): void {
 
       const response = args.response
 
-      log.info(`[permission] Response received — workspace=${workspaceId} type=${type}`)
+      permLog.info(`[permission] Response received — workspace=${workspaceId} type=${type}`)
 
       switch (type) {
         case 'elicitation': {
@@ -42,7 +42,7 @@ export function registerPermissionIpc(): void {
           if (session) {
             session.emit('elicitationResponse', response)
           } else {
-            log.warn(
+            permLog.warn(
               `[permission] No session for workspace ${workspaceId} — elicitation response dropped`
             )
           }
@@ -62,7 +62,7 @@ export function registerPermissionIpc(): void {
               resp.answer as string
             )
           } else {
-            log.warn(`[permission] askQuestion response missing requestId or answer`)
+            permLog.warn(`[permission] askQuestion response missing requestId or answer`)
           }
           break
         }
@@ -78,16 +78,16 @@ export function registerPermissionIpc(): void {
           if (runId) {
             mpaOrchestrationService.respondToGate(runId, resp.approved, resp.feedback)
           } else {
-            log.warn(`[permission] MPA approval response has no runId`)
+            permLog.warn(`[permission] MPA approval response has no runId`)
           }
           break
         }
 
         default:
-          log.warn(`[permission] Unknown permission type: ${type}`)
+          permLog.warn(`[permission] Unknown permission type: ${type}`)
       }
     } catch (err) {
-      log.error('[permission] Handler error:', err)
+      permLog.error('[permission] Handler error:', err)
       throw err
     }
   })

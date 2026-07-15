@@ -13,12 +13,13 @@ import type {
   CouncilInputType,
   CouncilReview,
   CouncilPeerReview,
-  CouncilVerdict
+  CouncilVerdict,
+  CouncilSessionStatus
 } from '../../../shared/types'
 
-// ── Types ───────────────────────────────────────────────────────────────────
+export type { CouncilSessionStatus }
 
-export type CouncilSessionStatus = 'running' | 'completed' | 'cancelled' | 'failed'
+// ── Types ───────────────────────────────────────────────────────────────────
 
 export interface CouncilSessionRow {
   id: string

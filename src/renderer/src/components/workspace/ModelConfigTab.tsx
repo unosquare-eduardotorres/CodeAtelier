@@ -17,10 +17,8 @@ export default function ModelConfigTab(): React.JSX.Element {
   useEffect(() => {
     if (modelsViewIntent) {
       setModelsViewIntent(null)
-      // Auto-test oMLX connection when deep-linked to local provider
-      if (modelsViewIntent.provider === 'local-llm') {
-        config.testConnection(undefined, undefined, true)
-      }
+      // Auto-test oMLX connection on mount (regardless of provider — always useful)
+      config.testConnection(undefined, undefined, true)
     }
   }, [modelsViewIntent, setModelsViewIntent, config])
 
@@ -57,9 +55,13 @@ export default function ModelConfigTab(): React.JSX.Element {
       <div className="px-6 pt-6">
         <h2 className="text-base font-semibold text-text-primary mb-6">Model Configuration</h2>
 
-        {/* ── Provider Cards (always both visible) ── */}
+        {/* ── Provider Connections ── */}
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium">
+            Provider Connections
+          </h3>
+        </div>
         <ProviderCards
-          defaultProvider={config.defaultProvider}
           claudeCliStatus={config.claudeCliStatus}
           fastMode={config.fastMode}
           budgetCapUsd={config.budgetCapUsd}
@@ -73,7 +75,6 @@ export default function ModelConfigTab(): React.JSX.Element {
           localBaseUrl={config.localBaseUrl}
           isRemoteServer={config.isRemoteServer}
           platformInfo={config.platformInfo}
-          onSetDefaultProvider={config.handleSetDefaultProvider}
           onFastModeToggle={config.handleFastModeToggle}
           onBudgetCapChange={config.handleBudgetCapChange}
           onExecutorBackendChange={config.handleExecutorBackendChange}
@@ -94,9 +95,11 @@ export default function ModelConfigTab(): React.JSX.Element {
         <ModelRolesSection
           modelRoles={config.modelRoles}
           claudeModelOverrides={config.claudeModelOverrides}
-          workspaceProvider={config.defaultProvider}
+          workspaceProvider={config.derivedProvider}
           omlxModels={config.omlxChatModels}
           onModelRolesChange={config.handleModelRolesChange}
+          fallbackModel={config.fallbackModel}
+          onFallbackModelChange={config.handleFallbackModelChange}
         />
 
         {/* ── Workspace Defaults (provider-agnostic, bottom) ── */}

@@ -12,9 +12,10 @@ import {
   Bone
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../../../shared/types'
 import { COMMUNICATION_TONES } from '../../../../shared/constants'
 import { AttachmentDropzone } from '@renderer/components/chat'
+import { useClipboardImagePaste, IMAGE_REGEX } from '@renderer/hooks'
 import { ModelPicker } from './ModelPicker'
 import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
@@ -33,6 +34,7 @@ interface NewConversationModalProps {
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -170,21 +172,26 @@ export default function NewConversationModal({
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
   const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
-  const [selectedModelId, setSelectedModelId] = useState<string | null>('claude-opus-4-8')
+  const [routingOverrides, setRoutingOverrides] = useState<Partial<ModelRoleMap>>({})
   const titleInputRef = useRef<HTMLInputElement>(null)
+
+  // Clipboard image paste from the Description field. The textarea is a sibling
+  // of AttachmentDropzone, so its paste events never reach the dropzone handler.
+  const handleImageSaved = useCallback((filePath: string) => {
+    setAttachments((prev) => [...prev, filePath])
+  }, [])
+  const handleDescriptionPaste = useClipboardImagePaste({
+    conversationId: 'unsorted',
+    imageCount: attachments.filter((p) => IMAGE_REGEX.test(p)).length,
+    onImageSaved: handleImageSaved
+  })
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const {
-    llmProvider,
-    setLlmProvider,
-    defaultLlmProvider,
-    localModelInfo,
-    platformInfo
+    modelRoles: workspaceModelRoles,
+    claudeModelOverrides,
+    derivedProvider,
+    omlxModels
   } = useWorkspaceModelInfo(activeWorkspace?.id)
-
-  const handleModelChange = useCallback((provider: LLMProvider, modelId: string | null) => {
-    setLlmProvider(provider)
-    setSelectedModelId(modelId)
-  }, [setLlmProvider])
 
   // Auto-focus title input when opened
   useEffect(() => {
@@ -205,8 +212,7 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setUseIsolatedBranch(false)
-      setSelectedModelId('claude-opus-4-8')
-      setLlmProvider(defaultLlmProvider)
+      setRoutingOverrides({})
     }
   // Only reset on open — not when defaultLlmProvider changes mid-modal
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,6 +225,9 @@ export default function NewConversationModal({
     // Model defaults are now configured exclusively in Settings → Models tab.
     // Chat creation should not silently rewrite workspace-wide settings.
 
+    // Derive provider from routing overrides or workspace routing
+    const effectiveProvider = routingOverrides['da-vinci:plan']?.provider ?? derivedProvider
+
     onSubmit({
       title: trimmedTitle,
       description: description.trim() || undefined,
@@ -226,7 +235,8 @@ export default function NewConversationModal({
       communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
       useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
-      llmProvider
+      llmProvider: effectiveProvider,
+      routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined
     })
   }, [
     title,
@@ -235,7 +245,8 @@ export default function NewConversationModal({
     conversationTone,
     attachments,
     useIsolatedBranch,
-    llmProvider,
+    derivedProvider,
+    routingOverrides,
     onSubmit
   ])
 
@@ -313,14 +324,15 @@ export default function NewConversationModal({
           {/* Mode Toggle */}
           <ModeToggle mode={mode} onModeChange={setMode} />
 
-          {/* Model Picker */}
+          {/* Model Routing */}
           {activeWorkspace && (
             <ModelPicker
-              provider={llmProvider}
-              selectedModelId={selectedModelId}
-              localModelInfo={localModelInfo}
-              platformInfo={platformInfo}
-              onChange={handleModelChange}
+              workspaceModelRoles={workspaceModelRoles}
+              claudeModelOverrides={claudeModelOverrides}
+              workspaceProvider={derivedProvider}
+              omlxModels={omlxModels}
+              overrides={routingOverrides}
+              onOverridesChange={setRoutingOverrides}
               compact
             />
           )}
@@ -340,13 +352,16 @@ export default function NewConversationModal({
               id="conv-description"
               value={description}
               onChange={(e) => setDescription(e.target.value.slice(0, DESCRIPTION_MAX))}
+              onPaste={handleDescriptionPaste}
               placeholder="Describe what needs to be done, acceptance criteria, technical requirements, etc."
               rows={5}
               className="w-full px-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-sm text-text-primary placeholder-text-muted outline-none focus:border-primary focus:ring-1 focus:ring-primary/30 transition-colors resize-y min-h-[80px] max-h-[240px]"
               maxLength={DESCRIPTION_MAX}
             />
             <div className="flex items-center justify-between mt-1">
-              <span className="text-xs text-text-muted">Supports @path file references</span>
+              <span className="text-xs text-text-muted">
+                Supports @path file references · paste images to attach
+              </span>
               <span className="text-xs text-text-muted">
                 {description.length.toLocaleString()}/{DESCRIPTION_MAX.toLocaleString()}
               </span>

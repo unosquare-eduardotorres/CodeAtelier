@@ -798,3 +798,102 @@ body::after {
 .animate-pulse-subtle {
   animation: pulse-subtle 2s ease-in-out infinite;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   E2E RunningBanner — gradient sweep + ring pulse
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes e2e-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-e2e-sweep {
+  background-size: 200% 100%;
+  animation: e2e-sweep 3s linear infinite;
+}
+
+@keyframes e2e-ring-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.animate-e2e-ring {
+  animation: e2e-ring-pulse 2s ease-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Blueprint item exit — collapse + fade + slide
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes bp-item-out {
+  to {
+    opacity: 0;
+    transform: translateX(12px) scaleY(0.6);
+    max-height: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mermaid Diagram Overrides — polished dark aesthetic
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Node shapes: thinner borders, subtle rounded corners */
+[data-testid="mermaid-diagram"] .node rect,
+[data-testid="mermaid-diagram"] .node polygon,
+[data-testid="mermaid-diagram"] .node circle,
+[data-testid="mermaid-diagram"] .node ellipse,
+[data-testid="mermaid-diagram"] .node path {
+  stroke-width: 1.5px !important;
+}
+
+/* Edge paths: crisp teal lines */
+[data-testid="mermaid-diagram"] .edgePath .path {
+  stroke-width: 1.5px !important;
+}
+
+/* Edge labels: transparent background, subtle text */
+[data-testid="mermaid-diagram"] .edgeLabel {
+  background-color: transparent !important;
+}
+[data-testid="mermaid-diagram"] .edgeLabel rect {
+  fill: transparent !important;
+  stroke: none !important;
+}
+
+/* Arrowheads: match teal line color */
+[data-testid="mermaid-diagram"] .marker {
+  fill: var(--color-teal, #73daca) !important;
+  stroke: var(--color-teal, #73daca) !important;
+}
+
+/* Subgraph clusters: subtle borders */
+[data-testid="mermaid-diagram"] .cluster rect {
+  stroke-width: 1px !important;
+  rx: 8px;
+  ry: 8px;
+}
+
+/* Text inside nodes: clean sans-serif */
+[data-testid="mermaid-diagram"] .nodeLabel,
+[data-testid="mermaid-diagram"] .label {
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 500 !important;
+}
+
+/* Icon shapes: proper sizing */
+[data-testid="mermaid-diagram"] .icon-shape {
+  opacity: 0.9;
+}

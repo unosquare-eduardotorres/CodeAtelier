@@ -1,23 +1,21 @@
 /**
- * ProviderCards — Two always-visible provider cards (Claude + oMLX).
+ * ProviderCards — Two always-visible provider connection cards (Claude + oMLX).
  *
- * Replaces: ProviderToggle, ClaudeConfigSection, ExecutorBackendSection,
- *           LocalLLMConfigSection (all absorbed into card anatomy).
+ * These are the providers available for routing. Configure connections here.
+ * No default/active concept — provider is derived from Model Routing config.
  *
- * Each card has: status dot + name + DEFAULT chip / "Set as default" button,
+ * Each card has: status dot + name + connection status text,
  *   provider-specific body, and a footer with save affordance.
  */
 
 import { useState } from 'react'
-import { Loader2, Cloud, Cpu, Check, Zap, DollarSign, CheckCircle2, ChevronDown, ChevronRight, Save } from 'lucide-react'
+import { Loader2, Cloud, Cpu, Zap, DollarSign, CheckCircle2, ChevronDown, ChevronRight, Save } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import { useToastStore } from '@renderer/store'
 import { OMLX_DEFAULT_PORT } from '../../../../../shared/constants'
 import type {
   ExecutorBackend,
-  LLMProvider,
   OmlxExtendedStatus,
-  OmlxModelDetail,
   PlatformInfo
 } from '../../../../../shared/types'
 import type { ClaudeCliStatus, ConnectionDraft } from './useModelConfig'
@@ -169,17 +167,13 @@ function ProviderCardHeader({
   name,
   sublabel,
   statusDot,
-  statusText,
-  isDefault,
-  onSetDefault
+  statusText
 }: {
   icon: React.ReactNode
   name: string
   sublabel: string
   statusDot: StatusDotColor
   statusText: string
-  isDefault: boolean
-  onSetDefault: () => void
 }): React.JSX.Element {
   return (
     <div className="flex items-center gap-3 mb-4">
@@ -187,22 +181,7 @@ function ProviderCardHeader({
       <div className="flex items-center gap-2">
         {icon}
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-text-primary">{name}</h3>
-            {isDefault ? (
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-success text-surface-base font-semibold uppercase tracking-wider">
-                <Check size={10} strokeWidth={3} />
-                Default
-              </span>
-            ) : (
-              <button
-                onClick={onSetDefault}
-                className="text-xs px-2 py-0.5 rounded-full border border-border-default text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-              >
-                Set as default
-              </button>
-            )}
-          </div>
+          <h3 className="text-sm font-semibold text-text-primary">{name}</h3>
           <p className="text-xs text-text-muted">{sublabel}</p>
         </div>
       </div>
@@ -214,24 +193,20 @@ function ProviderCardHeader({
 // ─── Claude Provider Card ────────────────────────────────
 
 interface ClaudeProviderCardProps {
-  isDefault: boolean
   claudeCliStatus: ClaudeCliStatus | null
   fastMode: boolean
   budgetCapUsd: number | undefined
   executorBackend: ExecutorBackend
-  onSetDefault: () => void
   onFastModeToggle: () => void
   onBudgetCapChange: (value: string) => void
   onExecutorBackendChange: (backend: ExecutorBackend) => void
 }
 
 function ClaudeProviderCard({
-  isDefault,
   claudeCliStatus,
   fastMode,
   budgetCapUsd,
   executorBackend,
-  onSetDefault,
   onFastModeToggle,
   onBudgetCapChange,
   onExecutorBackendChange
@@ -254,8 +229,6 @@ function ClaudeProviderCard({
         sublabel="Cloud API"
         statusDot={statusDot}
         statusText={statusText}
-        isDefault={isDefault}
-        onSetDefault={onSetDefault}
       />
 
       {/* ── Execution Backend ── */}
@@ -363,7 +336,6 @@ function ClaudeProviderCard({
 // ─── oMLX Provider Card ──────────────────────────────────
 
 interface OmlxProviderCardProps {
-  isDefault: boolean
   connectionDraft: ConnectionDraft
   isConnectionDirty: boolean
   localStatus: OmlxExtendedStatus | null
@@ -373,7 +345,6 @@ interface OmlxProviderCardProps {
   localBaseUrl: string
   isRemoteServer: boolean
   platformInfo: PlatformInfo | null
-  onSetDefault: () => void
   onHostChange: (host: string) => void
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
@@ -388,7 +359,6 @@ interface OmlxProviderCardProps {
 }
 
 function OmlxProviderCard({
-  isDefault,
   connectionDraft,
   isConnectionDirty,
   localStatus,
@@ -398,7 +368,6 @@ function OmlxProviderCard({
   localBaseUrl: _localBaseUrl,
   isRemoteServer,
   platformInfo: _platformInfo,
-  onSetDefault,
   onHostChange,
   onPortChange,
   onApiKeyChange,
@@ -449,8 +418,6 @@ function OmlxProviderCard({
         sublabel="Apple Silicon or remote server"
         statusDot={statusDot}
         statusText={statusText}
-        isDefault={isDefault}
-        onSetDefault={onSetDefault}
       />
 
       {/* ── Server Connection ── */}
@@ -622,7 +589,6 @@ function OmlxProviderCard({
 // ─── Main Grid ───────────────────────────────────────────
 
 export interface ProviderCardsProps {
-  defaultProvider: LLMProvider
   claudeCliStatus: ClaudeCliStatus | null
   fastMode: boolean
   budgetCapUsd: number | undefined
@@ -636,7 +602,6 @@ export interface ProviderCardsProps {
   localBaseUrl: string
   isRemoteServer: boolean
   platformInfo: PlatformInfo | null
-  onSetDefaultProvider: (provider: LLMProvider) => void
   onFastModeToggle: () => void
   onBudgetCapChange: (value: string) => void
   onExecutorBackendChange: (backend: ExecutorBackend) => void
@@ -657,18 +622,15 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
   return (
     <div data-testid="provider-toggle" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
       <ClaudeProviderCard
-        isDefault={props.defaultProvider === 'claude'}
         claudeCliStatus={props.claudeCliStatus}
         fastMode={props.fastMode}
         budgetCapUsd={props.budgetCapUsd}
         executorBackend={props.executorBackend}
-        onSetDefault={() => props.onSetDefaultProvider('claude')}
         onFastModeToggle={props.onFastModeToggle}
         onBudgetCapChange={props.onBudgetCapChange}
         onExecutorBackendChange={props.onExecutorBackendChange}
       />
       <OmlxProviderCard
-        isDefault={props.defaultProvider === 'local-llm'}
         connectionDraft={props.connectionDraft}
         isConnectionDirty={props.isConnectionDirty}
         localStatus={props.localStatus}
@@ -678,7 +640,6 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
         localBaseUrl={props.localBaseUrl}
         isRemoteServer={props.isRemoteServer}
         platformInfo={props.platformInfo}
-        onSetDefault={() => props.onSetDefaultProvider('local-llm')}
         onHostChange={props.onHostChange}
         onPortChange={props.onPortChange}
         onApiKeyChange={props.onApiKeyChange}

@@ -193,6 +193,10 @@ function handleMessageChunk(
     processTodoUpdate(data.conversationId, data.todoUpdate)
   }
 
+  if (data.turnLimit) {
+    useChatStore.setState({ turnLimitReached: data.turnLimit })
+  }
+
   if (data.contextUsageUpdate) {
     const convId = data.conversationId
     if (convId) {

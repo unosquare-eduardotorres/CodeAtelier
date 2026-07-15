@@ -237,6 +237,26 @@ describe('CliMcpConfigWriter.buildConfig', () => {
     assert.equal(gitCtx.env?.WORKSPACE_PATH, '/test/workspace')
   })
 
+  test('skipServers_removes_specified_servers_from_config', () => {
+    const config = buildConfig({ skipServers: ['control-actions', 'checkpoint-context'] })
+    assert.ok(!('control-actions' in config.mcpServers), 'control-actions should be removed')
+    assert.ok(!('checkpoint-context' in config.mcpServers), 'checkpoint-context should be removed')
+    // Other servers should still be present
+    assert.ok('git-context' in config.mcpServers, 'git-context should remain')
+    assert.ok('code-analysis' in config.mcpServers, 'code-analysis should remain')
+  })
+
+  test('skipServers_empty_array_removes_nothing', () => {
+    const config = buildConfig({ skipServers: [] })
+    assert.ok('control-actions' in config.mcpServers, 'control-actions should remain')
+    assert.ok('git-context' in config.mcpServers, 'git-context should remain')
+  })
+
+  test('skipServers_undefined_removes_nothing', () => {
+    const config = buildConfig({ skipServers: undefined })
+    assert.ok('control-actions' in config.mcpServers, 'control-actions should remain')
+  })
+
   test('code_graph_env_includes_workspace_id_and_db_path', () => {
     const config = buildConfig()
     const cg = config.mcpServers['code-graph']

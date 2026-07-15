@@ -98,7 +98,7 @@ function BlueprintQARecord({
 
 interface BlueprintQuestionFooterProps {
   questions: ClarifyQuestion[]
-  onSubmit: (formattedAnswer: string, answers?: Record<string, QuestionAnswerState>) => void
+  onSubmit: (formattedAnswer: string, answers?: Record<string, QuestionAnswerState>) => void | Promise<void>
   onSkip: () => void
 }
 
@@ -137,8 +137,9 @@ function BlueprintQuestionFooter({
     if (submitting) return
     setSubmitting(true)
 
+    let result: void | Promise<void>
     if (freeTextMode) {
-      onSubmit(freeText.trim())
+      result = onSubmit(freeText.trim())
     } else {
       // Convert QuestionState to QuestionAnswerState and format
       const answerStates: Record<string, QuestionAnswerState> = {}
@@ -153,8 +154,10 @@ function BlueprintQuestionFooter({
           }
         }
       }
-      onSubmit(formatClarifyAnswerMessage(questions, answerStates), answerStates)
+      result = onSubmit(formatClarifyAnswerMessage(questions, answerStates), answerStates)
     }
+    // Un-stick: reset submitting whether onSubmit succeeds or fails
+    Promise.resolve(result).finally(() => setSubmitting(false))
   }, [submitting, freeTextMode, freeText, questions, questionStates, onSubmit])
 
   const handleKeyDown = useCallback(

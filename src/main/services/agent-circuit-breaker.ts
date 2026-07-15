@@ -1,50 +1,58 @@
-import type { StreamChunk } from './agent-base.service'
 import type { ContextWindowTier } from './context-management'
 import { chatAgentLogger } from '../logger'
 import { eventLoggerService } from './event-logger.service'
 
-/** Tool call limits — plan mode needs room for file reads + searches */
-const MAX_PLAN_TOOL_CALLS = 50
-const MAX_BUILD_TOOL_CALLS = 80
+/**
+ * Tool call limits — runaway-loop guards, NOT productivity walls.
+ *
+ * These are intentionally high ceilings (2–3× the old values). A legitimate
+ * long task that reaches them will auto-continue via the recovery manager
+ * (up to MAX_TURN_CONTINUATIONS), then show a "Continue" button.
+ * Only a pathological loop should hit these limits meaningfully.
+ *
+ * Reference: Neither Claude Code nor OpenCode impose tool-call caps;
+ * they rely on auto-compaction + cost ceilings. Our budget guard
+ * (AgentExecutorFactory.checkPreFlightBudget → BudgetExceededError)
+ * is the real spend ceiling.
+ */
+const MAX_PLAN_TOOL_CALLS = 100
+const MAX_BUILD_TOOL_CALLS = 150
 
 /**
- * S1: Tier-aware plan-mode limits for local LLMs.
- * Plan mode needs generous tool budgets — models frequently explore 3-5 files
- * via Read + 2-3 Grep searches before producing a plan. With parallel tool calls
- * a single turn can consume 2-3 tool uses, so the limit must be well above maxTurns.
- * Formula: maxTurns × 2.5, rounded up.
+ * S1: Tier-aware limits for local LLMs.
+ * Raised proportionally from the old values to serve as runaway guards.
+ * With auto-continue (up to 3×), effective ceilings are 3× these values.
  */
 const LOCAL_PLAN_LIMITS: Record<ContextWindowTier, number> = {
-  small: 30, // 12 maxTurns × 2.5 — allows ~2.5 tools/turn average
-  medium: 38, // 15 maxTurns × 2.5
-  large: 50 // 30 maxTurns, capped at Claude-level MAX_PLAN_TOOL_CALLS
+  small: 50, // was 30
+  medium: 75, // was 38
+  large: 100 // was 50, now matches Claude MAX_PLAN_TOOL_CALLS
 }
 const LOCAL_BUILD_LIMITS: Record<ContextWindowTier, number> = {
-  small: 30, // 15 maxTurns × 2
-  medium: 50, // 25 maxTurns × 2
-  large: 80 // 50 maxTurns, same as Claude MAX_BUILD_TOOL_CALLS
+  small: 60, // was 30
+  medium: 100, // was 50
+  large: 150 // was 80, now matches Claude MAX_BUILD_TOOL_CALLS
 }
 
 /**
  * Result of evaluating a tool use against the circuit breaker.
  * When `broken` is true, the caller should stop the stream.
- * When `errorChunk` is provided, emit it before stopping.
  */
 export interface CircuitBreakerResult {
   /** Whether the circuit was just broken (caller should stop) */
   broken: boolean
-  /** Error chunk to emit to the renderer, if the hard limit was hit */
-  errorChunk?: StreamChunk
   /** Whether the stream should terminate after current tool completes (soft stop) */
   shouldTerminate: boolean
   /** S1: Optional additional context to inject into the conversation (e.g. early warnings) */
   additionalContext?: string
   /**
-   * When true, the breaker fired for a local LLM in plan mode.
-   * The recovery manager should treat this as a continuable condition
+   * When true, the breaker fired as a continuable condition.
+   * The recovery manager should treat this as a max_turns event
    * (save plan state + auto-continue) rather than a hard error.
+   * This is the default for all breaker trips — both Claude and local,
+   * both plan and build mode.
    */
-  isLocalPlanBreak?: boolean
+  isContinuableBreak?: boolean
 }
 
 /**
@@ -147,9 +155,10 @@ export class AgentCircuitBreaker {
 
     if (this._toolCallCount >= toolCallLimit) {
       this._circuitBroken = true
-      const isLocalPlan = !!opts.isLocalProvider && !opts.isBuildMode
-      this.log.error(
-        `Generalist circuit breaker: ${this._toolCallCount} tool calls exceeded ${opts.isBuildMode ? 'build' : 'plan'} limit of ${toolCallLimit}`
+      this.log.warn(
+        `[PIPELINE:circuit-breaker] ${this._toolCallCount} tool calls reached ` +
+          `${opts.isBuildMode ? 'build' : 'plan'} limit of ${toolCallLimit} — ` +
+          `continuable break (recovery manager will auto-continue)`
       )
       eventLoggerService.logAgentToolCall({
         agentId: 'da-vinci',
@@ -158,27 +167,13 @@ export class AgentCircuitBreaker {
         toolCallNumber: this._toolCallCount
       })
 
-      // Local plan mode: don't show a hard error — the recovery manager will
-      // save plan state and auto-continue from where we left off.
-      if (isLocalPlan) {
-        return {
-          broken: true,
-          shouldTerminate: true,
-          isLocalPlanBreak: true
-          // No errorChunk — recovery manager handles the UX
-        }
-      }
-
-      const errorMessage = opts.isBuildMode
-        ? `I made ${this._toolCallCount} tool calls, which suggests I got stuck. Try breaking your request into smaller steps (e.g., "run npm install" then "run npm start").`
-        : `I made ${this._toolCallCount} tool calls trying to help, which is more than expected for plan mode. If you need me to run commands, switch to **Build mode** using the toggle in the chat header.`
+      // All breaker trips are continuable — the recovery manager will
+      // save progress and auto-continue (up to MAX_TURN_CONTINUATIONS),
+      // then show a "Continue" button when exhausted. No hard error.
       return {
         broken: true,
         shouldTerminate: true,
-        errorChunk: {
-          type: 'error',
-          error: errorMessage
-        }
+        isContinuableBreak: true
       }
     }
 

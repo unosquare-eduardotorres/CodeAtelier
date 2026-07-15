@@ -96,6 +96,7 @@ export function useChatPanelState() {
       attachments?: string[]
       useIsolatedBranch?: boolean
       llmProvider?: string
+      routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
       mcpOverrides?: Record<string, boolean>
     }): Promise<void> => {
       if (!activeWorkspace) return
@@ -105,6 +106,7 @@ export function useChatPanelState() {
         data.title,
         undefined,
         (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
+        data.routingOverrides,
         data.mcpOverrides,
         data.communicationTone
       )

@@ -8,13 +8,14 @@ import { test, describe, summaryAsync } from './test-harness'
 import { forwardBlueprintChunk } from '../blueprint-chunk-forwarder'
 import type { StreamChunk } from '../agent-base.service'
 import type { BlueprintPhaseProgressPayload } from '../../../shared/blueprint-types'
+import type { BlueprintChunkForwarderCtx } from '../blueprint-chunk-forwarder'
 
-const baseCtx = {
+const baseCtx: BlueprintChunkForwarderCtx = {
   blueprintId: 'bp-123',
   workspaceId: 'ws-456',
-  phase: 'plan' as const,
+  phase: 'plan',
   workspacePath: '/tmp/test-workspace',
-  mode: 'plan' as const
+  mode: 'plan'
 }
 
 /** Helper: collect emissions from a single forwardBlueprintChunk call */

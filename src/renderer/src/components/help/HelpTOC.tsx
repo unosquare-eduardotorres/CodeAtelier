@@ -7,6 +7,7 @@ import {
   Users,
   Lightbulb,
   Brain,
+  Waypoints,
   FileText,
   Coins,
   UserCog,
@@ -40,6 +41,7 @@ const iconMap: Record<string, React.ComponentType<{ size?: number; className?: s
   Users,
   Lightbulb,
   Brain,
+  Waypoints,
   FileText,
   Coins,
   UserCog,
@@ -142,6 +144,7 @@ export default function HelpTOC({
             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
           />
           <input
+            data-testid="help-toc-search"
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -197,7 +200,7 @@ export default function HelpTOC({
           )}
 
           {filteredSections.length === 0 && (
-            <li className="px-3 py-6 text-center text-sm text-text-muted">
+            <li data-testid="help-toc-empty" className="px-3 py-6 text-center text-sm text-text-muted">
               No matching topics found
             </li>
           )}

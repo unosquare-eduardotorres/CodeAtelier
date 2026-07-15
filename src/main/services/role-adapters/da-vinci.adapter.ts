@@ -143,7 +143,7 @@ export class DaVinciRoleAdapter extends BaseRoleAdapter {
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
       mode: ctx.mode,
-      featureFlags: { ...mcpFlags, externalMcpActive },
+      featureFlags: { ...mcpFlags, externalMcpActive, codeAnalysisEnabled: this.codeAnalysisEnabled },
       costPreference: ctx.costPreference,
       personaSpecialistId: this.currentPersonaSpecialistId,
       personaData: this.currentPersonaData,

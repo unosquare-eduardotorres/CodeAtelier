@@ -191,8 +191,16 @@ describe('Context Window Tiers', () => {
     assert.ok(!supportsContext1M('claude-opus-4-7'))
   })
 
-  test('Sonnet supports 1M context', () => {
+  test('Sonnet 5 supports 1M context', () => {
+    assert.ok(supportsContext1M('claude-sonnet-5'))
+  })
+
+  test('Sonnet 4.6 (legacy) supports 1M context', () => {
     assert.ok(supportsContext1M('claude-sonnet-4-6'))
+  })
+
+  test('Fable 5 supports 1M context', () => {
+    assert.ok(supportsContext1M('claude-fable-5'))
   })
 
   test('Haiku does NOT support 1M context', () => {

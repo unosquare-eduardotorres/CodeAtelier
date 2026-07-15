@@ -14,7 +14,7 @@ import { conversationLifecycle } from '../services/conversation-lifecycle'
 import { chatStreamService } from '../services/chat-stream.service'
 import { repoService } from '../services/repo.service'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
-import type { CommunicationTone, ConversationMode, LLMProvider } from '../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../shared/types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -38,7 +38,10 @@ async function handleCreateConversation(args: {
   title?: string
   mode?: ConversationMode
   personaSpecialistId?: string
+  /** @deprecated Use routingOverrides — kept as fallback */
   llmProvider?: LLMProvider
+  /** Per-conversation routing overrides (Phase 1 addition) */
+  routingOverrides?: Partial<ModelRoleMap>
   mcpOverrides?: Record<string, boolean>
   communicationTone?: CommunicationTone | null
 }): Promise<ReturnType<typeof conversationRepository.create>> {
@@ -49,6 +52,7 @@ async function handleCreateConversation(args: {
     mode,
     personaSpecialistId,
     llmProvider,
+    routingOverrides,
     mcpOverrides,
     communicationTone
   } = args
@@ -77,13 +81,13 @@ async function handleCreateConversation(args: {
     if (!specialist) throw new Error(`${ch}: invalid persona specialist ID`)
   }
 
-  // Per-conversation LLM provider: explicit selection → workspace setting → 'claude'
-  const settings = workspaceRepository.getSettings(workspaceId)
-  const resolvedProvider: LLMProvider =
-    llmProvider ?? (settings.llmProvider as LLMProvider) ?? 'claude'
-
   // Build model config snapshot — frozen at creation time
-  const snapshot = buildConversationModelSnapshot(workspaceId, resolvedProvider)
+  const settings = workspaceRepository.getSettings(workspaceId)
+  const snapshot = buildConversationModelSnapshot(workspaceId, llmProvider, routingOverrides)
+
+  // Per-conversation LLM provider: derived from snapshot's plan action provider.
+  // snapshot.plan.provider is always defined (resolveAssignment always returns a provider).
+  const resolvedProvider: LLMProvider = snapshot.plan.provider
 
   const conversation = conversationRepository.create(
     workspaceId,
@@ -211,6 +215,7 @@ export function registerConversationCrudIpc(): void {
       mode: optionalString(args, 'mode', ch) as ConversationMode | undefined,
       personaSpecialistId: optionalString(args, 'personaSpecialistId', ch),
       llmProvider: optionalString(args, 'llmProvider', ch) as LLMProvider | undefined,
+      routingOverrides: args.routingOverrides as Partial<ModelRoleMap> | undefined,
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
       communicationTone: args.communicationTone as CommunicationTone | null | undefined
     })

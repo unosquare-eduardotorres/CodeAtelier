@@ -6,8 +6,8 @@
  * document content into phase prompts.
  */
 
-import { readFileSync } from 'node:fs'
-import { resolve, normalize, isAbsolute } from 'node:path'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
+import { resolve, normalize, isAbsolute, extname, basename, join } from 'node:path'
 import log from 'electron-log'
 /** Inline type — ReferenceDocument was removed from shared/blueprint-types */
 interface ReferenceDocument {
@@ -22,6 +22,13 @@ const docLog = log.scope('blueprint-doc-loader')
 
 /** Maximum characters per document to prevent context window overflow */
 const MAX_DOC_CHARS = 50_000
+
+/** Binary extensions listed by path instead of read as UTF-8 */
+const BINARY_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp',
+  '.pdf', '.doc', '.docx',
+  '.zip', '.tar', '.gz', '.dmg', '.exe', '.mp3', '.mp4', '.wav'
+])
 
 /** Content loaded from a reference document */
 export interface LoadedDocument {
@@ -51,11 +58,21 @@ export async function loadReferenceDocContent(
     // falls through
     case 'workspace-file': {
       const normalizedWorkspace = normalize(resolve(workspacePath))
-      const fullPath = normalize(resolve(workspacePath, doc.path))
+      let fullPath = normalize(resolve(workspacePath, doc.path))
 
       // Security: verify path is within workspace
       if (!fullPath.startsWith(normalizedWorkspace)) {
         throw new Error(`Path traversal detected: ${doc.path} resolves outside workspace`)
+      }
+
+      // Defensive fallback: if file not found, search for the filename in the workspace (depth ≤3)
+      if (!existsSync(fullPath)) {
+        const fileName = basename(doc.path)
+        const found = findFileInWorkspace(workspacePath, fileName)
+        if (found) {
+          docLog.info(`Resolved bare filename "${doc.path}" → "${found}" (fallback search)`)
+          fullPath = found
+        }
       }
 
       return readFileSync(fullPath, 'utf-8')
@@ -99,6 +116,95 @@ export async function loadAllReferenceDocuments(
       }
     })
   )
+}
+
+// ── Exported Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Split reference documents into text-readable and binary-path-only groups.
+ * Pure, synchronous, testable.
+ */
+export function splitBinaryDocs(
+  docs: ReferenceDocument[]
+): { textDocs: ReferenceDocument[]; binaryPaths: string[] } {
+  const textDocs: ReferenceDocument[] = []
+  const binaryPaths: string[] = []
+
+  for (const doc of docs) {
+    const ext = extname(doc.path).toLowerCase()
+    if (BINARY_EXTS.has(ext)) {
+      binaryPaths.push(doc.path)
+    } else {
+      textDocs.push(doc)
+    }
+  }
+
+  return { textDocs, binaryPaths }
+}
+
+/**
+ * Build the full reference-docs markdown block for injection into a phase prompt.
+ * Splits binary from text, loads text docs, and assembles sections.
+ * Returns undefined when there are no documents to render.
+ */
+export async function buildReferenceDocsBlock(
+  workspacePath: string,
+  docs: ReferenceDocument[]
+): Promise<string | undefined> {
+  if (!docs.length) return undefined
+
+  const { textDocs, binaryPaths } = splitBinaryDocs(docs)
+  const parts: string[] = []
+
+  if (textDocs.length > 0) {
+    const loaded = await loadAllReferenceDocuments(workspacePath, textDocs)
+    for (const ld of loaded) {
+      parts.push(`### ${ld.doc.name || ld.doc.path}\n\n${ld.content}`)
+    }
+  }
+
+  if (binaryPaths.length > 0) {
+    parts.push(
+      '### Binary Reference Files\n\n' +
+      'The following binary files were attached as reference. ' +
+      'Use your file tools to view them if needed:\n\n' +
+      binaryPaths.map((p) => `- \`${p}\``).join('\n')
+    )
+  }
+
+  return parts.length > 0 ? parts.join('\n\n---\n\n') : undefined
+}
+
+// ── Internal Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Shallow filename search in the workspace (depth ≤3).
+ * Returns the first absolute match or undefined. Used as a fallback when a bare
+ * filename was stored (e.g. Electron 32+ dropped File.path).
+ */
+function findFileInWorkspace(workspacePath: string, fileName: string): string | undefined {
+  try {
+    return walkForFile(workspacePath, fileName, 0, 3)
+  } catch {
+    return undefined
+  }
+}
+
+/** Recursive directory walk limited to `maxDepth` levels. */
+function walkForFile(dir: string, target: string, depth: number, maxDepth: number): string | undefined {
+  if (depth > maxDepth) return undefined
+  const entries = readdirSync(dir, { withFileTypes: true })
+  // Check files first at this level
+  for (const e of entries) {
+    if (e.isFile() && e.name === target) return join(dir, e.name)
+  }
+  // Then recurse into subdirectories
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === 'node_modules' || e.name.startsWith('.')) continue
+    const found = walkForFile(join(dir, e.name), target, depth + 1, maxDepth)
+    if (found) return found
+  }
+  return undefined
 }
 
 /**

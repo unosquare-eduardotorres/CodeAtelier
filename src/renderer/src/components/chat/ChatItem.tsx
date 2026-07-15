@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Pencil, GripVertical, Cloud, Monitor } from 'lucide-react'
-import type { Conversation, ContextUsage } from '../../../../shared/types'
+import { Trash2, Pencil, GripVertical, Compass, Hammer, ShieldAlert } from 'lucide-react'
+import type { Conversation, ConversationMode, ContextUsage } from '../../../../shared/types'
 import ContextBadge from './ContextBadge'
 
 interface ChatItemProps {
@@ -19,26 +19,37 @@ interface ChatItemProps {
   isDragOver?: boolean
 }
 
-// ── Data-driven provider styles ──
+// ── Data-driven mode styles ──
 
-const PROVIDER_STYLES = {
-  'local-llm': {
-    iconBgActive: 'bg-teal/20 text-teal-text',
-    iconBgDefault: 'bg-teal-muted text-teal-text',
-    pillClass: 'bg-teal-muted text-teal-text',
-    pillTitle: 'Local LLM',
-    pillLabel: 'Local',
-    Icon: Monitor
+const MODE_STYLES: Record<ConversationMode, {
+  iconBgActive: string
+  iconBgDefault: string
+  pillClass: string
+  pillLabel: string
+  Icon: typeof Compass
+}> = {
+  plan: {
+    iconBgActive: 'bg-mode-plan/20 text-mode-plan-text',
+    iconBgDefault: 'bg-mode-plan-muted text-mode-plan-text',
+    pillClass: 'bg-mode-plan-muted text-mode-plan-text',
+    pillLabel: 'Plan',
+    Icon: Compass
   },
-  claude: {
-    iconBgActive: 'bg-info/15 text-info',
-    iconBgDefault: 'bg-info-muted text-info',
-    pillClass: 'bg-info-muted text-info',
-    pillTitle: 'Claude',
-    pillLabel: 'Claude',
-    Icon: Cloud
+  build: {
+    iconBgActive: 'bg-mode-build/20 text-mode-build-text',
+    iconBgDefault: 'bg-mode-build-muted text-mode-build-text',
+    pillClass: 'bg-mode-build-muted text-mode-build-text',
+    pillLabel: 'Build',
+    Icon: Hammer
+  },
+  danger: {
+    iconBgActive: 'bg-red-500/20 text-red-400',
+    iconBgDefault: 'bg-red-500/10 text-red-400',
+    pillClass: 'bg-red-500/10 text-red-400',
+    pillLabel: 'Danger',
+    Icon: ShieldAlert
   }
-} as const
+}
 
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr)
@@ -141,7 +152,7 @@ export default function ChatItem({
   const inputRef = useRef<HTMLInputElement>(null)
   const { animationClass } = useStreamCompletionFlash(isStreaming)
 
-  const prov = PROVIDER_STYLES[conversation.llmProvider] ?? PROVIDER_STYLES.claude
+  const modeStyle = MODE_STYLES[conversation.mode] ?? MODE_STYLES.plan
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -211,10 +222,10 @@ export default function ChatItem({
 
       <div
         className={`flex items-center justify-center w-8 h-8 rounded-lg transition-shadow ${
-          isActive ? prov.iconBgActive : prov.iconBgDefault
+          isActive ? modeStyle.iconBgActive : modeStyle.iconBgDefault
         } ${animationClass}`}
       >
-        <prov.Icon size={14} />
+        <modeStyle.Icon size={14} />
       </div>
 
       <div className="flex-1 min-w-0">
@@ -243,12 +254,12 @@ export default function ChatItem({
         )}
         <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
           <span>{formatRelativeTime(conversation.createdAt)}</span>
-          {/* Provider pill */}
+          {/* Mode pill */}
           <span
-            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${prov.pillClass}`}
-            title={prov.pillTitle}
+            className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${modeStyle.pillClass}`}
+            title={modeStyle.pillLabel}
           >
-            {prov.pillLabel}
+            {modeStyle.pillLabel}
           </span>
           {contextUsage && contextUsage.percentage > 0 && (
             <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />

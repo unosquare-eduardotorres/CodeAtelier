@@ -188,7 +188,7 @@ class ModelConfigService {
 
     return {
       openCodeProvider: (settings?.openCodeProvider as string) ?? 'anthropic',
-      openCodeModel: (settings?.openCodeModel as string) ?? 'claude-sonnet-4-6',
+      openCodeModel: (settings?.openCodeModel as string) ?? 'claude-sonnet-5',
       openCodeBaseUrl: settings?.openCodeBaseUrl as string | undefined,
       // SEC-04: Decrypt openCodeApiKey (handles both legacy plaintext and encrypted)
       openCodeApiKey: decryptSettingsKey(
@@ -362,16 +362,26 @@ export function buildResolveOpts(workspaceId: string): {
  *
  * @param workspaceId - Workspace to snapshot settings from
  * @param explicitProvider - If provided, overrides the workspace-level provider
+ * @param routingOverrides - Per-conversation routing overrides (merged on top of workspace roles)
  */
 export function buildConversationModelSnapshot(
   workspaceId: string,
-  explicitProvider?: LLMProvider
+  explicitProvider?: LLMProvider,
+  routingOverrides?: Partial<ModelRoleMap>
 ): ConversationModelSnapshot {
   const resolveOpts = buildResolveOpts(workspaceId)
 
   // If caller specified a provider override, use it
   if (explicitProvider) {
     resolveOpts.workspaceProvider = explicitProvider
+  }
+
+  // Merge per-conversation routing overrides on top of workspace roles
+  if (routingOverrides && Object.keys(routingOverrides).length > 0) {
+    resolveOpts.modelRoles = {
+      ...(resolveOpts.modelRoles ?? {}),
+      ...routingOverrides
+    }
   }
 
   return {

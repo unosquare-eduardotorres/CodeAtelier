@@ -49,11 +49,11 @@ export default function ContradictionCard({
   const isPending = contradiction.status === 'pending'
 
   return (
-    <div className={`border rounded-md p-3 space-y-3 ${isPending ? 'border-warning' : 'border-border'}`}>
+    <div className={`border rounded-md p-3 space-y-3 ${isPending ? 'border-warning' : 'border-border-default'}`}>
       {/* Header */}
       <div className="flex items-center gap-2">
         <AlertTriangle className="w-4 h-4 text-warning" />
-        <span className="text-sm font-medium text-primary">Contradiction</span>
+        <span className="text-sm font-medium text-text-primary">Contradiction</span>
         <span
           className={`px-1.5 py-0.5 text-xs rounded ${
             isPending ? 'bg-warning-muted text-warning' : 'bg-success-muted text-success'
@@ -66,20 +66,20 @@ export default function ContradictionCard({
       {/* Side-by-side comparison */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* Old fact (superseded) */}
-        <div className="bg-surface-overlay rounded-md p-2.5 space-y-1.5 border border-border">
+        <div className="bg-surface-overlay rounded-md p-2.5 space-y-1.5 border border-border-default">
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wider text-tertiary font-medium">Old (superseded)</span>
+            <span className="text-[10px] uppercase tracking-wider text-text-muted font-medium">Old (superseded)</span>
           </div>
           {oldFact ? (
             <>
               <div className="flex items-center gap-1.5">
                 <TierBadge tier={oldFact.tier} confidence={oldFact.confidence} />
               </div>
-              <p className="text-xs font-medium text-primary">{oldFact.title}</p>
-              <p className="text-[11px] text-secondary leading-relaxed">{excerpt(oldFact.content)}</p>
+              <p className="text-xs font-medium text-text-primary">{oldFact.title}</p>
+              <p className="text-[11px] text-text-secondary leading-relaxed">{excerpt(oldFact.content)}</p>
             </>
           ) : (
-            <p className="text-xs text-tertiary font-mono">{contradiction.oldFactId.slice(0, 12)}…</p>
+            <p className="text-xs text-text-muted font-mono">{contradiction.oldFactId.slice(0, 12)}…</p>
           )}
         </div>
 
@@ -93,25 +93,25 @@ export default function ContradictionCard({
               <div className="flex items-center gap-1.5">
                 <TierBadge tier={newFact.tier} confidence={newFact.confidence} />
               </div>
-              <p className="text-xs font-medium text-primary">{newFact.title}</p>
-              <p className="text-[11px] text-secondary leading-relaxed">{excerpt(newFact.content)}</p>
+              <p className="text-xs font-medium text-text-primary">{newFact.title}</p>
+              <p className="text-[11px] text-text-secondary leading-relaxed">{excerpt(newFact.content)}</p>
             </>
           ) : (
-            <p className="text-xs text-tertiary font-mono">{contradiction.newFactId.slice(0, 12)}…</p>
+            <p className="text-xs text-text-muted font-mono">{contradiction.newFactId.slice(0, 12)}…</p>
           )}
         </div>
       </div>
 
       {/* Explanation line */}
       {isPending && (
-        <p className="text-[11px] text-tertiary leading-relaxed">
+        <p className="text-[11px] text-text-muted leading-relaxed">
           The newer fact automatically superseded the older one. Review and archive the old fact if the new one is correct.
         </p>
       )}
 
       {/* Resolution */}
       {contradiction.resolution && (
-        <p className="text-xs text-secondary">
+        <p className="text-xs text-text-secondary">
           <span className="font-medium">Resolution:</span> {contradiction.resolution}
         </p>
       )}

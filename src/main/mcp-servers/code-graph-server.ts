@@ -38,28 +38,34 @@ if (!WORKSPACE_ID) {
   process.exit(1)
 }
 
+// ── Lazy service initialization ─────────────────────────────────────────
+
+type CodeGraphServices = {
+  codeGraphService: typeof import('../services/code-graph.service').codeGraphService
+  codeGraphTagRepository: typeof import('../db/repositories/code-graph-tag.repository').codeGraphTagRepository
+  codeGraphEdgeRepository: typeof import('../db/repositories/code-graph-edge.repository').codeGraphEdgeRepository
+}
+
+let readyPromise: Promise<CodeGraphServices> | null = null
+
 /**
- * Lazy-load the code graph service and repositories.
+ * Memoized lazy init — imports code graph service and repositories.
  *
  * These modules depend on better-sqlite3 and the database singleton.
  * In the externalized server, we import them dynamically to allow the
  * DB connection to be initialized with the correct path.
- *
- * NOTE: In the initial implementation, this server is designed to be
- * spawned from the same Electron app bundle, so it shares the same
- * node_modules and can import the service layer directly. For true
- * standalone deployment, the service layer would need to be extracted
- * into a shared package.
  */
-async function loadServices(): Promise<{
-  codeGraphService: typeof import('../services/code-graph.service').codeGraphService
-  codeGraphTagRepository: typeof import('../db/repositories/code-graph-tag.repository').codeGraphTagRepository
-  codeGraphEdgeRepository: typeof import('../db/repositories/code-graph-edge.repository').codeGraphEdgeRepository
-}> {
-  const { codeGraphService } = await import('../services/code-graph.service')
-  const { codeGraphTagRepository } = await import('../db/repositories/code-graph-tag.repository')
-  const { codeGraphEdgeRepository } = await import('../db/repositories/code-graph-edge.repository')
-  return { codeGraphService, codeGraphTagRepository, codeGraphEdgeRepository }
+function ensureReady(): Promise<CodeGraphServices> {
+  if (!readyPromise) {
+    readyPromise = (async (): Promise<CodeGraphServices> => {
+      const { codeGraphService } = await import('../services/code-graph.service')
+      const { codeGraphTagRepository } = await import('../db/repositories/code-graph-tag.repository')
+      const { codeGraphEdgeRepository } = await import('../db/repositories/code-graph-edge.repository')
+      console.error('[code-graph-server] Services initialized')
+      return { codeGraphService, codeGraphTagRepository, codeGraphEdgeRepository }
+    })()
+  }
+  return readyPromise
 }
 
 // ── MCP Server ──
@@ -69,9 +75,7 @@ const server = new McpServer(
   { capabilities: { tools: {} } }
 )
 
-async function registerTools(): Promise<void> {
-  const { codeGraphService, codeGraphTagRepository, codeGraphEdgeRepository } = await loadServices()
-
+function registerToolSchemas(): void {
   // ── graph_map ──
   server.tool(
     'graph_map',
@@ -85,6 +89,7 @@ async function registerTools(): Promise<void> {
       priorityIdentifiers: z.array(z.string()).optional()
     },
     async (args) => {
+      const { codeGraphService } = await ensureReady()
       const result = await codeGraphService.getRepoMap(WORKSPACE_ID, WORKSPACE_PATH, {
         focusFiles: args.focusFiles,
         mapTokens: args.tokenLimit,
@@ -115,6 +120,7 @@ async function registerTools(): Promise<void> {
       includeReferences: z.boolean().optional().default(true)
     },
     async (args) => {
+      const { codeGraphService } = await ensureReady()
       const results = await codeGraphService.searchIdentifiers(
         WORKSPACE_ID,
         WORKSPACE_PATH,
@@ -143,6 +149,7 @@ async function registerTools(): Promise<void> {
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
+      const { codeGraphService } = await ensureReady()
       const results = await codeGraphService.findDeadCode(WORKSPACE_ID, WORKSPACE_PATH, {
         path: args.path,
         maxResults: args.maxResults
@@ -179,6 +186,7 @@ async function registerTools(): Promise<void> {
       filePath: z.string().describe('Relative file path within the workspace')
     },
     async (args) => {
+      const { codeGraphTagRepository } = await ensureReady()
       const tags = codeGraphTagRepository
         .findByFile(WORKSPACE_ID, args.filePath)
         .filter((t) => t.kind === 'def')
@@ -211,6 +219,7 @@ async function registerTools(): Promise<void> {
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
+      const { codeGraphEdgeRepository } = await ensureReady()
       let callers = codeGraphEdgeRepository
         .findCallersOf(WORKSPACE_ID, args.symbolName)
         .slice(0, args.maxResults)
@@ -265,6 +274,7 @@ async function registerTools(): Promise<void> {
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
+      const { codeGraphEdgeRepository } = await ensureReady()
       const callees = codeGraphEdgeRepository
         .findCalleesOf(WORKSPACE_ID, args.symbolName)
         .slice(0, args.maxResults)
@@ -311,6 +321,7 @@ async function registerTools(): Promise<void> {
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     async (args) => {
+      const { codeGraphTagRepository } = await ensureReady()
       let refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, args.symbolName, {
         maxResults: args.maxResults,
         includeDefinitions: false,
@@ -361,6 +372,7 @@ async function registerTools(): Promise<void> {
       filePath: z.string().describe('Relative file path to analyze')
     },
     async (args) => {
+      const { codeGraphEdgeRepository } = await ensureReady()
       const deps = codeGraphEdgeRepository.findDependenciesOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
       for (const d of deps) {
@@ -389,6 +401,7 @@ async function registerTools(): Promise<void> {
       deduplicate: z.boolean().optional().default(true).describe('Remove duplicate file entries per edge type (default: true)')
     },
     async (args) => {
+      const { codeGraphEdgeRepository } = await ensureReady()
       const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
       for (const d of deps) {
@@ -423,6 +436,7 @@ async function registerTools(): Promise<void> {
       path: z.string().optional().describe('Filter to symbols in files under this directory')
     },
     async (args) => {
+      const { codeGraphTagRepository } = await ensureReady()
       const hotspots = codeGraphTagRepository.findSymbolHotspots(WORKSPACE_ID, {
         maxResults: args.maxResults,
         path: args.path
@@ -448,6 +462,7 @@ async function registerTools(): Promise<void> {
       maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
     async (args) => {
+      const { codeGraphEdgeRepository } = await ensureReady()
       const coupled = codeGraphEdgeRepository.findCoupledFiles(WORKSPACE_ID, {
         minCoupling: args.minCoupling,
         path: args.path,
@@ -474,6 +489,7 @@ async function registerTools(): Promise<void> {
       path: z.string().optional().describe('Limit detection to files under this directory')
     },
     async (args) => {
+      const { codeGraphService } = await ensureReady()
       const cycles = codeGraphService.findCircularDependencies(WORKSPACE_ID, { path: args.path })
       return {
         content: [
@@ -498,6 +514,7 @@ async function registerTools(): Promise<void> {
         .describe('Directory depth for module boundaries')
     },
     async (args) => {
+      const { codeGraphEdgeRepository } = await ensureReady()
       const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(WORKSPACE_ID, args.depth)
       return {
         content: [
@@ -519,6 +536,7 @@ async function registerTools(): Promise<void> {
       symbolNames: z.array(z.string()).optional().describe('Key symbols to verify references for')
     },
     async (args) => {
+      const { codeGraphTagRepository, codeGraphEdgeRepository } = await ensureReady()
       const fileResults: Array<{ file: string; dependentCount: number; status: string }> = []
       for (const filePath of args.filePaths) {
         const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, filePath)
@@ -585,13 +603,15 @@ async function registerTools(): Promise<void> {
 // ── Bootstrap ──
 
 async function main(): Promise<void> {
-  await registerTools()
-
+  registerToolSchemas()
   const transport = new StdioServerTransport()
   await server.connect(transport)
-
   console.error(
     `[code-graph-server] Started (workspace=${WORKSPACE_ID}, tier=${CONTEXT_TIER ?? 'default'})`
+  )
+  // Warm up services in the background — non-blocking
+  void ensureReady().catch((err) =>
+    console.error('[code-graph-server] Background warm-up failed:', err)
   )
 }
 

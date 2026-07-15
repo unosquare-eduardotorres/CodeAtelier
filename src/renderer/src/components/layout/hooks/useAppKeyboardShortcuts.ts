@@ -8,14 +8,17 @@ import { useCallback, useEffect } from 'react'
 import type { Conversation, ConversationMode, Workspace } from '../../../../../shared/types'
 import { useChatStore } from '@renderer/store'
 
+type ViewType = 'chat' | 'app-settings' | 'help' | 'bugs'
+
 interface AppKeyboardShortcutsDeps {
   activeWorkspace: Workspace | null
   activeConversation: Conversation | null
   isStreaming: boolean
   updateMode: (mode: ConversationMode) => void
   navigateBack: () => void
+  view: ViewType
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>
-  setView: React.Dispatch<React.SetStateAction<'chat' | 'app-settings' | 'help' | 'bugs'>>
+  setView: (v: ViewType) => void
   setShowNewChat: React.Dispatch<React.SetStateAction<boolean>>
 }
 
@@ -26,6 +29,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): void {
     isStreaming,
     updateMode,
     navigateBack,
+    view,
     setSidebarCollapsed,
     setView,
     setShowNewChat
@@ -72,7 +76,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): void {
 
       if (isMeta && e.key === '/') {
         e.preventDefault()
-        setView((prev) => (prev === 'help' ? 'chat' : 'help'))
+        setView(view === 'help' ? 'chat' : 'help')
       }
 
       // Zoom shortcuts
@@ -95,6 +99,7 @@ export function useAppKeyboardShortcuts(deps: AppKeyboardShortcutsDeps): void {
       updateMode,
       isStreaming,
       navigateBack,
+      view,
       setSidebarCollapsed,
       setView,
       setShowNewChat

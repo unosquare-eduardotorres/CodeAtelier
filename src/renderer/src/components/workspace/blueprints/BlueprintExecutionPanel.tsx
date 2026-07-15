@@ -436,6 +436,20 @@ export default function BlueprintExecutionPanel({
   const [goalExpanded, setGoalExpanded] = useState(false)
 
   // ── Resize drag handle ──
+  // Track active drag listeners so we can clean up on unmount if mid-drag
+  const dragListenersRef = useRef<{ move: (ev: MouseEvent) => void; up: () => void } | null>(null)
+
+  useEffect(() => {
+    return () => {
+      // Safety cleanup: remove drag listeners if component unmounts mid-drag
+      if (dragListenersRef.current) {
+        window.removeEventListener('mousemove', dragListenersRef.current.move)
+        window.removeEventListener('mouseup', dragListenersRef.current.up)
+        dragListenersRef.current = null
+      }
+    }
+  }, [])
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (!onResize) return
@@ -453,9 +467,11 @@ export default function BlueprintExecutionPanel({
       const onMouseUp = (): void => {
         window.removeEventListener('mousemove', onMouseMove)
         window.removeEventListener('mouseup', onMouseUp)
+        dragListenersRef.current = null
       }
       window.addEventListener('mousemove', onMouseMove)
       window.addEventListener('mouseup', onMouseUp)
+      dragListenersRef.current = { move: onMouseMove, up: onMouseUp }
     },
     [onResize]
   )

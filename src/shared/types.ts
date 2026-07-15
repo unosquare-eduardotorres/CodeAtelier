@@ -923,7 +923,7 @@ export type MemoryFactTier = 0 | 1 | 2 | 3
 export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
 
 /** How the fact was originally captured. */
-export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md'
+export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill'
 
 export interface MemoryFact {
   id: string
@@ -981,7 +981,66 @@ export interface MemoryCaptureSettings {
   sessionCapture: boolean
   commitCapture: boolean
   docCapture: boolean
+  captureBlueprints: boolean
+  captureGrill: boolean
+  captureDocumentsOnAttach: boolean
   watcherGlobs: string[]
+}
+
+/** Bootstrap mode for project knowledge generation. */
+export type BootstrapMode = 'full' | 'incremental' | 'deep-scan'
+
+/** Phase labels for bootstrap progress. */
+export type BootstrapPhaseLabel =
+  | 'preflight'
+  | 'docs'
+  | 'stack'
+  | 'architecture'
+  | 'history'
+  | 'structure'
+  | 'agent-exploration'
+  | 'finalize'
+
+/** Progress event for project knowledge bootstrap. */
+export interface BootstrapProgress {
+  jobId: string
+  /** Current phase (0-based index) */
+  phaseIndex: number
+  /** Total phases in this run */
+  phaseCount: number
+  /** Human-readable phase label */
+  phaseLabel: BootstrapPhaseLabel
+  /** Number of facts created so far across all phases */
+  factsCreated: number
+  /** Message for display */
+  message: string
+  /** Overall job status */
+  jobStatus: 'running' | 'done' | 'cancelled' | 'error'
+  /** Bootstrap mode */
+  mode: BootstrapMode
+}
+
+/** Progress event for document ingestion jobs. */
+export interface IngestionProgress {
+  jobId: string
+  /** Current document index (1-based) */
+  docIndex: number
+  /** Total documents in the job */
+  docCount: number
+  /** Current chunk index within the current doc (1-based), 0 if not chunking yet */
+  chunkIndex: number
+  /** Total chunks for current doc, 0 if not chunking yet */
+  chunkCount: number
+  /** Number of facts created so far across all docs */
+  factsCreated: number
+  /** Per-document status */
+  docStatus: 'queued' | 'reading' | 'chunking' | 'extracting' | 'done' | 'skipped' | 'error'
+  /** Current document file name */
+  docName: string
+  /** Message for display */
+  message: string
+  /** Overall job status */
+  jobStatus: 'running' | 'done' | 'cancelled' | 'error'
 }
 
 /** Result of a hybrid retrieval query. */
@@ -997,6 +1056,31 @@ export interface MemoryEmbeddingStatus {
   pendingCount: number
   totalCount: number
   modelName: string | null
+}
+
+// ── Knowledge Graph View ──
+
+export type MemoryGraphEdgeKind = 'similarity' | 'superseded' | 'contradiction'
+
+export interface MemoryGraphNode {
+  id: string
+  title: string
+  category: MemoryFactCategory
+  tier: MemoryFactTier
+  status: MemoryFactStatus
+  confidence: number
+}
+
+export interface MemoryGraphEdge {
+  source: string
+  target: string
+  kind: MemoryGraphEdgeKind
+  weight: number // 0–1 for similarity, 1.0 for structural edges
+}
+
+export interface MemoryGraphData {
+  nodes: MemoryGraphNode[]
+  edges: MemoryGraphEdge[]
 }
 
 // ── Legacy types kept for backward compat during transition ──
@@ -1596,6 +1680,9 @@ export type CouncilAdvisorRole =
   | 'outsider'
   | 'executor'
 
+/** Council session lifecycle status */
+export type CouncilSessionStatus = 'running' | 'completed' | 'cancelled' | 'failed'
+
 /** What the council is evaluating */
 export type CouncilInputType = 'plan' | 'requirement' | 'question'
 
@@ -1765,6 +1852,7 @@ export interface PlanFilters {
 
 export type E2ECategory =
   | 'chat-core'
+  | 'chat-edge'
   | 'commands'
   | 'tools'
   | 'memory'
@@ -1775,8 +1863,72 @@ export type E2ECategory =
   | 'mpa'
   | 'audit'
   | 'code-intel'
+  | 'checkpoints'
+  | 'ideas'
+  | 'specialists'
+  | 'security'
+  | 'workspace-ops'
 
 export type E2EScenarioStatus = 'implemented' | 'planned'
+
+/** String key identifying a service-level runner (scenarios that bypass chat and call services directly) */
+export type E2EServiceRunnerKey =
+  | 'blueprint-create'
+  | 'blueprint-phase-management'
+  | 'blueprint-progress-tracking'
+  | 'blueprint-task-execution'
+  | 'blueprint-clarify-live'
+  | 'mpa-preflight'
+  | 'mpa-goal-conditions'
+  | 'mpa-orchestration'
+  | 'mpa-cancellation'
+  | 'mpa-campaign-sequential'
+  | 'mpa-campaign-pause-retry'
+  | 'mpa-campaign-skip'
+  | 'mpa-campaign-reconcile'
+  | 'code-intel-code-graph-index'
+  | 'code-intel-embedding-generation'
+  | 'code-intel-semantic-search'
+  | 'grill-evaluate'
+  | 'grill-multi-track'
+  | 'grill-iteration'
+  | 'grill-condense-requirement'
+  | 'grill-generate-plan'
+  | 'audit-start-run'
+  | 'audit-findings'
+  | 'audit-coverage'
+  | 'council-start-session'
+  | 'council-advisor-opinions'
+  | 'council-synthesis'
+  | 'council-structured-output'
+  | 'memory-tiers'
+  | 'memory-dedup-exact'
+  | 'memory-dedup-near'
+  | 'memory-ambiguous'
+  | 'memory-isolation'
+  | 'memory-scope-boost'
+  | 'memory-session-dedupe'
+  | 'checkpoint-capture'
+  | 'checkpoint-restore'
+  | 'checkpoint-rewind'
+  | 'checkpoint-untracked'
+  | 'idea-crud'
+  | 'idea-start-grill'
+  | 'idea-convert'
+  | 'idea-to-blueprint'
+  | 'specialist-crud'
+  | 'specialist-skills'
+  | 'specialist-dispatch'
+  | 'specialist-override'
+  | 'chat-edge-concurrent'
+  | 'chat-edge-rapid-cancel'
+  | 'chat-edge-compact-race'
+  | 'repo-diff-detection'
+  | 'repo-commit'
+  | 'repo-commit-message'
+  | 'btw-question'
+  | 'insights-tokens'
+  | 'docs-mermaid'
 
 export type E2EResultStatus = 'queued' | 'running' | 'passed' | 'failed' | 'skipped' | 'error'
 
@@ -1797,6 +1949,14 @@ export interface E2EScenarioSummary {
   mode: 'plan' | 'build'
   timeoutMs: number
   promptCount: number
+  /** Service-level runner key (undefined for chat-based scenarios) */
+  runner?: E2EServiceRunnerKey
+  /** When true, excluded from Run All (heavy/long-running) */
+  heavy: boolean
+  /** Set when the scenario has a known upstream blocker (failures downgrade to skipped) */
+  knownIssue?: string
+  /** Set when the scenario's assertions are known-weak — surfaced as a revisit badge */
+  falsePositiveRisk?: string
 }
 
 export interface E2ERunSummary {
@@ -1845,6 +2005,8 @@ export interface E2EPreflightResult {
   error?: string
   /** Whether the model/backend actually emits structured tool_calls */
   supportsTools?: boolean
+  /** Whether the model supports image_url content parts (VLM). Text-only models → false. */
+  supportsVision?: boolean
 }
 
 export interface E2EProgressEvent {

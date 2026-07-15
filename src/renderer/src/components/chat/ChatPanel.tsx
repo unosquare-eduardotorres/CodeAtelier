@@ -13,8 +13,10 @@ import {
   RepoWarningBanner,
   RateLimitBadge
 } from '@renderer/components/chat'
+import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import SessionRecoveryBanner from './SessionRecoveryBanner'
 import BudgetCapBanner from './BudgetCapBanner'
+import TurnLimitBanner from './TurnLimitBanner'
 import NewChatPage from './NewChatPage'
 import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
@@ -107,7 +109,10 @@ function ChatPanelBanners({
   sessionRecovery,
   budgetCapBanner,
   continuePastBudgetCap,
-  dismissBudgetCap
+  dismissBudgetCap,
+  turnLimitReached,
+  continuePastTurnLimit,
+  dismissTurnLimit
 }: {
   activeTab: ChatTab
   workspaceId?: string
@@ -117,6 +122,9 @@ function ChatPanelBanners({
   budgetCapBanner: { message: string; canContinue: boolean } | null
   continuePastBudgetCap: () => void
   dismissBudgetCap: () => void
+  turnLimitReached: { continuable: boolean; continuationsUsed: number; continuationsMax: number } | null
+  continuePastTurnLimit: () => void
+  dismissTurnLimit: () => void
 }): React.JSX.Element {
   return (
     <>
@@ -152,6 +160,15 @@ function ChatPanelBanners({
           canContinue={budgetCapBanner.canContinue}
           onContinue={continuePastBudgetCap}
           onDismiss={dismissBudgetCap}
+        />
+      )}
+      {activeTab === 'chat' && turnLimitReached && (
+        <TurnLimitBanner
+          continuable={turnLimitReached.continuable}
+          continuationsUsed={turnLimitReached.continuationsUsed}
+          continuationsMax={turnLimitReached.continuationsMax}
+          onContinue={continuePastTurnLimit}
+          onDismiss={dismissTurnLimit}
         />
       )}
     </>
@@ -327,6 +344,11 @@ export default function ChatPanel({
   const continuePastBudgetCap = useChatStore((s) => s.continuePastBudgetCap)
   const dismissBudgetCap = useChatStore((s) => s.dismissBudgetCap)
 
+  // Turn limit banner state
+  const turnLimitReached = useChatStore((s) => s.turnLimitReached)
+  const continuePastTurnLimit = useChatStore((s) => s.continuePastTurnLimit)
+  const dismissTurnLimit = useChatStore((s) => s.dismissTurnLimit)
+
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
   const loadFiles = useCodeChangesStore((s) => s.loadFiles)
@@ -351,6 +373,7 @@ export default function ChatPanel({
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: string
+    routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
   }): Promise<void> => {
     if (!activeWorkspace) return
@@ -360,6 +383,7 @@ export default function ChatPanel({
       data.title,
       undefined,
       (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
+      data.routingOverrides,
       data.mcpOverrides,
       data.communicationTone
     )
@@ -369,8 +393,12 @@ export default function ChatPanel({
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    if (data.description) {
-      sendMessage(data.description, data.attachments)
+    // Send when there is a description OR attachments — an image-only creation
+    // (title + pasted screenshot, no text) must not silently drop the image.
+    const body = data.description?.trim() ?? ''
+    const hasAttachments = (data.attachments?.length ?? 0) > 0
+    if (body || hasAttachments) {
+      sendMessage(body || IMAGE_ONLY_FALLBACK_PROMPT, data.attachments)
     }
   }
 
@@ -442,6 +470,9 @@ export default function ChatPanel({
           budgetCapBanner={budgetCapBanner}
           continuePastBudgetCap={continuePastBudgetCap}
           dismissBudgetCap={dismissBudgetCap}
+          turnLimitReached={turnLimitReached}
+          continuePastTurnLimit={continuePastTurnLimit}
+          dismissTurnLimit={dismissTurnLimit}
         />
 
         {/* Tab content */}

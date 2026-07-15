@@ -25,7 +25,7 @@ import {
 import type { BlueprintPhase, BlueprintTask } from '../../../../../../shared/blueprint-types'
 import { PHASE_CONFIG } from '../phase-config'
 import type { BlueprintPhaseType } from '../../../../../../shared/blueprint-types'
-import { getPhaseSummary, formatDuration } from './phase-summaries'
+import { getPhaseSummary } from './phase-summaries'
 import { PhaseJourneyItemContent } from './PhaseJourneyItem'
 
 // ── Phase number circled digits ──

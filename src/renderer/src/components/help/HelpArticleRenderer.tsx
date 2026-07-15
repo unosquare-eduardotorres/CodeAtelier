@@ -206,6 +206,7 @@ export default function HelpArticleRenderer({
 
   return (
     <article
+      data-testid="help-article"
       className={`max-w-[75ch] mx-auto ${className}`}
       role="article"
       aria-label="Help documentation"

@@ -5,7 +5,7 @@ import { useWorkspaceCardsData } from '@renderer/hooks/useWorkspaceCardsData'
 import { ConfirmDialog } from '@renderer/components/common'
 import FloatingIconField from './FloatingIconField'
 import WorkspaceCard from './WorkspaceCard'
-import CreateProjectWizard from './CreateProjectWizard'
+import CreateProjectDialog from './CreateProjectDialog'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 const metaKey = isMac ? '⌘' : 'Ctrl+'
@@ -87,7 +87,7 @@ export default function WelcomeScreen(): React.JSX.Element {
   const { workspaces, openWorkspace, createWorkspace, deleteWorkspace } = useWorkspaceStore()
   const cardData = useWorkspaceCardsData(workspaces)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [showWizard, setShowWizard] = useState(false)
+  const [showDialog, setShowDialog] = useState(false)
 
   const handleAddWorkspace = useCallback(async (): Promise<void> => {
     try {
@@ -136,7 +136,7 @@ export default function WelcomeScreen(): React.JSX.Element {
               />
             ))}
             <AddWorkspaceCard onClick={handleAddWorkspace} />
-            <CreateProjectCard onClick={() => setShowWizard(true)} />
+            <CreateProjectCard onClick={() => setShowDialog(true)} />
           </div>
 
           {workspaces.length === 0 && (
@@ -190,12 +190,12 @@ export default function WelcomeScreen(): React.JSX.Element {
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {/* Create New Project wizard overlay */}
-      {showWizard && (
-        <CreateProjectWizard
-          onClose={() => setShowWizard(false)}
+      {/* Create New Project dialog */}
+      {showDialog && (
+        <CreateProjectDialog
+          onClose={() => setShowDialog(false)}
           onCreated={(workspaceId) => {
-            setShowWizard(false)
+            setShowDialog(false)
             openWorkspace(workspaceId)
           }}
         />

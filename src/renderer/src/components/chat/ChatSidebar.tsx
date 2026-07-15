@@ -3,6 +3,7 @@ import { Plus, MessageSquare, FolderOpen, ChevronLeft, ChevronRight } from 'luci
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { ChatItem, NewConversationModal } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
+import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
 
 interface ChatSidebarProps {
@@ -60,6 +61,7 @@ export default function ChatSidebar({
     attachments?: string[]
     useIsolatedBranch?: boolean
     llmProvider?: LLMProvider
+    routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -68,6 +70,7 @@ export default function ChatSidebar({
       data.title,
       data.personaSpecialistId,
       data.llmProvider,
+      data.routingOverrides,
       undefined,
       data.communicationTone
     )
@@ -78,8 +81,12 @@ export default function ChatSidebar({
         '[NewConversationModal] Isolated branch requested — worktree integration pending'
       )
     }
-    if (data.description) {
-      sendMessage(data.description, data.attachments)
+    // Send when there is a description OR attachments — an image-only creation
+    // (title + pasted screenshot, no text) must not silently drop the image.
+    const body = data.description?.trim() ?? ''
+    const hasAttachments = (data.attachments?.length ?? 0) > 0
+    if (body || hasAttachments) {
+      sendMessage(body || IMAGE_ONLY_FALLBACK_PROMPT, data.attachments)
     }
   }
 

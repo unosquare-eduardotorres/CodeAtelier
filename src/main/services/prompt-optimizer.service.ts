@@ -14,7 +14,8 @@
 
 import log from 'electron-log'
 import { runOneShotClaude, type OneShotClaudeOptions } from './one-shot-claude'
-import { modelConfigService } from './model-config.service'
+import { runOneShotLocal } from './one-shot-local'
+import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
 import { workspaceRepository } from '../db/repositories'
 
 const optimizerLog = log.scope('prompt-optimizer')
@@ -55,8 +56,28 @@ export interface PromptOptimizeResult {
 // ── Service ──────────────────────────────────────────────────────────────
 
 class PromptOptimizerService {
-  /** Test seam — overrides the CLI runner when set. Defaults to undefined (uses runClaudeCliOneShot). */
+  /** Test seam — overrides the CLI runner when set. Defaults to undefined (uses runOneShotClaude). */
   _runner?: OneShotClaudeOptions['_runner']
+  /** R6-B1: Test seam for the local LLM path — overrides runOneShotLocal when set. */
+  _localRunner?: (opts: { systemPrompt: string; userMessage: string }) => Promise<{ text: string }>
+
+  /**
+   * Resolve the local model id for prompt optimization.
+   * Only honors the assignment when it explicitly targets a local provider —
+   * default assignments resolve to Claude models, which oMLX 404s on.
+   */
+  resolveLocalModel(
+    workspaceId: string,
+    localCfg: { localModel?: string }
+  ): string {
+    const assignment = resolveAssignment({
+      action: 'prompt:optimize',
+      ...buildResolveOpts(workspaceId)
+    })
+    return (assignment.provider === 'local-llm' && assignment.modelId)
+      ? assignment.modelId
+      : (localCfg.localModel ?? 'qwen3-coder')
+  }
 
   /**
    * Check whether the optimizer should run for this prompt.
@@ -72,8 +93,7 @@ class PromptOptimizerService {
     const settings = workspaceRepository.getSettings(workspaceId)
     if (settings.promptOptimizationEnabled === false) return 'disabled'
 
-    const provider = settings.llmProvider ?? 'claude'
-    if (provider === 'local-llm') return 'local-llm'
+    // R6-B1: Removed local-llm guard — optimizer now runs via runOneShotLocal for local providers
 
     if (text.length < 80) return 'short'
     if (text.trimStart().startsWith('/')) return 'slash-command'
@@ -101,13 +121,21 @@ class PromptOptimizerService {
       return { optimizedText: text, changed: false, skippedReason: guardReason }
     }
 
-    // ── Call Claude one-shot ──
-    const model = modelConfigService.getModelById(workspaceId, 'prompt:optimize')
     const modeHint = mode === 'plan'
       ? 'The user is in Plan mode (thinking, planning, Q&A — no code execution).'
       : 'The user is in Build mode (code writing, execution, and tool use).'
     const wrappedPrompt = `<original_prompt>\n${text}\n</original_prompt>\n\n${modeHint}`
 
+    // ── R6-B1: Local LLM path via runOneShotLocal ──
+    const settings = workspaceRepository.getSettings(workspaceId)
+    const provider = settings.llmProvider ?? 'claude'
+
+    if (provider === 'local-llm') {
+      return this.optimizeLocal({ text, workspaceId, wrappedPrompt })
+    }
+
+    // ── Claude one-shot path (original) ──
+    const model = modelConfigService.getModelById(workspaceId, 'prompt:optimize')
     try {
       const { text: responseText } = await runOneShotClaude({
         feature: 'prompt_optimize',
@@ -132,7 +160,71 @@ class PromptOptimizerService {
     }
   }
 
+  // ── R6-B1: Local LLM optimization path ──────────────────────────────
+
+  private async optimizeLocal(params: {
+    text: string
+    workspaceId: string
+    wrappedPrompt: string
+  }): Promise<PromptOptimizeResult> {
+    const { text, workspaceId, wrappedPrompt } = params
+
+    try {
+      let responseText: string
+
+      if (this._localRunner) {
+        // Test seam
+        const r = await this._localRunner({ systemPrompt: META_PROMPT, userMessage: wrappedPrompt })
+        responseText = r.text
+      } else {
+        const ws = workspaceRepository.findById(workspaceId)
+        const workspacePath = ws?.repoPath
+        if (!workspacePath) {
+          optimizerLog.warn('[optimize] No workspace path found, using original')
+          return { optimizedText: text, changed: false, skippedReason: 'error' }
+        }
+
+        const localCfg = modelConfigService.getLocalLLMConfig(workspacePath)
+        const baseUrl = modelConfigService.getLocalBaseUrl(localCfg)
+        const model = this.resolveLocalModel(workspaceId, localCfg)
+
+        const result = await runOneShotLocal({
+          systemPrompt: META_PROMPT,
+          userMessage: wrappedPrompt,
+          baseUrl,
+          model,
+          apiKey: localCfg.localApiKey,
+          feature: 'prompt_optimize',
+          workspaceId,
+          maxTokens: 1024,
+          timeoutMs: 30_000
+          // No claudeFallbackArgs — empty response → skippedReason: 'error' → original prompt used
+        })
+
+        responseText = result.text
+      }
+
+      if (!responseText) {
+        optimizerLog.warn('[optimize] Empty local LLM response, using original')
+        return { optimizedText: text, changed: false, skippedReason: 'error' }
+      }
+
+      // R6-B1: Strip <think>…</think> blocks from local model reasoning leakage
+      responseText = this.stripThinkingBlocks(responseText)
+
+      return this.parseResponse(responseText, text)
+    } catch (err) {
+      optimizerLog.warn('[optimize] Local LLM call failed, using original:', err)
+      return { optimizedText: text, changed: false, skippedReason: 'error' }
+    }
+  }
+
   // ── Response parsing ─────────────────────────────────────────────────
+
+  /** Strip <think>…</think> blocks that local reasoning models sometimes emit */
+  private stripThinkingBlocks(text: string): string {
+    return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+  }
 
   private parseResponse(response: string, original: string): PromptOptimizeResult {
     const trimmed = response.trim()
@@ -142,11 +234,19 @@ class PromptOptimizerService {
       return { optimizedText: original, changed: false }
     }
 
-    // Parse fenced block: ```optimized-prompt ... ```
-    const fenceMatch = trimmed.match(/```optimized-prompt\s*\n([\s\S]*?)```/)
+    // Parse fenced block: prefer ```optimized-prompt ... ```, fallback to a single generic ``` fence
+    let fenceMatch = trimmed.match(/```optimized-prompt\s*\n([\s\S]*?)```/)
     if (!fenceMatch || fenceMatch[1] === undefined) {
-      optimizerLog.warn('[optimize] Failed to parse fenced block, using original')
-      return { optimizedText: original, changed: false, skippedReason: 'parse-error' }
+      // Fallback: accept a single generic fenced block (any or no info string)
+      // — local models (qwen, llama) often emit plain ``` fences instead of the requested tag
+      const genericFences = [...trimmed.matchAll(/```[^\n]*\n([\s\S]*?)```/g)]
+      if (genericFences.length === 1 && genericFences[0][1] !== undefined) {
+        fenceMatch = genericFences[0]
+        optimizerLog.info('[optimize] Accepted single generic fence block (local-model fallback)')
+      } else {
+        optimizerLog.warn('[optimize] Failed to parse fenced block, using original')
+        return { optimizedText: original, changed: false, skippedReason: 'parse-error' }
+      }
     }
 
     const optimized = fenceMatch[1].trim()

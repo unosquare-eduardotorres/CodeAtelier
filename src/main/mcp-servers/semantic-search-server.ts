@@ -4,6 +4,13 @@
  *
  * Exposes: semantic_search, similar_code, codebase_concepts
  *
+ * Architecture:
+ *   Tool schemas are registered synchronously (cheap — zod only),
+ *   then transport is connected immediately so the MCP handshake completes fast.
+ *   Heavy work (vector-search service import + index hydration) is deferred to
+ *   a memoized ensureReady() called on first tool invocation, with a background
+ *   warm-up kicked off after connect.
+ *
  * Environment variables:
  *   WORKSPACE_ID — Workspace UUID for vector index queries
  *   DB_PATH      — Electron userData dir (this runs as plain node, no app.getPath())
@@ -25,25 +32,44 @@ const server = new McpServer(
   { capabilities: { tools: {} } }
 )
 
-async function registerTools(): Promise<void> {
-  const { vectorSearchService } = await import('../services/vector-search.service')
+// ── Lazy service initialization ─────────────────────────────────────────
 
-  // Hydrate the in-memory vector collection from SQLite. In the main process this
-  // happens on workspace open, but this standalone server starts with a fresh, empty
-  // singleton — without hydration, search/similar_code/codebase_concepts all return [].
-  try {
-    if (vectorSearchService.hasPersistedIndex(WORKSPACE_ID)) {
-      const { symbolCount } = await vectorSearchService.loadPersistedIndex(WORKSPACE_ID)
-      console.error(`[semantic-search-server] Hydrated ${symbolCount} vectors from DB`)
-    } else {
-      console.error(
-        `[semantic-search-server] No persisted index for workspace ${WORKSPACE_ID} (not indexed)`
-      )
-    }
-  } catch (err) {
-    console.error('[semantic-search-server] Hydration failed:', err)
+type VectorService = typeof import('../services/vector-search.service').vectorSearchService
+
+let readyPromise: Promise<VectorService> | null = null
+
+/** Memoized lazy init — imports service + hydrates vector index. */
+function ensureReady(): Promise<VectorService> {
+  if (!readyPromise) {
+    readyPromise = (async (): Promise<VectorService> => {
+      const { vectorSearchService } = await import('../services/vector-search.service')
+
+      // Hydrate the in-memory vector collection from SQLite. In the main process this
+      // happens on workspace open, but this standalone server starts with a fresh, empty
+      // singleton — without hydration, search/similar_code/codebase_concepts all return [].
+      try {
+        if (vectorSearchService.hasPersistedIndex(WORKSPACE_ID)) {
+          const { symbolCount } = await vectorSearchService.loadPersistedIndex(WORKSPACE_ID)
+          console.error(`[semantic-search-server] Hydrated ${symbolCount} vectors from DB`)
+        } else {
+          console.error(
+            `[semantic-search-server] No persisted index for workspace ${WORKSPACE_ID} (not indexed)`
+          )
+        }
+      } catch (err) {
+        console.error('[semantic-search-server] Hydration failed:', err)
+      }
+
+      console.error('[semantic-search-server] Services initialized')
+      return vectorSearchService
+    })()
   }
+  return readyPromise
+}
 
+// ── Tool schema registration (synchronous — no heavy imports) ───────────
+
+function registerToolSchemas(): void {
   server.tool(
     'semantic_search',
     'Search the codebase using natural language queries. Returns relevant code chunks with file paths, symbol names, and relevance scores.',
@@ -61,6 +87,7 @@ async function registerTools(): Promise<void> {
         .describe('Number of results to return')
     },
     async (args) => {
+      const vectorSearchService = await ensureReady()
       // Build where clause from optional filters
       const where: Record<string, unknown> = {}
       if (args.language) where.language = args.language
@@ -93,6 +120,7 @@ async function registerTools(): Promise<void> {
       nResults: z.number().int().min(1).max(100).optional().default(5)
     },
     async (args) => {
+      const vectorSearchService = await ensureReady()
       const results = await vectorSearchService.searchByCode(WORKSPACE_ID, args.code, {
         nResults: args.nResults
       })
@@ -117,6 +145,7 @@ async function registerTools(): Promise<void> {
       maxConcepts: z.number().int().min(1).max(100).optional().default(20)
     },
     async (args) => {
+      const vectorSearchService = await ensureReady()
       const concepts = await vectorSearchService.getConceptClusters(WORKSPACE_ID, {
         maxClusters: args.maxConcepts
       })
@@ -133,10 +162,14 @@ async function registerTools(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await registerTools()
+  registerToolSchemas()
   const transport = new StdioServerTransport()
   await server.connect(transport)
   console.error(`[semantic-search-server] Started (workspace=${WORKSPACE_ID})`)
+  // Warm up services + hydrate vector index in the background — non-blocking
+  void ensureReady().catch((err) =>
+    console.error('[semantic-search-server] Background warm-up failed:', err)
+  )
 }
 
 main().catch((err) => {

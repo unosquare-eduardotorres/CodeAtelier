@@ -281,6 +281,28 @@ export function deduplicateClarifyQuestions(
   return incoming.filter((q) => !askedSet.has(`${q.id}::${q.question}`))
 }
 
+// ── ask_user → ClarifyQuestion bridge ──
+
+/**
+ * Convert GrillQuestion[] (from ask_user tool call) into ClarifyQuestion[] suitable
+ * for the clarify question card UI. Maps 1:1 — GrillQuestion and ClarifyQuestion share
+ * the same semantic shape (id, header, question, multiSelect, options with recommended).
+ */
+export function grillQuestionsToClarifyBlock(questions: GrillQuestion[]): ClarifyQuestionsBlock {
+  const mapped: ClarifyQuestion[] = questions.map((gq, idx) => ({
+    id: gq.id || `aq${idx + 1}`,
+    header: gq.header || '',
+    question: gq.question,
+    multiSelect: gq.multiSelect ?? false,
+    options: (gq.options || []).map((o) => ({
+      label: o.label,
+      recommended: o.recommended ?? false,
+      recommendedReason: o.recommendedReason
+    }))
+  }))
+  return { questions: mapped }
+}
+
 // ── Strip helpers ──
 
 export function stripBlueprintBlocks(text: string): string {

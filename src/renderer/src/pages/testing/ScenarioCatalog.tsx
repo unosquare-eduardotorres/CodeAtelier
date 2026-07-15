@@ -4,7 +4,7 @@
  *
  * Each category is a collapsible SectionCard with a lucide icon, mini pass-rate
  * bar, and per-category Run button. Clicking a scenario row with a result opens
- * the ResultDetailDrawer.
+ * the full-page ResultDetailView via onOpenDetail.
  */
 
 import { useState, useMemo, useCallback } from 'react'
@@ -30,7 +30,13 @@ import {
   Layers,
   Network,
   ShieldCheck,
-  Code2
+  Code2,
+  AlertTriangle,
+  GitBranch,
+  Lightbulb,
+  UserCog,
+  Lock,
+  FolderGit2
 } from 'lucide-react'
 import type {
   E2EScenarioSummary,
@@ -40,12 +46,11 @@ import type {
 } from '../../../../shared/types'
 import type { ScenarioDelta } from '../TestingPage'
 import SectionCard from './SectionCard'
-import ResultDetailDrawer from './ResultDetailDrawer'
-import type { DrawerTarget } from './ResultDetailDrawer'
+import type { DetailTarget } from './ResultDetailView'
 
 // ── Types ──
 
-type FilterMode = 'all' | 'failed' | 'passed' | 'not_run' | 'planned'
+type FilterMode = 'all' | 'failed' | 'passed' | 'not_run' | 'planned' | 'flagged'
 
 interface ScenarioCatalogProps {
   scenarios: E2EScenarioSummary[]
@@ -57,12 +62,14 @@ interface ScenarioCatalogProps {
   onRunAll: () => void
   onRunCategory: (category: E2ECategory) => void
   onRunOne: (scenarioId: string) => void
+  onOpenDetail: (target: DetailTarget) => void
 }
 
 // ── Constants ──
 
 const CATEGORY_LABELS: Record<E2ECategory, string> = {
   'chat-core': 'Chat Core',
+  'chat-edge': 'Chat Edge Cases',
   commands: 'Commands',
   tools: 'Tools',
   memory: 'Memory',
@@ -72,11 +79,17 @@ const CATEGORY_LABELS: Record<E2ECategory, string> = {
   blueprints: 'Blueprints',
   mpa: 'Multi-Project Agent',
   audit: 'Audit',
-  'code-intel': 'Code Intelligence'
+  'code-intel': 'Code Intelligence',
+  checkpoints: 'Checkpoints',
+  ideas: 'Ideas',
+  specialists: 'Specialists',
+  security: 'Security',
+  'workspace-ops': 'Workspace Ops'
 }
 
 const CATEGORY_ICONS: Record<E2ECategory, React.ReactNode> = {
   'chat-core': <MessageSquare size={14} />,
+  'chat-edge': <AlertTriangle size={14} />,
   commands: <Terminal size={14} />,
   tools: <Wrench size={14} />,
   memory: <Brain size={14} />,
@@ -86,13 +99,19 @@ const CATEGORY_ICONS: Record<E2ECategory, React.ReactNode> = {
   blueprints: <Layers size={14} />,
   mpa: <Network size={14} />,
   audit: <ShieldCheck size={14} />,
-  'code-intel': <Code2 size={14} />
+  'code-intel': <Code2 size={14} />,
+  checkpoints: <GitBranch size={14} />,
+  ideas: <Lightbulb size={14} />,
+  specialists: <UserCog size={14} />,
+  security: <Lock size={14} />,
+  'workspace-ops': <FolderGit2 size={14} />
 }
 
 const FILTER_LABELS: { mode: FilterMode; label: string }[] = [
   { mode: 'all', label: 'All' },
   { mode: 'failed', label: 'Failed' },
   { mode: 'passed', label: 'Passed' },
+  { mode: 'flagged', label: 'Flagged' },
   { mode: 'not_run', label: 'Not run' },
   { mode: 'planned', label: 'Planned' }
 ]
@@ -115,6 +134,8 @@ function matchesFilter(
       return scenario.status === 'implemented' && (!result || result.status === 'queued')
     case 'planned':
       return scenario.status === 'planned'
+    case 'flagged':
+      return !!(scenario.knownIssue || scenario.falsePositiveRisk)
   }
 }
 
@@ -135,7 +156,7 @@ function getFilterCounts(
   scenarios: E2EScenarioSummary[],
   results: Map<string, E2EResultSummary>
 ): Record<FilterMode, number> {
-  const counts: Record<FilterMode, number> = { all: 0, failed: 0, passed: 0, not_run: 0, planned: 0 }
+  const counts: Record<FilterMode, number> = { all: 0, failed: 0, passed: 0, not_run: 0, planned: 0, flagged: 0 }
   for (const s of scenarios) {
     counts.all++
     const r = results.get(s.id)
@@ -143,6 +164,7 @@ function getFilterCounts(
     if (matchesFilter(s, r, 'passed')) counts.passed++
     if (matchesFilter(s, r, 'not_run')) counts.not_run++
     if (matchesFilter(s, r, 'planned')) counts.planned++
+    if (matchesFilter(s, r, 'flagged')) counts.flagged++
   }
   return counts
 }
@@ -231,22 +253,23 @@ export default function ScenarioCatalog({
   preflightOk,
   onRunAll,
   onRunCategory,
-  onRunOne
+  onRunOne,
+  onOpenDetail
 }: ScenarioCatalogProps): React.JSX.Element {
   const [filter, setFilter] = useState<FilterMode>('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [drawerTarget, setDrawerTarget] = useState<DrawerTarget | null>(null)
 
-  const openDrawer = useCallback(
+  const handleRowClick = useCallback(
     (result: E2EResultSummary, title: string) => {
-      setDrawerTarget({
+      onOpenDetail({
         resultId: result.id,
         title,
         status: result.status,
-        durationMs: result.durationMs
+        durationMs: result.durationMs,
+        from: 'scenarios'
       })
     },
-    []
+    [onOpenDetail]
   )
 
   // Filter counts (unaffected by text search — show total available per filter)
@@ -286,11 +309,7 @@ export default function ScenarioCatalog({
             >
               <Play size={14} /> Run All Implemented
             </button>
-            {isRunning && (
-              <span className="flex items-center gap-1.5 text-xs text-text-secondary">
-                <Loader2 size={12} className="animate-spin" /> Running...
-              </span>
-            )}
+            {/* Running banner is now rendered by TestingPage — removed inline spinner */}
           </div>
 
           {/* Filter chips + search */}
@@ -424,16 +443,18 @@ export default function ScenarioCatalog({
                       className={`flex items-center justify-between px-4 py-2 ${
                         isPlanned
                           ? 'opacity-50'
-                          : 'hover:bg-surface-raised/50 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary-muted focus:bg-surface-raised/30'
+                          : resultStatus === 'running'
+                            ? 'bg-info/5 border-l-2 border-info animate-pulse-subtle cursor-pointer focus:outline-none focus:ring-1 focus:ring-info'
+                            : 'hover:bg-surface-raised/50 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary-muted focus:bg-surface-raised/30'
                       }`}
                       onClick={() => {
-                        if (hasResult) openDrawer(result, scenario.title)
+                        if (hasResult) handleRowClick(result, scenario.title)
                       }}
                       onKeyDown={(e) => {
                         if (isPlanned) return
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          if (hasResult) openDrawer(result, scenario.title)
+                          if (hasResult) handleRowClick(result, scenario.title)
                         }
                       }}
                     >
@@ -448,6 +469,22 @@ export default function ScenarioCatalog({
                             <span className="text-xs text-text-muted px-1.5 py-0.5 rounded-lg bg-surface-base">
                               {scenario.mode}
                             </span>
+                            {scenario.knownIssue && (
+                              <span
+                                title={scenario.knownIssue}
+                                className="text-xs px-1.5 py-0.5 rounded-lg bg-warning-muted/20 text-warning-text border border-warning-muted/40"
+                              >
+                                Known Issue
+                              </span>
+                            )}
+                            {scenario.falsePositiveRisk && (
+                              <span
+                                title={scenario.falsePositiveRisk}
+                                className="text-xs px-1.5 py-0.5 rounded-lg bg-primary-muted/20 text-primary-text border border-primary-muted/40"
+                              >
+                                False-Positive Risk
+                              </span>
+                            )}
                           </div>
                           <p className="text-xs text-text-muted truncate mt-0.5">
                             {scenario.description}
@@ -502,12 +539,6 @@ export default function ScenarioCatalog({
           )
         })}
       </div>
-
-      {/* Slide-over drawer */}
-      <ResultDetailDrawer
-        target={drawerTarget}
-        onClose={() => setDrawerTarget(null)}
-      />
     </>
   )
 }

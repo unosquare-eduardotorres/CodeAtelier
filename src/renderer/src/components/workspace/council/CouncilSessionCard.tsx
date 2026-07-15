@@ -1,6 +1,6 @@
 import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark, Trash2 } from 'lucide-react'
-import type { CouncilSessionStatus } from '../../../../../main/db/repositories/council-session.repository'
 import type {
+  CouncilSessionStatus,
   CouncilInputType,
   CouncilVerdict,
   CouncilPeerReview,

@@ -129,21 +129,6 @@ describe('GreenfieldGrillRoleAdapter', () => {
     )
   })
 
-  // ── onSessionStop ──
-
-  test('onSessionStop_completes_without_error', () => {
-    const adapter = createAdapter()
-    adapter.onSessionStop()
-    assert.ok(true)
-  })
-
-  test('onSessionStop_is_safe_to_call_twice', () => {
-    const adapter = createAdapter()
-    adapter.onSessionStop()
-    adapter.onSessionStop()
-    assert.ok(true)
-  })
-
   // persistMemory removed — memory tools now on dedicated memory MCP server
 
   // ── Different tracks ──

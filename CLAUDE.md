@@ -159,7 +159,7 @@ npm run format        # Prettier
   - Both share `buildWorkspaceMcpConfig`, `intentDetector.detectAll`, `memoryRepository`, `prompt-assembly-helpers`.
 - **Two executor backends: CLI (Claude Max subscription) and OpenCode (local LLMs via Ollama/oMLX).** `ExecutorBackend = 'cli' | 'opencode'`.
 - **No handoffs, no orchestrator, no sub-agents.** `Agent` and `ToolSearch` tools are blocked globally.
-- **Tool execution runs unattended in build mode** (`permissionMode: 'bypassPermissions'`). Safety relies on the workspace scope guard + `disallowedTools` (Agent, ToolSearch, ExitPlanMode, AskUserQuestion). No in-app permission popup.
+- **Tool execution runs unattended in build mode** (`permissionMode: 'acceptEdits'`). This auto-approves working-dir file edits + common fs Bash commands deterministically (no account gating). Safety relies on the workspace scope guard + `disallowedTools` (Agent, ToolSearch, ExitPlanMode, AskUserQuestion). No in-app permission popup. Danger mode uses `bypassPermissions` (unrestricted).
 - **IPC**: `window.api.invoke()` → preload `ipcRenderer.invoke` → main `ipcMain.handle`.
 - **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`.
 - **Database**: SQLite, `schema.sql`, 107 versioned migrations, repository pattern.

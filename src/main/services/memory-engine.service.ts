@@ -17,6 +17,7 @@ import { modelConfigService, resolveAssignment, buildResolveOpts } from './model
 import { runOneShotLocal, buildMemoryFeedFallbackArgs } from './one-shot-local'
 import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
 import { spawn } from 'node:child_process'
+import { buildEnvWithPath } from './env-utils'
 import type {
   MemoryFact,
   MemoryFactCategory,
@@ -262,6 +263,18 @@ Respond with EXACTLY one word: "duplicate", "contradiction", or "distinct".
 
   // ── Promotion ───────────────────────────────────────────────────────────
 
+  /**
+   * Confirm a fact with automatic tier promotion.
+   * This is the single entry point for UI confirms, MCP tool confirms,
+   * and internal dedup confirms — all paths compute promotion.
+   */
+  confirmFactWithPromotion(factId: string): MemoryFact {
+    const existing = memoryFactRepository.findById(factId)
+    if (!existing) throw new Error(`MemoryFact not found: ${factId}`)
+    const newTier = computePromotionTierPure(existing.tier, existing.confirmationCount)
+    return memoryFactRepository.confirmFact(factId, newTier)
+  }
+
   /** Compute the new tier after a confirmation, based on promotion rules. */
   private computePromotionTier(fact: MemoryFact): MemoryFactTier {
     return computePromotionTierPure(fact.tier, fact.confirmationCount)
@@ -289,7 +302,7 @@ Respond with EXACTLY one word: "duplicate", "contradiction", or "distinct".
 
   // ── Embedding backfill ──────────────────────────────────────────────────
 
-  /** Embed all pending facts, retro-run dedup/contradiction on each. */
+  /** Embed a single batch of up to 50 pending facts (opportunistic background path). */
   async backfillPendingEmbeddings(): Promise<number> {
     if (!omlxEmbeddingProvider.isReady) return 0
 
@@ -316,6 +329,81 @@ Respond with EXACTLY one word: "duplicate", "contradiction", or "distinct".
       log.info(`[MemoryEngine] Backfilled ${backfilled}/${pending.length} embeddings`)
     }
     return backfilled
+  }
+
+  /** Embed ALL pending facts in batches of 50, reporting progress per fact. */
+  async backfillAllPendingEmbeddings(
+    onProgress?: (processed: number, total: number) => void
+  ): Promise<number> {
+    if (!omlxEmbeddingProvider.isReady) return 0
+
+    // Count total pending up front for progress reporting
+    const allPending = memoryFactRepository.findPendingEmbeddings(10_000)
+    const total = allPending.length
+    if (total === 0) return 0
+
+    let processed = 0
+    let batch: ReturnType<typeof memoryFactRepository.findPendingEmbeddings>
+
+    // Process in batches of 50 until no more pending
+    while ((batch = memoryFactRepository.findPendingEmbeddings(50)).length > 0) {
+      for (const fact of batch) {
+        try {
+          const text = `${fact.title}\n${fact.content}`
+          const vectors = await omlxEmbeddingProvider.embed([text])
+          if (vectors.length > 0 && vectors[0].length > 0) {
+            const buf = Buffer.from(new Float32Array(vectors[0]).buffer)
+            memoryFactRepository.setEmbedding(fact.id, buf)
+          }
+        } catch (err) {
+          log.warn(`[MemoryEngine] Backfill failed for fact ${fact.id}:`, err)
+          // Report final progress before returning on provider failure
+          onProgress?.(processed, total)
+          log.info(`[MemoryEngine] Backfill stopped after ${processed}/${total} embeddings (provider failure)`)
+          return processed
+        }
+        processed++
+        onProgress?.(processed, total)
+      }
+    }
+
+    log.info(`[MemoryEngine] Backfilled all ${processed}/${total} embeddings`)
+    return processed
+  }
+
+  // ── Dedup scan ─────────────────────────────────────────────────
+
+  /** Scan embedded facts for near-duplicates, creating contradiction review records. */
+  scanForDuplicates(workspaceId: string): { pairsFound: number } {
+    const embedded = memoryFactRepository.findWithEmbeddings(workspaceId)
+    if (embedded.length < 2) return { pairsFound: 0 }
+
+    const THRESHOLD = 0.90
+    let pairsFound = 0
+
+    // Pairwise cosine — O(n²/2) but fast for in-process 384-dim vectors
+    for (let i = 0; i < embedded.length; i++) {
+      for (let j = i + 1; j < embedded.length; j++) {
+        const sim = cosineSimilarity(embedded[i].embedding, embedded[j].embedding)
+        if (sim >= THRESHOLD) {
+          // Create a contradiction-style review record flagged as duplicate
+          try {
+            memoryFactRepository.createContradiction({
+              oldFactId: embedded[i].fact.id,
+              newFactId: embedded[j].fact.id,
+              status: 'pending',
+              resolution: `duplicate (cosine: ${sim.toFixed(3)})`
+            })
+            pairsFound++
+          } catch {
+            // Unique constraint might prevent duplicate contradictions
+          }
+        }
+      }
+    }
+
+    log.info(`[MemoryEngine] Dedup scan: ${pairsFound} duplicate pairs found from ${embedded.length} embedded facts`)
+    return { pairsFound }
   }
 
   // ── Haiku classifier ───────────────────────────────────────────────────
@@ -348,15 +436,7 @@ Respond with EXACTLY one word: "duplicate", "contradiction", or "distinct".
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-      const env = { ...process.env }
-      delete env.CLAUDECODE
-
-      if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-        env.PATH = `/usr/local/bin:${env.PATH}`
-      }
-      if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) {
-        env.PATH = `/opt/homebrew/bin:${env.PATH}`
-      }
+      const env = buildEnvWithPath()
 
       const model = modelConfigService.getModel(workspacePath ?? undefined, 'memoryFeed')
 

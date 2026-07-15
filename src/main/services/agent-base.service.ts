@@ -37,6 +37,7 @@ export interface StreamChunk {
     | 'structured_output'
     | 'lsp_diagnostics'
     | 'todo_update'
+    | 'turn_limit'
   content?: string
   toolName?: string
   toolInput?: string
@@ -104,6 +105,15 @@ export interface StreamChunk {
     action: 'add' | 'complete' | 'remove' | 'update'
     text: string
     index?: number
+  }
+  /** Turn limit reached — emitted when all auto-continuations are exhausted */
+  turnLimit?: {
+    /** Whether the user can click Continue to resume */
+    continuable: boolean
+    /** How many auto-continuations were used */
+    continuationsUsed: number
+    /** Max auto-continuations allowed */
+    continuationsMax: number
   }
 }
 

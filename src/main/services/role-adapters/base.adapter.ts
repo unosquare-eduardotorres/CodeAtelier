@@ -71,6 +71,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   protected repomapEnabled = true
   protected semanticSearchEnabled = true
   protected githubConfigured = false
+  protected codeAnalysisEnabled = true
 
   // ── Strategy Λ: Locked MCP flags ──────────────────────────────────
   // Snapshotted at onSessionStart() — tool set stays stable for the entire
@@ -143,7 +144,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
     // Resolve per-chat local MCP active state from conversation overrides
     const localMcpActive = this.resolveLocalMcpActive(ctx.conversationId)
 
-    return buildWorkspaceMcpConfig({
+    const result = buildWorkspaceMcpConfig({
       mode: ctx.mode,
       workspacePath: ctx.workspacePath,
       workspaceId: ctx.workspaceId,
@@ -153,6 +154,11 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
       isLocalProvider: modelConfigService.isLocalProvider(ctx.workspacePath),
       contextTier: ctx.contextTier
     })
+
+    // Propagate code-analysis availability to prompt guidance gating
+    this.codeAnalysisEnabled = result.codeAnalysisEnabled
+
+    return result
   }
 
   /**
@@ -251,7 +257,8 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
       semanticSearchEnabled: this.semanticSearchEnabled,
       githubConfigured: this.githubConfigured,
       includeGitContext: this.getIncludeGitContext(),
-      includeCheckpoint: false
+      includeCheckpoint: false,
+      codeAnalysisEnabled: this.codeAnalysisEnabled
     }
   }
 

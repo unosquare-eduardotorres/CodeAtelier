@@ -30,6 +30,7 @@ import type {
   GrillQuestion,
   LLMProvider,
   Message,
+  ModelRoleMap,
   ThinkingEffort,
   ToolActivity
 } from '../../../shared/types'
@@ -93,6 +94,7 @@ export interface ChatState {
     title?: string,
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
+    routingOverrides?: Partial<ModelRoleMap>,
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null
   ) => Promise<void>
@@ -189,6 +191,15 @@ export interface ChatState {
   continuePastBudgetCap: () => Promise<void>
   dismissBudgetCap: () => void
 
+  // Turn limit reached — shows Continue button when auto-continuations are exhausted
+  turnLimitReached: {
+    continuable: boolean
+    continuationsUsed: number
+    continuationsMax: number
+  } | null
+  continuePastTurnLimit: () => void
+  dismissTurnLimit: () => void
+
   // Conversation state machine mirror
   setConversationState: (data: ChatState['conversationState']) => void
 
@@ -231,6 +242,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   autoModeSwitchPill: null,
   sessionRecovery: null,
   budgetCapBanner: null,
+  turnLimitReached: null,
   conversationState: previousChatState?.conversationState ?? {
     phase: 'idle',
     from: null,
@@ -283,6 +295,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     title?: string,
     personaSpecialistId?: string,
     llmProvider?: LLMProvider,
+    routingOverrides?: Partial<ModelRoleMap>,
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null
   ) => {
@@ -292,6 +305,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       title,
       personaSpecialistId,
       llmProvider,
+      routingOverrides,
       mcpOverrides,
       communicationTone
     })
@@ -416,6 +430,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSegments: [],
       compactSuggestion: null,
       budgetCapBanner: null,
+      turnLimitReached: null,
       // Preserve any in-flight ask_user question when re-opening / re-rendering the
       // SAME actively-streaming conversation. Hard-nulling here wiped the requestId,
       // so submitQuestionAnswers could no longer route the answer and it looked like
@@ -572,6 +587,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSegments: [],
       toolActivities: [],
       budgetCapBanner: null,
+      turnLimitReached: null,
       // activeRequestId is set AFTER the backend returns — see below.
       activeRequestId: null,
       // Track this conversation as streaming (for sidebar indicator when user switches away)
@@ -667,22 +683,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setBudgetCapBanner: (data) => set({ budgetCapBanner: data }),
 
   continuePastBudgetCap: async () => {
-    const { budgetCapBanner, activeConversation } = get()
-    if (!budgetCapBanner || !activeConversation) return
+    const { budgetCapBanner, activeConversation, isStreaming, isSending } = get()
+    if (!budgetCapBanner || !activeConversation || isStreaming || isSending) return
     set({ budgetCapBanner: null })
-    // Resume by sending a continuation prompt — the SDK session is still alive
-    try {
-      await window.api.sendMessage({
-        conversationId: activeConversation.id,
-        text: 'Continue where you left off.',
-        attachments: []
-      })
-    } catch (err) {
-      console.error('Failed to continue past budget cap:', err)
-    }
+    void get().sendMessage('Continue where you left off.')
   },
 
   dismissBudgetCap: () => set({ budgetCapBanner: null }),
+
+  continuePastTurnLimit: () => {
+    const { activeConversation, isStreaming, isSending } = get()
+    if (!activeConversation || isStreaming || isSending) return
+    set({ turnLimitReached: null })
+    void get().sendMessage('Continue where you left off. Do not repeat completed work.')
+  },
+
+  dismissTurnLimit: () => set({ turnLimitReached: null }),
 
   setConversationState: (data) => {
     // Only update conversationState — do NOT derive isStreaming from phase.
@@ -943,6 +959,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingQuestionAction: null,
       pendingQuestionRequestId: null,
       budgetCapBanner: null,
+      turnLimitReached: null,
       sessionRecovery: null,
       autoModeSwitchPill: null,
       draftTexts: {},

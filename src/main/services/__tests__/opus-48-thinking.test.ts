@@ -19,15 +19,16 @@ describe('Opus 4.8 Thinking Config', () => {
     assert.deepEqual(thinking, { type: 'adaptive' })
   })
 
-  test('Sonnet budget-based thinking config shape', () => {
-    const modelId = 'claude-sonnet-4-6'
+  test('Sonnet adaptive thinking config shape (Sonnet 5 is adaptive-only)', () => {
+    const modelId = 'claude-sonnet-5'
     const budget = parseInt(THINKING_BUDGETS.sonnet)
     const thinking = modelId.includes('opus')
       ? { type: 'adaptive' as const }
       : budget
         ? { type: 'enabled' as const, budgetTokens: budget }
         : undefined
-    assert.deepEqual(thinking, { type: 'enabled', budgetTokens: 10000 })
+    // Sonnet 5 is adaptive-only — THINKING_BUDGETS.sonnet is '' → parseInt is NaN → falsy → undefined
+    assert.equal(thinking, undefined)
   })
 
   test('Haiku budget-based thinking config shape', () => {
@@ -45,7 +46,7 @@ describe('Opus 4.8 Thinking Config', () => {
   })
 
   test('effort for sonnet model uses standard level', () => {
-    const modelId = 'claude-sonnet-4-6'
+    const modelId = 'claude-sonnet-5'
     const effort = modelId.includes('opus') ? 'xhigh' : 'high'
     assert.equal(effort, 'high')
   })

@@ -1,39 +1,93 @@
 import { ipcMain } from 'electron'
+import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type { Idea, LLMProvider } from '../../shared/types'
 import {
   ideaRepository,
   conversationRepository,
-  workspaceRepository
+  workspaceRepository,
+  grillSessionRepository
 } from '../db/repositories'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
+import { memoryExtractionService } from '../services/memory-extraction.service'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 
+const ideaLog = log.scope('idea-ipc')
+
 /**
  * Sync a completed idea into the knowledge-aware memory engine.
- * Creates a 'decision' fact so agents can reference refined ideas.
+ * Creates a consolidated 'decision' fact with grill decisions, track scores,
+ * and summary. Enqueues LLM extraction over the plan for granular facts.
+ *
+ * MEM-GRILL-01: Reads grill_decisions and session data BEFORE grill:complete
+ * strips them (ordering guarantee: idea:completeFromGrill fires before grill:complete).
  */
 function syncIdeaToMemory(idea: Idea): void {
   if (idea.status !== 'completed') return
+
+  // Gate behind captureGrill setting (default ON)
+  const wsSettings = workspaceRepository.getSettings(idea.workspaceId)
+  const grillCaptureEnabled = (wsSettings as any).memoryCaptureGrill !== false
+  if (!grillCaptureEnabled) return
 
   const ideaTag = `idea:${idea.id}`
   const existing = memoryFactRepository
     .search(idea.workspaceId, idea.title, 5)
     .filter((f) => f.tags.includes(ideaTag))
 
+  // Build enriched content with grill decisions + track scores
   const contentParts = [idea.description]
+
+  // Parse grill decisions (Q→A pairs per track)
+  if (idea.grillDecisions) {
+    try {
+      const decisions = JSON.parse(idea.grillDecisions)
+      if (decisions && typeof decisions === 'object') {
+        const decisionLines: string[] = []
+        for (const [key, value] of Object.entries(decisions)) {
+          if (typeof value === 'string') {
+            decisionLines.push(`- **${key}**: ${value}`)
+          } else if (value && typeof value === 'object') {
+            decisionLines.push(`- **${key}**: ${JSON.stringify(value)}`)
+          }
+        }
+        if (decisionLines.length > 0) {
+          contentParts.push(`\n### Grill Decisions\n${decisionLines.join('\n')}`)
+        }
+      }
+    } catch {
+      // Malformed JSON — skip decisions
+    }
+  }
+
+  // Read grill session for track scores and plan
+  const grillSession = grillSessionRepository.findByIdeaId(idea.id)
+  if (grillSession) {
+    // Track scores
+    if (Array.isArray(grillSession.trackScores) && grillSession.trackScores.length > 0) {
+      const scoreLines = grillSession.trackScores.map((ts: any) =>
+        `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
+      )
+      contentParts.push(`\n### Track Scores\n${scoreLines.join('\n')}`)
+    }
+    if (grillSession.currentScore != null) {
+      contentParts.push(`\n**Final Score**: ${grillSession.currentScore}/10 (${grillSession.scoreLabel ?? 'unrated'})`)
+    }
+  }
+
   if (idea.grillSummary) {
     contentParts.push(`\n### Grill Summary\n${idea.grillSummary}`)
   }
   const content = contentParts.filter(Boolean).join('\n')
 
+  // Write/update the consolidated decision fact
   if (existing.length > 0) {
     memoryFactRepository.updateFact(existing[0].id, {
       title: `Idea: ${idea.title}`,
       content,
-      tags: ['idea', ideaTag]
+      tags: ['idea', 'grill', ideaTag]
     })
   } else {
     memoryFactRepository.createFact({
@@ -41,10 +95,33 @@ function syncIdeaToMemory(idea: Idea): void {
       category: 'decision',
       title: `Idea: ${idea.title}`,
       content,
-      tags: ['idea', ideaTag],
-      sourceType: 'manual',
+      tags: ['idea', 'grill', ideaTag],
+      sourceType: 'grill',
       sourceRef: idea.id
     })
+  }
+
+  // Enqueue LLM extraction over the grill plan for granular facts
+  // (risks, constraints, implementation decisions)
+  if (grillSession?.plan) {
+    const workspace = workspaceRepository.findById(idea.workspaceId)
+    if (workspace?.repoPath) {
+      const planText = JSON.stringify(grillSession.plan, null, 2)
+      memoryExtractionService.enqueue(async () => {
+        try {
+          await memoryExtractionService.extractFromContent(
+            idea.workspaceId,
+            workspace.repoPath,
+            `grill-plan:${idea.id}`,
+            `## Grill Plan for "${idea.title}"\n\n${planText.substring(0, 40000)}`,
+            undefined,
+            { sourceType: 'grill', tags: ['grill', 'plan', ideaTag] }
+          )
+        } catch (err) {
+          ideaLog.warn(`[syncIdeaToMemory] LLM extraction for grill plan failed: ${err}`)
+        }
+      })
+    }
   }
 }
 

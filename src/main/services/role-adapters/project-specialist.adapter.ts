@@ -185,7 +185,8 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
         ctx.turnCount,
         {
           ...mcpFlags,
-          externalMcpActive
+          externalMcpActive,
+          codeAnalysisEnabled: this.codeAnalysisEnabled
         },
         resolvedModel
       )

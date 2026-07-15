@@ -208,6 +208,32 @@ describe('BlueprintBaseAdapter', () => {
     )
   })
 
+  test('buildMcpConfig_includes_memory_tools_when_workspaceId', () => {
+    const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
+    const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(
+      allowedTools.some((t) => t.startsWith('mcp__memory__')),
+      'Should include memory tools when workspaceId present'
+    )
+    // Verify all three memory tools are present
+    assert.ok(allowedTools.includes('mcp__memory__memory_search'), 'memory_search')
+    assert.ok(allowedTools.includes('mcp__memory__memory_record'), 'memory_record')
+    assert.ok(allowedTools.includes('mcp__memory__memory_flag'), 'memory_flag')
+  })
+
+  test('buildMcpConfig_excludes_memory_tools_without_workspaceId', () => {
+    const adapter = new TestBlueprintAdapter({ workspaceId: 'ws-1', blueprintId: 'bp-1' })
+    const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(
+      !allowedTools.some((t) => t.startsWith('mcp__memory__')),
+      'Should exclude memory tools when workspaceId null'
+    )
+  })
+
   // ── emitDetectedIntents (no-op) ──
 
   test('emitDetectedIntents_is_no_op', () => {

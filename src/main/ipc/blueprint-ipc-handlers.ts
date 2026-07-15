@@ -65,6 +65,32 @@ export function extractGrillDecisions(
   return decisions as GrillDecisionForBlueprint[]
 }
 
+// ── Reference Document Extraction ───────────────────────────────────────────
+
+/** Inline type — matches the shape stored in settingsJson.referenceDocuments */
+interface ReferenceDocument {
+  type: string
+  path: string
+  name?: string
+}
+
+/**
+ * Safely extract reference documents from a blueprint's settingsJson.
+ * Validates each entry has a `path` string. Returns undefined when
+ * settingsJson is null/missing or contains no valid documents.
+ */
+export function extractReferenceDocuments(
+  settingsJson: Record<string, unknown> | null | undefined
+): ReferenceDocument[] | undefined {
+  if (!settingsJson) return undefined
+  const docs = settingsJson.referenceDocuments
+  if (!Array.isArray(docs)) return undefined
+  const valid = docs.filter(
+    (d) => d && typeof d === 'object' && typeof (d as { path?: unknown }).path === 'string'
+  )
+  return valid.length > 0 ? (valid as ReferenceDocument[]) : undefined
+}
+
 // ── Approval Response Action ─────────────────────────────────────────────────
 
 export type ApprovalAction =

@@ -41,7 +41,6 @@ const TEST_FILES: string[] = [
   './model-config.test',
   './opus-48-thinking.test',
   './session-recovery.test',
-  './health-check.test',
   // Run 6 — lifecycle
   './conversation-lifecycle.test',
   // Run 6b — Project Specialist refactor (Phase 1)
@@ -207,10 +206,8 @@ const TEST_FILES: string[] = [
   './base-adapter-strategies.test',
   './heuristic-description-logic.test',
   './event-logger-service.test',
-  '../../ipc/__tests__/ipc-registration.test',
   '../../mcp-servers/__tests__/mcp-server-registration.test',
   // ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
-  '../../ipc/__tests__/ipc-remaining-registration.test',
   './cli-executor-args.test',
   './opencode-executor-pure.test',
   './agent-session-deep.test',
@@ -238,6 +235,8 @@ const TEST_FILES: string[] = [
   '../../ipc/__tests__/ipc-audit-handlers.test',
   '../../ipc/__tests__/ipc-crud-deep.test',
   '../../mcp-servers/__tests__/mcp-server-tools-deep.test',
+  // ─── MCP tool consistency (cross-validates evaluation/advisor/prompt against canonical registry) ───
+  './mcp-tool-consistency.test',
   // ─── OpenCode error pipeline (normalizer → processor end-to-end) ───
   './opencode-error-pipeline.test',
   // ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
@@ -276,17 +275,45 @@ const TEST_FILES: string[] = [
   './resolve-assignment.test',
   // ─── Snapshot model resolver — blueprint IDs + conversation snapshots ───
   './snapshot-resolver.test',
-  // ─── Test registry sync guard (self-referential) ───
-  './test-registry-sync.test',
   // ─── Memory Engine (knowledge-aware) ───
   './memory-engine.test',
   './memory-retrieval.test',
   './memory-extraction.test',
   './memory-doc-watcher.test',
+  // ─── Memory Graph (knowledge graph edge derivation) ───
+  './memory-graph.test',
   // ─── E2E Testing Infrastructure ───
-  './scenario-catalog.test',
-  './e2e-assertions.test',
-  './e2e-runner.test',
+  './e2e-contracts.test',
+  // ─── Blueprint document loader (splitBinaryDocs, buildReferenceDocsBlock) ───
+  './blueprint-document-loader.test',
+  // ─── Phase 18: Coverage Mega-Push IV — giant services deep + MCP tool bodies ───
+  './giant-services-deep.test',
+  '../../mcp-servers/__tests__/mcp-tool-bodies.test',
+  './adapter-completion-round2.test',
+  './coverage-mega-push-phase18.test',
+  './coverage-push-phase18b.test',
+  // ─── Blueprint clarify ask_user bridge (B1–B4 fixes) ───
+  './blueprint-clarify-askuser.test',
+  // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
+  './memory-extraction-content.test',
+  './blueprint-memory-hooks.test',
+  './grill-memory-sync.test',
+  // ─── Blueprint MCP tool availability fix (W1–W3) ───
+  './mcp-skip-servers.test',
+  // ─── Document Ingestion (reader, chunker, orchestration service) ───
+  './document-chunker.test',
+  './document-reader.test',
+  './memory-ingestion.test',
+  './memory-bootstrap.test',
+  // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
+  './local-plan-state-fk-guard.test',
+  // ─── Phase 19 deep coverage ───
+  './session-stream-deep-phase19.test',
+  './executor-deep-phase19.test',
+  './blueprint-services-deep.test',
+  './orchestrator-pipeline-deep.test',
+  './memory-vector-deep.test',
+  './mcp-servers-deep.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

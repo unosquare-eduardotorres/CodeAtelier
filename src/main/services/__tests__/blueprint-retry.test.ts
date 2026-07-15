@@ -35,6 +35,7 @@ interface MockPhase {
   id: string
   phase: BlueprintPhaseType
   status: 'pending' | 'active' | 'complete' | 'skipped' | 'failed'
+  artifactsJson?: Array<{ type: string; contentJson?: Record<string, unknown> }>
 }
 
 interface MockBlueprint {
@@ -65,7 +66,18 @@ function retryPhase(blueprint: MockBlueprint, pipelineRunning = false): {
   const isRetryable = blueprint.status === 'failed' || blueprint.status === 'cancelled'
   const isOrphaned = MID_PIPELINE_STATUSES.has(blueprint.status) && !pipelineRunning
 
-  if (!isRetryable && !isOrphaned) {
+  // BP-COMPLETE-RETRY: Allow retrying 'complete' blueprints with gaps_found
+  const isCompletedWithGaps = blueprint.status === 'complete' && (() => {
+    const verifyPhaseRec = blueprint.phases.find((p) => p.phase === 'verify')
+    if (!verifyPhaseRec) return false
+    const verifyArt = verifyPhaseRec.artifactsJson?.findLast(
+      (a) => a.type === 'verify' || a.type === 'verification'
+    )
+    const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
+    return overall === 'gaps_found'
+  })()
+
+  if (!isRetryable && !isOrphaned && !isCompletedWithGaps) {
     if (MID_PIPELINE_STATUSES.has(blueprint.status) && pipelineRunning) {
       throw new Error(
         `Cannot retry blueprint ${blueprint.id} — pipeline is currently active for workspace ${blueprint.workspaceId}`
@@ -77,10 +89,16 @@ function retryPhase(blueprint: MockBlueprint, pipelineRunning = false): {
   }
 
   // Phase resolution: failed > currentPhase (if pending or active) > first pending
-  const targetPhase =
+  let targetPhase =
     blueprint.phases.find((p) => p.status === 'failed') ??
     blueprint.phases.find((p) => p.phase === blueprint.currentPhase && (p.status === 'pending' || p.status === 'active')) ??
     blueprint.phases.find((p) => p.status === 'pending')
+
+  // BP-COMPLETE-RETRY: For completed blueprints with gaps, the verify phase
+  // is 'complete' (not failed/pending) — resolve it explicitly.
+  if (!targetPhase && isCompletedWithGaps) {
+    targetPhase = blueprint.phases.find((p) => p.phase === 'verify')
+  }
 
   if (!targetPhase) {
     throw new Error(`No retryable phase found for blueprint ${blueprint.id}`)
@@ -236,13 +254,55 @@ describe('retryPhase — cancelled (stopped) blueprint resume', () => {
 })
 
 describe('retryPhase — error cases', () => {
-  test('throws_if_blueprint_status_is_complete', () => {
+  test('throws_if_complete_without_gaps', () => {
     const bp: MockBlueprint = {
       id: 'bp-4',
       workspaceId: 'ws-4',
       status: 'complete',
       currentPhase: 'verify',
       phases: [{ id: 'ph-1', phase: 'verify', status: 'complete' }]
+      // No artifactsJson with gaps_found → not retryable
+    }
+
+    assert.throws(
+      () => retryPhase(bp),
+      { message: /status is 'complete'/ }
+    )
+  })
+
+  test('allows_retry_when_complete_with_gaps_found', () => {
+    const bp: MockBlueprint = {
+      id: 'bp-gaps',
+      workspaceId: 'ws-gaps',
+      status: 'complete',
+      currentPhase: 'verify',
+      phases: [{
+        id: 'ph-v',
+        phase: 'verify',
+        status: 'complete',
+        artifactsJson: [{ type: 'verify', contentJson: { overallStatus: 'gaps_found' } }]
+      }]
+    }
+
+    const result = retryPhase(bp)
+    assert.equal(result.phase, 'verify')
+    assert.equal(result.resetPhaseId, 'ph-v')
+    assert.equal(result.newBlueprintStatus, 'verifying')
+  })
+
+  test('throws_if_complete_with_human_needed_no_longer_retryable', () => {
+    // human_needed was removed from isCompletedWithGaps — verify it throws
+    const bp: MockBlueprint = {
+      id: 'bp-hn',
+      workspaceId: 'ws-hn',
+      status: 'complete',
+      currentPhase: 'verify',
+      phases: [{
+        id: 'ph-v',
+        phase: 'verify',
+        status: 'complete',
+        artifactsJson: [{ type: 'verify', contentJson: { overallStatus: 'human_needed' } }]
+      }]
     }
 
     assert.throws(
@@ -554,6 +614,264 @@ describe('BlueprintPhaseCompletePayload error field', () => {
     assert.equal(failPayload.status, 'failed')
     assert.ok(failPayload.error.includes('--goal'))
     assert.equal(typeof failPayload.error, 'string')
+  })
+})
+
+// ── Replicated generateFallbackRemediationTasks logic ──
+
+/**
+ * Replicated from BlueprintVerifyService.generateFallbackRemediationTasks.
+ * Pure function: generates remediation tasks from verify findings when the
+ * agent fails to include structured remediationTasks in the completion block.
+ *
+ * @param maxExistingR - Highest existing R-task sequence number (simulates
+ *                       the DB query in the real implementation).
+ */
+function generateFallbackRemediationTasks(
+  completion: Record<string, unknown> | null,
+  text: string,
+  maxExistingR: number
+): Array<{ taskId: string; description: string; files: string[] }> {
+  const tasks: Array<{ taskId: string; description: string; files: string[] }> = []
+  let seq = maxExistingR + 1
+
+  // Strategy 1: Parse structured completion fields
+  if (completion) {
+    const findings = completion.findings as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(findings)) {
+      for (const finding of findings) {
+        const desc = String(finding.description ?? finding.issue ?? '')
+        const files = Array.isArray(finding.files) ? finding.files.map(String) : []
+        if (desc) {
+          tasks.push({
+            taskId: `R${String(seq++).padStart(3, '0')}`,
+            description: `Fix: ${desc}`,
+            files
+          })
+        }
+      }
+    }
+    // If artifacts object has missing/stub/orphaned counts but no findings array
+    if (tasks.length === 0) {
+      const artifacts = completion.artifacts as Record<string, unknown> | undefined
+      if (artifacts) {
+        const missing = (artifacts.missing as number) ?? 0
+        const stub = (artifacts.stub as number) ?? 0
+        const orphaned = (artifacts.orphaned as number) ?? 0
+        if (missing + stub + orphaned > 0) {
+          tasks.push({
+            taskId: `R${String(seq++).padStart(3, '0')}`,
+            description: `Fix verification gaps: ${missing} missing, ${stub} stub, ${orphaned} orphaned artifacts. Review the verify phase report and implement the missing functionality.`,
+            files: []
+          })
+        }
+      }
+    }
+  }
+
+  // Strategy 2: Regex fallback — extract file paths from MISSING/STUB/ORPHANED lines
+  if (tasks.length === 0 && text) {
+    const gapPattern = /(?:MISSING|STUB|ORPHANED|✗|⚠️)\s*[—–-]\s*(?:`([^`]+)`|(\S+\.\w+))/gi
+    const gapFiles = new Set<string>()
+    let match: RegExpExecArray | null
+    while ((match = gapPattern.exec(text)) !== null) {
+      const file = match[1] || match[2]
+      if (file) gapFiles.add(file)
+    }
+    if (gapFiles.size > 0) {
+      tasks.push({
+        taskId: `R${String(seq++).padStart(3, '0')}`,
+        description: `Fix ${gapFiles.size} artifact gap(s) identified during verification: ${[...gapFiles].slice(0, 10).join(', ')}${gapFiles.size > 10 ? '...' : ''}`,
+        files: [...gapFiles].slice(0, 20)
+      })
+    }
+  }
+
+  // Strategy 3: Last resort — single generic task from the full report
+  if (tasks.length === 0 && text.length > 100) {
+    tasks.push({
+      taskId: `R${String(seq++).padStart(3, '0')}`,
+      description: 'Fix all gaps identified in the verification report. Review the verify phase output and implement missing or incomplete functionality.',
+      files: []
+    })
+  }
+
+  return tasks
+}
+
+describe('generateFallbackRemediationTasks', () => {
+  test('strategy_1_extracts_from_findings_array', () => {
+    const completion = {
+      overallStatus: 'gaps_found',
+      findings: [
+        { description: 'Missing auth middleware', files: ['src/auth.ts'] },
+        { issue: 'Stub handler', files: [] }
+      ]
+    }
+    const tasks = generateFallbackRemediationTasks(completion, '', 0)
+    assert.equal(tasks.length, 2)
+    assert.equal(tasks[0].taskId, 'R001')
+    assert.match(tasks[0].description, /auth middleware/)
+    assert.deepEqual(tasks[0].files, ['src/auth.ts'])
+    assert.equal(tasks[1].taskId, 'R002')
+    assert.match(tasks[1].description, /Stub handler/)
+  })
+
+  test('strategy_1_extracts_from_artifact_counts', () => {
+    const completion = { overallStatus: 'gaps_found', artifacts: { missing: 2, stub: 1, orphaned: 0 } }
+    const tasks = generateFallbackRemediationTasks(completion, '', 0)
+    assert.equal(tasks.length, 1)
+    assert.match(tasks[0].description, /2 missing, 1 stub, 0 orphaned/)
+  })
+
+  test('strategy_2_regex_extracts_file_paths', () => {
+    const text = '✗ — `src/api/routes.ts` is MISSING\n⚠️ — `src/db/repo.ts` is STUB'
+    const tasks = generateFallbackRemediationTasks(null, text, 0)
+    assert.equal(tasks.length, 1)
+    assert.ok(tasks[0].files.includes('src/api/routes.ts'))
+    assert.ok(tasks[0].files.includes('src/db/repo.ts'))
+  })
+
+  test('strategy_3_generic_fallback_for_long_text', () => {
+    const tasks = generateFallbackRemediationTasks(null, 'x'.repeat(200), 0)
+    assert.equal(tasks.length, 1)
+    assert.equal(tasks[0].taskId, 'R001')
+    assert.match(tasks[0].description, /Fix all gaps/)
+  })
+
+  test('strategy_3_collision_safe_with_existing_tasks', () => {
+    // maxExistingR = 5 → Strategy 3 should generate R006, not hardcoded R001
+    const tasks = generateFallbackRemediationTasks(null, 'x'.repeat(200), 5)
+    assert.equal(tasks.length, 1)
+    assert.equal(tasks[0].taskId, 'R006')
+  })
+
+  test('collision_safe_seq_starts_after_existing', () => {
+    // maxExistingR = 3 → first generated ID should be R004
+    const completion = { findings: [{ description: 'gap' }] }
+    const tasks = generateFallbackRemediationTasks(completion, '', 3)
+    assert.equal(tasks[0].taskId, 'R004')
+  })
+
+  test('no_tasks_when_no_data', () => {
+    const tasks = generateFallbackRemediationTasks(null, '', 0)
+    assert.equal(tasks.length, 0)
+  })
+
+  test('findings_with_empty_description_are_skipped', () => {
+    const completion = {
+      findings: [
+        { description: '', files: ['src/a.ts'] },
+        { description: 'Valid gap', files: [] }
+      ]
+    }
+    const tasks = generateFallbackRemediationTasks(completion, '', 0)
+    assert.equal(tasks.length, 1)
+    assert.match(tasks[0].description, /Valid gap/)
+  })
+
+  test('strategy_3_not_triggered_for_short_text', () => {
+    // Text under 100 chars doesn't trigger strategy 3
+    const tasks = generateFallbackRemediationTasks(null, 'short', 0)
+    assert.equal(tasks.length, 0)
+  })
+})
+
+describe('retryPhase — findLast artifact resolution', () => {
+  test('allows_retry_reads_latest_verify_artifact', () => {
+    // After remediation: first artifact is gaps_found, latest is passed
+    // isCompletedWithGaps should read the LATEST (passed) → not retryable
+    const bp: MockBlueprint = {
+      id: 'bp-remediated',
+      workspaceId: 'ws-rem',
+      status: 'complete',
+      currentPhase: 'verify',
+      phases: [{
+        id: 'ph-v',
+        phase: 'verify',
+        status: 'complete',
+        artifactsJson: [
+          { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
+          { type: 'verify', contentJson: { overallStatus: 'passed' } }
+        ]
+      }]
+    }
+
+    // Should throw — latest artifact says 'passed', not 'gaps_found'
+    assert.throws(
+      () => retryPhase(bp),
+      { message: /status is 'complete'/ }
+    )
+  })
+
+  test('findLast_still_finds_gaps_when_latest_is_gaps_found', () => {
+    // When the latest artifact is still gaps_found, retry should be allowed
+    const bp: MockBlueprint = {
+      id: 'bp-still-gaps',
+      workspaceId: 'ws-sg',
+      status: 'complete',
+      currentPhase: 'verify',
+      phases: [{
+        id: 'ph-v',
+        phase: 'verify',
+        status: 'complete',
+        artifactsJson: [
+          { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
+          { type: 'verify', contentJson: { overallStatus: 'gaps_found' } }
+        ]
+      }]
+    }
+
+    const result = retryPhase(bp)
+    assert.equal(result.phase, 'verify')
+    assert.equal(result.resetPhaseId, 'ph-v')
+  })
+})
+
+describe('getOutcomeStats — findLast verify artifact', () => {
+  // Minimal replica of getOutcomeStats verify logic from phase-summaries.ts
+  function getVerifyStatus(
+    artifactsJson: Array<{ type: string; contentJson?: Record<string, unknown> }> | undefined
+  ): string | null {
+    const verify = artifactsJson?.findLast(
+      (a) => a.type === 'verify' || a.type === 'verification'
+    )
+    if (!verify?.contentJson) return null
+    return (verify.contentJson.overallStatus as string) ?? 'unknown'
+  }
+
+  test('returns_latest_status_when_multiple_verify_artifacts', () => {
+    const artifacts = [
+      { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
+      { type: 'verify', contentJson: { overallStatus: 'passed' } }
+    ]
+    assert.equal(getVerifyStatus(artifacts), 'passed')
+  })
+
+  test('returns_gaps_found_when_latest_is_gaps_found', () => {
+    const artifacts = [
+      { type: 'verify', contentJson: { overallStatus: 'passed' } },
+      { type: 'verify', contentJson: { overallStatus: 'gaps_found' } }
+    ]
+    assert.equal(getVerifyStatus(artifacts), 'gaps_found')
+  })
+
+  test('returns_status_for_single_artifact', () => {
+    const artifacts = [
+      { type: 'verify', contentJson: { overallStatus: 'passed' } }
+    ]
+    assert.equal(getVerifyStatus(artifacts), 'passed')
+  })
+
+  test('returns_null_for_no_verify_artifact', () => {
+    const artifacts = [
+      { type: 'build', contentJson: { filesCreated: [] } }
+    ]
+    assert.equal(getVerifyStatus(artifacts), null)
+  })
+
+  test('returns_null_for_undefined_artifacts', () => {
+    assert.equal(getVerifyStatus(undefined), null)
   })
 })
 

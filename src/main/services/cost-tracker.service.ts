@@ -14,9 +14,11 @@ const costLogger = log.scope('CostTracker')
 export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
   // Current models
   'claude-haiku-4-5-20251001': { inputPer1M: 1.0, outputPer1M: 5.0 },
-  'claude-sonnet-4-6': { inputPer1M: 3.0, outputPer1M: 15.0 },
+  'claude-sonnet-5': { inputPer1M: 3.0, outputPer1M: 15.0 },
   'claude-opus-4-8': { inputPer1M: 5.0, outputPer1M: 25.0 },
+  'claude-fable-5': { inputPer1M: 10.0, outputPer1M: 50.0 },
   // Legacy (kept for historical cost calculation on older sessions)
+  'claude-sonnet-4-6': { inputPer1M: 3.0, outputPer1M: 15.0 },
   'claude-opus-4-7': { inputPer1M: 5.0, outputPer1M: 25.0 },
   'claude-sonnet-4-20250514': { inputPer1M: 3.0, outputPer1M: 15.0 },
   'claude-opus-4-20250514': { inputPer1M: 15.0, outputPer1M: 75.0 },

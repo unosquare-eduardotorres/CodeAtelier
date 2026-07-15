@@ -2,11 +2,21 @@ import { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Paperclip, X } from 'lucide-react'
 import type React from 'react'
+import {
+  useClipboardImagePaste,
+  MAX_IMAGE_ATTACHMENTS,
+  IMAGE_REGEX
+} from '@renderer/hooks'
 import ImagePreviewThumbnail from './ImagePreviewThumbnail'
 
 interface AttachmentDropzoneProps {
   attachments: string[]
-  onAttachmentsChange: (attachments: string[]) => void
+  /**
+   * Accepts a functional updater so async paste callbacks apply against the
+   * latest state — a plain array snapshot goes stale on rapid pastes and the
+   * first image gets silently overwritten. All call sites pass a React setter.
+   */
+  onAttachmentsChange: (next: string[] | ((prev: string[]) => string[])) => void
   conversationId: string
   children: React.ReactNode
 }
@@ -34,11 +44,6 @@ const ACCEPTED_EXTENSIONS = [
   '.docx'
 ]
 
-const IMAGE_REGEX = /\.(png|jpg|jpeg|gif|webp)$/i
-
-/** Maximum number of image attachments per message */
-const MAX_IMAGE_ATTACHMENTS = 5
-
 export default function AttachmentDropzone({
   attachments,
   onAttachmentsChange,
@@ -49,7 +54,7 @@ export default function AttachmentDropzone({
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      const newPaths = acceptedFiles.map((f) => (f as File & { path: string }).path).filter(Boolean)
+      const newPaths = acceptedFiles.map((f) => window.api.getPathForFile(f)).filter(Boolean)
 
       // Enforce image limit on dropped files
       let currentImageCount = imageCount
@@ -67,42 +72,18 @@ export default function AttachmentDropzone({
     [attachments, onAttachmentsChange, imageCount]
   )
 
-  const handlePaste = useCallback(
-    async (e: React.ClipboardEvent) => {
-      const items = e.clipboardData?.items
-      if (!items) return
-
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault()
-
-          // Check image limit
-          if (imageCount >= MAX_IMAGE_ATTACHMENTS) {
-            console.warn(`Image limit reached (${MAX_IMAGE_ATTACHMENTS})`)
-            return
-          }
-
-          const blob = item.getAsFile()
-          if (!blob) continue
-
-          // Convert to data URL and save via IPC
-          const reader = new FileReader()
-          reader.onload = async (): Promise<void> => {
-            try {
-              const dataUrl = reader.result as string
-              const filePath = await window.api.saveClipboardImage({ dataUrl, conversationId })
-              onAttachmentsChange([...attachments, filePath])
-            } catch (error) {
-              console.error('Failed to save clipboard image:', error)
-            }
-          }
-          reader.readAsDataURL(blob)
-          return // Only handle first image
-        }
-      }
+  const handleImageSaved = useCallback(
+    (filePath: string) => {
+      onAttachmentsChange((prev) => [...prev, filePath])
     },
-    [attachments, onAttachmentsChange, conversationId, imageCount]
+    [onAttachmentsChange]
   )
+
+  const handlePaste = useClipboardImagePaste({
+    conversationId,
+    imageCount,
+    onImageSaved: handleImageSaved
+  })
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
@@ -165,7 +146,11 @@ export default function AttachmentDropzone({
               onRemove={() => removeAttachment(idx)}
             />
           ))}
-          <span className="text-xs text-text-secondary">
+          <span
+            className={`text-xs ${
+              imageCount >= MAX_IMAGE_ATTACHMENTS ? 'text-warning' : 'text-text-secondary'
+            }`}
+          >
             {imageCount}/{MAX_IMAGE_ATTACHMENTS} images
           </span>
         </div>

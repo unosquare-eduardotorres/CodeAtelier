@@ -261,6 +261,34 @@ export class CouncilService extends EventEmitter {
       if (verdict) {
         if (entry.dbSessionId) councilSessionRepository.saveVerdict(entry.dbSessionId, verdict)
         this.emit('verdict', { workspaceId: entry.workspaceId, verdict })
+
+        // MEM-COUNCIL-01: Write council verdict as a direct decision fact.
+        // Contains recommendation, blind spots, and score — high-value memory.
+        try {
+          const { memoryEngineService } = await import('./memory-engine.service')
+          const { workspaceRepository } = await import('../db/repositories')
+          const ws = workspaceRepository.findById(entry.workspaceId)
+          const wsSettings = workspaceRepository.getSettings(entry.workspaceId)
+          if ((wsSettings as any).memoryCaptureBlueprints !== false && ws) {
+            await memoryEngineService.writeFact({
+              workspaceId: entry.workspaceId,
+              category: 'decision',
+              title: `Council verdict: ${entry.framedInput.planContent.substring(0, 80)}`,
+              content: [
+                `**Score**: ${verdict.overallScore}/10`,
+                `**Recommendation**: ${verdict.sections.recommendation}`,
+                verdict.sections.blindSpots ? `**Blind Spots**: ${verdict.sections.blindSpots}` : '',
+                verdict.sections.oneThingFirst ? `**Do First**: ${verdict.sections.oneThingFirst}` : ''
+              ].filter(Boolean).join('\n\n'),
+              tags: ['council', 'verdict'],
+              sourceType: 'blueprint',
+              sourceRef: entry.dbSessionId ?? null,
+              workspacePath: ws.repoPath
+            })
+          }
+        } catch (memErr) {
+          councilLog.warn('[council] Failed to write verdict memory fact:', memErr)
+        }
       }
 
       // Step 5: Complete
@@ -770,6 +798,33 @@ Respond ONLY with a JSON block:
     if (verdict) {
       councilSessionRepository.saveVerdict(sessionId, verdict)
       this.emit('verdict', { workspaceId: entry.workspaceId, verdict })
+
+      // MEM-COUNCIL-01: Write council verdict (resume path — same as primary path)
+      try {
+        const { memoryEngineService } = await import('./memory-engine.service')
+        const { workspaceRepository } = await import('../db/repositories')
+        const ws = workspaceRepository.findById(entry.workspaceId)
+        const wsSettings = workspaceRepository.getSettings(entry.workspaceId)
+        if ((wsSettings as any).memoryCaptureBlueprints !== false && ws) {
+          await memoryEngineService.writeFact({
+            workspaceId: entry.workspaceId,
+            category: 'decision',
+            title: `Council verdict: ${entry.framedInput.planContent.substring(0, 80)}`,
+            content: [
+              `**Score**: ${verdict.overallScore}/10`,
+              `**Recommendation**: ${verdict.sections.recommendation}`,
+              verdict.sections.blindSpots ? `**Blind Spots**: ${verdict.sections.blindSpots}` : '',
+              verdict.sections.oneThingFirst ? `**Do First**: ${verdict.sections.oneThingFirst}` : ''
+            ].filter(Boolean).join('\n\n'),
+            tags: ['council', 'verdict'],
+            sourceType: 'blueprint',
+            sourceRef: sessionId,
+            workspacePath: ws.repoPath
+          })
+        }
+      } catch (memErr) {
+        councilLog.warn('[council] Failed to write verdict memory fact (resume):', memErr)
+      }
     }
 
     this.setPhase(entry, 'complete')

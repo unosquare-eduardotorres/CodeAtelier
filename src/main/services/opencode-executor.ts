@@ -20,7 +20,7 @@ import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult, ExecutorTokenUsage } from './executor-types'
 import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
 import type { ImageAttachment } from '../../shared/types'
-import { normalizeOpenCodeEvent } from './opencode-event-normalizer'
+import { normalizeOpenCodeEvent, type NormalizerState } from './opencode-event-normalizer'
 import { ensureOpencodePathInEnv, getOpencodePath } from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
 
@@ -139,6 +139,8 @@ export class OpenCodeExecutor {
   private readonly sessionMap = new Map<string, string>()
   /** Consecutive error count for circuit breaker integration */
   private consecutiveErrors = 0
+  /** In-flight transient-retry backoffs — a rising value signals a retry storm. */
+  private retriesInFlight = 0
   /** Max consecutive errors before circuit breaker trips */
   private static readonly CIRCUIT_BREAKER_THRESHOLD = 5
   /** Health check polling interval (ms) */
@@ -158,6 +160,12 @@ export class OpenCodeExecutor {
   private serverReadyPromise?: Promise<void>
   /** EXEC-05: Track the serverReady fallback timeout so it can be cancelled */
   private serverReadyTimeout: ReturnType<typeof setTimeout> | null = null
+  /** R6-A1: Persistent normalizer state — survives across events so dedupe sets,
+   *  F16 lastPartType, and context-delta gating are preserved within a session. */
+  private normalizerState: NormalizerState = {
+    childSessions: this.childSessions,
+    sessionMap: this.sessionMap
+  }
 
    /**
     * Check if the OpenCode CLI is installed and available in PATH.
@@ -351,6 +359,25 @@ export class OpenCodeExecutor {
       process.chdir(cwd)
       openCodeLog.info(`[opencode] Set CWD to workspace: ${cwd}`)
 
+      // OC-09: Isolate from global opencode config to prevent personal MCP servers
+      // (e.g. ~/.config/opencode/opencode.json registering a "pencil" MCP) from
+      // leaking into sessions. Point XDG_CONFIG_HOME at an empty app-controlled
+      // directory so the opencode binary's global config resolves clean.
+      const { tmpdir } = await import('node:os')
+      const { join } = await import('node:path')
+      const { mkdirSync } = await import('node:fs')
+      const isolatedConfigHome = join(tmpdir(), 'agentstudio-opencode-xdg')
+      mkdirSync(join(isolatedConfigHome, 'opencode'), { recursive: true })
+      const savedXdgConfigHome = process.env.XDG_CONFIG_HOME
+      process.env.XDG_CONFIG_HOME = isolatedConfigHome
+      openCodeLog.info(`[opencode] Set XDG_CONFIG_HOME=${isolatedConfigHome} (was ${savedXdgConfigHome ?? 'unset'})`)
+
+      // OC-10: Force XDG_DATA_HOME to temp dir so the opencode SQLite database
+      // lives alongside the config — e2e-runner can reliably clean it.
+      const savedXdgDataHome = process.env.XDG_DATA_HOME
+      process.env.XDG_DATA_HOME = isolatedConfigHome
+      openCodeLog.info(`[opencode] Set XDG_DATA_HOME=${isolatedConfigHome} (was ${savedXdgDataHome ?? 'unset'})`)
+
       let result: Awaited<ReturnType<typeof createOpencode>>
       try {
         result = await createOpencode({
@@ -363,7 +390,18 @@ export class OpenCodeExecutor {
         })
       } finally {
         process.chdir(originalCwd)
-        openCodeLog.info(`[opencode] Restored CWD to: ${originalCwd}`)
+        // Restore XDG_CONFIG_HOME so the Electron main process is unaffected
+        if (savedXdgConfigHome !== undefined) {
+          process.env.XDG_CONFIG_HOME = savedXdgConfigHome
+        } else {
+          delete process.env.XDG_CONFIG_HOME
+        }
+        if (savedXdgDataHome !== undefined) {
+          process.env.XDG_DATA_HOME = savedXdgDataHome
+        } else {
+          delete process.env.XDG_DATA_HOME
+        }
+        openCodeLog.info(`[opencode] Restored CWD and XDG_*_HOME`)
       }
 
       // EXEC-06: Validate client exists before marking as started
@@ -437,7 +475,12 @@ export class OpenCodeExecutor {
       content: retry.startedMessage
     } as StreamChunk
 
-    await new Promise((r) => setTimeout(r, retry.delayMs))
+    this.retriesInFlight++
+    try {
+      await new Promise((r) => setTimeout(r, retry.delayMs))
+    } finally {
+      this.retriesInFlight--
+    }
     this.resendPrompt(sessionId, promptBody)
 
     yield {
@@ -1507,11 +1550,9 @@ Troubleshooting:
     sessionId: string,
     tokenUsage: ExecutorTokenUsage
   ): StreamChunk[] {
-    return normalizeOpenCodeEvent(event, sessionId, tokenUsage, {
-      childSessions: this.childSessions,
-      sessionMap: this.sessionMap,
-      serverReadyResolve: this.serverReadyResolve
-    })
+    // R6-A1: Keep serverReadyResolve in sync (it's set/cleared outside the state)
+    this.normalizerState.serverReadyResolve = this.serverReadyResolve
+    return normalizeOpenCodeEvent(event, sessionId, tokenUsage, this.normalizerState)
   }
 
   /**
@@ -1523,6 +1564,11 @@ Troubleshooting:
    *   because the retry budget hasn't been exhausted (which caused the suppression
    *   deadlock: errors were suppressed but no retry ever fired).
    */
+  /** Diagnostic gauges for the vitals heartbeat (see main-vitals.ts). */
+  public getVitals(): { activeSessions: number; retriesInFlight: number } {
+    return { activeSessions: this.sessionMap.size, retriesInFlight: this.retriesInFlight }
+  }
+
   private isSessionComplete(event: unknown, sessionId: string, retriesAvailable = false): boolean {
     const evt = event as Record<string, unknown>
     const type = evt.type as string | undefined
@@ -1553,11 +1599,14 @@ Troubleshooting:
       if (status === 'error' && !retriesAvailable) return true
     }
 
-    // V2 event bus: session.next.step.ended with finish="stop" is a completion signal
-    if (type === 'session.next.step.ended') {
-      const finish = properties.finish as string | undefined
-      if (finish === 'stop') return true
-    }
+    // NOTE: session.next.step.ended with finish="stop" is NOT treated as terminal.
+    // It marks the end of a single generation *step*, not the agent loop. Reasoning
+    // models emit a step.ended(stop) for the thinking step before the final answer
+    // step streams in — breaking here truncated the last text (e.g. the JSON answer),
+    // left the server session running as a zombie, and stalled the UI with no loading
+    // state. `session.idle` / `session.status:idle` is the authoritative completion
+    // signal (see handleSessionIdle in opencode-event-normalizer.ts); the outer
+    // streamPrompt timeout is the backstop if idle never arrives.
 
     // V2 event bus: session.next.step.failed is a terminal signal
     if (type === 'session.next.step.failed') {

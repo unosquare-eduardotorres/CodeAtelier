@@ -11,6 +11,7 @@ import {
   validateBlueprintPhase,
   selectPhaseToRetry,
   extractGrillDecisions,
+  extractReferenceDocuments,
   determineApprovalAction
 } from '../blueprint-ipc-handlers'
 import type { BlueprintPhase } from '../../../shared/blueprint-types'
@@ -146,6 +147,75 @@ describe('extractGrillDecisions', () => {
     const result = extractGrillDecisions({ grillDecisions: [] })
     assert.ok(result)
     assert.equal(result!.length, 0)
+  })
+})
+
+// ── extractReferenceDocuments ──────────────────────────────────────────────
+
+describe('extractReferenceDocuments', () => {
+  test('extracts valid reference documents array', () => {
+    const settingsJson = {
+      referenceDocuments: [
+        { type: 'file', path: '/tmp/spec.md', name: 'spec.md' },
+        { type: 'workspace-file', path: 'docs/readme.md', name: 'readme' }
+      ]
+    }
+    const result = extractReferenceDocuments(settingsJson)
+    assert.ok(result)
+    assert.equal(result!.length, 2)
+    assert.equal(result![0].path, '/tmp/spec.md')
+    assert.equal(result![1].path, 'docs/readme.md')
+  })
+
+  test('returns undefined for null settingsJson', () => {
+    assert.equal(extractReferenceDocuments(null), undefined)
+  })
+
+  test('returns undefined for undefined settingsJson', () => {
+    assert.equal(extractReferenceDocuments(undefined), undefined)
+  })
+
+  test('returns undefined when referenceDocuments is not an array', () => {
+    assert.equal(extractReferenceDocuments({ referenceDocuments: 'not-array' }), undefined)
+  })
+
+  test('returns undefined when referenceDocuments is a string value', () => {
+    assert.equal(extractReferenceDocuments({ referenceDocuments: '/some/path' }), undefined)
+  })
+
+  test('filters out entries missing path property', () => {
+    const settingsJson = {
+      referenceDocuments: [
+        { type: 'file', path: 'valid.md', name: 'valid' },
+        { type: 'file', name: 'no-path' },
+        { type: 'file', path: 123, name: 'number-path' },
+        null,
+        undefined,
+        'just-a-string'
+      ]
+    }
+    const result = extractReferenceDocuments(settingsJson)
+    assert.ok(result)
+    assert.equal(result!.length, 1)
+    assert.equal(result![0].path, 'valid.md')
+  })
+
+  test('returns undefined when all entries are invalid (empty result)', () => {
+    const settingsJson = {
+      referenceDocuments: [
+        { type: 'file', name: 'no-path' },
+        null
+      ]
+    }
+    assert.equal(extractReferenceDocuments(settingsJson), undefined)
+  })
+
+  test('returns undefined when referenceDocuments key is missing', () => {
+    assert.equal(extractReferenceDocuments({ otherKey: 'value' }), undefined)
+  })
+
+  test('returns undefined for empty array', () => {
+    assert.equal(extractReferenceDocuments({ referenceDocuments: [] }), undefined)
   })
 })
 

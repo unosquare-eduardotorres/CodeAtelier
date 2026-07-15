@@ -16,6 +16,17 @@ import { e2eTestRunRepository, e2eTestResultRepository, workspaceRepository } fr
 export function registerTestingIpc(mainWindow: BrowserWindow): void {
   e2eRunnerService.setMainWindow(mainWindow)
 
+  // Recover orphaned runs left in 'running' state from a prior crash/kill.
+  // This must run early (before any IPC calls) so the UI never sees stale 'running' runs.
+  try {
+    const recovered = e2eTestRunRepository.recoverOrphanedRuns()
+    if (recovered > 0) {
+      console.log(`[Testing] Recovered ${recovered} orphaned E2E test run(s) from prior session`)
+    }
+  } catch (e) {
+    console.warn('[Testing] Orphan recovery failed (non-fatal):', e)
+  }
+
   // ── List all scenarios (implemented + planned) ──
   ipcMain.handle(IPC_CHANNELS.TESTING_LIST_SCENARIOS, (event) => {
     validateSender(event)
@@ -57,7 +68,8 @@ export function registerTestingIpc(mainWindow: BrowserWindow): void {
       }
 
       const workspaceId = optionalString(args, 'workspaceId', ch)
-      return { runId: await e2eRunnerService.run({ scenarioIds, category, workspaceId }) }
+      const forceTools = args.forceTools === true
+      return { runId: await e2eRunnerService.run({ scenarioIds, category, workspaceId, forceTools }) }
     }
 
     return { runId: await e2eRunnerService.run() }
@@ -71,6 +83,17 @@ export function registerTestingIpc(mainWindow: BrowserWindow): void {
     const runId = requireString(args, 'runId', ch)
     const workspaceId = optionalString(args, 'workspaceId', ch)
     return { runId: await e2eRunnerService.requeueFailed(runId, workspaceId) }
+  })
+
+  // ── Resume an interrupted run (re-runs queued/error scenarios as a new run) ──
+  ipcMain.handle(IPC_CHANNELS.TESTING_RESUME_RUN, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.TESTING_RESUME_RUN
+    const args = requireObject(rawArgs, ch)
+    const runId = requireString(args, 'runId', ch)
+    const workspaceId = optionalString(args, 'workspaceId', ch)
+    const newRunId = await e2eRunnerService.resumeRun(runId, workspaceId ?? undefined)
+    return { runId: newRunId }
   })
 
   // ── Cancel current run ──

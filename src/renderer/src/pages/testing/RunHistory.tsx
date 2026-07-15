@@ -5,7 +5,7 @@
  * Horizontally scrollable when runs exceed container width.
  */
 
-import { History, CheckCircle2, XCircle, Loader2, RotateCcw, Clock } from 'lucide-react'
+import { History, CheckCircle2, XCircle, Loader2, RotateCcw, Play, Clock, Ban } from 'lucide-react'
 import type { E2ERunSummary } from '../../../../shared/types'
 import SectionCard from './SectionCard'
 
@@ -16,6 +16,7 @@ interface RunHistoryProps {
   preflightOk: boolean
   onSelectRun: (runId: string) => void
   onRequeueFailed: (runId: string) => void
+  onResumeRun: (runId: string) => void
   onCancel: () => void
 }
 
@@ -57,6 +58,7 @@ export default function RunHistory({
   preflightOk,
   onSelectRun,
   onRequeueFailed,
+  onResumeRun,
   onCancel
 }: RunHistoryProps): React.JSX.Element {
   if (runs.length === 0) {
@@ -85,7 +87,11 @@ export default function RunHistory({
           const isActive = run.id === selectedRunId
           const total =
             run.totalPassed + run.totalFailed + run.totalSkipped + run.totalError
-          const hasFailed = run.totalFailed > 0 || run.totalError > 0
+          const canResume = run.status === 'cancelled' && run.totalError > 0
+          // Requeue retries assertion failures always. It also retries scenarios that errored
+          // mid-run — but NOT on a cancelled run, where Resume already re-runs the identical
+          // error set (prevents a redundant duplicate button).
+          const canRequeue = run.totalFailed > 0 || (run.totalError > 0 && !canResume)
           const duration = runDuration(run)
 
           return (
@@ -103,6 +109,8 @@ export default function RunHistory({
                 <div className="flex items-center gap-2 min-w-0">
                   {run.status === 'running' ? (
                     <Loader2 size={14} className="text-info animate-spin shrink-0" />
+                  ) : run.status === 'cancelled' ? (
+                    <Ban size={14} className="text-text-muted shrink-0" />
                   ) : run.totalFailed > 0 || run.totalError > 0 ? (
                     <XCircle size={14} className="text-danger shrink-0" />
                   ) : (
@@ -136,26 +144,51 @@ export default function RunHistory({
                   </div>
                 </div>
 
-                {hasFailed && run.status !== 'running' && preflightOk && !isRunning && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onRequeueFailed(run.id)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        onRequeueFailed(run.id)
-                      }
-                    }}
-                    className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors shrink-0"
-                    title="Requeue failed scenarios"
-                  >
-                    <RotateCcw size={10} /> Requeue
-                  </span>
+                {run.status !== 'running' && preflightOk && !isRunning && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {canResume && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onResumeRun(run.id)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            onResumeRun(run.id)
+                          }
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-primary-muted/40 text-primary-muted hover:bg-primary-muted/10 transition-colors"
+                        title="Resume incomplete scenarios"
+                      >
+                        <Play size={10} /> Resume
+                      </span>
+                    )}
+                    {canRequeue && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onRequeueFailed(run.id)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            onRequeueFailed(run.id)
+                          }
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
+                        title="Requeue failed scenarios"
+                      >
+                        <RotateCcw size={10} /> Requeue
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
 

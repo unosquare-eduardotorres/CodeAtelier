@@ -15,7 +15,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 113
+const CURRENT_SCHEMA_VERSION = 116
 
 export interface Migration {
   version: number
@@ -2835,6 +2835,143 @@ export const migrations: Migration[] = [
 
       dbLogger.info('[migration-113] ✓ Created e2e_test_runs, e2e_test_results tables')
     }
+  },
+
+  // ── Migration 114: Upgrade Claude Sonnet preset from 4.6 → 5 + seed Fable 5 preset ──
+  {
+    version: 114,
+    name: 'upgrade-sonnet-5-seed-fable-5-presets',
+    up: (db) => {
+      // 1. Update built-in Sonnet presets: swap claude-sonnet-4-6 → claude-sonnet-5 in action_config_json
+      const sonnetPresets = db.prepare(
+        `SELECT id, action_config_json FROM llm_presets WHERE is_built_in = 1 AND name = 'Claude Sonnet'`
+      ).all() as { id: string; action_config_json: string }[]
+
+      const updateStmt = db.prepare(
+        `UPDATE llm_presets SET action_config_json = ?, updated_at = datetime('now') WHERE id = ?`
+      )
+      for (const preset of sonnetPresets) {
+        const updatedJson = preset.action_config_json.replace(/claude-sonnet-4-6/g, 'claude-sonnet-5')
+        updateStmt.run(updatedJson, preset.id)
+      }
+
+      // 2. Seed Fable 5 preset for each workspace (same chat-group actions as migration-108)
+      const workspaces = db.prepare('SELECT id FROM workspaces').all() as { id: string }[]
+      const chatActions = [
+        'da-vinci', 'da-vinci:plan', 'da-vinci:build',
+        'project-specialist', 'project-specialist:plan', 'project-specialist:build'
+      ]
+      const cfg: Record<string, { provider: string; modelId: string }> = {}
+      for (const a of chatActions) cfg[a] = { provider: 'claude', modelId: 'claude-fable-5' }
+      const fableJson = JSON.stringify(cfg)
+
+      const insert = db.prepare(
+        `INSERT OR IGNORE INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json) VALUES (?, ?, ?, 1, ?)`
+      )
+      for (const ws of workspaces) {
+        insert.run(`${ws.id}_claude-fable`, ws.id, 'Claude Fable', fableJson)
+      }
+
+      dbLogger.info(`[migration-114] ✓ Upgraded Sonnet presets to v5 + seeded Fable 5 for ${workspaces.length} workspace(s)`)
+    }
+  },
+
+  // ── Migration 115: Extend memory_facts source_type CHECK for blueprint + grill ──
+  {
+    version: 115,
+    name: 'memory-facts-blueprint-grill-source-types',
+    up: (db) => {
+      // Remove orphaned facts whose workspace was deleted before FK cascade existed.
+      // Without this, the INSERT…SELECT below violates the FK on memory_facts_new.
+      const purged = db.prepare(
+        `DELETE FROM memory_facts
+         WHERE workspace_id IS NOT NULL
+           AND workspace_id NOT IN (SELECT id FROM workspaces)`
+      ).run()
+      if (purged.changes > 0) dbLogger.warn(`[migration-115] Purged ${purged.changes} orphaned memory_facts`)
+
+      // SQLite cannot ALTER CHECK constraints — must rebuild the table.
+      // Precedent: migration 107 (blueprint_tasks 'skipped' status).
+      //
+      // memory_contradictions has FK references to memory_facts(id), so we must
+      // detach it before DROP TABLE memory_facts and recreate it after.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_contradictions_bak AS
+          SELECT * FROM memory_contradictions;
+        DROP TABLE IF EXISTS memory_contradictions;
+      `)
+
+      db.exec(`
+        CREATE TABLE memory_facts_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+          category TEXT NOT NULL CHECK (category IN ('decision','convention','gotcha','preference','reference')),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+          scope_paths TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scope_paths)),
+          tier INTEGER NOT NULL DEFAULT 0 CHECK (tier BETWEEN 0 AND 3),
+          confidence REAL NOT NULL DEFAULT 0.5,
+          confirmation_count INTEGER NOT NULL DEFAULT 0,
+          last_confirmed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','archived')),
+          superseded_by TEXT,
+          source_type TEXT NOT NULL CHECK (source_type IN ('session','commit','document','tool','manual','claude-md','blueprint','grill')),
+          source_ref TEXT,
+          embedding BLOB,
+          embedding_pending INTEGER NOT NULL DEFAULT 1,
+          last_accessed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO memory_facts_new SELECT * FROM memory_facts;
+        DROP TABLE memory_facts;
+        ALTER TABLE memory_facts_new RENAME TO memory_facts;
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_workspace ON memory_facts(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1;
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref);
+      `)
+
+      // Restore memory_contradictions with FK pointing at the rebuilt memory_facts
+      db.exec(`
+        CREATE TABLE memory_contradictions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          old_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          new_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('auto_resolved','pending','user_resolved')),
+          resolution TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          resolved_at TEXT
+        );
+        INSERT INTO memory_contradictions
+          SELECT * FROM memory_contradictions_bak
+          WHERE old_fact_id IN (SELECT id FROM memory_facts)
+            AND new_fact_id IN (SELECT id FROM memory_facts);
+        DROP TABLE memory_contradictions_bak;
+        CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status);
+      `)
+      dbLogger.info('[migration-115] ✓ Extended memory_facts source_type CHECK to include blueprint + grill')
+    }
+  },
+
+  // ── Migration 116: Sync plan prompt with diagram styling + Lucide icon guidance ──
+  {
+    version: 116,
+    name: 'sync-plan-prompt-diagram-styling',
+    up: (db) => {
+      const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
+      db.prepare(`
+        UPDATE core_agent_prompts
+        SET default_prompt_text = ?,
+            prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
+            updated_at = datetime('now')
+        WHERE agent_role = 'da-vinci' AND mode = 'plan'
+      `).run(newPlanPrompt, newPlanPrompt)
+      dbLogger.info('[migration-116] ✓ Plan prompt updated with diagram styling + icon guidance')
+    }
   }
 ]
 
@@ -2913,8 +3050,24 @@ export function getDatabase(): Database.Database {
     db.exec(SCHEMA_SQL)
   }
 
-  // Run versioned migrations (only pending ones)
-  runMigrations(db)
+  // Run versioned migrations (only pending ones).
+  // Standalone MCP-server processes (spawned with DB_PATH) must NOT run migrations —
+  // the Electron main process owns schema changes; racing two writers corrupts state.
+  const isStandaloneMcpServer = !!process.env.DB_PATH
+  if (!isStandaloneMcpServer) {
+    try {
+      runMigrations(db)
+    } catch (migrationError) {
+      // Zombie-state prevention: if migrations fail, close the DB and null out
+      // the singleton so the app doesn't silently run on an unmigrated schema.
+      dbLogger.error('[DB] Migration failed — closing DB to prevent zombie state:', migrationError)
+      try { db.close() } catch { /* best-effort close */ }
+      db = null
+      throw migrationError
+    }
+  } else {
+    dbLogger.info('[DB] Standalone MCP server — skipping migrations (main process owns schema)')
+  }
 
   // WAL checkpoint to reclaim space (runs every startup, cheap no-op if WAL is small)
   db.pragma('wal_checkpoint(TRUNCATE)')
@@ -3079,7 +3232,7 @@ function seedDefaultSkills(database: Database.Database): void {
     )
 }
 
-const SCHEMA_SQL = `
+export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   name TEXT NOT NULL,

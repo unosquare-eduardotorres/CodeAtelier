@@ -217,7 +217,7 @@ Combine tool-based scanning with reasoning:
 
 ### Check 3 — Test Coverage
 Use tools + reasoning to evaluate test adequacy:
-- Run **test_coverage_map** — identify which changed files lack corresponding test files
+- Run **analyze_test_coverage** — identify which changed files lack corresponding test files
 - Check if new test files are registered in the test runner (e.g. run-tests.ts imports)
 - Are critical paths tested (happy path + main error paths)?
 - Are edge cases covered (empty inputs, nulls, boundary values)?
@@ -232,7 +232,7 @@ Use tools + reasoning to evaluate test adequacy:
 
 ### Check 5 — Dead Code & Tech Debt
 - Run **find_dead_code** scoped to changed files — identify unreferenced functions, types, constants
-- Run **todo_scanner** — check for TODO/FIXME/HACK markers introduced by this implementation
+- Run **audit_scan** — check for TODO/FIXME/HACK markers, dead code, and complexity issues introduced by this implementation
 - Check for commented-out code blocks
 - Check for unused imports added by the implementation
 
@@ -306,9 +306,9 @@ List files from conversation + \`git diff --name-only\`. Print scope. Exclude ou
 ## Checks (in order)
 1. **Wiring** — Run wiring_check with all changed file paths + key new symbol names in a single call. Verify exports have importers, new symbols are called, IPC/routes/tests registered.
 2. **Bugs** — Run audit_scan on changed files (combines eslint_check + analyze_complexity + find_dead_code). Grep for \`as any\`, TODO, HACK, empty catches. Reason about edge cases, error handling, races, type safety, off-by-one, stale state.
-3. **Tests** — Run test_coverage_map. Check test runner registration. Evaluate happy path + error path + edge case coverage.
+3. **Tests** — Run analyze_test_coverage. Check test runner registration. Evaluate happy path + error path + edge case coverage.
 4. **Complexity** — Check audit_scan results for functions above threshold. Flag >10 as high, 7–10 as approaching.
-5. **Dead Code** — Check audit_scan results + run todo_scanner. Check commented-out code, unused imports.
+5. **Dead Code** — Check audit_scan results. Grep for TODO, HACK, FIXME. Check commented-out code, unused imports.
 6. **Premortem 🔮** — For each: scaling, maintenance, silent corruption, security, assumptions → state failure + prevention.
 
 ## Tool Guidance

@@ -11,6 +11,8 @@ import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString, optionalNumber } from './validate-args'
+import { extractGrillDecisions, extractReferenceDocuments } from './blueprint-ipc-handlers'
+import { memoryEngineService } from '../services/memory-engine.service'
 // M6: Wire-once pattern — listeners registered once in registerBlueprintIpc, no TTL cleanup needed
 import { blueprintService } from '../services/blueprint.service'
 import { blueprintSpecService } from '../services/blueprint-spec.service'
@@ -50,7 +52,12 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const description = optionalString(args, 'description', ch)
       const priority = optionalString(args, 'priority', ch) as BlueprintPriority | undefined
       const settingsJson = args.settingsJson as Record<string, unknown> | undefined
-      return blueprintService.create({ workspaceId, title, description, priority, settingsJson })
+      const blueprint = blueprintService.create({ workspaceId, title, description, priority, settingsJson })
+
+      // MEM-DOC-SPECIFY-01: Doc extraction moved to startSpecifyPhase() —
+      // covers create, createFromIdea, resume, and retry paths in one place.
+
+      return blueprint
     }
   )
 
@@ -346,6 +353,36 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         )
       }
 
+      // MEM-BP-APPROVAL-01: Write approval/rejection as a direct decision fact.
+      // Human approval is the highest-value memory — captured verbatim, no LLM needed.
+      const bpForFact = blueprintService.getBlueprint(blueprintId)
+      if (bpForFact) {
+        const bpSettings = workspaceRepository.getSettings(bpForFact.workspaceId)
+        const bpCaptureEnabled = (bpSettings as any).memoryCaptureBlueprints !== false
+        if (bpCaptureEnabled) {
+          const decision = approved ? 'approved' : 'rejected'
+          // Assemble a plan summary from the plan phase artifact
+          const planPhase = bpForFact.phases?.find((p: any) => p.phase === 'plan')
+          const planArtifact = planPhase?.artifactsJson?.find((a: any) => a.type === 'plan')
+          const planSummary = planArtifact?.contentMd
+            ? planArtifact.contentMd.substring(0, 2000)
+            : bpForFact.description ?? ''
+
+          memoryEngineService.writeFact({
+            workspaceId: bpForFact.workspaceId,
+            category: 'decision',
+            title: `Blueprint ${decision}: ${bpForFact.title}`,
+            content: `Plan was ${decision} by the user.\n\n### Plan Summary\n${planSummary}`,
+            tags: ['blueprint', `blueprint:${blueprintId}`, decision],
+            sourceType: 'blueprint',
+            sourceRef: blueprintId,
+            workspacePath: workspaceRepository.findById(bpForFact.workspaceId)?.repoPath
+          }).catch((err) => {
+            bpLog.warn(`[blueprint:approvalRespond] Failed to write approval fact: ${err}`)
+          })
+        }
+      }
+
       return { responded: true }
     }
   )
@@ -412,10 +449,9 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         throw new Error(`Blueprint not found: ${blueprintId}`)
       }
 
-      // Extract grill decisions from settings if available
-      const grillDecisions = blueprint.settingsJson?.grillDecisions as
-        | Array<{ header: string; selectedOption: string; reason: string }>
-        | undefined
+      // Extract grill decisions and reference documents from settings (validated)
+      const grillDecisions = extractGrillDecisions(blueprint.settingsJson as Record<string, unknown> | null)
+      const referenceDocuments = extractReferenceDocuments(blueprint.settingsJson as Record<string, unknown> | null)
 
       // Start the SPECIFY phase (non-blocking)
       blueprintSpecService
@@ -424,7 +460,8 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
           workspaceId,
           workspacePath: workspace.repoPath,
           description: blueprint.description,
-          grillDecisions
+          grillDecisions,
+          referenceDocuments
         })
         .catch((err) => {
           bpLog.error('[blueprint:startSpecify] Phase failed:', err)
@@ -515,7 +552,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const ch = IPC_CHANNELS.BLUEPRINT_CLARIFY_PROCEED
       const args = requireObject(rawArgs, ch)
       const blueprintId = requireString(args, 'blueprintId', ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
+      requireString(args, 'workspaceId', ch)
 
       await blueprintSpecService.proceedClarifyGate(blueprintId)
       return { proceeded: true }
@@ -531,7 +568,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const ch = IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE
       const args = requireObject(rawArgs, ch)
       const blueprintId = requireString(args, 'blueprintId', ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
+      requireString(args, 'workspaceId', ch)
 
       await blueprintSpecService.iterateClarify(blueprintId)
       return { iterated: true }
@@ -841,13 +878,14 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 function wireOnceEventForwarding(): void {
 
   // Helper: safe event forwarding with error isolation
-  function forward<T extends { workspaceId?: string }>(emitter: EventEmitterLike, event: string, channel: string, logPrefix?: string): void {
-    emitter.on(event, (payload: T) => {
+  function forward(emitter: EventEmitterLike, event: string, channel: string, logPrefix?: string): void {
+    emitter.on(event, (...args: unknown[]) => {
       try {
-        const wsId = (payload as Record<string, unknown>).workspaceId as string | undefined
+        const payload = args[0] as Record<string, unknown>
+        const wsId = payload?.workspaceId as string | undefined
         if (!wsId) return
-        if (logPrefix) bpLog.info(`[${logPrefix}] ${event}: ${(payload as Record<string, unknown>).phase ?? ''}`)
-        getSessionEventRouter().sendWorkspaceEvent(channel, wsId, payload as unknown as Record<string, unknown>)
+        if (logPrefix) bpLog.info(`[${logPrefix}] ${event}: ${payload.phase ?? ''}`)
+        getSessionEventRouter().sendWorkspaceEvent(channel, wsId, payload)
       } catch (err) {
         bpLog.error(`[event-forward] '${event}' handler threw:`, err)
       }
@@ -856,9 +894,10 @@ function wireOnceEventForwarding(): void {
 
   // Helper: forward status events (different shape: { workspaceId?, status })
   function forwardStatus(emitter: EventEmitterLike): void {
-    emitter.on('status', (data: { workspaceId?: string; status: AgentStatus }) => {
+    emitter.on('status', (...args: unknown[]) => {
       try {
-        if (!data.workspaceId) return
+        const data = args[0] as { workspaceId?: string; status: AgentStatus }
+        if (!data?.workspaceId) return
         getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, data.workspaceId, { ...data.status })
       } catch (err) {
         bpLog.error(`[event-forward] 'status' handler threw:`, err)
@@ -871,9 +910,10 @@ function wireOnceEventForwarding(): void {
   // ── BlueprintService (orchestrator) ──
 
   // M2: Forward whole-state snapshot on every state mutation
-  blueprintService.on('stateSync', (snapshot: Record<string, unknown>) => {
+  blueprintService.on('stateSync', (...args: unknown[]) => {
     try {
-      const wsId = snapshot.workspaceId as string | undefined
+      const snapshot = args[0] as Record<string, unknown>
+      const wsId = snapshot?.workspaceId as string | undefined
       if (!wsId) return
       getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.BLUEPRINT_STATE_SYNC, wsId, snapshot)
     } catch (err) {
@@ -966,21 +1006,24 @@ function wireOnceEventForwarding(): void {
   ] as unknown as EventEmitterLike[]
 
   for (const emitter of allPhaseEmitters) {
-    emitter.on('phaseStart', (payload: Record<string, unknown>) => {
-      const bpId = payload.blueprintId as string | undefined
+    emitter.on('phaseStart', (...args: unknown[]) => {
+      const payload = args[0] as Record<string, unknown>
+      const bpId = payload?.blueprintId as string | undefined
       if (bpId) journalAppend(bpId, 'system', { event: 'phaseStart', phase: payload.phase })
     })
-    emitter.on('phaseComplete', (payload: Record<string, unknown>) => {
-      const bpId = payload.blueprintId as string | undefined
+    emitter.on('phaseComplete', (...args: unknown[]) => {
+      const payload = args[0] as Record<string, unknown>
+      const bpId = payload?.blueprintId as string | undefined
       if (bpId) journalAppend(bpId, 'system', { event: 'phaseComplete', phase: payload.phase, status: payload.status, error: payload.error })
     })
   }
 
   // Journal: phaseArtifact → type-specific entries (plan, tasks, agent)
   for (const emitter of allPhaseEmitters) {
-    emitter.on('phaseArtifact', (payload: Record<string, unknown>) => {
-      const bpId = payload.blueprintId as string | undefined
-      const artifact = payload.artifact as { type?: string; contentMd?: string } | undefined
+    emitter.on('phaseArtifact', (...args: unknown[]) => {
+      const payload = args[0] as Record<string, unknown>
+      const bpId = payload?.blueprintId as string | undefined
+      const artifact = payload?.artifact as { type?: string; contentMd?: string } | undefined
       if (!bpId || !artifact) return
       const journalType = artifact.type === 'plan' ? 'plan'
         : artifact.type === 'tasks' ? 'tasks'
@@ -990,30 +1033,35 @@ function wireOnceEventForwarding(): void {
   }
 
   // Journal: clarify findings → 'findings' entries
-  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyFindings', (payload: Record<string, unknown>) => {
-    const bpId = payload.blueprintId as string | undefined
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyFindings', (...args: unknown[]) => {
+    const payload = args[0] as Record<string, unknown>
+    const bpId = payload?.blueprintId as string | undefined
     if (bpId) journalAppend(bpId, 'findings', { findings: payload.findings })
   })
 
   // Journal: clarify questions → 'qa' entries
-  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyQuestions', (payload: Record<string, unknown>) => {
-    const bpId = payload.blueprintId as string | undefined
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyQuestions', (...args: unknown[]) => {
+    const payload = args[0] as Record<string, unknown>
+    const bpId = payload?.blueprintId as string | undefined
     if (bpId) journalAppend(bpId, 'qa', { questions: payload.questions })
   })
 
   // Journal: clarify gate → 'qa' entry
-  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyGateReady', (payload: Record<string, unknown>) => {
-    const bpId = payload.blueprintId as string | undefined
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyGateReady', (...args: unknown[]) => {
+    const payload = args[0] as Record<string, unknown>
+    const bpId = payload?.blueprintId as string | undefined
     if (bpId) journalAppend(bpId, 'qa', { event: 'gateReady', findings: payload.findings })
   })
 
   // Journal: wave markers → 'system' entries
-  ;(blueprintBuildService as unknown as EventEmitterLike).on('waveStart', (payload: Record<string, unknown>) => {
-    const bpId = payload.blueprintId as string | undefined
+  ;(blueprintBuildService as unknown as EventEmitterLike).on('waveStart', (...args: unknown[]) => {
+    const payload = args[0] as Record<string, unknown>
+    const bpId = payload?.blueprintId as string | undefined
     if (bpId) journalAppend(bpId, 'system', { event: 'waveStart', wave: payload.wave, taskCount: payload.taskCount })
   })
-  ;(blueprintBuildService as unknown as EventEmitterLike).on('waveComplete', (payload: Record<string, unknown>) => {
-    const bpId = payload.blueprintId as string | undefined
+  ;(blueprintBuildService as unknown as EventEmitterLike).on('waveComplete', (...args: unknown[]) => {
+    const payload = args[0] as Record<string, unknown>
+    const bpId = payload?.blueprintId as string | undefined
     if (bpId) journalAppend(bpId, 'system', { event: 'waveComplete', wave: payload.wave, status: payload.status })
   })
 
@@ -1060,11 +1108,8 @@ function wireOnceEventForwarding(): void {
   // delay when verification finds gaps and remediation tasks are appended.
   // Same dispatch pattern as autoRetry — build phase re-runs, BP-RESUME-01 skips
   // all complete tasks, only new remediation waves execute.
-  ;(blueprintVerifyService as unknown as EventEmitterLike).on('remediationNeeded', (payload: {
-    blueprintId: string
-    workspaceId: string
-    workspacePath: string
-  }) => {
+  ;(blueprintVerifyService as unknown as EventEmitterLike).on('remediationNeeded', (...args: unknown[]) => {
+    const payload = args[0] as { blueprintId: string; workspaceId: string; workspacePath: string }
     const { blueprintId, workspaceId, workspacePath } = payload
     bpLog.info(`[remediation] Dispatching build for remediation tasks — blueprint ${blueprintId}`)
     blueprintBuildService.startBuildPhase({ blueprintId, workspaceId, workspacePath })

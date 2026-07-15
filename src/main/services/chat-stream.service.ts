@@ -15,7 +15,7 @@ import type {
 import { memoryExtractionService } from './memory-extraction.service'
 import { memoryRetrievalService } from './memory-retrieval.service'
 import { eventLoggerService } from './event-logger.service'
-import { forwardChunkToRenderer } from '../ipc/chat-shared'
+import { forwardChunkToRenderer, notifyChunkTaps } from '../ipc/chat-shared'
 import {
   flushTextBatcher,
   getAndClearToolActivities,
@@ -554,6 +554,14 @@ export class ChatStreamService {
 
     emitCard({ status: 'running' })
 
+    // R6-B2: Notify chunk taps so E2E transcripts capture the optimizer run
+    notifyChunkTaps(requestId, {
+      type: 'tool_use',
+      toolName: 'Prompt Optimizer',
+      toolId: optimizerToolId,
+      toolInput: inputPreview
+    })
+
     const optimizeResult = await promptOptimizerService.optimize({
       text, workspaceId, conversationId, mode
     })
@@ -572,15 +580,45 @@ export class ChatStreamService {
         result: 'Prompt optimized for clarity',
         resultDetail: optimizeResult.optimizedText + attachNote
       })
+      // R6-B2: Emit tool_result tap so transcripts show the rewritten prompt
+      notifyChunkTaps(requestId, {
+        type: 'tool_result',
+        toolName: 'Prompt Optimizer',
+        toolId: optimizerToolId,
+        content: optimizeResult.optimizedText
+      })
       log.info('[PIPELINE:prompt-optimizer] Prompt optimized')
       return optimizeResult.optimizedText
     }
 
     if (optimizeResult.skippedReason === 'error') {
       emitCard({ status: 'error', result: 'Optimization skipped — original prompt sent' })
+      notifyChunkTaps(requestId, {
+        type: 'tool_result',
+        toolName: 'Prompt Optimizer',
+        toolId: optimizerToolId,
+        content: 'Error — original prompt sent'
+      })
       log.warn('[PIPELINE:prompt-optimizer] Error — using original prompt')
+    } else if (optimizeResult.skippedReason) {
+      // parse-error | empty-output | oversize — surface the real failure
+      const reason = optimizeResult.skippedReason
+      emitCard({ status: 'error', result: `Optimization failed (${reason}) — original prompt sent` })
+      notifyChunkTaps(requestId, {
+        type: 'tool_result',
+        toolName: 'Prompt Optimizer',
+        toolId: optimizerToolId,
+        content: `Optimization failed (${reason}) — original prompt sent`
+      })
+      log.warn(`[PIPELINE:prompt-optimizer] Failed (${reason}) — using original prompt`)
     } else {
       emitCard({ status: 'completed', result: 'No changes needed' })
+      notifyChunkTaps(requestId, {
+        type: 'tool_result',
+        toolName: 'Prompt Optimizer',
+        toolId: optimizerToolId,
+        content: 'No changes needed'
+      })
     }
 
     return text // unchanged — use original

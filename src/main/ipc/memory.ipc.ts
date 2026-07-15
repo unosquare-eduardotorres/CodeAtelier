@@ -24,6 +24,9 @@ import { memoryExtractionService } from '../services/memory-extraction.service'
 import { omlxEmbeddingProvider } from '../services/omlx-embedding.service'
 import { workspaceRepository } from '../db/repositories'
 import { memoryDocWatcherService } from '../services/memory-doc-watcher.service'
+import { buildMemoryGraph } from '../services/memory-graph'
+import { memoryIngestionService } from '../services/memory-ingestion.service'
+import { memoryBootstrapService } from '../services/memory-bootstrap.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 
@@ -97,7 +100,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.MEMORY_FACTS_CONFIRM,
     (event, args: { id: string }) => {
       validateSender(event)
-      return memoryFactRepository.confirmFact(args.id)
+      return memoryEngineService.confirmFactWithPromotion(args.id)
     }
   )
 
@@ -182,6 +185,9 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         sessionCapture: (settings as any).memorySessionCapture !== false,
         commitCapture: (settings as any).memoryCommitCapture !== false,
         docCapture: (settings as any).memoryDocCapture !== false,
+        captureBlueprints: (settings as any).memoryCaptureBlueprints !== false,
+        captureGrill: (settings as any).memoryCaptureGrill !== false,
+        captureDocumentsOnAttach: (settings as any).memoryCaptureDocumentsOnAttach !== false,
         watcherGlobs: (settings as any).memoryWatcherGlobs ?? ['docs/**/*.md', 'README.md', 'CLAUDE.md']
       }
       return memSettings
@@ -198,6 +204,9 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ...(args.settings.sessionCapture !== undefined && { memorySessionCapture: args.settings.sessionCapture }),
         ...(args.settings.commitCapture !== undefined && { memoryCommitCapture: args.settings.commitCapture }),
         ...(args.settings.docCapture !== undefined && { memoryDocCapture: args.settings.docCapture }),
+        ...(args.settings.captureBlueprints !== undefined && { memoryCaptureBlueprints: args.settings.captureBlueprints }),
+        ...(args.settings.captureGrill !== undefined && { memoryCaptureGrill: args.settings.captureGrill }),
+        ...(args.settings.captureDocumentsOnAttach !== undefined && { memoryCaptureDocumentsOnAttach: args.settings.captureDocumentsOnAttach }),
         ...(args.settings.watcherGlobs !== undefined && { memoryWatcherGlobs: args.settings.watcherGlobs })
       }
       workspaceRepository.updateSettings(args.workspaceId, updated)
@@ -212,8 +221,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
           memoryDocWatcherService.stop()
         } else {
           const ws = workspaceRepository.findById(args.workspaceId)
-          if (ws?.path) {
-            memoryDocWatcherService.start(args.workspaceId, ws.path, (updated as any).memoryWatcherGlobs)
+          if (ws?.repoPath) {
+            memoryDocWatcherService.start(args.workspaceId, ws.repoPath, (updated as any).memoryWatcherGlobs)
           }
         }
       }
@@ -242,7 +251,41 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.MEMORY_EMBEDDING_BACKFILL,
     async (event) => {
       validateSender(event)
-      const count = await memoryEngineService.backfillPendingEmbeddings()
+
+      // Attempt full provider ready (auto-start oMLX, auto-load model) if offline
+      if (!omlxEmbeddingProvider.isReady) {
+        const ready = await omlxEmbeddingProvider.ensureEmbeddingReady()
+        if (!ready) {
+          const errorMsg = 'Embedding model could not be initialized. ' +
+            'Please ensure oMLX is running with an embedding model downloaded and loaded.'
+          // Send done+error so the renderer clears the spinner and shows the real message
+          safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_EMBEDDING_PROGRESS, {
+            processed: 0,
+            total: 0,
+            done: true,
+            error: errorMsg
+          })
+          return { backfilled: 0, error: errorMsg }
+        }
+      }
+
+      const count = await memoryEngineService.backfillAllPendingEmbeddings(
+        (processed, total) => {
+          safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_EMBEDDING_PROGRESS, {
+            processed,
+            total,
+            done: false
+          })
+        }
+      )
+
+      // Send final done signal
+      safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_EMBEDDING_PROGRESS, {
+        processed: count,
+        total: count,
+        done: true
+      })
+
       return { backfilled: count }
     }
   )
@@ -300,4 +343,115 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     })
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
+
+  // ── Dedup Scan ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DEDUP_SCAN,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return memoryEngineService.scanForDuplicates(args.workspaceId)
+    }
+  )
+
+  // ── Knowledge Graph ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_GRAPH_GET,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return buildMemoryGraph(args.workspaceId)
+    }
+  )
+
+  // ── Document Ingestion ──
+
+  // Select files via native dialog
+  ipcMain.handle(IPC_CHANNELS.MEMORY_INGEST_SELECT_FILES, async (event) => {
+    validateSender(event)
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select documents to ingest into memory',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Documents', extensions: ['md', 'txt', 'pdf', 'docx', 'rst', 'adoc'] },
+        { name: 'Code', extensions: ['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'cs', 'rb'] },
+        { name: 'Config', extensions: ['json', 'yaml', 'yml', 'toml', 'xml', 'sql'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    return result.canceled ? null : result.filePaths
+  })
+
+  // Select folder via native dialog
+  ipcMain.handle(IPC_CHANNELS.MEMORY_INGEST_SELECT_FOLDER, async (event) => {
+    validateSender(event)
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select a folder to ingest into memory',
+      properties: ['openDirectory']
+    })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  // Discover files in a folder (returns counts for confirmation)
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_INGEST_DISCOVER,
+    (event, args: { folderPath: string }) => {
+      validateSender(event)
+      return memoryIngestionService.discoverFiles(args.folderPath)
+    }
+  )
+
+  // Start document ingestion (files or folder)
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_INGEST_DOCUMENTS,
+    async (event, args: { files: string[]; workspaceId: string; workspacePath: string }) => {
+      validateSender(event)
+      const { files, workspaceId, workspacePath } = args
+      return memoryIngestionService.ingestFiles(
+        files,
+        workspaceId,
+        workspacePath,
+        (progress) => safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_INGEST_PROGRESS, progress)
+      )
+    }
+  )
+
+  // Cancel ingestion job
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_INGEST_CANCEL,
+    (event, args: { jobId: string }) => {
+      validateSender(event)
+      return memoryIngestionService.cancel(args.jobId)
+    }
+  )
+
+  // ── Bootstrap Service ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_START,
+    async (
+      event,
+      args: {
+        workspaceId: string
+        workspacePath: string
+        mode?: import('../../shared/types').BootstrapMode
+      }
+    ) => {
+      validateSender(event)
+      return memoryBootstrapService.startBootstrap(
+        args.workspaceId,
+        args.workspacePath,
+        args.mode ?? 'full',
+        (progress) => safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, progress)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_CANCEL,
+    (event, args: { jobId: string }) => {
+      validateSender(event)
+      return memoryBootstrapService.cancel(args.jobId)
+    }
+  )
 }

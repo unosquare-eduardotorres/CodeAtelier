@@ -15,42 +15,38 @@ Trust only: data flowing through verified wiring.
 ## 4-Level Artifact Verification (Detailed)
 
 ### Level 1 — EXISTS
-Simply check the file is present at the expected path:
-```bash
-[ -f "path/to/file" ] && echo "FOUND" || echo "MISSING"
-```
+Check the file is present at the expected path:
+- Use `Glob` with the exact path pattern to confirm existence.
 
 ### Level 2 — SUBSTANTIVE
 Check if the file contains real implementation:
-- Line count > minimum expected (a React component should be > 10 lines)
-- No stub patterns:
+- Use `mcp__code-graph__file_outline` to check the symbol count and structure.
+- Use `Read` to inspect the file contents.
+- Flag stub patterns:
   - `return null` / `return undefined` as the only return
   - `return {}` / `return []` as the only return
   - `() => {}` or `function() {}` empty bodies
   - `throw new Error('Not implemented')`
   - `// TODO` as the only logic
-- No placeholder text:
+- Flag placeholder text:
   - "not implemented", "coming soon", "placeholder"
   - "Lorem ipsum", "Example text"
 
 ### Level 3 — WIRED
 Check if the artifact is connected to the system:
-```bash
-# Import check — is it imported by other files?
-grep -r "import.*ComponentName" src/ --include="*.ts" --include="*.tsx" | wc -l
-
-# Usage check — is it actually called/rendered (beyond imports)?
-grep -r "ComponentName" src/ --include="*.ts" --include="*.tsx" | grep -v "import" | wc -l
-```
+- Use `mcp__code-graph__file_dependents` to see which files import this module.
+- Use `mcp__code-graph__find_references` on the key exported symbol to see all usage sites.
+- Fallback: `Grep` for import/usage patterns.
 
 Interpret results:
-- **WIRED**: Imported AND used (both counts > 0)
-- **ORPHANED**: Exists but not imported (import count = 0)
-- **PARTIAL**: Imported but not used beyond import (usage count = 0)
+- **WIRED**: Imported AND used (dependents > 0, references beyond imports > 0)
+- **ORPHANED**: Exists but not imported (dependents = 0)
+- **PARTIAL**: Imported but not used beyond import (references = imports only)
 
 ### Level 4 — DATA FLOWING
 Verify real data flows through the wiring:
-- Trace the data variable from its source (DB, API, state) to its destination (render, response, storage)
+- Use `mcp__code-graph__find_callees` to trace from entry point through to data source.
+- Use `mcp__code-graph__find_callers` to verify consumers exist.
 - Flag: static returns with no DB query (fake backend)
 - Flag: props declared but hardcoded `{}` at call site (fake frontend)
 - Flag: state variable exists but never rendered (dead state)

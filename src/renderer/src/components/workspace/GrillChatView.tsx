@@ -187,7 +187,7 @@ export default function GrillChatView({
     ) : null
 
   return (
-    <div data-testid="grill-chat-view">
+    <div data-testid="grill-chat-view" className="flex-1 min-w-0 flex flex-col min-h-0">
       <StreamingTranscript
         messages={messages}
         renderMessage={renderGrillMessage}

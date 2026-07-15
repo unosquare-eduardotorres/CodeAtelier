@@ -180,13 +180,47 @@ describe('agent-recovery-nudge › attemptRecovery', () => {
     assert.match(result.text, /didn't produce a summary/)
     assert.equal(onChunk.callCount, 1)
   })
+
+  test('skipCliTurn=true → emits fallback message and never calls cliExecutor.execute', async () => {
+    const { executor, calls } = capturingExecutor([{ type: 'text', content: 'should not appear' }])
+    const onChunk = createSpy<[StreamChunk], void>()
+    const opts = baseOpts({
+      cliExecutor: executor,
+      onChunk,
+      toolCallCount: 4,
+      skipCliTurn: true
+    })
+
+    const result = await service.attemptRecovery(opts)
+    assert.equal(result.recovered, false, 'Should not mark as recovered')
+    assert.match(result.text, /I used 4 tools but didn't produce a summary/)
+    assert.equal(calls.length, 0, 'cliExecutor.execute must NOT be called')
+    assert.equal(onChunk.callCount, 1, 'Fallback message must be emitted')
+  })
+
+  test('skipCliTurn=false (default) → still invokes cliExecutor.execute', async () => {
+    const { executor, calls } = capturingExecutor([{ type: 'text', content: 'recovered text' }])
+    const onChunk = createSpy<[StreamChunk], void>()
+    const opts = baseOpts({
+      cliExecutor: executor,
+      onChunk,
+      toolCallCount: 2,
+      skipCliTurn: false
+    })
+
+    const result = await service.attemptRecovery(opts)
+    assert.equal(result.recovered, true)
+    assert.equal(result.text, 'recovered text')
+    assert.equal(calls.length, 1, 'cliExecutor.execute must be called')
+  })
 })
 
 describe('agent-recovery-nudge › attemptRecovery (withChunkTimeout)', () => {
   test('hanging executor → fallback message after timeout (not wedged)', async () => {
     // Use a very short timeout to keep the test fast (50ms instead of 2 min).
     // We test via a subclass that overrides the timeout constant.
-    const { executor, iteratorClosed } = hangingExecutor([
+    // Create a hanging executor to validate the pattern (actual test uses fakeExecutor below)
+    hangingExecutor([
       { type: 'text', content: 'partial ' } // one chunk, then hang
     ])
     const onChunk = createSpy<[StreamChunk], void>()

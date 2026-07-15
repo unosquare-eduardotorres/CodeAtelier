@@ -100,6 +100,16 @@ export interface BlueprintWithDetails extends BlueprintWithPhases {
   tasks: BlueprintTask[]
 }
 
+// ── Reference Documents ──
+
+export interface ReferenceDocument {
+  type: 'file' | 'workspace-file' | 'url'
+  path: string
+  name: string
+  url?: string
+  label?: string
+}
+
 // ── Create / Update Params ──
 
 export interface CreateBlueprintParams {
@@ -225,6 +235,10 @@ export interface BlueprintApprovalNeededPayload {
   workspaceId: string
   phase: BlueprintPhaseType
   planSummary: string
+  /** Structured phase completion metrics (coverage, findings counts, recommendation, etc.) */
+  completion?: BlueprintPhaseCompletion
+  /** Full review report markdown (detailed findings, gaps, risks) */
+  reviewMarkdown?: string
 }
 
 export interface BlueprintWaveStartPayload {

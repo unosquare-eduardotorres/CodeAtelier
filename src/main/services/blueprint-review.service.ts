@@ -13,7 +13,7 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS } from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintReviewAdapter } from './role-adapters/blueprint/blueprint-review.adapter'
 import { buildReviewGoalCondition } from './blueprint-goal-conditions'
@@ -61,6 +61,7 @@ export class BlueprintReviewService extends EventEmitter {
     let session: AgentSessionService | null = null
     let onChunk: ((chunk: StreamChunk) => void) | null = null
     let onStatus: ((status: AgentStatus) => void) | null = null
+    let cleanupAskUser: (() => void) | undefined
 
     try {
       // 1. Pipeline + DB state
@@ -109,6 +110,10 @@ export class BlueprintReviewService extends EventEmitter {
       }
       session.on('chunk', onChunk)
       session.on('statusUpdate', onStatus)
+
+      // B4-FIX: Auto-respond to ask_user calls — review is non-interactive
+      cleanupAskUser = wireAskUserAutoResponder(session, 'REVIEW')
+
       // 6. Start session + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
@@ -193,12 +198,18 @@ export class BlueprintReviewService extends EventEmitter {
 
       const planSummary = this.buildApprovalSummary(completion ?? null)
       // M2: Track approval state for snapshot sync
-      blueprintService.setPendingApproval(workspaceId, { planSummary })
+      blueprintService.setPendingApproval(workspaceId, {
+        planSummary,
+        completion: completion ? (completion as Record<string, unknown>) : undefined,
+        reviewMarkdown: text || undefined
+      })
       this.safeEmit('approvalNeeded', {
         blueprintId,
         workspaceId,
         phase: 'review',
-        planSummary
+        planSummary,
+        completion: completion ?? undefined,
+        reviewMarkdown: text || undefined
       } satisfies BlueprintApprovalNeededPayload)
 
       // NOTE: Does NOT advance to BUILD. That happens in BLUEPRINT_APPROVAL_RESPOND handler.
@@ -239,6 +250,7 @@ export class BlueprintReviewService extends EventEmitter {
         ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
     } finally {
+      cleanupAskUser?.()
       if (session) {
         if (onChunk) session.removeListener('chunk', onChunk)
         if (onStatus) session.removeListener('statusUpdate', onStatus)

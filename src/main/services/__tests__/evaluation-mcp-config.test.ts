@@ -6,6 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import { MCP_TOOLS } from '../../../shared/constants'
 import {
   buildReadOnlyToolConfig,
   buildNoToolsConfig,
@@ -139,9 +140,10 @@ describe('buildReadOnlyToolConfig', () => {
     })
     const { allowedTools } = result
     assert.ok(allowedTools, 'allowedTools should be defined')
-    assert.ok(allowedTools.includes('mcp__code-analysis__todo_scanner'))
-    assert.ok(allowedTools.includes('mcp__code-analysis__dependency_health'))
-    assert.ok(allowedTools.includes('mcp__code-analysis__test_coverage_map'))
+    // Validate against canonical MCP_TOOLS registry (not hardcoded names)
+    for (const name of MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES) {
+      assert.ok(allowedTools.includes(name), `Expected ${name} in allowedTools`)
+    }
   })
 })
 

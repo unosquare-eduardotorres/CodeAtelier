@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
+import { buildEnvWithPath } from './env-utils'
 import { dbLogger } from '../logger'
 import { memoryEngineService } from './memory-engine.service'
 import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
@@ -50,7 +51,7 @@ class MemoryExtractionService {
   // ── Queue ───────────────────────────────────────────────────────────────
 
   /** Enqueue an extraction job. Only one runs at a time. */
-  private enqueue(job: () => Promise<void>): void {
+  enqueue(job: () => Promise<void>): void {
     this.queue.push(job)
     this.processQueue()
   }
@@ -163,33 +164,32 @@ class MemoryExtractionService {
   // ── Document extraction ─────────────────────────────────────────────────
 
   /**
-   * Extract facts from a document file (used by doc watcher and manual feed).
+   * Core content-based extraction — works with any text, no file on disk needed.
+   * Used by extractFromDocument (file wrapper) and direct content extraction
+   * (e.g. URL reference docs, blueprint artifacts).
    */
-  async extractFromDocument(
+  async extractFromContent(
     workspaceId: string,
     workspacePath: string,
-    filePath: string,
-    onProgress?: ProgressCallback
+    sourceRef: string,
+    content: string,
+    onProgress?: ProgressCallback,
+    opts?: { sourceType?: import('../../shared/types').MemorySourceType; tags?: string[] }
   ): Promise<number> {
+    const sourceType = opts?.sourceType ?? 'document'
     const emit = (msg: string, status: MemoryFeedProgress['status'] = 'running'): void => {
-      onProgress?.({ status, message: msg, source: 'document', timestamp: Date.now() })
+      onProgress?.({ status, message: msg, source: sourceType, timestamp: Date.now() })
     }
 
-    if (!existsSync(filePath)) {
-      emit('File not found', 'error')
-      return 0
-    }
-
-    const content = readFileSync(filePath, 'utf-8')
     if (content.length < 20) {
-      emit('Document too short', 'error')
+      emit('Content too short for extraction', 'error')
       return 0
     }
 
-    emit(`Extracting facts from ${filePath}...`)
+    emit(`Extracting facts from ${sourceRef}...`)
 
     const prompt = buildExtractionPrompt(
-      `## Document: ${filePath}\n${content.substring(0, 50000)}`
+      `## Document: ${sourceRef}\n${content.substring(0, 50000)}`
     )
 
     try {
@@ -204,25 +204,44 @@ class MemoryExtractionService {
             category: fact.category,
             title: fact.title,
             content: fact.content,
-            tags: fact.tags,
-            scopePaths: fact.scopePaths ?? [filePath],
-            sourceType: 'document',
-            sourceRef: filePath,
+            tags: [...(fact.tags ?? []), ...(opts?.tags ?? [])],
+            scopePaths: fact.scopePaths ?? [sourceRef],
+            sourceType,
+            sourceRef,
             workspacePath
           })
           created++
         } catch (err) {
-          log.warn('[MemoryExtraction] Failed to write doc fact:', err)
+          log.warn('[MemoryExtraction] Failed to write content fact:', err)
         }
       }
 
-      emit(`Created ${created} facts from document`, 'done')
+      emit(`Created ${created} facts from ${sourceRef}`, 'done')
       return created
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       emit(`Extraction failed: ${msg}`, 'error')
       return 0
     }
+  }
+
+  /**
+   * Extract facts from a document file (used by doc watcher and manual feed).
+   * Thin wrapper over extractFromContent that reads the file from disk.
+   */
+  async extractFromDocument(
+    workspaceId: string,
+    workspacePath: string,
+    filePath: string,
+    onProgress?: ProgressCallback
+  ): Promise<number> {
+    if (!existsSync(filePath)) {
+      onProgress?.({ status: 'error', message: 'File not found', source: 'document', timestamp: Date.now() })
+      return 0
+    }
+
+    const content = readFileSync(filePath, 'utf-8')
+    return this.extractFromContent(workspaceId, workspacePath, filePath, content, onProgress)
   }
 
   // ── Commit extraction ───────────────────────────────────────────────────
@@ -300,6 +319,114 @@ class MemoryExtractionService {
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Commit extraction failed:', err)
+    }
+  }
+
+  // ── Blueprint completion extraction ──────────────────────────────────────
+
+  /**
+   * Extract facts from a completed/failed blueprint. Assembles a context block
+   * from spec+plan artifacts, clarify Q&A, and task outcomes, then runs LLM
+   * extraction. Enqueued (non-blocking).
+   *
+   * MEM-BP-COMPLETE-01: Deliberately NOT per-task or per-phase hooks — per-task
+   * facts would flood memory. Task outcomes are summarized at completion where
+   * failures become 'gotcha' facts.
+   */
+  enqueueBlueprintExtraction(params: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    title: string
+    status: 'complete' | 'failed'
+    phases: Array<{ phase: string; artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }> }>
+    tasks: Array<{ taskId: string; description: string; status: string }>
+    clarifyQA?: Array<{ question: string; answer: string }>
+  }): void {
+    this.enqueue(async () => {
+      await this.extractFromBlueprint(params)
+    })
+  }
+
+  private async extractFromBlueprint(params: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    title: string
+    status: 'complete' | 'failed'
+    phases: Array<{ phase: string; artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }> }>
+    tasks: Array<{ taskId: string; description: string; status: string }>
+    clarifyQA?: Array<{ question: string; answer: string }>
+  }): Promise<void> {
+    const { blueprintId, workspaceId, workspacePath, title, status, phases, tasks, clarifyQA } = params
+
+    const parts: string[] = []
+    parts.push(`## Blueprint: ${title}\nFinal status: ${status}\n`)
+
+    // Spec artifact
+    const specPhase = phases.find((p) => p.phase === 'specify')
+    const specArtifact = specPhase?.artifacts?.find((a) => a.type === 'spec')
+    if (specArtifact?.contentMd) {
+      parts.push(`### Specification\n${specArtifact.contentMd.substring(0, 5000)}`)
+    }
+
+    // Plan artifact (decisions, risks, constraints)
+    const planPhase = phases.find((p) => p.phase === 'plan')
+    const planArtifact = planPhase?.artifacts?.find((a) => a.type === 'plan')
+    if (planArtifact?.contentMd) {
+      parts.push(`### Plan\n${planArtifact.contentMd.substring(0, 5000)}`)
+    }
+
+    // Clarify Q&A
+    if (clarifyQA && clarifyQA.length > 0) {
+      const qaLines = clarifyQA.map((qa) => `Q: ${qa.question}\nA: ${qa.answer}`).join('\n\n')
+      parts.push(`### Clarification Q&A\n${qaLines.substring(0, 3000)}`)
+    }
+
+    // Task outcomes summary
+    const completed = tasks.filter((t) => t.status === 'complete')
+    const failed = tasks.filter((t) => t.status === 'failed')
+    const skipped = tasks.filter((t) => t.status === 'skipped')
+    parts.push(`### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`)
+    if (failed.length > 0) {
+      parts.push('#### Failed Tasks')
+      for (const t of failed.slice(0, 10)) {
+        parts.push(`- ${t.taskId}: ${t.description.substring(0, 200)}`)
+      }
+    }
+
+    const combined = parts.join('\n\n')
+    const prompt = buildExtractionPrompt(combined)
+
+    try {
+      const result = await this.spawnSummarizer(prompt, workspacePath, workspaceId)
+      const facts = parseExtractedFacts(result)
+
+      let created = 0
+      for (const fact of facts) {
+        try {
+          await memoryEngineService.writeFact({
+            workspaceId,
+            category: fact.category,
+            title: fact.title,
+            content: fact.content,
+            tags: [...(fact.tags ?? []), 'blueprint', `blueprint:${blueprintId}`],
+            scopePaths: fact.scopePaths,
+            sourceType: 'blueprint',
+            sourceRef: blueprintId,
+            workspacePath
+          })
+          created++
+        } catch (err) {
+          log.warn('[MemoryExtraction] Failed to write blueprint fact:', err)
+        }
+      }
+
+      if (created > 0) {
+        log.info(`[MemoryExtraction] Blueprint extraction: ${created} facts from "${title}" (${status})`)
+      }
+    } catch (err) {
+      log.warn('[MemoryExtraction] Blueprint extraction failed:', err)
     }
   }
 
@@ -450,10 +577,7 @@ class MemoryExtractionService {
         this.currentAbortController?.abort()
       }, TIMEOUT_MS)
 
-      const env = { ...process.env }
-      delete env.CLAUDECODE
-      if (env.PATH && !env.PATH.includes('/usr/local/bin')) env.PATH = `/usr/local/bin:${env.PATH}`
-      if (env.PATH && !env.PATH.includes('/opt/homebrew/bin')) env.PATH = `/opt/homebrew/bin:${env.PATH}`
+      const env = buildEnvWithPath()
 
       const model = modelConfigService.getModel(workspacePath ?? undefined, 'memoryFeed')
 

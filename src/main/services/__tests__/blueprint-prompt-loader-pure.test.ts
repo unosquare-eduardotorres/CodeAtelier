@@ -2,16 +2,20 @@
  * Unit tests for blueprint-prompt-loader pure template functions.
  *
  * Tests buildPhaseSystemPrompt (which internally calls formatArtifacts,
- * replaceVariables, buildFallbackPrompt) and buildConstitutionEditorPrompt
- * (which calls buildFallbackConstitutionPrompt).
- *
- * When .md prompt files aren't found (which is the case in test env),
- * the fallback prompts are used — exercising full code paths.
+ * replaceVariables, buildFallbackPrompt), buildConstitutionEditorPrompt
+ * (which calls buildFallbackConstitutionPrompt), and the formatArtifacts
+ * compaction logic (contentMd preference, compact JSON, field projection,
+ * discovery consolidation, budget cap).
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { buildPhaseSystemPrompt, buildConstitutionEditorPrompt } from '../blueprint-prompt-loader'
-import type { BlueprintPhaseType, PhaseContext } from '../../../shared/blueprint-types'
+import {
+  buildPhaseSystemPrompt,
+  buildConstitutionEditorPrompt,
+  formatArtifacts,
+  ARTIFACT_BUDGET_CHARS
+} from '../blueprint-prompt-loader'
+import type { BlueprintPhaseType, PhaseContext, BlueprintArtifact } from '../../../shared/blueprint-types'
 
 // ── Helpers ──
 
@@ -113,7 +117,7 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
     assert.ok(result.includes('Add login page with OAuth2'))
   })
 
-  test('artifact_with_contentJson_included_as_json_block', () => {
+  test('artifact_with_contentJson_only_included_as_compact_json_block', () => {
     const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
       previousArtifacts: [{
         type: 'plan',
@@ -124,6 +128,24 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
     }))
     assert.ok(result.includes('```json'))
     assert.ok(result.includes('Phase 1'))
+    // Should use compact JSON (no pretty-printing)
+    assert.ok(!result.includes('  "phases"'), 'Should NOT use pretty-printed JSON')
+  })
+
+  test('artifact_with_both_contentMd_and_contentJson_prefers_md', () => {
+    const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
+      previousArtifacts: [{
+        type: 'plan',
+        contentMd: '# Plan Summary\nThis is the plan markdown.',
+        contentJson: { phases: [{ name: 'Phase 1' }] },
+        filePath: undefined
+      }]
+    }))
+    // Should include the markdown
+    assert.ok(result.includes('Plan Summary'))
+    assert.ok(result.includes('This is the plan markdown.'))
+    // Should NOT include the JSON dump since contentMd is present
+    assert.ok(!result.includes('```json'), 'JSON should be omitted when contentMd exists')
   })
 
   test('artifact_with_filePath_shows_path_line', () => {
@@ -194,6 +216,216 @@ describe('buildConstitutionEditorPrompt — fallback', () => {
       { name: 'P', path: '/tmp' }
     )
     assert.ok(result.includes('Always write tests first.'))
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════
+//  formatArtifacts — direct tests (context compaction)
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('formatArtifacts — contentMd preference', () => {
+  test('prefers_contentMd_and_omits_contentJson', () => {
+    const result = formatArtifacts([{
+      type: 'spec',
+      contentMd: '# My Spec\nDetails here.',
+      contentJson: { title: 'Spec', sections: ['a', 'b'] }
+    }])
+    assert.ok(result.includes('# My Spec'), 'Should include markdown')
+    assert.ok(!result.includes('```json'), 'Should NOT include JSON when markdown exists')
+  })
+
+  test('falls_back_to_json_when_no_contentMd', () => {
+    const result = formatArtifacts([{
+      type: 'spec',
+      contentJson: { title: 'Spec' }
+    }])
+    assert.ok(result.includes('```json'), 'Should include JSON block')
+    assert.ok(result.includes('"title"'), 'Should include JSON content')
+  })
+
+  test('empty_artifacts_returns_no_artifacts_message', () => {
+    assert.equal(formatArtifacts([]), '(No previous artifacts available.)')
+  })
+})
+
+describe('formatArtifacts — compact JSON (no pretty-printing)', () => {
+  test('json_is_compact_not_pretty_printed', () => {
+    const result = formatArtifacts([{
+      type: 'plan',
+      contentJson: { summary: 'Build login', techStack: ['React', 'Node'] }
+    }])
+    // Compact JSON has no leading whitespace before keys
+    assert.ok(!result.includes('  "summary"'), 'Should not have indented keys')
+    assert.ok(result.includes('"summary":'), 'Should have compact key')
+  })
+})
+
+describe('formatArtifacts — field projection', () => {
+  test('plan_json_projects_only_allowed_fields', () => {
+    const result = formatArtifacts([{
+      type: 'plan',
+      contentJson: {
+        summary: 'Build login page',
+        techStack: ['React'],
+        mustHaves: ['OAuth2'],
+        longDescription: 'This is a very long description that should be dropped...',
+        internalNotes: 'Internal notes should be dropped'
+      }
+    }])
+    assert.ok(result.includes('Build login page'), 'Should keep summary')
+    assert.ok(result.includes('React'), 'Should keep techStack')
+    assert.ok(result.includes('OAuth2'), 'Should keep mustHaves')
+    assert.ok(!result.includes('longDescription'), 'Should drop longDescription')
+    assert.ok(!result.includes('internalNotes'), 'Should drop internalNotes')
+  })
+
+  test('tasks_json_projects_only_allowed_fields', () => {
+    const result = formatArtifacts([{
+      type: 'tasks',
+      contentJson: {
+        id: 'T001',
+        title: 'Setup auth',
+        wave: 1,
+        longAnalysis: 'This long analysis text should be dropped',
+        files: ['auth.ts']
+      }
+    }])
+    assert.ok(result.includes('T001'), 'Should keep id')
+    assert.ok(result.includes('Setup auth'), 'Should keep title')
+    assert.ok(!result.includes('longAnalysis'), 'Should drop longAnalysis')
+  })
+
+  test('non_plan_non_tasks_json_keeps_all_fields', () => {
+    const result = formatArtifacts([{
+      type: 'review',
+      contentJson: {
+        score: 85,
+        findings: ['Good coverage'],
+        customField: 'kept'
+      }
+    }])
+    assert.ok(result.includes('score'), 'Should keep score')
+    assert.ok(result.includes('customField'), 'Should keep custom fields for non-plan/tasks types')
+  })
+})
+
+describe('formatArtifacts — discovery consolidation', () => {
+  test('multiple_discovery_artifacts_merged_into_one_block', () => {
+    const result = formatArtifacts([
+      { type: 'discoveries', contentJson: { phase: 'plan', entries: ['Finding A', 'Finding B'] } },
+      { type: 'discoveries', contentJson: { phase: 'build', entries: ['Finding C'] } }
+    ])
+    // Should have ONE consolidated heading, not separate ones
+    assert.ok(result.includes('### Discoveries (consolidated)'), 'Should have consolidated heading')
+    assert.ok(result.includes('- Finding A'), 'Should include entry A')
+    assert.ok(result.includes('- Finding B'), 'Should include entry B')
+    assert.ok(result.includes('- Finding C'), 'Should include entry C')
+    // Should NOT have per-phase headings
+    assert.ok(!result.includes('### Discoveries (plan)'), 'Should NOT have per-phase heading')
+    assert.ok(!result.includes('### Discoveries (build)'), 'Should NOT have per-phase heading')
+  })
+
+  test('duplicate_entries_are_deduplicated', () => {
+    const result = formatArtifacts([
+      { type: 'discoveries', contentJson: { phase: 'plan', entries: ['Finding A', 'Finding B'] } },
+      { type: 'discoveries', contentJson: { phase: 'build', entries: ['Finding A', 'Finding C'] } }
+    ])
+    const matches = result.match(/- Finding A/g)
+    assert.equal(matches?.length, 1, 'Finding A should appear only once (deduplicated)')
+  })
+
+  test('caps_at_30_entries_with_omission_breadcrumb', () => {
+    const entries = Array.from({ length: 40 }, (_, i) => `Discovery ${i}`)
+    const result = formatArtifacts([
+      { type: 'discoveries', contentJson: { entries } }
+    ])
+    // Should have exactly 30 entries (the most recent ones)
+    assert.ok(result.includes('- Discovery 10'), 'Should include entry 10 (start of last 30)')
+    assert.ok(result.includes('- Discovery 39'), 'Should include last entry')
+    assert.ok(!result.includes('- Discovery 9'), 'Should NOT include entry 9 (trimmed)')
+    assert.ok(result.includes('10 older discoveries omitted'), 'Should have omission breadcrumb')
+  })
+
+  test('empty_discovery_entries_are_skipped', () => {
+    const result = formatArtifacts([
+      { type: 'spec', contentMd: '# Spec' },
+      { type: 'discoveries', contentJson: { entries: [] } }
+    ])
+    assert.ok(!result.includes('Discoveries'), 'Should skip empty discoveries')
+    assert.ok(result.includes('# Spec'), 'Should keep other artifacts')
+  })
+})
+
+describe('formatArtifacts — budget cap with truncation', () => {
+  test('truncates_when_exceeding_budget', () => {
+    // Create artifacts that exceed a small budget
+    const largeContent = 'x'.repeat(500)
+    const result = formatArtifacts(
+      [
+        { type: 'spec', contentMd: largeContent },
+        { type: 'plan', contentMd: largeContent },
+        { type: 'tasks', contentMd: largeContent }
+      ],
+      800 // small budget
+    )
+    assert.ok(result.includes('artifact(s) truncated'), 'Should have truncation breadcrumb')
+    assert.ok(result.includes('### Artifact: spec'), 'Should keep first artifact')
+  })
+
+  test('keeps_all_artifacts_when_under_budget', () => {
+    const result = formatArtifacts(
+      [
+        { type: 'spec', contentMd: 'Short spec' },
+        { type: 'plan', contentMd: 'Short plan' }
+      ],
+      50_000 // generous budget
+    )
+    assert.ok(result.includes('Short spec'))
+    assert.ok(result.includes('Short plan'))
+    assert.ok(!result.includes('truncated'), 'Should NOT truncate under budget')
+  })
+
+  test('always_includes_at_least_one_artifact', () => {
+    const result = formatArtifacts(
+      [{ type: 'spec', contentMd: 'x'.repeat(1000) }],
+      10 // tiny budget
+    )
+    assert.ok(result.includes('### Artifact: spec'), 'Should include at least one artifact')
+    assert.ok(!result.includes('truncated'), 'Single artifact should not show truncation')
+  })
+})
+
+describe('formatArtifacts — size regression guard', () => {
+  test('representative_verify_context_under_budget_ceiling', () => {
+    // Simulate a realistic late-phase artifact set
+    const artifacts: BlueprintArtifact[] = [
+      { type: 'spec', contentMd: '# Feature Spec\n' + 'Requirement details. '.repeat(100) },
+      {
+        type: 'plan',
+        contentMd: '# Implementation Plan\n' + 'Plan step details. '.repeat(80)
+      },
+      {
+        type: 'build',
+        contentMd: '# Build Report\n' + 'Build result details. '.repeat(50)
+      },
+      // 15 discovery artifacts (typical for a build with multiple waves)
+      ...Array.from({ length: 15 }, (_, i) => ({
+        type: 'discoveries' as const,
+        contentJson: {
+          phase: 'build',
+          entries: Array.from({ length: 3 }, (__, j) => `Wave ${i} discovery ${j}: found pattern in file_${i}_${j}.ts`)
+        }
+      }))
+    ]
+    const result = formatArtifacts(artifacts)
+    assert.ok(
+      result.length <= ARTIFACT_BUDGET_CHARS + 500, // small margin for breadcrumbs
+      `Verify context should be under budget ceiling (got ${result.length} chars, budget ${ARTIFACT_BUDGET_CHARS})`
+    )
+    // Key content must still be present
+    assert.ok(result.includes('Feature Spec'), 'Spec should be present')
+    assert.ok(result.includes('Implementation Plan'), 'Plan should be present')
+    assert.ok(result.includes('Build Report'), 'Build report should be present')
   })
 })
 

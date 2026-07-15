@@ -132,9 +132,11 @@ interface BlueprintState {
   clarifyGateReady: boolean
   /** B3-FIX: In-flight flag to block double-click on gate/iterate/answer actions */
   clarifyInFlight: boolean
+  /** Blueprint ID that owns the current clarify questions (fallback when currentBlueprint is null) */
+  clarifyBlueprintId: string | null
 
   // Approval gate (review → build transition)
-  pendingApproval: { blueprintId: string; planSummary: string } | null
+  pendingApproval: { blueprintId: string; planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
 
   // Goal tracking — current phase/task goal condition for UI display
   currentGoal: string | null
@@ -168,8 +170,23 @@ interface BlueprintState {
     totalTasks: number
   } | null
 
+  // Pending onboard — handoff from CreateProjectDialog → BlueprintPage
+  pendingOnboard: {
+    workspaceId: string
+    title: string
+    description: string
+    referenceDocuments: Array<{ type: string; path: string; name: string }>
+  } | null
+
   // ── Actions ──
 
+  setPendingOnboard: (payload: {
+    workspaceId: string
+    title: string
+    description: string
+    referenceDocuments: Array<{ type: string; path: string; name: string }>
+  }) => void
+  clearPendingOnboard: () => void
   loadHistory: (workspaceId: string) => Promise<void>
   loadBlueprint: (blueprintId: string) => Promise<void>
   startBlueprint: (params: {
@@ -177,6 +194,7 @@ interface BlueprintState {
     title: string
     description?: string
     priority?: string
+    settingsJson?: Record<string, unknown>
   }) => Promise<void>
   cancelBlueprint: (workspaceId: string) => Promise<string | null>
   respondToApproval: (blueprintId: string, approved: boolean, feedback?: string) => Promise<void>
@@ -184,6 +202,7 @@ interface BlueprintState {
   skipClarify: (blueprintId: string) => Promise<void>
   proceedClarifyGate: (blueprintId: string, workspaceId: string) => Promise<void>
   iterateClarify: (blueprintId: string, workspaceId: string) => Promise<void>
+  deleteBlueprint: (blueprintId: string, workspaceId: string) => Promise<void>
   retryPhase: (blueprintId: string, workspaceId: string) => Promise<void>
   loadPipelineStatus: (workspaceId: string) => Promise<void>
 
@@ -211,6 +230,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   clarifyQuestions: null,
   clarifyGateReady: false,
   clarifyInFlight: false,
+  clarifyBlueprintId: null,
   currentGoal: null,
   taskGoals: {},
   currentTask: null,
@@ -223,8 +243,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   history: [],
   lastError: null,
   orphanedBlueprint: null,
+  pendingOnboard: null,
 
   // ── Actions ──
+
+  setPendingOnboard: (payload) => set({ pendingOnboard: payload }),
+  clearPendingOnboard: () => set({ pendingOnboard: null }),
 
   loadHistory: async (workspaceId: string) => {
     try {
@@ -257,7 +281,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         workspaceId: params.workspaceId,
         title: params.title,
         description: params.description,
-        priority: params.priority
+        priority: params.priority,
+        settingsJson: params.settingsJson
       })) as { id: string }
 
       // Clear cancelled guard — this blueprint should receive events
@@ -279,6 +304,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyFindings: null,
         clarifyQuestions: null,
         clarifyGateReady: false,
+        clarifyBlueprintId: null,
         currentGoal: null,
         taskGoals: {},
         currentTask: null,
@@ -324,6 +350,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyFindings: null,
         clarifyQuestions: null,
         clarifyGateReady: false,
+        clarifyBlueprintId: null,
         currentGoal: null,
         taskGoals: {},
         currentTask: null,
@@ -344,6 +371,21 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     } catch (error) {
       rendererLog.error('Failed to cancel blueprint:', error)
       return null
+    }
+  },
+
+  deleteBlueprint: async (blueprintId: string, workspaceId: string) => {
+    try {
+      // If the pipeline is actively running for this blueprint, cancel first
+      const state = get()
+      if (state.isRunning && state.currentBlueprint?.id === blueprintId) {
+        await get().cancelBlueprint(workspaceId)
+      }
+      await window.api.blueprintDelete({ id: blueprintId })
+      set((s) => ({ history: s.history.filter((b) => b.id !== blueprintId) }))
+    } catch (error) {
+      rendererLog.error('Failed to delete blueprint:', error)
+      set({ lastError: { blueprintId, message: error instanceof Error ? error.message : String(error) } })
     }
   },
 
@@ -399,7 +441,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   },
 
   skipClarify: async (blueprintId: string) => {
-    set({ clarifyAwaitingInput: false, clarifyQuestions: null, clarifyFindings: null, clarifyGateReady: false })
+    set({ clarifyAwaitingInput: false, clarifyQuestions: null, clarifyFindings: null, clarifyGateReady: false, clarifyBlueprintId: null })
     try {
       await window.api.blueprintSkipClarify({ blueprintId })
     } catch (error) {
@@ -488,6 +530,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyFindings: null,
       clarifyQuestions: null,
       clarifyGateReady: false,
+      clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
       currentTask: null,
@@ -880,7 +923,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       commitStreamAsAgentMessage()
       // Only set awaitingInput if no questions are already pending (questions win)
       if (!get().clarifyQuestions) {
-        set({ clarifyAwaitingInput: true })
+        set({ clarifyAwaitingInput: true, clarifyBlueprintId: data.blueprintId })
       }
     })
 
@@ -900,6 +943,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         set((state) => ({
           clarifyFindings: findings,
           clarifyRound: state.clarifyRound + 1,
+          clarifyBlueprintId: payload.blueprintId,
           chatMessages: [
             ...state.chatMessages,
             { type: 'findings' as const, findings, round: state.clarifyRound + 1, timestamp: Date.now() }
@@ -921,7 +965,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         // Questions beat awaitingInput (per plan item 5)
         set({
           clarifyQuestions: payload.questions as ClarifyQuestionsBlock,
-          clarifyAwaitingInput: false
+          clarifyAwaitingInput: false,
+          clarifyBlueprintId: payload.blueprintId
         })
       }
     )
@@ -942,7 +987,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           clarifyGateReady: true,
           clarifyQuestions: null,
           clarifyAwaitingInput: false,
-          clarifyFindings: incomingFindings ?? get().clarifyFindings
+          clarifyFindings: incomingFindings ?? get().clarifyFindings,
+          clarifyBlueprintId: payload.blueprintId
         })
       }
     )
@@ -958,7 +1004,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       set((state) => ({
         pendingApproval: {
           blueprintId: data.blueprintId,
-          planSummary: data.planSummary
+          planSummary: data.planSummary,
+          completion: data.completion ? (data.completion as Record<string, unknown>) : undefined,
+          reviewMarkdown: data.reviewMarkdown
         },
         chatMessages: [
           ...state.chatMessages,
@@ -1109,7 +1157,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyFindings: snap.clarifyFindings as ClarifyFindingsBlock | null,
         // Approval state
         pendingApproval: snap.pendingApproval
-          ? { blueprintId: snap.blueprintId ?? '', planSummary: snap.pendingApproval.planSummary }
+          ? {
+              blueprintId: snap.blueprintId ?? '',
+              planSummary: snap.pendingApproval.planSummary,
+              completion: snap.pendingApproval.completion,
+              reviewMarkdown: snap.pendingApproval.reviewMarkdown
+            }
           : null,
         // Wave state
         currentWave: snap.wave
@@ -1171,6 +1224,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyQuestions: null,
       clarifyGateReady: false,
       clarifyInFlight: false,
+      clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
       currentTask: null,

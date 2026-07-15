@@ -6,7 +6,8 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { BlueprintService } from '../blueprint.service'
+import { BlueprintService, PHASE_ARTIFACT_RELEVANCE } from '../blueprint.service'
+import type { BlueprintPhaseType } from '../../../shared/blueprint-types'
 
 describe('BlueprintService.parsePhaseCompletion', () => {
   const svc = new BlueprintService()
@@ -342,6 +343,81 @@ describe('BlueprintService.setClarifyState', () => {
     svc.setClarifyState('ws-c3', { findings: testFindings as unknown as null, questions: null })
     const snapshot = svc.getSnapshot('ws-c3')
     assert.deepEqual(snapshot.clarifyFindings, testFindings)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════
+//  PHASE_ARTIFACT_RELEVANCE map — phase-aware artifact selection
+// ═════════════════════════════════════════════════════════════════════════
+
+describe('PHASE_ARTIFACT_RELEVANCE', () => {
+  test('specify_has_no_relevant_artifact_types', () => {
+    assert.equal(PHASE_ARTIFACT_RELEVANCE.specify.size, 0)
+  })
+
+  test('clarify_only_needs_spec', () => {
+    assert.ok(PHASE_ARTIFACT_RELEVANCE.clarify.has('spec'))
+    assert.equal(PHASE_ARTIFACT_RELEVANCE.clarify.size, 1)
+  })
+
+  test('plan_only_needs_spec_after_clarify_merge', () => {
+    // Plan B: clarify merges resolutions into spec in-place, so plan only needs spec
+    assert.ok(PHASE_ARTIFACT_RELEVANCE.plan.has('spec'))
+    assert.ok(!PHASE_ARTIFACT_RELEVANCE.plan.has('clarify-qa'), 'clarify-qa merged into spec by finalizeClarifyPhase')
+    assert.equal(PHASE_ARTIFACT_RELEVANCE.plan.size, 1)
+  })
+
+  test('tasks_needs_spec_and_plan', () => {
+    assert.ok(PHASE_ARTIFACT_RELEVANCE.tasks.has('spec'))
+    assert.ok(PHASE_ARTIFACT_RELEVANCE.tasks.has('plan'))
+    assert.ok(!PHASE_ARTIFACT_RELEVANCE.tasks.has('clarify-qa'), 'clarify-qa merged into spec by finalizeClarifyPhase')
+    assert.equal(PHASE_ARTIFACT_RELEVANCE.tasks.size, 2)
+  })
+
+  test('review_needs_spec_plan_tasks_discoveries', () => {
+    const r = PHASE_ARTIFACT_RELEVANCE.review
+    assert.ok(r.has('spec'))
+    assert.ok(r.has('plan'))
+    assert.ok(r.has('tasks'))
+    assert.ok(r.has('discoveries'))
+    assert.ok(!r.has('clarify-qa'), 'clarify-qa merged into spec by finalizeClarifyPhase')
+    assert.equal(r.size, 4)
+  })
+
+  test('build_needs_plan_tasks_discoveries_but_not_spec', () => {
+    const b = PHASE_ARTIFACT_RELEVANCE.build
+    assert.ok(b.has('plan'))
+    assert.ok(b.has('tasks'))
+    assert.ok(b.has('discoveries'))
+    assert.ok(!b.has('spec'), 'build should NOT include spec')
+    assert.equal(b.size, 3)
+  })
+
+  test('verify_needs_spec_plan_build_discoveries_but_not_tasks', () => {
+    const v = PHASE_ARTIFACT_RELEVANCE.verify
+    assert.ok(v.has('spec'))
+    assert.ok(v.has('plan'))
+    assert.ok(v.has('build'))
+    assert.ok(v.has('discoveries'))
+    assert.ok(!v.has('tasks'), 'verify should NOT include full tasks JSON')
+    assert.equal(v.size, 4)
+  })
+
+  test('no_phase_includes_clarify_qa_after_plan_b', () => {
+    // Plan B: clarify-qa is merged into spec by finalizeClarifyPhase,
+    // so no phase should reference it in the relevance map anymore
+    const phases: BlueprintPhaseType[] = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify']
+    for (const phase of phases) {
+      assert.ok(!PHASE_ARTIFACT_RELEVANCE[phase].has('clarify-qa'),
+        `${phase} should not reference clarify-qa — resolutions are merged into spec`)
+    }
+  })
+
+  test('all_phases_are_covered', () => {
+    const phases: BlueprintPhaseType[] = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify']
+    for (const phase of phases) {
+      assert.ok(phase in PHASE_ARTIFACT_RELEVANCE, `Missing phase: ${phase}`)
+    }
   })
 })
 

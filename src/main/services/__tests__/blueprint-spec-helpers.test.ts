@@ -19,6 +19,8 @@ import {
   buildVerifyGoalCondition
 } from '../blueprint-goal-conditions'
 
+import { stripClarificationsSection } from '../blueprint-spec.service'
+
 // ── Tests: Artifact Parsers ──
 
 describe('Blueprint Parsers — parsePhaseCompletionBlock', () => {
@@ -196,6 +198,55 @@ describe('Blueprint — verify pass/fail determination', () => {
     const result = overallStatus === 'passed' || overallStatus === 'human_needed'
       ? 'complete' : 'failed'
     assert.equal(result, 'failed')
+  })
+})
+
+// ── Tests: stripClarificationsSection (Plan B — clarify→spec merge) ──
+
+describe('stripClarificationsSection', () => {
+  test('returns_unchanged_when_no_clarifications_block', () => {
+    const md = '# Spec\n\nSome content here.\n\n## Requirements\n\n- Req 1'
+    assert.equal(stripClarificationsSection(md), md)
+  })
+
+  test('strips_resolved_clarifications_block', () => {
+    const base = '# Spec\n\nSome content here.'
+    const clarifications = '## Resolved Clarifications\n\nQ: What is the API?\nA: REST'
+    const md = `${base}\n\n${clarifications}`
+    assert.equal(stripClarificationsSection(md), base)
+  })
+
+  test('strips_block_with_trailing_whitespace', () => {
+    const base = '# Spec\n\nContent'
+    const md = `${base}\n\n  \n## Resolved Clarifications\n\nQ&A transcript`
+    assert.equal(stripClarificationsSection(md), base)
+  })
+
+  test('merge_is_idempotent', () => {
+    const base = '# Spec\n\nOriginal content.'
+    const qa = 'Q: How many endpoints?\nA: Three.'
+    const heading = '## Resolved Clarifications'
+
+    // First merge
+    const merged1 = `${base}\n\n${heading}\n\n${qa}`
+    // Second merge (simulate re-run): strip then re-append
+    const stripped = stripClarificationsSection(merged1)
+    const merged2 = `${stripped}\n\n${heading}\n\n${qa}`
+
+    assert.equal(merged1, merged2, 're-running merge should produce identical output')
+  })
+
+  test('handles_empty_string', () => {
+    assert.equal(stripClarificationsSection(''), '')
+  })
+
+  test('preserves_content_before_heading', () => {
+    const base = '# Spec\n\n## Section A\n\nDetails\n\n## Section B\n\nMore details'
+    const md = `${base}\n\n## Resolved Clarifications\n\nQ&A`
+    const result = stripClarificationsSection(md)
+    assert.equal(result, base)
+    assert.ok(result.includes('## Section A'))
+    assert.ok(result.includes('## Section B'))
   })
 })
 

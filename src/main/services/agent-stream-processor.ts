@@ -194,7 +194,7 @@ export class AgentStreamProcessor {
       streamState: StreamLoopState
       contextTier?: ContextWindowTier
     }
-  ): 'next' | 'break' | 'continue' | 'return' {
+  ): 'next' | 'break' | 'continue' {
     const { conversationId, streamState } = ctx
 
     // Error handling (stale session, unexpected abort, budget cap)
@@ -317,7 +317,7 @@ export class AgentStreamProcessor {
       streamState: StreamLoopState
       contextTier?: ContextWindowTier
     }
-  ): 'next' | 'break' | 'continue' | 'return' {
+  ): 'next' | 'break' | 'continue' {
     const { conversationId, isBuildMode, streamState } = ctx
 
     if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) {
@@ -356,37 +356,31 @@ export class AgentStreamProcessor {
   }
 
   private applyCircuitBreakerResult(
-    cbResult: { isLocalPlanBreak?: boolean; errorChunk?: StreamChunk },
+    _cbResult: { isContinuableBreak?: boolean },
     conversationId: string,
     streamState: StreamLoopState
-  ): 'break' | 'return' {
-    if (cbResult.isLocalPlanBreak) {
-      this.s.log.info(
-        `[PIPELINE:local-plan-break] Circuit breaker fired for local plan — ` +
-          `saving progress and allowing auto-continuation`
-      )
-      streamState.lastTerminalReason = 'max_turns'
-      if (conversationId) {
-        this.s.saveCurrentPlanState(conversationId)
-      }
-      return 'break'
+  ): 'break' {
+    // All circuit breaker trips are continuable — we set lastTerminalReason
+    // to 'max_turns' so the recovery manager's auto-continue logic picks it up.
+    // This replaces the old hard-error path that dead-ended the session.
+    this.s.log.info(
+      `[PIPELINE:continuable-break] Circuit breaker fired — ` +
+        `saving progress and allowing auto-continuation for conversationId=${conversationId}`
+    )
+    streamState.lastTerminalReason = 'max_turns'
+    if (conversationId) {
+      this.s.saveCurrentPlanState(conversationId)
     }
-
-    this.s.currentStatus = 'failed'
-    this.s.emit('statusUpdate', this.s.getStatus())
-    if (cbResult.errorChunk) {
-      this.s.emit('chunk', cbResult.errorChunk)
-    }
-    this.s.emit('complete')
-    return 'return'
+    return 'break'
   }
 
   private handleSubagentStartChunk(ctx: {
     isBuildMode: boolean
     conversationId: string
+    streamState: StreamLoopState
     contextTier?: ContextWindowTier
   }): 'next' | 'break' {
-    const { isBuildMode, conversationId } = ctx
+    const { isBuildMode, conversationId, streamState } = ctx
     for (let i = 0; i < 10; i++) {
       const cbResult = this.s.circuitBreaker.onToolUse({
         isBuildMode,
@@ -399,10 +393,8 @@ export class AgentStreamProcessor {
         this.s.log.warn(
           `[PIPELINE:subagent-circuit-break] Sub-agent spawn tripped circuit breaker at ${this.s.circuitBreaker.count} tool calls`
         )
-        if (cbResult.errorChunk) {
-          this.s.emit('chunk', cbResult.errorChunk)
-        }
-        return 'break'
+        // Route through same continuable break path as regular tool calls
+        return this.applyCircuitBreakerResult(cbResult, conversationId, streamState)
       }
     }
     return 'next'

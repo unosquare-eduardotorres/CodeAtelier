@@ -14,8 +14,16 @@ describe('Prompt Verbosity', () => {
     assert.equal(resolvePromptVerbosity('claude-opus-4-8'), 'lean')
   })
 
-  test('sonnet 4.6 resolves to lean', () => {
+  test('sonnet 5 resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-sonnet-5'), 'lean')
+  })
+
+  test('sonnet 4.6 (legacy) resolves to lean', () => {
     assert.equal(resolvePromptVerbosity('claude-sonnet-4-6'), 'lean')
+  })
+
+  test('fable 5 resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-fable-5'), 'lean')
   })
 
   test('haiku resolves to full', () => {

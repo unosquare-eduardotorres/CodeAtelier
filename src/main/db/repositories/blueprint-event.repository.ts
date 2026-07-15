@@ -8,12 +8,10 @@
  * Uses safeParseJSON for the payload_json column per repo convention.
  */
 
-import log from 'electron-log'
 import { getDatabase } from '../index'
 import { safeParseJSON } from '../json-utils'
 import type Database from 'better-sqlite3'
 
-const repoLog = log.scope('blueprint-event-repo')
 
 // ── Types ──
 

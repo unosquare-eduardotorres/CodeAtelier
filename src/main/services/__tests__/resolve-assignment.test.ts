@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { resolveAssignment } from '../model-config.service'
 import { resolveModelAction } from '../../../shared/constants'
-import type { ModelRoleMap, ModelOverrides, ModelRoleAssignment } from '../../../shared/types'
+import type { ModelRoleMap, ModelOverrides } from '../../../shared/types'
 
 // ── resolveAssignment ──────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ describe('resolveAssignment', () => {
 
   test('default_config_for_known_action', () => {
     const result = resolveAssignment({ action: 'da-vinci:build' })
-    assert.equal(result.modelId, 'claude-sonnet-4-6')
+    assert.equal(result.modelId, 'claude-sonnet-5')
     assert.equal(result.source, 'default')
     assert.equal(result.provider, 'claude')
   })

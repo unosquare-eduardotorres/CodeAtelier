@@ -727,6 +727,31 @@ function handlePermissionRequest(ctx: ChunkRouterContext, chunk: StreamChunk): v
   })
 }
 
+function handleTurnLimit(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Flush pending text before the turn-limit card
+  textBatcher.flush(ctx.conversationId)
+
+  // Emit text fallback (the markdown message) for content accumulation
+  const text = chunk.content ?? ''
+  if (text) {
+    ctx.contentAccumulator.value += text
+    safeSend(
+      ctx,
+      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+      createTextChunk({ ...basePayload(ctx), text, phase: ctx.phase })
+    )
+  }
+
+  // Emit the structured turnLimit payload so the renderer can show a Continue button
+  if (chunk.turnLimit) {
+    safeSend(ctx, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      ...basePayload(ctx),
+      chunk: '',
+      turnLimit: chunk.turnLimit
+    })
+  }
+}
+
 // ── Dispatch table ──
 
 function handleStructuredOutput(ctx: ChunkRouterContext, chunk: StreamChunk): void {
@@ -766,7 +791,8 @@ const CHUNK_HANDLERS: Record<string, ChunkHandler> = {
   structured_output: handleStructuredOutput,
   // N4: tool_use_summary handler removed — summaries flow via tool_result
   permission_request: handlePermissionRequest,
-  lsp_diagnostics: handleLspDiagnostics
+  lsp_diagnostics: handleLspDiagnostics,
+  turn_limit: handleTurnLimit
 }
 
 /**

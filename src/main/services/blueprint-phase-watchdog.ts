@@ -31,6 +31,7 @@ export class PhaseActivityWatchdog {
   private timer: ReturnType<typeof setTimeout> | null = null
   private rejectFn: ((err: Error) => void) | null = null
   private _stalled = false
+  private _paused = false
 
   constructor(
     private readonly stallTimeoutMs: number,
@@ -54,12 +55,44 @@ export class PhaseActivityWatchdog {
     })
   }
 
+  /** Whether the watchdog is currently paused (e.g. awaiting user input). */
+  get paused(): boolean {
+    return this._paused
+  }
+
+  /**
+   * Pause the watchdog — stops the stall timer without disposing.
+   * Used when awaiting user input (ask_user bridge) to prevent false stalls.
+   */
+  pause(): void {
+    if (this._paused) return
+    this._paused = true
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    bpLog.info(`[stall-watchdog] ${this.phaseName} paused — awaiting user input`)
+  }
+
+  /**
+   * Resume the watchdog — restarts the stall timer.
+   * Called after the user answers the ask_user question.
+   */
+  resume(): void {
+    if (!this._paused) return
+    this._paused = false
+    if (this.rejectFn) {
+      this.resetTimer()
+    }
+    bpLog.info(`[stall-watchdog] ${this.phaseName} resumed`)
+  }
+
   /**
    * Record activity — call on each chunk to reset the stall timer.
-   * Safe to call after dispose() (no-op).
+   * Safe to call after dispose() (no-op). No-op while paused.
    */
   touch(): void {
-    if (!this.rejectFn) return // disposed or not started
+    if (!this.rejectFn || this._paused) return // disposed, not started, or paused
     this.resetTimer()
   }
 
@@ -85,4 +118,30 @@ export class PhaseActivityWatchdog {
       this.rejectFn?.(new Error(msg))
     }, this.stallTimeoutMs)
   }
+}
+
+// ── Non-interactive phase ask_user auto-responder ──
+
+/**
+ * Wire an auto-responder to a session's askQuestion event for non-interactive phases
+ * (specify, plan, tasks, review, verify). If the model calls ask_user during these
+ * phases, immediately respond so the turn doesn't deadlock waiting for user input.
+ *
+ * Returns a cleanup function to remove the listener.
+ */
+export function wireAskUserAutoResponder(
+  session: { on: (event: string, handler: (...args: unknown[]) => void) => void; off: (event: string, handler: (...args: unknown[]) => void) => void; respondToAskUser: (requestId: string, response: string) => void },
+  phaseName: string
+): () => void {
+  const handler = (data: unknown): void => {
+    const { requestId } = data as { requestId?: string }
+    if (!requestId) return
+    bpLog.info(`[askUser-auto-responder] ${phaseName} phase — auto-responding to ask_user (non-interactive phase)`)
+    session.respondToAskUser(
+      requestId,
+      `Non-interactive phase (${phaseName}) — proceed with best judgment and emit the required fenced block.`
+    )
+  }
+  session.on('askQuestion', handler)
+  return () => session.off('askQuestion', handler)
 }
