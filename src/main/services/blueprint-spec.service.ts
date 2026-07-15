@@ -190,8 +190,8 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'specifying')
       blueprintRepository.update(blueprintId, { currentPhase: 'specify' })
 
-      // 3. Assemble phase context
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'specify')
+      // 3. Assemble phase context (includes pre-loaded workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'specify', workspacePath)
 
       // 3b. Surface code-graph index status — warn when repomap is enabled
       // but no persisted index exists. The agent will still start, but its
@@ -494,8 +494,8 @@ export class BlueprintSpecService extends EventEmitter {
         blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'active')
       }
 
-      // 3. Assemble phase context (includes spec from SPECIFY)
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'clarify')
+      // 3. Assemble phase context (includes spec from SPECIFY + workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'clarify', workspacePath)
 
       // 4. Create adapter
       const adapter = new BlueprintClarifyAdapter({

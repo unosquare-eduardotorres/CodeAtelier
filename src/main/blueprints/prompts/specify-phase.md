@@ -41,6 +41,46 @@ success criteria.
 
 ## Execution Flow
 
+### Step 0: Workspace Discovery (MANDATORY — execute before generating anything)
+
+Before writing any specification, you MUST understand the workspace context. Skip steps that return empty results — the workspace may be greenfield.
+
+#### 0a. Read Workspace Documentation (pre-loaded below)
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+Review CLAUDE.md, README.md, and package.json above. Extract:
+- **Tech stack decisions** already made (frameworks, databases, languages)
+- **Conventions** (naming, file structure, design system rules)
+- **Architecture decisions** (ADRs, patterns, constraints)
+- **What's already built** (existing packages, apps, scripts)
+
+#### 0b. Search Workspace Memories
+
+Use `mcp__memory__memory_search` to find existing decisions:
+- Search for: tech stack, architecture, conventions, database, testing strategy
+- Any decision found in memory is a RESOLVED FACT — do not re-ask it
+
+#### 0c. Explore Existing Code Structure
+
+If the workspace has source files:
+1. Use `mcp__code-graph__graph_map` (or `Glob` if unavailable) to understand the directory structure
+2. Read key config files (`tsconfig.json`, `docker-compose.yml`, `eslint.config.*`, etc.)
+3. Identify existing patterns, naming conventions, and architecture
+
+#### 0d. Compile Context Summary
+
+Before generating the spec, write a brief "Workspace Context" section:
+- Tech stack: [resolved from package.json/code]
+- Architecture: [resolved from docs/code]
+- Conventions: [resolved from CLAUDE.md/code]
+- Already built: [list existing modules/features]
+- Constraints: [from constitution + CLAUDE.md]
+
+Use these as RESOLVED FACTS in the specification. Do NOT specify choices that are already decided. If the workspace uses PostgreSQL, don't write "database choice TBD" — write "PostgreSQL (established)".
+
 ### Step 1: Parse Input
 
 Read the blueprint context above. Extract:
@@ -64,7 +104,13 @@ Create a 2-4 word short name for this feature:
 
 ### Step 4: Generate Specification
 
-Generate a complete spec.md with these sections:
+Generate a complete spec.md. When the workspace already has established conventions:
+- Reference existing patterns ("following the existing service pattern in apps/api/src/services/")
+- Don't re-specify tech stack if already decided
+- Mark requirements that extend existing code vs. net-new features
+- Use the domain language found in CLAUDE.md and existing code
+
+Include these sections:
 
 | Section | Requirement |
 |---------|-------------|

@@ -519,7 +519,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   // Active view goes full-bleed; landing/input/detail stay narrow for readability
   const isFullBleed = effectiveView === 'active'
   // B1: Input view gets wider max-w and flex-fill for full-height layout
-  const narrowMaxW = effectiveView === 'input' ? 'max-w-7xl' : 'max-w-3xl'
+  const narrowMaxW = (effectiveView === 'input' || effectiveView === 'detail') ? 'max-w-7xl' : 'max-w-3xl'
 
   return (
     <div data-testid="blueprint-page" className={`flex flex-col h-full ${isFullBleed ? '' : 'overflow-y-auto'}`}>
@@ -547,6 +547,24 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
         {/* ── Landing View ── */}
         {effectiveView === 'landing' && (
           <>
+            {/* Error banner — shown when a blueprint start/phase failed silently */}
+            {lastError && (
+              <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-300">
+                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                  <span className="text-sm font-medium">Blueprint failed to start</span>
+                  <span className="text-xs opacity-80 break-words">{lastError.message}</span>
+                </div>
+                <button
+                  onClick={() => useBlueprintStore.setState({ lastError: null })}
+                  className="inline-flex items-center justify-center w-6 h-6 text-red-400/60 hover:text-red-300 rounded transition-colors flex-shrink-0"
+                  title="Dismiss"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
             {/* Empty state */}
             {history.length === 0 && (
               <div className="flex flex-col items-center justify-center py-10 px-4">

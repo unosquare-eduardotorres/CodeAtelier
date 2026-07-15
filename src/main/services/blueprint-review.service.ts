@@ -75,8 +75,8 @@ export class BlueprintReviewService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'reviewing')
       blueprintRepository.update(blueprintId, { currentPhase: 'review' })
 
-      // 2. Assemble context (includes spec + clarify + plan + tasks artifacts)
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'review')
+      // 2. Assemble context (includes spec + clarify + plan + tasks artifacts + workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'review', workspacePath)
 
       // 3. Create adapter + session
       const adapter = new BlueprintReviewAdapter({ workspaceId, blueprintId, phaseContext })

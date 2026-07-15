@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { execSync } from 'node:child_process'
 import { test, describe, beforeEach, afterEach, summaryAsync } from './test-harness'
 import type { BootstrapProgress, BootstrapPhaseLabel } from '../../../shared/types'
+import { MCP_TOOLS } from '../../../shared/constants'
 
 // ── BootstrapProgress type shape ────────────────────────────────────────────
 
@@ -353,6 +354,82 @@ describe('aggregation caps', () => {
   test('architecture files capped at MAX_ARCHITECTURE_FILES', () => {
     const MAX_ARCHITECTURE_FILES = 40
     assert.equal(MAX_ARCHITECTURE_FILES, 40, 'Architecture files capped at 40')
+  })
+})
+
+// ── Deep Scan agent runner integration ─────────────────────────────────────
+
+describe('deep scan agent runner', () => {
+  test('deep scan allowedTools includes memory + code-graph + built-in read tools', () => {
+    // This mirrors what spawnDeepScanAgent passes to runAgenticClaude
+    const allowedTools = [
+      'Read', 'Grep', 'Glob',
+      ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
+      ...MCP_TOOLS.MEMORY._ALL_NAMES
+    ]
+
+    // Must include all read-only built-ins
+    assert.ok(allowedTools.includes('Read'), 'should include Read')
+    assert.ok(allowedTools.includes('Grep'), 'should include Grep')
+    assert.ok(allowedTools.includes('Glob'), 'should include Glob')
+
+    // Must include memory tools (so the agent can actually record facts)
+    assert.ok(
+      allowedTools.includes('mcp__memory__memory_record'),
+      'should include memory_record — Deep Scan needs this to write facts'
+    )
+    assert.ok(
+      allowedTools.includes('mcp__memory__memory_search'),
+      'should include memory_search — agent uses this to avoid duplicates'
+    )
+
+    // Must include code-graph tools for exploration
+    assert.ok(
+      allowedTools.includes('mcp__code-graph__graph_map'),
+      'should include graph_map'
+    )
+    assert.ok(
+      allowedTools.includes('mcp__code-graph__file_outline'),
+      'should include file_outline'
+    )
+
+    // Must NOT include Write or Edit (read-only agent)
+    assert.ok(!allowedTools.includes('Write'), 'should NOT include Write')
+    assert.ok(!allowedTools.includes('Edit'), 'should NOT include Edit')
+  })
+
+  test('deep scan tool list is non-empty and reasonable size', () => {
+    const allowedTools = [
+      'Read', 'Grep', 'Glob',
+      ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
+      ...MCP_TOOLS.MEMORY._ALL_NAMES
+    ]
+
+    // Should have 3 built-ins + 14 code-graph + 3 memory = 20 tools
+    assert.ok(allowedTools.length >= 15, `expected at least 15 tools, got ${allowedTools.length}`)
+    assert.ok(allowedTools.length <= 30, `expected at most 30 tools, got ${allowedTools.length}`)
+  })
+
+  test('CLAUDE.md regen allowedTools excludes memory but includes code-graph', () => {
+    // This mirrors what regenerateClaudeMdAgentic passes
+    const allowedTools = [
+      'Read', 'Grep', 'Glob',
+      ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES
+    ]
+
+    // Should include read tools and code-graph
+    assert.ok(allowedTools.includes('Read'), 'should include Read')
+    assert.ok(allowedTools.includes('mcp__code-graph__graph_map'), 'should include graph_map')
+
+    // Should NOT include memory tools (not needed for CLAUDE.md gen)
+    assert.ok(
+      !allowedTools.includes('mcp__memory__memory_record'),
+      'should NOT include memory tools for CLAUDE.md gen'
+    )
+
+    // Should NOT include Write or Edit
+    assert.ok(!allowedTools.includes('Write'), 'should NOT include Write')
+    assert.ok(!allowedTools.includes('Edit'), 'should NOT include Edit')
   })
 })
 

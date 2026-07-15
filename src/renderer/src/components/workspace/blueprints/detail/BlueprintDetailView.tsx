@@ -170,6 +170,26 @@ export function BlueprintDetailView({
         </div>
       )}
 
+      {/* ── Human review needed banner with Re-verify button ── */}
+      {isComplete && outcomeStats?.verifyStatus === 'human_needed' && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-accent/20 bg-accent/5 text-accent">
+          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+          <div className="flex flex-col gap-0.5 flex-1">
+            <span className="text-sm font-medium">Human Review Needed</span>
+            <span className="text-xs opacity-80">
+              The verifier flagged items requiring manual review. After making changes, re-verify to check them.
+            </span>
+          </div>
+          <button
+            onClick={onRetryPhase}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors flex-shrink-0"
+          >
+            <RotateCcw size={12} />
+            Re-verify
+          </button>
+        </div>
+      )}
+
       {/* ── Failed phase error banner with retry ── */}
       {bp.status === 'failed' && (() => {
         const failedPhase = bp.phases.find((p) => p.status === 'failed')

@@ -483,6 +483,9 @@ export default function ModelRolesSection({
                 </optgroup>
               )}
             </select>
+            {isFallbackUnavailable && (
+              <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
+            )}
           </div>
         </SettingsCard>
       </div>

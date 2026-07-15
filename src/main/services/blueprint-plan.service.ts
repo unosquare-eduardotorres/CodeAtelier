@@ -73,8 +73,8 @@ export class BlueprintPlanService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'planning')
       blueprintRepository.update(blueprintId, { currentPhase: 'plan' })
 
-      // 2. Assemble context (includes spec + clarify artifacts from prior phases)
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'plan')
+      // 2. Assemble context (includes spec + clarify artifacts + workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'plan', workspacePath)
 
       // 3. Create adapter + session
       const adapter = new BlueprintPlanAdapter({ workspaceId, blueprintId, phaseContext })

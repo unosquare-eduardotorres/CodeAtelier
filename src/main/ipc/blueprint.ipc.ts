@@ -190,13 +190,13 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.BLUEPRINT_BUILD_PROMPT,
-    (event, rawArgs: unknown) => {
+    async (event, rawArgs: unknown) => {
       validateSender(event)
       const ch = IPC_CHANNELS.BLUEPRINT_BUILD_PROMPT
       const args = requireObject(rawArgs, ch)
       const blueprintId = requireString(args, 'blueprintId', ch)
       const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
-      return { prompt: blueprintService.buildSystemPrompt(blueprintId, phase) }
+      return { prompt: await blueprintService.buildSystemPrompt(blueprintId, phase) }
     }
   )
 
@@ -772,6 +772,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const blueprint = blueprintService.getBlueprint(blueprintId)
       if (!blueprint) throw new Error(`Blueprint not found: ${blueprintId}`)
 
+      // Extract grill decisions and reference documents from settings (for specify retry)
+      const grillDecisions = extractGrillDecisions(blueprint.settingsJson as Record<string, unknown> | null)
+      const referenceDocuments = extractReferenceDocuments(blueprint.settingsJson as Record<string, unknown> | null)
+
       // Dispatch to the matching sub-service (non-blocking)
       const phaseDispatch: Record<string, () => Promise<void>> = {
         specify: () =>
@@ -779,7 +783,9 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
             blueprintId,
             workspaceId,
             workspacePath: workspace.repoPath,
-            description: blueprint.description
+            description: blueprint.description,
+            grillDecisions,
+            referenceDocuments
           }),
         clarify: () =>
           blueprintSpecService.startClarifyPhase({
@@ -1080,9 +1086,13 @@ function wireOnceEventForwarding(): void {
     const phaseDispatch: Record<string, () => Promise<void>> = {
       specify: () => {
         const bp = blueprintService.getBlueprint(blueprintId)
+        const grillDecisions = extractGrillDecisions(bp?.settingsJson as Record<string, unknown> | null)
+        const referenceDocuments = extractReferenceDocuments(bp?.settingsJson as Record<string, unknown> | null)
         return blueprintSpecService.startSpecifyPhase({
           blueprintId, workspaceId, workspacePath,
-          description: bp?.description ?? ''
+          description: bp?.description ?? '',
+          grillDecisions,
+          referenceDocuments
         })
       },
       clarify: () => blueprintSpecService.startClarifyPhase({ blueprintId, workspaceId, workspacePath }),

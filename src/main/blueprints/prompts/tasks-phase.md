@@ -18,6 +18,17 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+## Workspace Context
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+When decomposing tasks, respect existing workspace structure:
+- File paths must follow existing naming conventions
+- If CLAUDE.md specifies workflow expectations (e.g., "compose existing design-system components first"), tasks must reflect that order
+- Search `mcp__memory__memory_search` for file path conventions before assigning paths
+
 ## Your Task
 
 Decompose the implementation plan into phased, dependency-ordered, wave-assignable

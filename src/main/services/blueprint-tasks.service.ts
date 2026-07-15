@@ -73,8 +73,8 @@ export class BlueprintTasksService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'tasking')
       blueprintRepository.update(blueprintId, { currentPhase: 'tasks' })
 
-      // 2. Assemble context (includes spec + clarify + plan artifacts)
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'tasks')
+      // 2. Assemble context (includes spec + clarify + plan artifacts + workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'tasks', workspacePath)
 
       // 3. Create adapter + session
       const adapter = new BlueprintTasksAdapter({ workspaceId, blueprintId, phaseContext })

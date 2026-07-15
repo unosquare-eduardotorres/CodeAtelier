@@ -21,7 +21,9 @@ import {
   TrendingUp,
   BarChart3,
   ListChecks,
-  ClipboardList
+  ClipboardList,
+  Play,
+  RotateCcw
 } from 'lucide-react'
 import type {
   E2ERunSummary,
@@ -132,10 +134,7 @@ export default function RunsView({
           runs={runs}
           selectedRunId={selectedRunId}
           isRunning={isRunning}
-          preflightOk={preflightOk}
           onSelectRun={onSelectRun}
-          onRequeueFailed={onRequeueFailed}
-          onResumeRun={onResumeRun}
           onCancel={onCancel}
         />
 
@@ -183,9 +182,37 @@ export default function RunsView({
               title="Results"
               icon={<ClipboardList size={14} />}
               action={
-                <span className="text-xs tabular-nums text-text-muted">
-                  {sortedResults.length}
-                </span>
+                (() => {
+                  const canResume = selectedRun.status === 'cancelled' && selectedRun.totalError > 0
+                  const canRunFailed =
+                    selectedRun.totalFailed > 0 || (selectedRun.totalError > 0 && !canResume)
+                  const runActionsEnabled = preflightOk && !isRunning
+                  return (
+                    <div className="flex items-center gap-2">
+                      {runActionsEnabled && canResume && (
+                        <button
+                          type="button"
+                          onClick={() => onResumeRun(selectedRun.id)}
+                          className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-primary-muted/40 text-primary-muted hover:bg-primary-muted/10 transition-colors"
+                          title="Resume incomplete scenarios"
+                        >
+                          <Play size={12} /> Resume
+                        </button>
+                      )}
+                      {runActionsEnabled && canRunFailed && (
+                        <button
+                          type="button"
+                          onClick={() => onRequeueFailed(selectedRun.id)}
+                          className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
+                          title="Re-run failed and errored scenarios"
+                        >
+                          <RotateCcw size={12} /> Run Failed
+                        </button>
+                      )}
+                      <span className="text-xs tabular-nums text-text-muted">{sortedResults.length}</span>
+                    </div>
+                  )
+                })()
               }
               flush
             >

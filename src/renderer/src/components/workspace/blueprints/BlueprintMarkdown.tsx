@@ -14,8 +14,8 @@ import remarkBreaks from 'remark-breaks'
 
 const PROSE_CLASSES = `prose prose-sm prose-invert max-w-none text-text-secondary
   prose-headings:text-text-primary prose-headings:font-semibold prose-headings:text-sm
-  prose-p:text-xs prose-p:my-1
-  prose-li:text-xs prose-ul:my-1 prose-ol:my-1
+  prose-p:text-sm prose-p:my-1.5
+  prose-li:text-sm prose-ul:my-1 prose-ol:my-1
   prose-code:text-xs prose-code:bg-surface-inset prose-code:px-1 prose-code:rounded
   prose-code:before:content-none prose-code:after:content-none
   prose-pre:bg-surface-base prose-pre:border prose-pre:border-border-subtle prose-pre:rounded-lg prose-pre:my-1.5

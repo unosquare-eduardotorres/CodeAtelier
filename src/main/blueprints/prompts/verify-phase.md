@@ -51,6 +51,50 @@ For each `mustHaves.keyLinks`: verify connection exists and data flows (Componen
 
 Scan for: TODO/FIXME/HACK, empty bodies, console-only handlers, hardcoded dynamic data, missing async error handling.
 
+### Step 4b: Automated Quality Gates (MANDATORY)
+
+Run these code-analysis tools on ALL files created/modified by BUILD:
+
+| Gate | Tool | Fail Criteria |
+|------|------|---------------|
+| **Lint compliance** | `mcp__code-analysis__eslint_check` | Any error (warnings are informational) |
+| **Complexity** | `mcp__code-analysis__analyze_complexity` | New functions with cyclomatic complexity > 15 |
+| **Test coverage** | `mcp__code-analysis__analyze_test_coverage` | Files with 0% coverage that should have tests |
+| **Dead code** | `mcp__code-graph__find_dead_code` | New orphaned exports/functions |
+| **Code smells** | `mcp__code-analysis__find_code_smells` | Critical smells in new code |
+| **Dependency coupling** | `mcp__code-analysis__analyze_dependencies` | Circular dependencies introduced |
+
+Include results in the completion block as `qualityGates`:
+```json
+{
+  "qualityGates": {
+    "lint": "pass|fail",
+    "complexity": { "maxNew": 12, "threshold": 15 },
+    "coverage": { "uncoveredFiles": [] },
+    "deadCode": { "newOrphans": 0 },
+    "codeSmells": { "critical": 0, "warning": 2 }
+  }
+}
+```
+
+### Step 4c: Workspace Convention Compliance (MANDATORY)
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+Verify BUILD output follows workspace conventions:
+- **CLAUDE.md rules**: Check every rule listed in CLAUDE.md against the code
+  - Design tokens used (no hardcoded hex/sizes)?
+  - Correct fonts (if specified)?
+  - Motion/animation within specified ranges?
+  - Copy in correct language/format?
+  - Domain-specific rules followed?
+- **Existing patterns**: Do new files match the structure of existing files?
+- **Memory conventions**: `mcp__memory__memory_search` for any convention the code should follow
+
+Convention violations are severity "high" findings with `overallStatus: "gaps_found"`.
+
 ### Step 5-6: Requirement & Success Criteria Check
 
 For each requirement and success criterion in spec.md: trace to implemented code, verify match, confirm acceptance scenarios are satisfiable.
@@ -123,6 +167,12 @@ Note: `remediationTasks` is REQUIRED when `overallStatus` is `"gaps_found"`. Omi
 | Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
 | Check module dependencies | `mcp__code-graph__file_dependencies` | `Read` |
 | Find similar implementations | `mcp__semantic-search__similar_code` | `Grep` |
+| Lint check (MANDATORY) | `mcp__code-analysis__eslint_check` | — |
+| Test coverage (MANDATORY) | `mcp__code-analysis__analyze_test_coverage` | — |
+| Complexity check | `mcp__code-analysis__analyze_complexity` | — |
+| Dead code detection | `mcp__code-graph__find_dead_code` | — |
+| Code smell scan | `mcp__code-analysis__find_code_smells` | — |
+| Dependency analysis | `mcp__code-analysis__analyze_dependencies` | — |
 | Search workspace knowledge | `mcp__memory__memory_search` | — |
 | Record a verification finding | `mcp__memory__memory_record` | — |
 

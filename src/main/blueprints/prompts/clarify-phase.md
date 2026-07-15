@@ -24,13 +24,51 @@
 
 Analyze the specification (from the Specify phase artifacts) for gaps, ambiguities, and missing information. Present findings as structured JSON. Ask the user targeted questions to resolve gaps.
 
+## Auto-Resolution Protocol (MANDATORY — before flagging any gap)
+
+Before marking ANY finding as "outstanding", check these sources IN ORDER:
+
+### Source 1: Workspace Documentation
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+Check CLAUDE.md, README.md, package.json above. If a gap is answered there (e.g., "what database?" → package.json shows PostgreSQL), mark the finding as `"resolved"` with a note citing the source.
+
+### Source 2: Workspace Memories
+
+Use `mcp__memory__memory_search` with relevant terms. If a previous decision answers the gap, mark as `"resolved"`.
+
+### Source 3: Existing Code
+
+If the workspace has source files, use code-intelligence tools:
+- `mcp__code-graph__graph_map` or `Glob` for structure
+- `mcp__code-graph__search_identifiers` for specific symbols
+- `Read` for config files and key source files
+
+If existing code already implements the pattern in question (e.g., error handling, auth, logging), mark as `"resolved"` and note what exists.
+
+### Source 4: Reference Documents
+
+Re-check the spec from the SPECIFY phase. If the gap was already addressed there, mark as `"resolved"`.
+
+### Resolution Rules
+
+- Only flag as `"outstanding"` gaps with NO answer in ANY source
+- Add a `"resolvedBy"` field to resolved findings: `"resolvedBy": "CLAUDE.md — design tokens spec"`
+- When presenting findings, show auto-resolved items separately so the user sees what was handled
+- Questions should ONLY be asked for genuinely unknown items
+
 ## Output Contracts
 
 You communicate via **three fenced JSON blocks**. Prose is limited to a 2–3 sentence intro before each block. All detail goes INSIDE the JSON.
 
 ### 1. Findings Block
 
-Emit after gap analysis and **re-emit with updated statuses at the end of every round**:
+Emit after gap analysis and **re-emit with updated statuses at the end of every round**.
+
+Each finding includes a `resolvedBy` field when auto-resolved:
 
 ````
 ```blueprint-clarify-findings
@@ -39,15 +77,25 @@ Emit after gap analysis and **re-emit with updated statuses at the end of every 
     {
       "id": "f1",
       "category": "missing_requirements",
+      "severity": "high",
+      "status": "resolved",
+      "resolvedBy": "CLAUDE.md — design tokens spec defines all color and spacing conventions",
+      "title": "No design system specified",
+      "description": "The spec does not define a design system.",
+      "specRefs": ["Section 2.1"]
+    },
+    {
+      "id": "f2",
+      "category": "missing_requirements",
       "severity": "critical",
       "status": "outstanding",
-      "title": "No auth strategy specified",
-      "description": "The spec mentions user accounts but does not define authentication mechanism.",
-      "specRefs": ["Section 3.1", "User Stories §2"],
-      "recommendation": "Add OAuth2/OIDC with session tokens as the default strategy."
+      "title": "No caching strategy defined",
+      "description": "No source in workspace docs, code, or memories addresses this.",
+      "specRefs": ["Section 4.2"],
+      "recommendation": "Define a caching strategy for frequently accessed data."
     }
   ],
-  "summary": "Found 4 gaps: 1 critical, 2 high, 1 medium. 0 resolved so far."
+  "summary": "Found 4 gaps: 1 critical, 2 high, 1 medium. 1 auto-resolved from workspace docs."
 }
 ```
 ````

@@ -14,7 +14,6 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { execSync } from 'node:child_process'
-import { spawn } from 'node:child_process'
 import { join, relative, basename } from 'node:path'
 import { createHash } from 'node:crypto'
 import log from 'electron-log'
@@ -27,6 +26,8 @@ import { omlxEmbeddingProvider } from './omlx-embedding.service'
 import { workspaceRepository } from '../db/repositories'
 import { readDocument } from './document-reader'
 import { chunkDocument, detectStrategy } from './document-chunker'
+import { runAgenticClaude } from './agentic-claude-runner'
+import { MCP_TOOLS } from '../../shared/constants'
 
 const bsLog = log.scope('memory-bootstrap')
 
@@ -686,7 +687,7 @@ class MemoryBootstrapService {
     const factsBefore = memoryFactRepository.countByWorkspace(workspaceId).active
 
     try {
-      await this.spawnDeepScanAgent(workspacePath, explorationPrompt, signal, onMsg)
+      await this.spawnDeepScanAgent(workspaceId, workspacePath, explorationPrompt, signal, onMsg)
     } catch (err) {
       if (signal.aborted) {
         onMsg('Agent exploration cancelled')
@@ -703,79 +704,38 @@ class MemoryBootstrapService {
     return created
   }
 
-  private spawnDeepScanAgent(
+  private async spawnDeepScanAgent(
+    workspaceId: string,
     workspacePath: string,
     prompt: string,
     signal: AbortSignal,
     onMsg: (msg: string) => void
   ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-p', prompt,
-        '--output-format', 'text',
-        '--permission-mode', 'plan',
-        '--model', 'claude-sonnet-4-6',
-        '--max-turns', '30'
-      ]
+    const allowedTools = [
+      'Read', 'Grep', 'Glob',
+      ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
+      ...MCP_TOOLS.MEMORY._ALL_NAMES
+    ]
 
-      const child = spawn('claude', args, {
-        cwd: workspacePath,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: DEEP_SCAN_TIMEOUT_MS,
-        env: { ...process.env, MCP_TIMEOUT: '30000' }
-      })
-
-      let stdoutBuf = ''
-
-      child.stdout?.on('data', (chunk: Buffer) => {
-        stdoutBuf += chunk.toString()
-        // Parse partial output for progress updates
-        const lines = stdoutBuf.split('\n')
-        if (lines.length > 1) {
-          for (let i = 0; i < lines.length - 1; i++) {
-            const line = lines[i].trim()
-            if (line.length > 10) {
-              onMsg(`Agent: ${line.substring(0, 120)}…`)
-            }
-          }
-          stdoutBuf = lines[lines.length - 1]
+    const result = await runAgenticClaude({
+      workspaceId,
+      workspacePath,
+      prompt,
+      allowedTools,
+      model: 'claude-sonnet-4-6',
+      maxTurns: 30,
+      timeoutMs: DEEP_SCAN_TIMEOUT_MS,
+      signal,
+      onLine: (line) => {
+        if (line.length > 10) {
+          onMsg(`Agent: ${line.substring(0, 120)}…`)
         }
-      })
-
-      child.stderr?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString().trim()
-        if (text) {
-          bsLog.info(`[deepScan:stderr] ${text.substring(0, 200)}`)
-        }
-      })
-
-      const onAbort = (): void => {
-        child.kill('SIGTERM')
-        reject(new Error('Agent exploration cancelled'))
       }
-
-      if (signal.aborted) {
-        child.kill('SIGTERM')
-        reject(new Error('Agent exploration cancelled'))
-        return
-      }
-
-      signal.addEventListener('abort', onAbort, { once: true })
-
-      child.on('close', (code) => {
-        signal.removeEventListener('abort', onAbort)
-        if (code === 0 || code === null) {
-          resolve()
-        } else {
-          reject(new Error(`Claude CLI exited with code ${code}`))
-        }
-      })
-
-      child.on('error', (err) => {
-        signal.removeEventListener('abort', onAbort)
-        reject(err)
-      })
     })
+
+    if (result.exitCode !== 0 && result.exitCode !== null) {
+      throw new Error(`Claude CLI exited with code ${result.exitCode}`)
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
