@@ -18,6 +18,18 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+## Workspace Context & Conventions
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+**Before writing ANY code**, review workspace docs above. Follow ALL conventions from CLAUDE.md:
+- Use existing design system components and design tokens
+- Follow naming conventions found in existing code
+- Match existing patterns (service structure, component structure, test structure)
+- Use `mcp__memory__memory_search` to find relevant conventions for the area you're building
+
 ## Your Task
 
 Execute the implementation tasks from the Tasks phase. This phase is orchestrated
@@ -51,8 +63,10 @@ After each task, verify:
 - [ ] All files listed in the task exist
 - [ ] No placeholder/stub code left behind
 - [ ] Tests pass (if applicable)
-- [ ] No lint errors introduced
+- [ ] No lint errors: run `mcp__code-analysis__eslint_check` on modified files
 - [ ] Constitution rules followed
+- [ ] **CLAUDE.md conventions followed** (design tokens, naming, domain rules)
+- [ ] Code follows existing patterns found in the codebase
 
 ## Discoveries
 

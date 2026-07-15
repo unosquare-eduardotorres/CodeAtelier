@@ -345,6 +345,7 @@ interface Api {
   memoryFeedCancel: () => Promise<void>
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
+    workspaceId: string
   }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
   memoryFeedDocument: (args: {
     workspacePath: string

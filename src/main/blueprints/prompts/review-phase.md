@@ -57,6 +57,34 @@ Check for: missing coverage, over-scoping beyond spec, long dependency chains, p
 
 Success criteria measurable? Task descriptions specific enough for autonomous execution? File paths realistic? Wave count reasonable (2-6)?
 
+### 7. Code Quality Baseline (MANDATORY)
+
+Before BUILD begins, establish a quality baseline using code-analysis tools:
+
+| Check | Tool | Purpose |
+|-------|------|---------|
+| Complexity baseline | `mcp__code-analysis__analyze_complexity` | Flag plan items touching high-complexity areas |
+| Dependency health | `mcp__code-analysis__analyze_dependencies` | Identify coupling risks in planned changes |
+| Existing code smells | `mcp__code-analysis__find_code_smells` | Baseline so new smells aren't blamed on BUILD |
+| Technical debt | `mcp__code-analysis__audit_scan` | Document existing debt in affected areas |
+| Dead code | `mcp__code-graph__find_dead_code` | Identify orphaned code that plan should clean up |
+
+Record baseline findings in the review report so VERIFY can compare post-build.
+
+### 8. Workspace Convention Compliance
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+Verify the plan follows workspace conventions from CLAUDE.md:
+- Does the plan use existing design-system components before creating new ones?
+- Do file paths follow naming conventions?
+- Does the tech stack match what's established?
+- Are domain-specific rules respected (e.g., es-MX copy, design tokens)?
+
+Use `mcp__memory__memory_search` for additional conventions not in CLAUDE.md.
+
 ## Severity Classification
 
 | Severity | Criteria | Action |
@@ -121,6 +149,10 @@ Before your completion block, emit a `blueprint-discoveries` block: a JSON array
 | Verify callers/callees | `mcp__code-graph__find_callers` / `find_callees` | `Grep` |
 | Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
 | Verify code patterns match plan | `mcp__semantic-search__semantic_search` | `Grep` |
+| Establish complexity baseline | `mcp__code-analysis__analyze_complexity` | — |
+| Check dependency coupling | `mcp__code-analysis__analyze_dependencies` | — |
+| Find existing code smells | `mcp__code-analysis__find_code_smells` | — |
+| Audit technical debt | `mcp__code-analysis__audit_scan` | — |
 | Search workspace knowledge | `mcp__memory__memory_search` | — |
 | Record a review finding | `mcp__memory__memory_record` | — |
 

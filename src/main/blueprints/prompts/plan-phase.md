@@ -43,10 +43,45 @@ Split signals: >3 tasks/item, multiple subsystems, >5 files, >30% context.
 
 ## Execution Flow
 
-0. **Research** — identify unknowns, investigate existing patterns, document findings
+### Step 0: Workspace Discovery & Pattern Research (MANDATORY)
+
+Before designing anything, thoroughly research the workspace:
+
+#### 0a. Workspace Documentation
+
+<workspace_docs>
+{{WORKSPACE_DOCS}}
+</workspace_docs>
+
+Extract: tech stack, conventions, architecture patterns, design system rules, existing domain model.
+
+#### 0b. Memory Search
+
+Use `mcp__memory__memory_search` for: architecture decisions, existing patterns, conventions, tech debt, constraints.
+
+#### 0c. Code Structure Analysis
+
+1. `mcp__code-graph__graph_map` — understand the full architecture
+2. `mcp__code-graph__file_outline` on key entry points (routers, main files, index files)
+3. `mcp__semantic-search__codebase_concepts` — understand domain entities
+4. Read existing service/component patterns to replicate their structure
+
+#### 0d. Existing Pattern Inventory
+
+Document what patterns ALREADY EXIST that the plan should follow:
+- File naming conventions (from existing code)
+- Service/repository patterns (from existing code)
+- Component patterns (from existing code)
+- Test patterns (from existing code)
+- Import/export conventions
+
+**CRITICAL**: The plan MUST extend existing patterns, not invent new ones. If the codebase has a `ServiceName.service.ts` convention, all new services follow it. If there's a design system barrel export, new components use it.
+
+### Steps 1–3:
+
 1. **Design** — define entities/data model, interfaces/contracts, file layout, quickstart guide
 2. **Generate Plan Items** — each with: ID (P1+), title, description (referencing existing patterns), files (exact paths), scope (backend|frontend|database|shared|tests), dependsOn, includesTests, userStory (US1+), isParallel, priority (P1|P2|P3 — P1=must-have, P2=should-have, P3=nice-to-have)
-3. **Constitution Check** — verify no prohibited patterns, required patterns followed, tech stack matches
+3. **Constitution Check** — verify no prohibited patterns, required patterns followed, tech stack matches, CLAUDE.md conventions respected
 
 ## Output Format
 

@@ -586,6 +586,7 @@ const api = {
 
   memoryRegenerateClaudeMd: (args: {
     workspacePath: string
+    workspaceId: string
   }): Promise<{ success: boolean; content: string; existing: string | null; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD, args),
 

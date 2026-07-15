@@ -316,15 +316,17 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD,
-    async (event, args: { workspacePath: string }) => {
+    async (event, args: { workspacePath: string; workspaceId: string }) => {
       validateSender(event)
       if (!args.workspacePath) throw new Error('Workspace path is required')
+      if (!args.workspaceId) throw new Error('Workspace ID is required')
       let existing: string | null = null
       try {
         existing = readFileSync(join(args.workspacePath, 'CLAUDE.md'), 'utf-8')
       } catch { /* none */ }
-      const result = await memoryExtractionService.regenerateClaudeMd(
+      const result = await memoryExtractionService.regenerateClaudeMdAgentic(
         args.workspacePath,
+        args.workspaceId,
         (progress) => safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_FEED_PROGRESS, progress)
       )
       return { ...result, existing }

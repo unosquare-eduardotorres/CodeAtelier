@@ -143,6 +143,8 @@ export interface PhaseContext {
   specFilePath: string
   blueprintDir: string
   grillDecisions?: GrillDecisionForBlueprint[]
+  /** Pre-loaded workspace docs (CLAUDE.md, README.md, package.json, PLAN.md) for prompt injection */
+  workspaceDocs?: string
 }
 
 export interface GrillDecisionForBlueprint {

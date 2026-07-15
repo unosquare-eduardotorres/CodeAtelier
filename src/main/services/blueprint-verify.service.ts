@@ -94,8 +94,8 @@ export class BlueprintVerifyService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'verifying')
       blueprintRepository.update(blueprintId, { currentPhase: 'verify' })
 
-      // 2. Assemble context (includes ALL prior artifacts: spec → build)
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'verify')
+      // 2. Assemble context (includes ALL prior artifacts: spec → build + workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'verify', workspacePath)
 
       // 3. Create adapter + session
       const adapter = new BlueprintVerifyAdapter({ workspaceId, blueprintId, phaseContext })

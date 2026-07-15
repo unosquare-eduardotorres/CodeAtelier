@@ -303,6 +303,11 @@ function replaceVariables(
               .join('\n')
           : '(No grill decisions available.)'
       )
+      // Pre-loaded workspace documentation (CLAUDE.md, README.md, package.json, PLAN.md)
+      .replace(
+        '{{WORKSPACE_DOCS}}',
+        context.workspaceDocs || '(No workspace documentation found — use Read to check for CLAUDE.md, README.md, package.json)'
+      )
   )
 }
 

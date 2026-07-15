@@ -175,6 +175,48 @@ export async function buildReferenceDocsBlock(
   return parts.length > 0 ? parts.join('\n\n---\n\n') : undefined
 }
 
+// ── Workspace Documentation Loader ──────────────────────────────────────────
+
+/** Maximum characters per workspace doc (CLAUDE.md, README.md, etc.) */
+const MAX_WORKSPACE_DOC_CHARS = 30_000
+
+/** Well-known workspace documentation files to pre-read for prompt injection. */
+const WORKSPACE_DOC_FILES = [
+  { name: 'CLAUDE.md', path: 'CLAUDE.md' },
+  { name: 'README.md', path: 'README.md' },
+  { name: 'package.json', path: 'package.json' },
+  { name: 'PLAN.md', path: 'PLAN.md' },
+] as const
+
+/**
+ * Pre-read key workspace documentation files for prompt injection.
+ * Reads CLAUDE.md, README.md, package.json, and PLAN.md from workspace root.
+ * Returns a formatted markdown block or undefined if no files found.
+ *
+ * Each file is capped at MAX_WORKSPACE_DOC_CHARS to avoid context overflow.
+ * Files that don't exist are silently skipped.
+ */
+export async function buildWorkspaceDocsBlock(workspacePath: string): Promise<string | undefined> {
+  const parts: string[] = []
+
+  for (const doc of WORKSPACE_DOC_FILES) {
+    const fullPath = resolve(workspacePath, doc.path)
+    if (existsSync(fullPath)) {
+      try {
+        let content = readFileSync(fullPath, 'utf-8')
+        if (content.length > MAX_WORKSPACE_DOC_CHARS) {
+          content = content.slice(0, MAX_WORKSPACE_DOC_CHARS) + '\n\n[… truncated]'
+        }
+        parts.push(`### ${doc.name}\n\n${content}`)
+      } catch (err) {
+        docLog.warn(`Failed to read workspace doc "${doc.name}": ${err}`)
+      }
+    }
+  }
+
+  return parts.length > 0 ? parts.join('\n\n---\n\n') : undefined
+}
+
 // ── Internal Helpers ─────────────────────────────────────────────────────────
 
 /**

@@ -18,7 +18,8 @@ import { dbLogger } from '../logger'
 import { memoryEngineService } from './memory-engine.service'
 import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
 import { runOneShotLocal, buildMemoryFeedFallbackArgs } from './one-shot-local'
-import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
+import { DEFAULT_MODEL_CONFIG, MCP_TOOLS } from '../../shared/constants'
+import { runAgenticClaude, parseSentinelBlock, SENTINELS } from './agentic-claude-runner'
 import type {
   MemoryFactCategory,
   MemoryFeedProgress,
@@ -540,6 +541,92 @@ class MemoryExtractionService {
     }
   }
 
+  // ── CLAUDE.md agentic regeneration ─────────────────────────────────────
+
+  /**
+   * Regenerate CLAUDE.md using an agentic Claude session that explores
+   * the project with read-only tools + code-graph MCP.
+   *
+   * The agent reads the existing CLAUDE.md (if any), explores the codebase,
+   * and emits the complete CLAUDE.md between sentinel markers.
+   */
+  async regenerateClaudeMdAgentic(
+    workspacePath: string,
+    workspaceId: string,
+    onProgress?: ProgressCallback
+  ): Promise<{ success: boolean; content: string; error?: string }> {
+    if (this.isBusy) {
+      return { success: false, content: '', error: 'An extraction is already in progress' }
+    }
+
+    this.isBusy = true
+    try {
+      onProgress?.({ source: 'document', status: 'running', message: 'Starting agentic CLAUDE.md generation...' })
+
+      // Read existing CLAUDE.md for context
+      let existingClaudeMd = ''
+      try {
+        existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
+      } catch { /* none */ }
+
+      const prompt = buildAgenticClaudeMdPrompt(existingClaudeMd)
+
+      onProgress?.({ source: 'document', status: 'running', message: 'Agent exploring project...' })
+
+      const allowedTools = [
+        'Read', 'Grep', 'Glob',
+        ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES
+      ]
+
+      const result = await runAgenticClaude({
+        workspaceId,
+        workspacePath,
+        prompt,
+        allowedTools,
+        model: 'claude-sonnet-4-6',
+        maxTurns: 25,
+        timeoutMs: 8 * 60 * 1000, // 8 minutes
+        mcpServers: ['code-graph'], // No memory tools for CLAUDE.md gen
+        onLine: (line) => {
+          // Surface progress to the UI
+          if (line.length > 10 && !line.startsWith(SENTINELS.BEGIN) && !line.startsWith(SENTINELS.END)) {
+            onProgress?.({ source: 'document', status: 'running', message: `Agent: ${line.substring(0, 100)}` })
+          }
+        }
+      })
+
+      // Parse sentinel block
+      const sentinelContent = parseSentinelBlock(result.stdout)
+      if (sentinelContent && sentinelContent.length > 50) {
+        onProgress?.({ source: 'document', status: 'done', message: 'CLAUDE.md generated' })
+        return { success: true, content: sentinelContent }
+      }
+
+      // Fallback: use trimmed stdout if sentinels are missing
+      const trimmed = result.stdout.trim()
+      if (trimmed.length > 50) {
+        log.warn('[regenerateClaudeMdAgentic] Sentinels missing — falling back to full stdout')
+        onProgress?.({ source: 'document', status: 'done', message: 'CLAUDE.md generated (no sentinels)' })
+        return { success: true, content: trimmed }
+      }
+
+      // Empty output
+      const errorMsg = result.exitCode !== 0
+        ? `Claude CLI exited with code ${result.exitCode}`
+        : 'Agent produced no output'
+      log.error(`[regenerateClaudeMdAgentic] Failed: ${errorMsg}`)
+      onProgress?.({ source: 'document', status: 'error', message: errorMsg })
+      return { success: false, content: '', error: errorMsg }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      log.error('[regenerateClaudeMdAgentic] Error:', msg)
+      onProgress?.({ source: 'document', status: 'error', message: msg })
+      return { success: false, content: '', error: msg }
+    } finally {
+      this.isBusy = false
+    }
+  }
+
   // ── Internals ───────────────────────────────────────────────────────────
 
   private async spawnSummarizer(prompt: string, workspacePath?: string, workspaceId?: string): Promise<string> {
@@ -784,6 +871,63 @@ ${skillLines}
 ${existingSection}
 
 Output ONLY the CLAUDE.md content.`
+}
+
+// ── Agentic CLAUDE.md prompt ─────────────────────────────────────────────────
+
+function buildAgenticClaudeMdPrompt(existingClaudeMd: string): string {
+  const existingSection = existingClaudeMd
+    ? `## Existing CLAUDE.md
+The project already has a CLAUDE.md. Reuse anything that is still accurate, but update or remove anything outdated. Here it is:
+
+${existingClaudeMd.substring(0, 12000)}`
+    : `## No existing CLAUDE.md
+This project does not have a CLAUDE.md yet. Create one from scratch.`
+
+  return `You are a senior engineer creating a CLAUDE.md file for this project. CLAUDE.md is a configuration file that gives Claude Code context about the project.
+
+## Your task
+
+Explore this project thoroughly using the available tools (Read, Grep, Glob, code-graph tools), then produce a comprehensive CLAUDE.md.
+
+## Exploration strategy
+
+1. Start with root files: package.json, tsconfig.json, README.md, Makefile, Dockerfile, etc.
+2. Use Glob to understand the project structure and key directories.
+3. Read key entry points, config files, and service files.
+4. Use code-graph tools (graph_map, file_outline, find_callers) to understand architecture.
+5. Look for test infrastructure, build scripts, and CI configuration.
+6. Check for conventions in coding style, naming, error handling.
+
+## CLAUDE.md sections to cover
+
+1. **Project overview** — What the project does, its purpose, and high-level architecture.
+2. **Tech stack** — Languages, frameworks, key dependencies (only what's actually used).
+3. **Project structure** — Key directories and what they contain.
+4. **Build & run commands** — How to build, test, lint, and run the project (only real commands from package.json/Makefile).
+5. **Key services & modules** — The main components and their responsibilities.
+6. **Conventions** — Coding style, naming patterns, file organization, error handling patterns.
+7. **What NOT to do** — Anti-patterns, known gotchas, things to avoid.
+8. **Testing** — Test infrastructure, how to run tests, test patterns.
+
+## Critical rules
+
+- ONLY include technologies and commands you've verified exist in the project.
+- NEVER invent conventions you can't verify from the code.
+- Keep it concise: 100–300 lines.
+- Be specific and actionable — not generic advice.
+
+${existingSection}
+
+## Output format
+
+After exploring, emit the complete CLAUDE.md content between these exact sentinel markers:
+
+${SENTINELS.BEGIN}
+(your complete CLAUDE.md here)
+${SENTINELS.END}
+
+Begin exploring the project now.`
 }
 
 export const memoryExtractionService = new MemoryExtractionService()

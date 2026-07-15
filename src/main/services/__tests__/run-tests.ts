@@ -314,6 +314,8 @@ const TEST_FILES: string[] = [
   './orchestrator-pipeline-deep.test',
   './memory-vector-deep.test',
   './mcp-servers-deep.test',
+  // ─── Agentic Claude runner (Deep Scan + CLAUDE.md regen shared helper) ───
+  './agentic-claude-runner.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

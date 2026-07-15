@@ -98,8 +98,8 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'building')
       blueprintRepository.update(blueprintId, { currentPhase: 'build' })
 
-      // 2. Assemble phase context (includes spec + clarify + plan + tasks + review artifacts)
-      const phaseContext = blueprintService.assemblePhaseContext(blueprintId, 'build')
+      // 2. Assemble phase context (includes spec + clarify + plan + tasks + review artifacts + workspace docs)
+      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'build', workspacePath)
 
       // 2b. Seed discoveries from prior phases + previous build runs (crash-resume)
       if (buildPhase) {

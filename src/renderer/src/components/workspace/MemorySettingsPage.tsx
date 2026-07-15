@@ -150,17 +150,31 @@ export default function MemorySettingsPage(): React.JSX.Element {
   }, [activeWorkspace, workspaceId])
 
   const handleRegenerateClaudeMd = useCallback(async () => {
-    if (!activeWorkspace) return
+    if (!activeWorkspace || !workspaceId) return
     startFeed('document')
-    const result = await window.api.memoryRegenerateClaudeMd({
-      workspacePath: activeWorkspace.repoPath
-    })
-    if (result.success && result.content) {
-      setDiffData({ existing: result.existing ?? null, generated: result.content })
-      setShowDiffModal(true)
+    try {
+      const result = await window.api.memoryRegenerateClaudeMd({
+        workspacePath: activeWorkspace.repoPath,
+        workspaceId
+      })
+      if (result.success && result.content) {
+        setDiffData({ existing: result.existing ?? null, generated: result.content })
+        setShowDiffModal(true)
+        dismissFeed()
+      } else {
+        // Surface the error instead of silently dismissing
+        useMemoryStore.setState({
+          feedStatus: 'error',
+          feedError: result.error || 'CLAUDE.md generation produced no content'
+        })
+      }
+    } catch (err) {
+      useMemoryStore.setState({
+        feedStatus: 'error',
+        feedError: err instanceof Error ? err.message : 'CLAUDE.md generation failed'
+      })
     }
-    dismissFeed()
-  }, [activeWorkspace])
+  }, [activeWorkspace, workspaceId])
 
   if (!workspaceId) {
     return (

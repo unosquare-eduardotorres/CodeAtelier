@@ -19,6 +19,7 @@ import { workspaceRepository } from '../db/repositories'
 import { ideaRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
 import { buildPhaseSystemPrompt } from './blueprint-prompt-loader'
+import { buildWorkspaceDocsBlock } from './blueprint-document-loader'
 import { safeParseJSON } from '../db/json-utils'
 import { validateTaskGraph } from './blueprint-task-validator'
 import type {
@@ -864,7 +865,7 @@ export class BlueprintService extends EventEmitter {
    * Uses PHASE_ARTIFACT_RELEVANCE to inject only the artifact types each phase needs,
    * instead of blindly accumulating all prior artifacts (which caused 146–214KB prompts).
    */
-  assemblePhaseContext(blueprintId: string, phase: BlueprintPhaseType): PhaseContext {
+  async assemblePhaseContext(blueprintId: string, phase: BlueprintPhaseType, workspacePath?: string): Promise<PhaseContext> {
     const blueprint = blueprintRepository.findById(blueprintId)
     if (!blueprint) {
       throw new Error(`Blueprint not found: ${blueprintId}`)
@@ -890,6 +891,12 @@ export class BlueprintService extends EventEmitter {
     // Extract grill decisions from settings if available (with runtime validation)
     const grillDecisions = parseGrillDecisions(blueprint.settingsJson?.grillDecisions)
 
+    // Pre-read workspace docs (CLAUDE.md, README.md, package.json, PLAN.md) if workspace path provided
+    let workspaceDocs: string | undefined
+    if (workspacePath) {
+      workspaceDocs = await buildWorkspaceDocsBlock(workspacePath)
+    }
+
     return {
       blueprint: {
         id: blueprint.id,
@@ -904,15 +911,16 @@ export class BlueprintService extends EventEmitter {
       previousArtifacts,
       specFilePath: `blueprints/${blueprint.shortName || blueprint.id}/spec.md`,
       blueprintDir: `blueprints/${blueprint.shortName || blueprint.id}`,
-      grillDecisions
+      grillDecisions,
+      workspaceDocs
     }
   }
 
   /**
    * Build the full system prompt for a phase (convenience wrapper).
    */
-  buildSystemPrompt(blueprintId: string, phase: BlueprintPhaseType): string {
-    const context = this.assemblePhaseContext(blueprintId, phase)
+  async buildSystemPrompt(blueprintId: string, phase: BlueprintPhaseType, workspacePath?: string): Promise<string> {
+    const context = await this.assemblePhaseContext(blueprintId, phase, workspacePath)
     return buildPhaseSystemPrompt(phase, context)
   }
 
