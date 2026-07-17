@@ -94,6 +94,7 @@ class MemoryEngineService {
     reject: (err: Error) => void
   }> = []
   private classifyProcessing = false
+  private draining = false
 
   private captureCounts: CaptureCounts = {
     session: new Map(),
@@ -147,8 +148,9 @@ class MemoryEngineService {
         isVolatile
       )
       if (result !== undefined) {
-        // Pipeline handled it (confirmed, updated, nooped, or superseded)
-        this.incrementCaptureCap(params)
+        // Pipeline handled it (confirmed, updated, nooped, or superseded).
+        // Cap accounting is inside the mutating handlers (handleUpdate, handleContradiction)
+        // so that dedup confirms (handleDuplicate) don't consume cap slots.
         return result
       }
     }
@@ -174,8 +176,9 @@ class MemoryEngineService {
 
     log.info(`[MemoryEngine] New fact created: ${fact.id} (tier=${fact.tier}, pending=${embeddingPending}, volatile=${isVolatile})`)
 
-    // 5. Record the creation as a first confirmation event
-    memoryFactRepository.addConfirmation(fact.id, this.sourceTypeToConfirmationType(params.sourceType))
+    // 5. Do NOT record a confirmation at creation — the fact starts at T0 and must
+    // earn its first confirmation through a separate re-observation event.
+    // This preserves the "2 confirms on 2 days" requirement for T0→T1.
 
     this.incrementCaptureCap(params)
 
@@ -184,7 +187,8 @@ class MemoryEngineService {
       log.warn('[MemoryEngine] Background backfill error:', e)
     )
 
-    return fact
+    // Return with accurate volatile flag (setVolatile mutated DB but not the object)
+    return isVolatile ? { ...fact, volatile: true } : fact
   }
 
   /**
@@ -221,8 +225,14 @@ class MemoryEngineService {
       return undefined // New fact territory
     }
 
-    // Volatile facts: always UPDATE-in-place the best match
-    if (isVolatile && topMatch.similarity >= AMBIGUOUS_THRESHOLD) {
+    // Volatile facts: UPDATE-in-place only when similarity is high AND same category.
+    // At 0.70 two different volatile facts (e.g. schemaVersion vs electronVersion) can
+    // easily match — require ≥0.90 + same category to prevent cross-fact data loss.
+    if (
+      isVolatile &&
+      topMatch.similarity >= DUPLICATE_THRESHOLD &&
+      topMatch.fact.category === params.category
+    ) {
       return this.handleUpdate(topMatch.fact, params, embedding)
     }
 
@@ -262,13 +272,17 @@ class MemoryEngineService {
     // Update embedding to match new content
     memoryFactRepository.setEmbedding(existing.id, embedding)
 
+    // Record confirmation AND bump confirmation_count/last_confirmed_at + tier
     const confirmType = this.sourceTypeToConfirmationType(newParams.sourceType)
-    memoryFactRepository.addConfirmation(existing.id, confirmType)
+    const confirmed = this.confirmFactWithEvidence(updated, confirmType)
+
+    // Consume a capture-cap slot — this is a real mutation (content rewrite)
+    this.incrementCaptureCap(newParams)
 
     log.info(
       `[MemoryEngine] Updated in-place: ${existing.id} (volatile=${existing.volatile})`
     )
-    return updated
+    return confirmed
   }
 
   /**
@@ -304,8 +318,10 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 - "NOOP" = the new fact says the same thing as an existing fact — skip it
 - "SUPERSEDE" = the new fact contradicts Match 1 — replace it`
 
-    // Queue instead of falling through when busy
-    if (this.classifyProcessing) {
+    // Queue instead of falling through when busy (include draining to prevent
+    // concurrent classifiers during the microtask window between one classification's
+    // finally block and the drain loop's next await)
+    if (this.classifyProcessing || this.draining) {
       return new Promise<MemoryFact | null | undefined>((resolve, reject) => {
         this.classifyQueue.push({
           params: newParams,
@@ -373,8 +389,10 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
    * Each item gets fresh similarity scoring and a real classifier prompt.
    */
   private async drainClassifyQueue(): Promise<void> {
-    if (this.classifyProcessing || this.classifyQueue.length === 0) return
+    if (this.draining || this.classifyProcessing || this.classifyQueue.length === 0) return
 
+    this.draining = true
+    try {
     while (this.classifyQueue.length > 0) {
       const item = this.classifyQueue.shift()!
 
@@ -398,6 +416,22 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         if (!bestMatch || bestMatch.similarity < AMBIGUOUS_THRESHOLD) {
           // No match — resolve undefined so writeFact inserts as new
           item.resolve(undefined)
+          continue
+        }
+
+        // Fast-path: mirror the pipeline's branch order to skip the LLM classifier
+        // when fresh similarity is high enough for a deterministic outcome.
+        const isVolatile = this.detectVolatility(item.factText)
+        if (
+          isVolatile &&
+          bestMatch.similarity >= DUPLICATE_THRESHOLD &&
+          bestMatch.fact.category === item.params.category
+        ) {
+          item.resolve(this.handleUpdate(bestMatch.fact, item.params, item.embedding))
+          continue
+        }
+        if (bestMatch.similarity >= DUPLICATE_THRESHOLD) {
+          item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
           continue
         }
 
@@ -437,6 +471,9 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         item.reject(err as Error)
       }
     }
+    } finally {
+      this.draining = false
+    }
   }
 
   /** Handle a contradiction: supersede old fact, insert new, record audit. */
@@ -475,6 +512,9 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     } catch {
       // Unique constraint prevents duplicate contradiction records — expected
     }
+
+    // Consume a capture-cap slot — this is a real mutation (new fact inserted + old superseded)
+    this.incrementCaptureCap(newParams)
 
     log.info(
       `[MemoryEngine] Contradiction: ${oldFact.id} superseded by ${newFact.id}`
@@ -522,6 +562,9 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
   /** Check if a write is within capture caps. Returns true if allowed. */
   private checkCaptureCap(params: WriteFactParams): boolean {
+    // Manual (user-initiated) writes always bypass caps
+    if (params.sourceType === 'manual') return true
+
     this.resetCapsIfNewDay()
 
     const { sourceType, sourceRef, workspaceId } = params
@@ -765,6 +808,8 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         )
         const canonical = clusterFacts[0]
         for (let k = 1; k < clusterFacts.length; k++) {
+          // Transfer confirmation events before merging (preserves evidence history)
+          memoryFactRepository.reparentConfirmations(clusterFacts[k].id, canonical.id)
           memoryFactRepository.mergeFact(clusterFacts[k].id, canonical.id)
           autoMerged++
         }

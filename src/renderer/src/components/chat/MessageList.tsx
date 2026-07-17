@@ -7,6 +7,7 @@ import type { StructuredPlan } from '../../../../shared/types'
 import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
 import MessageListFooter from './MessageListFooter'
+import AuditProvenanceBanner from './AuditProvenanceBanner'
 import { useAutoScroll } from './useAutoScroll'
 import { useMessageVirtualizer } from './useMessageVirtualizer'
 import { useThinkingIdentity } from './useThinkingIdentity'
@@ -38,6 +39,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   }, [])
 
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
+  const sourceAuditRunId = useChatStore((s) => s.activeConversation?.sourceAuditRunId ?? null)
 
   const handleBuildFromPlan = useCallback(
     async (_plan: StructuredPlan, _planContent: string): Promise<void> => {
@@ -155,6 +157,16 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     <div data-testid="message-list" className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
       <FloatingRobots />
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full">
+        {/* Audit provenance banner (when conversation originated from Health audit) */}
+        {sourceAuditRunId && (
+          <AuditProvenanceBanner
+            auditRunId={sourceAuditRunId}
+            onViewAudit={() => {
+              // Navigate to health page — handled by app layout
+              window.dispatchEvent(new CustomEvent('navigate-to-health'))
+            }}
+          />
+        )}
         {/* Virtualized message list */}
         <div
           style={{

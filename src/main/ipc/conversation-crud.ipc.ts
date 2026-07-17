@@ -10,7 +10,7 @@ import {
   specialistRepository
 } from '../db/repositories'
 import { chatAgentService } from '../services'
-import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { lifecycleRegistry } from '../services/conversation-lifecycle'
 import { chatStreamService } from '../services/chat-stream.service'
 import { repoService } from '../services/repo.service'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
@@ -44,6 +44,8 @@ async function handleCreateConversation(args: {
   routingOverrides?: Partial<ModelRoleMap>
   mcpOverrides?: Record<string, boolean>
   communicationTone?: CommunicationTone | null
+  /** Audit run ID that sourced this conversation (Audit → Chat handoff) */
+  sourceAuditRunId?: string
 }): Promise<ReturnType<typeof conversationRepository.create>> {
   const ch = IPC_CHANNELS.CHAT_CREATE_CONVERSATION
   const {
@@ -54,7 +56,8 @@ async function handleCreateConversation(args: {
     llmProvider,
     routingOverrides,
     mcpOverrides,
-    communicationTone
+    communicationTone,
+    sourceAuditRunId
   } = args
 
   if (title !== undefined && title.length > 500) {
@@ -98,7 +101,8 @@ async function handleCreateConversation(args: {
     mcpOverrides,
     communicationTone,
     undefined, // type
-    snapshot
+    snapshot,
+    sourceAuditRunId
   )
   conversationSpecialistRepository.initFromWorkspaceDefaults(conversation.id)
 
@@ -217,7 +221,8 @@ export function registerConversationCrudIpc(): void {
       llmProvider: optionalString(args, 'llmProvider', ch) as LLMProvider | undefined,
       routingOverrides: args.routingOverrides as Partial<ModelRoleMap> | undefined,
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
-      communicationTone: args.communicationTone as CommunicationTone | null | undefined
+      communicationTone: args.communicationTone as CommunicationTone | null | undefined,
+      sourceAuditRunId: optionalString(args, 'sourceAuditRunId', ch)
     })
   })
 
@@ -248,10 +253,10 @@ export function registerConversationCrudIpc(): void {
 
     // CONV-DEL-RACE-01: Abort active stream before cascade-delete to prevent
     // FK violations when finalizeStreamMessage() races with conversation deletion.
-    if (conversationLifecycle.conversationId === conversationId) {
+    if (lifecycleRegistry.isStreaming(conversationId)) {
       // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
       completeStreamMetrics(conversationId, 'aborted')
-      conversationLifecycle.abort('conversation-deleted')
+      lifecycleRegistry.abort(conversationId, 'conversation-deleted')
     }
 
     chatAgentService.clearSession(conversationId)

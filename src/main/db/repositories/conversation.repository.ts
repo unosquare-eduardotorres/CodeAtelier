@@ -32,6 +32,7 @@ interface ConversationRow {
   preset_id: string | null
   handoff_context: string | null
   model_config_json: string | null
+  source_audit_run_id: string | null
 }
 
 function parseMcpOverrides(json: string | null): Record<string, boolean> | undefined {
@@ -66,7 +67,8 @@ function mapRow(row: ConversationRow): Conversation {
     handoffContext: row.handoff_context ?? null,
     modelConfigSnapshot: row.model_config_json
       ? safeParseJSON<ConversationModelSnapshot | null>(row.model_config_json, null)
-      : null
+      : null,
+    sourceAuditRunId: row.source_audit_run_id ?? null
   }
 }
 
@@ -85,12 +87,13 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null,
     type?: ConversationType,
-    modelConfigSnapshot?: ConversationModelSnapshot | null
+    modelConfigSnapshot?: ConversationModelSnapshot | null,
+    sourceAuditRunId?: string
   ): Conversation {
     const row = this.db()
       .prepare(
-        `INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider, mcp_overrides_json, communication_tone, preset_id, type, model_config_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO conversations (workspace_id, title, mode, persona_specialist_id, llm_provider, mcp_overrides_json, communication_tone, preset_id, type, model_config_json, source_audit_run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -103,7 +106,8 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
         communicationTone ?? null,
         null, // preset_id — deprecated, always null
         type ?? 'chat',
-        modelConfigSnapshot ? JSON.stringify(modelConfigSnapshot) : null
+        modelConfigSnapshot ? JSON.stringify(modelConfigSnapshot) : null,
+        sourceAuditRunId ?? null
       ) as ConversationRow
     return mapRow(row)
   }
@@ -223,6 +227,14 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     this.db()
       .prepare('UPDATE conversations SET handoff_context = ? WHERE id = ?')
       .run(handoffContext, conversationId)
+  }
+
+  /** Find all conversations sourced from a specific audit run. */
+  findByAuditRunId(auditRunId: string): Conversation[] {
+    const rows = this.db()
+      .prepare('SELECT * FROM conversations WHERE source_audit_run_id = ? ORDER BY created_at DESC')
+      .all(auditRunId) as ConversationRow[]
+    return rows.map(mapRow)
   }
 
   reorderConversations(orderedIds: string[]): void {

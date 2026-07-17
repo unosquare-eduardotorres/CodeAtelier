@@ -12,6 +12,8 @@ import HealthConfigure from './health/HealthConfigure'
 import HealthPlanStep from './health/HealthPlanStep'
 import SelectionTrayBar from './health/SelectionTrayBar'
 import { useHealthPageActions, useAuditRunStatus } from './useHealthPageHooks'
+import TrackPickerModal from './health/TrackPickerModal'
+import { useAuditHandoff } from './health/useAuditHandoff'
 
 type HealthView = 'landing' | 'configure' | 'active' | 'plan'
 
@@ -27,7 +29,7 @@ interface HealthPageProps {
 }
 
 export default function HealthPage({
-  onNavigateToChat: _onNavigateToChat,
+  onNavigateToChat,
   onFixInNewChat,
   onSendPlanToGrill,
   onNavigateToCouncil,
@@ -77,6 +79,9 @@ export default function HealthPage({
     onNavigateToCouncil,
     onNavigateToGoals
   })
+
+  // Audit → Chat handoff orchestration
+  const handoff = useAuditHandoff(workspaceId, currentRun, onFixInNewChat, onNavigateToChat)
 
   const {
     completedCount,
@@ -263,6 +268,8 @@ export default function HealthPage({
           onAutoFix={actions.handleAutoFix}
           onClearSelected={clearSelectedFindings}
           onExport={actions.handleExport}
+          onSendAllToChat={handoff.handleSendAllToChat}
+          onSplitByTrack={handoff.handleSplitByTrack}
         />
       </div>
 
@@ -290,7 +297,18 @@ export default function HealthPage({
           auditorCount={auditorCount}
           isGenerating={false}
           onBuildPlan={actions.handleBuildPlan}
+          onFixInChat={handoff.handleFixInChat}
           onClear={clearSelectedFindings}
+        />
+      )}
+
+      {/* Track picker modal for split flow */}
+      {handoff.showTrackPicker && currentRun && (
+        <TrackPickerModal
+          open={handoff.showTrackPicker}
+          tracks={handoff.trackPickerOptions}
+          onConfirm={handoff.handleSplitConfirm}
+          onClose={handoff.handleCloseTrackPicker}
         />
       )}
     </div>

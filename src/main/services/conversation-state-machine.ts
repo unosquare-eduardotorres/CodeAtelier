@@ -123,11 +123,14 @@ export class ConversationStateMachine extends EventEmitter {
     }
 
     log.info(`[StateMachine] ${prevState} → ${nextState} (event=${event} conversation=${convId})`)
+    // A8-FIX: Always include conversationId in the payload so Phase 3
+    // renderers can attribute idle transitions to a specific conversation.
+    // Previously sent null on idle transitions, losing attribution.
     const statePayload = {
       from: prevState,
       to: nextState,
       event,
-      conversationId: nextState === 'idle' ? null : convId
+      conversationId: convId
     }
     this.emit('stateChange', statePayload)
 
@@ -181,11 +184,13 @@ export class ConversationStateMachine extends EventEmitter {
       const prevState = this.getState(conversationId)
       log.warn(`[StateMachine] Force reset conversation=${conversationId} from ${prevState}`)
       this.states.delete(conversationId)
+      // A8-FIX: Include conversationId so renderer knows which conversation
+      // went idle. Previously sent null, losing attribution.
       const statePayload = {
         from: prevState,
         to: 'idle' as const,
         event: 'forceReset',
-        conversationId: null
+        conversationId
       }
       this.emit('stateChange', statePayload)
 

@@ -202,18 +202,24 @@ function registerToolSchemas(): void {
         if (!newFact) {
           return { content: [{ type: 'text' as const, text: 'Contradiction note deduplicated — no change made.' }] }
         }
-        memoryFactRepository.supersedeFact(existing.id, newFact.id)
-        memoryFactRepository.createContradiction({
-          oldFactId: existing.id,
-          newFactId: newFact.id,
-          status: 'auto_resolved',
-          resolution: args.note
-        })
+        // Guard: writeFact may UPDATE-match the replacement against the very fact
+        // being contradicted and return it — don't self-supersede.
+        if (newFact.id !== existing.id) {
+          memoryFactRepository.supersedeFact(existing.id, newFact.id)
+          memoryFactRepository.createContradiction({
+            oldFactId: existing.id,
+            newFactId: newFact.id,
+            status: 'auto_resolved',
+            resolution: args.note
+          })
+        }
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Fact "${existing.title}" superseded by "${newFact.title}" (id: ${newFact.id})`
+              text: newFact.id !== existing.id
+                ? `Fact "${existing.title}" superseded by "${newFact.title}" (id: ${newFact.id})`
+                : `Fact "${existing.title}" updated in place (id: ${existing.id})`
             }
           ]
         }

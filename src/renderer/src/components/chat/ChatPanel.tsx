@@ -374,6 +374,7 @@ export default function ChatPanel({
     llmProvider?: string
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
+    sourceAuditRunId?: string
   }): Promise<void> => {
     if (!activeWorkspace) return
     await createConversation(
@@ -384,7 +385,8 @@ export default function ChatPanel({
       (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
       data.routingOverrides,
       data.mcpOverrides,
-      data.communicationTone
+      data.communicationTone,
+      data.sourceAuditRunId
     )
     onNewChatDismiss?.()
     if (data.useIsolatedBranch) {

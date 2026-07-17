@@ -172,6 +172,7 @@ const api = {
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    sourceAuditRunId?: string
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
 
@@ -537,6 +538,9 @@ const api = {
 
   memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }): Promise<{ resolvedCount: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_AUTORESOLVE, args),
+
+  memoryConsolidate: (args: { workspaceId: string }): Promise<{ clustersFound: number; autoMerged: number; reviewItemsCreated: number; staleArchived: number; contradictionsPruned: number; reviewQueueCapped: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONSOLIDATE, args),
 
   memoryReadClaudeMd: (args: { workspacePath: string }): Promise<{ content: string | null; path: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_READ_CLAUDE_MD, args),
@@ -1833,6 +1837,14 @@ const api = {
     findings: AuditFinding[]
   }): Promise<{ conversationId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CONVERT_FINDINGS, args),
+
+  auditHandoffToChat: (args: {
+    workspaceId: string
+    auditRunId: string
+    trackIds?: AuditTrackId[]
+    mode: 'consolidated' | 'split'
+  }): Promise<{ conversationIds: string[]; count: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_HANDOFF_TO_CHAT, args),
 
   auditRerunTrack: (args: {
     workspaceId: string

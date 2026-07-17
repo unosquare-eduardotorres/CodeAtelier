@@ -47,6 +47,7 @@ interface NewChatPageProps {
     llmProvider?: LLMProvider
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
+    sourceAuditRunId?: string
   }) => void
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }
@@ -217,15 +218,28 @@ export default function NewChatPage({
   }, [])
 
   // Pre-fill from audit fix context on mount (once)
+  // When autoSend is set, skip the form and submit immediately.
 
   useEffect(() => {
     if (pendingFixContext) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- consuming pending fix context on mount
-      setTitle(pendingFixContext.title)
-      setDescription(pendingFixContext.description)
-      setMode('plan') // Fixes default to plan mode
-      // Consume — don't re-apply if user navigates back
+      const { title: ctxTitle, description: ctxDesc, autoSend, sourceAuditRunId } = pendingFixContext
+      // Consume immediately to prevent re-application
       setPendingFixContext(null)
+
+      if (autoSend && ctxTitle.trim()) {
+        // Skip form — create conversation and send immediately
+        onCreateChat({
+          title: ctxTitle,
+          description: ctxDesc || undefined,
+          mode: 'plan',
+          sourceAuditRunId
+        })
+      } else {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- consuming pending fix context on mount
+        setTitle(ctxTitle)
+        setDescription(ctxDesc)
+        setMode('plan') // Fixes default to plan mode
+      }
     }
   }, [])
 

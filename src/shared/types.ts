@@ -111,6 +111,8 @@ export interface Conversation {
   handoffContext?: string | null
   /** Frozen model configuration snapshot — NULL for legacy conversations (live resolution) */
   modelConfigSnapshot?: ConversationModelSnapshot | null
+  /** Audit run ID when this conversation was created from the Health page */
+  sourceAuditRunId?: string | null
 }
 
 /**

@@ -39,8 +39,10 @@ interface ConsolidationResult {
 }
 
 class MemoryConsolidationService {
+  private startupTimer: ReturnType<typeof setTimeout> | null = null
   private idleTimer: ReturnType<typeof setInterval> | null = null
   private running = false
+  private boundWorkspaceId: string | null = null
 
   // ── One-time consolidation pass ──────────────────────────────────────
 
@@ -179,6 +181,8 @@ class MemoryConsolidationService {
     for (let i = 1; i < facts.length; i++) {
       facts[i].scopePaths.forEach((p) => allScopePaths.add(p))
       facts[i].tags.forEach((t) => allTags.add(t))
+      // Transfer confirmation events to the canonical fact (summed evidence)
+      memoryFactRepository.reparentConfirmations(facts[i].id, canonical.id)
       memoryFactRepository.mergeFact(facts[i].id, canonical.id)
       merged++
     }
@@ -244,6 +248,7 @@ class MemoryConsolidationService {
           f.tier === 0 &&
           f.confirmationCount === 0 &&
           !f.lastAccessedAt &&
+          f.workspaceId === workspaceId && // Skip global facts (workspaceId IS NULL)
           daysSince(f.createdAt) > STALE_T0_DAYS
         )
 
@@ -298,10 +303,13 @@ class MemoryConsolidationService {
 
   /** Start the periodic idle consolidation job. */
   startIdleJob(workspaceId: string): void {
-    if (this.idleTimer) return
+    if (this.idleTimer || this.startupTimer) return
 
-    // Delay first run
-    setTimeout(() => {
+    this.boundWorkspaceId = workspaceId
+
+    // Delay first run — store handle so stopIdleJob can cancel
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null
       this.runIdleConsolidation(workspaceId)
 
       // Then run periodically
@@ -314,12 +322,22 @@ class MemoryConsolidationService {
     log.info('[Consolidation] Idle job scheduled (6h interval, 5min initial delay)')
   }
 
-  /** Stop the idle job. */
+  /** Stop the idle job for a specific workspace (no-op if different workspace is bound). */
+  stopIdleJobIfWorkspace(workspaceId: string): void {
+    if (this.boundWorkspaceId === workspaceId) this.stopIdleJob()
+  }
+
+  /** Stop the idle job (cancels both startup timer and interval). */
   stopIdleJob(): void {
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer)
+      this.startupTimer = null
+    }
     if (this.idleTimer) {
       clearInterval(this.idleTimer)
       this.idleTimer = null
     }
+    this.boundWorkspaceId = null
   }
 
   /** Run a lightweight consolidation pass (subset of full). */

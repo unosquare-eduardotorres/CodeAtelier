@@ -41,6 +41,15 @@ import { promptOptimizerService } from './prompt-optimizer.service'
 
 const log = chatIpcLogger
 
+/**
+ * Maximum number of concurrent cross-conversation streams.
+ * Set to 1 until Phase 2 lands per-conversation execution isolation
+ * (conversationId-tagged chunk/complete events, per-conversation
+ * getStreamedContent, per-conversation switchMode/compact).
+ * Flip to Infinity when Phase 2 is complete.
+ */
+const MAX_CONCURRENT_STREAMS = 1
+
 // ── StreamContext — explicit per-stream state bag ──
 
 /** Immutable per-stream context — replaces the ad-hoc closure state bag. */
@@ -178,11 +187,12 @@ export class ChatStreamService {
     // compactNeeded is not an intent — keep as direct forwarder
     const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
       if (this.isDisposed) return
+      const convId = chatAgentService.getCurrentConversationId() || ''
       this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
-          conversationId: chatAgentService.getCurrentConversationId() || '',
-          requestId: this.activeRequestId ?? undefined,
+          conversationId: convId,
+          requestId: this.activeRequestIds.get(convId) ?? undefined,
           role: this.currentStreamingRole,
           compactNeeded: data
         })
@@ -225,7 +235,7 @@ export class ChatStreamService {
       if (this.isDisposed) return
       this.safeWindowSend(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId: data.conversationId,
-        requestId: this.activeRequestId ?? undefined,
+        requestId: this.activeRequestIds.get(data.conversationId) ?? undefined,
         budgetCapReached: {
           message: 'Turn budget reached — your work is safe.',
           canContinue: true
@@ -298,7 +308,7 @@ export class ChatStreamService {
           chatAgentService.getWorkspacePath() ?? undefined,
           undefined,
           'specialist-responding',
-          this.activeRequestId ?? undefined,
+          this.activeRequestIds.get(conversationId) ?? undefined,
           chatAgentService.getMode()
         )
       } catch (error) {
@@ -384,18 +394,46 @@ export class ChatStreamService {
         'A message is already being processed in this chat. Please wait for it to complete or stop it first.'
       )
     }
+
+    // A1-FIX: Interim cross-conversation concurrency gate.
+    // Until Phase 2 lands per-conversation execution isolation, reject if
+    // another conversation is already streaming. Prevents the corruption
+    // path where shared global state (accumulatedText, sdkAbortController,
+    // single CLIExecutor) is interleaved between two streams.
+    const activeStreams = lifecycleRegistry.active()
+    if (
+      activeStreams.length >= MAX_CONCURRENT_STREAMS &&
+      !activeStreams.some((s) => s.conversationId === conversationId)
+    ) {
+      const busyConvId = activeStreams[0]?.conversationId ?? 'unknown'
+      log.warn(
+        `[STREAM:cross-conv-rejected] conversationId=${conversationId} ` +
+          `blocked by active stream in ${busyConvId} (MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS})`
+      )
+      throw new Error(
+        'Another chat is still processing. Please wait for it to complete or stop it first.'
+      )
+    }
+
+    // A5-FIX: Begin lifecycle BEFORE the state-machine transition.
+    // If a stale-active registry entry exists for this conversation,
+    // begin()'s supersede path calls existing.abort() → forceReset(convId).
+    // If the SM transition ran first, that forceReset would wipe the
+    // fresh 'chat-agent-streaming' state — leaving lock held + SM idle.
+    const lifecycle = lifecycleRegistry.begin(conversationId)
+    const requestId = lifecycle.requestId!
+
     this.streamingLocks.add(conversationId)
     // CHAT-SM-TRANSITION-UNCHECKED-01: If state machine rejects the transition,
-    // release the lock immediately to prevent a permanent streaming block.
+    // release the lock immediately and abort the just-begun lifecycle.
     if (!conversationStateMachine.transition('sendMessage', conversationId)) {
       this.streamingLocks.delete(conversationId)
+      lifecycle.abort('sm-rejected')
       throw new Error(
         `State machine rejected sendMessage — current state: ${conversationStateMachine.getState(conversationId)}`
       )
     }
 
-    const lifecycle = lifecycleRegistry.begin(conversationId)
-    const requestId = lifecycle.requestId!
     this.activeRequestIds.set(conversationId, requestId)
     this.stoppedConversations.delete(conversationId)
 
@@ -810,7 +848,7 @@ export class ChatStreamService {
       )
     } catch (error) {
       // Lifecycle abort handles: streamingLock, listener removal, state machine force-reset
-      conversationLifecycle.abort('streamError')
+      lifecycleRegistry.abort(conversationId, 'streamError')
       completeStreamMetrics(conversationId, 'error')
 
       eventLoggerService.logSessionFailed({
@@ -1370,18 +1408,50 @@ export class ChatStreamService {
 
   // ── Stop ──
 
-  async stop(): Promise<void> {
-    this.isStopped = true
+  /**
+   * Stop streaming for a specific conversation, or all conversations if no ID given.
+   * Passing no conversationId preserves backward compat with e2e helpers (fixes P6).
+   */
+  async stop(targetConversationId?: string): Promise<void> {
+    if (!targetConversationId) {
+      // Stop ALL active streams (backward compat / e2e)
+      const activeStreams = lifecycleRegistry.active()
+      if (activeStreams.length === 0) {
+        // Nothing streaming — fall through to legacy single-stop path
+        await this.stopSingleConversation(chatAgentService.getCurrentConversationId())
+      } else {
+        for (const stream of activeStreams) {
+          await this.stopSingleConversation(stream.conversationId)
+        }
+      }
+    } else {
+      await this.stopSingleConversation(targetConversationId)
+    }
+    // A3-FIX: Cancel the global query ONCE after all per-conversation stops
+    // have completed. Previously each stopSingleConversation iteration called
+    // cancelCurrentQuery(), which with N streams would kill whichever query
+    // was active on the first call, then no-op on subsequent calls.
+    chatAgentService.cancelCurrentQuery()
+  }
 
-    // Stop keepalive timer immediately on user stop
-    if (this.keepaliveTimer) {
-      clearInterval(this.keepaliveTimer)
-      this.keepaliveTimer = null
+  private async stopSingleConversation(conversationId: string | null): Promise<void> {
+    if (conversationId) {
+      this.stoppedConversations.add(conversationId)
     }
 
-    const conversationId = chatAgentService.getCurrentConversationId()
-    const requestId =
-      this.activeRequestId ?? conversationLifecycle.requestId ?? `req-stop-${Date.now()}`
+    // Stop keepalive timer for this conversation
+    if (conversationId) {
+      const kt = this.keepaliveTimers.get(conversationId)
+      if (kt) {
+        clearInterval(kt)
+        this.keepaliveTimers.delete(conversationId)
+      }
+    }
+
+    const lifecycle = conversationId ? lifecycleRegistry.get(conversationId) : undefined
+    const requestId = conversationId
+      ? (this.activeRequestIds.get(conversationId) ?? lifecycle?.requestId ?? `req-stop-${Date.now()}`)
+      : `req-stop-${Date.now()}`
 
     // Stop specialist pool via callback
     await this.callbacks.onStopPipeline()
@@ -1390,18 +1460,33 @@ export class ChatStreamService {
       // Save partial content
       if (conversationId) {
         try {
-          const partialContent = chatAgentService.getStreamedContent()
+          // A3-FIX: Only read global getStreamedContent() when this conversation
+          // owns the active session. With the A1 gate (MAX_CONCURRENT_STREAMS=1),
+          // at most one stream is active, so this is the common path. For any
+          // other conversation (e.g. background abort), save the plain marker
+          // to avoid writing another stream's content into this conversation.
+          const isActiveSession =
+            chatAgentService.getCurrentConversationId() === conversationId
+          const partialContent = isActiveSession
+            ? chatAgentService.getStreamedContent()
+            : ''
           const contentToSave = partialContent
             ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
             : '⏹ *Generation stopped by user.*'
 
           // Snapshot the active adapter for the stop path — runs from a different
           // IPC entry point and has no per-turn snapshot in scope.
-          // Check persona directly since stream-level streamingRole/specialistMeta
-          // aren't available in this separate IPC entry point.
-          const stopPersona = chatAgentService.getActivePersona()
-          const stopRole = stopPersona ? 'specialist' : chatAgentService.getActiveMessageRole()
-          const stopAgentId = stopPersona?.agentId ?? chatAgentService.getActiveAgentId()
+          // A3-FIX: Only read persona/role from chatAgentService when this
+          // conversation owns the active session, otherwise use defaults.
+          const stopPersona = isActiveSession
+            ? chatAgentService.getActivePersona()
+            : undefined
+          const stopRole = stopPersona ? 'specialist' : (
+            isActiveSession ? chatAgentService.getActiveMessageRole() : 'specialist'
+          )
+          const stopAgentId = stopPersona?.agentId ?? (
+            isActiveSession ? chatAgentService.getActiveAgentId() : 'specialist'
+          )
           const savedMessage = messageRepository.create(
             conversationId,
             stopRole,
@@ -1439,13 +1524,14 @@ export class ChatStreamService {
         }
       }
     } finally {
-      // ALWAYS cancel and abort — even if save/send fails.
+      // ALWAYS abort lifecycle — even if save/send fails.
       // Prevents orphaned CLI processes and stuck streaming locks.
+      // A3-FIX: cancelCurrentQuery() moved to stop() caller — called once
+      // after all per-conversation stops instead of per-iteration.
       if (conversationId) {
         completeStreamMetrics(conversationId, 'stopped')
+        lifecycleRegistry.abort(conversationId, 'userStop')
       }
-      chatAgentService.cancelCurrentQuery()
-      conversationLifecycle.abort('userStop')
     }
   }
 
@@ -1461,16 +1547,28 @@ export class ChatStreamService {
    * Called by the workspace switch IPC handler to prevent cross-workspace lock contamination.
    */
   forceResetIfStuck(): void {
-    const lockStuck = this.streamingLock
+    const activeStreams = lifecycleRegistry.active()
     const smStuck = !conversationStateMachine.isIdle()
-    if (lockStuck || smStuck) {
+    if (activeStreams.length > 0 || this.streamingLocks.size > 0 || smStuck) {
       log.warn(
-        `[STREAM:force-reset] lock=${lockStuck} smState=${conversationStateMachine.currentState} — force-resetting`
+        `[STREAM:force-reset] activeStreams=${activeStreams.length} locks=${this.streamingLocks.size} ` +
+        `smStuck=${smStuck} — aborting all (fixes P12)`
       )
       // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
-      const wsConvId = conversationLifecycle.conversationId
-      if (wsConvId) completeStreamMetrics(wsConvId, 'aborted')
-      conversationLifecycle.abort('workspace-switch')
+      for (const stream of activeStreams) {
+        completeStreamMetrics(stream.conversationId, 'aborted')
+      }
+      lifecycleRegistry.abortAll('workspace-switch')
+      // A9-FIX: When the state machine is stuck but the registry is empty,
+      // abortAll no-ops and the stale SM entries permanently block that
+      // conversation. Force-reset the SM as a fallback.
+      if (smStuck && activeStreams.length === 0) {
+        log.warn('[STREAM:force-reset] SM stuck with empty registry — forcing SM global reset')
+        conversationStateMachine.forceReset()
+      }
+      // Belt-and-suspenders: clear any orphaned locks
+      this.streamingLocks.clear()
+      this.activeRequestIds.clear()
     }
   }
 
@@ -1481,11 +1579,27 @@ export class ChatStreamService {
    */
   clearConversationMemoryState(conversationId: string): void {
     this.injectedFactIds.delete(conversationId)
+    // A10-FIX: Clear stoppedConversations entry for this conversation.
+    // Without this, entries from conversations that are never re-streamed
+    // accumulate in the Set forever.
+    this.stoppedConversations.delete(conversationId)
   }
 
   // N14: Clean up all persistent listeners when the service is replaced
   dispose(): void {
     this.isDisposed = true
+
+    // Abort all active streams before disposal
+    lifecycleRegistry.abortAll('service-disposed')
+    this.streamingLocks.clear()
+    this.activeRequestIds.clear()
+    this.stoppedConversations.clear()
+
+    // Clear all keepalive timers
+    for (const timer of this.keepaliveTimers.values()) {
+      clearInterval(timer)
+    }
+    this.keepaliveTimers.clear()
 
     // N1-FIX: Clear all per-conversation memory dedupe state on service replacement
     this.injectedFactIds.clear()

@@ -213,11 +213,12 @@ export class LifecycleRegistry {
     lifecycle.begin(conversationId)
 
     // Auto-remove from registry when lifecycle completes or is aborted.
-    // Uses a flag to prevent double-removal if abort() triggers disposers
-    // that themselves call registry methods.
+    // A4-FIX: Check both the removed flag AND that the map entry is still
+    // this lifecycle instance. If begin(sameConvId) was called from a
+    // disposer, the map entry is a fresh lifecycle — don't delete it.
     let removed = false
     lifecycle.onDispose(() => {
-      if (!removed) {
+      if (!removed && this.lifecycles.get(conversationId) === lifecycle) {
         removed = true
         this.lifecycles.delete(conversationId)
       }
@@ -244,7 +245,13 @@ export class LifecycleRegistry {
     if (lc?.isActive) {
       lc.abort(reason)
     }
-    this.lifecycles.delete(conversationId)
+    // A4-FIX: Only delete if the map entry is still the same instance.
+    // A disposer inside lc.abort() may call registry.begin(sameConvId),
+    // replacing the map entry with a fresh lifecycle. Unconditionally
+    // deleting here would orphan that new lifecycle.
+    if (this.lifecycles.get(conversationId) === lc) {
+      this.lifecycles.delete(conversationId)
+    }
   }
 
   /** Abort all active lifecycles. Used on workspace switch / force reset. */
@@ -288,11 +295,7 @@ export class LifecycleRegistry {
 
 export const lifecycleRegistry = new LifecycleRegistry()
 
-// ── Backward Compatibility ──
-
-/**
- * @deprecated Use `lifecycleRegistry` instead. This singleton proxy routes to
- * the first active lifecycle (or a detached instance) for code that hasn't
- * been migrated yet. Will be removed after full migration.
- */
-export const conversationLifecycle = new ConversationLifecycle()
+// A12-FIX: Removed deprecated `conversationLifecycle` singleton export.
+// It was a detached ConversationLifecycle instance that silently no-oped
+// for any code importing it — only the rewritten tests referenced it
+// (in a catch comment). All live code uses `lifecycleRegistry`.

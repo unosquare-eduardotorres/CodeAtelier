@@ -48,6 +48,7 @@ export function useInputHistory({
 
   const resetHistory = useCallback((): void => {
     historyIndexRef.current = -1
+    savedDraftRef.current = ''
   }, [])
 
   const handleHistoryKey = useCallback(

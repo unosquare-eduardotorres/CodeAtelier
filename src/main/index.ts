@@ -484,6 +484,10 @@ app.whenReady().then(() => {
     log.debug('Memory decay sweep error (non-fatal):', e)
   }
 
+  // ── Memory Consolidation: idle job starts when a workspace is opened ──
+  // (wired in workspace.ipc.ts handleWorkspaceOpen — not at app launch,
+  //  because there's no real workspace ID until the user opens one)
+
   // ── Embedding: auto-load model at startup (delayed, non-fatal) ──
   setTimeout(() => {
     import('./services/omlx-embedding.service').then(({ omlxEmbeddingProvider }) =>

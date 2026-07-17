@@ -20,15 +20,23 @@ import type {
   AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from '../services/agent-base.service'
+import {
+  formatDirectFindings,
+  formatConsolidatedPlan,
+  buildHandoffTitle
+} from '../services/audit-handoff.service'
 import { processToolChunk } from './tool-chunk-processor'
+import { randomUUID } from 'node:crypto'
 import { createTimedCleanupMap } from './listener-cleanup'
 import {
   auditRepository,
   auditPlanRepository,
   conversationRepository,
-  messageRepository
+  messageRepository,
+  handoffRepository
 } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
+import type { HandoffEnvelope } from '../../shared/handoff-types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { auditPlanGeneratorService } from '../services/audit-plan-generator.service'
 import { detectTechStack } from '../services/tech-stack-detector.service'
@@ -53,6 +61,7 @@ export function registerAuditIpc(mainWindow: BrowserWindow): void {
   registerAuditLifecycleHandlers(mainWindow)
   registerAuditQueryHandlers(mainWindow)
   registerAuditExportHandlers(mainWindow)
+  registerAuditHandoffHandlers(mainWindow)
 }
 
 // ── Lifecycle Handlers ──────────────────────────────────────────────────────
@@ -452,6 +461,9 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── audit:handoffToChat — create conversation(s) from audit findings ──
+  // (Moved to registerAuditHandoffHandlers below)
+
   // ── audit:exportMarkdown — export latest audit as Markdown ─────────
 
   ipcMain.handle(
@@ -601,6 +613,184 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
         'Export Remediation Plan',
         'audit:exportPlan'
       )
+    }
+  )
+}
+
+// ── Handoff Handlers (Audit → Chat) ─────────────────────────────────────────
+
+function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_HANDOFF_TO_CHAT,
+    (
+      event,
+      args: {
+        workspaceId: string
+        auditRunId: string
+        trackIds?: AuditTrackId[]
+        mode: 'consolidated' | 'split'
+      }
+    ): { conversationIds: string[]; count: number } => {
+      validateSender(event)
+
+      const { workspaceId, auditRunId, trackIds, mode } = args
+
+      // Load the audit run with results
+      const run = auditRepository.getLatestForWorkspace(workspaceId)
+      if (!run || run.id !== auditRunId) {
+        throw new Error(`Audit run ${auditRunId} not found for workspace ${workspaceId}`)
+      }
+
+      // Filter to requested tracks (or all completed with actionable findings)
+      const completedResults = run.results.filter(
+        (r) =>
+          r.status === 'completed' &&
+          r.findings.some((f) => f.severity !== 'info') &&
+          (!trackIds || trackIds.includes(r.trackId))
+      )
+
+      if (completedResults.length === 0) {
+        throw new Error('No completed results with actionable findings')
+      }
+
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
+      const llmProvider: LLMProvider = wsSettings.llmProvider ?? 'claude'
+      const conversationIds: string[] = []
+
+      if (mode === 'split') {
+        // Create one conversation per track
+        for (const result of completedResults) {
+          const actionableCount = result.findings.filter((f) => f.severity !== 'info').length
+          const title = buildHandoffTitle('split', result.trackId, actionableCount)
+          const contextMessage = formatDirectFindings(result)
+          const snapshot = buildConversationModelSnapshot(workspaceId, llmProvider)
+
+          const conv = conversationRepository.create(
+            workspaceId,
+            title,
+            'plan',
+            undefined,
+            llmProvider,
+            undefined,
+            undefined,
+            undefined,
+            snapshot,
+            auditRunId
+          )
+
+          messageRepository.create(conv.id, 'user', contextMessage)
+          conversationIds.push(conv.id)
+
+          // Record handoff event
+          const envelope: HandoffEnvelope = {
+            id: randomUUID(),
+            version: 1,
+            source: 'audit',
+            target: 'chat',
+            workspaceId,
+            intent: `Fix ${actionableCount} ${result.trackId} audit finding(s)`,
+            originalGoal: title,
+            contextSummary: `Audit findings from ${result.trackId} track (score: ${result.score ?? 'N/A'}/100)`,
+            completedWork: [],
+            remainingWork: result.findings
+              .filter((f) => f.severity !== 'info')
+              .map((f) => ({
+                title: f.title,
+                description: f.description,
+                priority: f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium'
+              })),
+            decisions: [],
+            constraints: [],
+            risks: [],
+            artifacts: [{ type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }],
+            suggestedTools: [],
+            suggestedSkills: [],
+            filesToReadFirst: result.findings
+              .filter((f) => f.filePath)
+              .map((f) => f.filePath!)
+              .slice(0, 10),
+            commandsToRunFirst: [],
+            sourceSessionId: auditRunId,
+            confidence: 0.8,
+            priority: 'medium',
+            createdAt: new Date().toISOString(),
+            createdBy: 'user'
+          }
+          handoffRepository.create(envelope)
+        }
+
+        auditLog.info(
+          `[audit:handoff] Split: created ${conversationIds.length} conversations from run ${auditRunId}`
+        )
+      } else {
+        // Consolidated: single conversation with all findings
+        const totalIssues = completedResults.flatMap((r) =>
+          r.findings.filter((f) => f.severity !== 'info')
+        ).length
+        const title = buildHandoffTitle('consolidated', undefined, totalIssues)
+        const contextMessage = formatConsolidatedPlan(run)
+        const snapshot = buildConversationModelSnapshot(workspaceId, llmProvider)
+
+        const conv = conversationRepository.create(
+          workspaceId,
+          title,
+          'plan',
+          undefined,
+          llmProvider,
+          undefined,
+          undefined,
+          undefined,
+          snapshot,
+          auditRunId
+        )
+
+        messageRepository.create(conv.id, 'user', contextMessage)
+        conversationIds.push(conv.id)
+
+        // Record handoff event
+        const envelope: HandoffEnvelope = {
+          id: randomUUID(),
+          version: 1,
+          source: 'audit',
+          target: 'chat',
+          workspaceId,
+          intent: `Fix ${totalIssues} audit finding(s) across ${completedResults.length} auditor(s)`,
+          originalGoal: title,
+          contextSummary: `Consolidated audit health report (overall score: ${run.overallScore ?? 'N/A'}/100)`,
+          completedWork: [],
+          remainingWork: completedResults.flatMap((r) =>
+            r.findings
+              .filter((f) => f.severity !== 'info')
+              .map((f) => ({
+                title: f.title,
+                description: f.description,
+                priority: f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium' as const
+              }))
+          ),
+          decisions: [],
+          constraints: [],
+          risks: [],
+          artifacts: [{ type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }],
+          suggestedTools: [],
+          suggestedSkills: [],
+          filesToReadFirst: completedResults
+            .flatMap((r) => r.findings.filter((f) => f.filePath).map((f) => f.filePath!))
+            .slice(0, 10),
+          commandsToRunFirst: [],
+          sourceSessionId: auditRunId,
+          confidence: 0.8,
+          priority: 'medium',
+          createdAt: new Date().toISOString(),
+          createdBy: 'user'
+        }
+        handoffRepository.create(envelope)
+
+        auditLog.info(
+          `[audit:handoff] Consolidated: created conversation ${conv.id} from run ${auditRunId}`
+        )
+      }
+
+      return { conversationIds, count: conversationIds.length }
     }
   )
 }

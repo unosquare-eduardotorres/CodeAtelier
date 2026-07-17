@@ -76,10 +76,9 @@ interface MemoryState {
   triggerBackfill: (workspaceId: string) => Promise<void>
   clearBackfillError: () => void
 
-  // Dedup
+  // Dedup & Consolidation
   scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
-
-  // Dedup scan return type already correct
+  runConsolidation: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
 
   // Search
   setSearchQuery: (query: string) => void
@@ -110,11 +109,16 @@ interface MemoryState {
 export const useMemoryStore = create<MemoryState>((set) => ({
   facts: [],
   contradictions: [],
+  contradictionsPage: 0,
+  contradictionsTotal: 0,
   searchQuery: '',
   embeddingStatus: null,
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
+  claudeMdContent: null,
+  claudeMdPath: null,
+  claudeMdLoading: false,
   feedStatus: 'idle',
   feedSource: null,
   feedMessage: null,
@@ -203,10 +207,15 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   // ── Contradictions ──
 
-  loadContradictions: async () => {
+  loadContradictions: async (status, page = 0) => {
     try {
-      const contradictions = await window.api.memoryContradictionsList()
-      set({ contradictions })
+      const PAGE_SIZE = 25
+      const result = await window.api.memoryContradictionsList({
+        status: status as any,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE
+      })
+      set({ contradictions: result.items, contradictionsPage: page, contradictionsTotal: result.total })
     } catch (error) {
       rendererLog.error('Failed to load contradictions:', error)
     }
@@ -216,10 +225,33 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     try {
       await window.api.memoryContradictionsResolve({ id, resolution, keepFactId, archiveFactId })
       set((state) => ({
-        contradictions: state.contradictions.filter((c) => c.id !== id)
+        contradictions: state.contradictions.filter((c) => c.id !== id),
+        contradictionsTotal: Math.max(0, state.contradictionsTotal - 1)
       }))
     } catch (error) {
       rendererLog.error('Failed to resolve contradiction:', error)
+    }
+  },
+
+  autoResolveDuplicates: async (workspaceId, minCosine = 0.95) => {
+    try {
+      const result = await window.api.memoryDedupAutoresolve({ workspaceId, minCosine })
+      await useMemoryStore.getState().loadContradictions()
+      return result
+    } catch (error) {
+      rendererLog.error('Failed to auto-resolve duplicates:', error)
+      return { resolvedCount: 0 }
+    }
+  },
+
+  loadClaudeMd: async (workspacePath) => {
+    try {
+      set({ claudeMdLoading: true })
+      const result = await window.api.memoryReadClaudeMd({ workspacePath })
+      set({ claudeMdContent: result.content, claudeMdPath: result.path, claudeMdLoading: false })
+    } catch (error) {
+      rendererLog.error('Failed to load CLAUDE.md:', error)
+      set({ claudeMdLoading: false })
     }
   },
 
@@ -308,6 +340,19 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     } catch (error) {
       rendererLog.error('Failed to scan for duplicates:', error)
       return { clustersFound: 0, autoMerged: 0 }
+    }
+  },
+
+  runConsolidation: async (workspaceId) => {
+    try {
+      const result = await window.api.memoryConsolidate({ workspaceId })
+      // Refresh facts + contradictions after consolidation
+      await useMemoryStore.getState().loadFacts(workspaceId)
+      await useMemoryStore.getState().loadContradictions()
+      return result
+    } catch (error) {
+      rendererLog.error('Failed to run consolidation:', error)
+      return { clustersFound: 0, autoMerged: 0, staleArchived: 0 }
     }
   },
 

@@ -692,6 +692,26 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .run(volatile ? 1 : 0, id)
   }
 
+  /** Re-parent confirmation events from one fact to another (used during cluster merge). */
+  reparentConfirmations(fromFactId: string, toFactId: string): number {
+    const result = this.db()
+      .prepare('UPDATE memory_confirmations SET fact_id = ? WHERE fact_id = ?')
+      .run(toFactId, fromFactId)
+
+    // Sync the canonical fact's confirmation_count to match actual evidence
+    if (result.changes > 0) {
+      this.db()
+        .prepare(
+          `UPDATE memory_facts SET confirmation_count = (
+             SELECT COUNT(*) FROM memory_confirmations WHERE fact_id = ?
+           ) WHERE id = ?`
+        )
+        .run(toFactId, toFactId)
+    }
+
+    return result.changes
+  }
+
   /** Mark a fact as merged into a canonical fact and archive it. */
   mergeFact(sourceId: string, canonicalId: string): void {
     this.db()
@@ -705,20 +725,22 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .run(canonicalId, sourceId)
   }
 
-  /** Update a fact's content in-place (for UPDATE action on volatile/dedup). */
+  /** Update a fact's content in-place (for UPDATE action on volatile/dedup).
+   *  Preserves existing tags/scopePaths when the caller doesn't provide them. */
   updateFactInPlace(id: string, params: {
     title: string
     content: string
     tags?: string[]
     scopePaths?: string[]
   }): MemoryFact {
+    // Only overwrite tags/scopePaths when explicitly provided — undefined means "keep existing"
     const row = this.db()
       .prepare(
         `UPDATE memory_facts SET
            title = ?,
            content = ?,
-           tags = ?,
-           scope_paths = ?,
+           tags = COALESCE(?, tags),
+           scope_paths = COALESCE(?, scope_paths),
            updated_at = datetime('now')
          WHERE id = ?
          RETURNING *`
@@ -726,8 +748,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .get(
         params.title,
         params.content,
-        JSON.stringify(params.tags ?? []),
-        JSON.stringify(params.scopePaths ?? []),
+        params.tags !== undefined ? JSON.stringify(params.tags) : null,
+        params.scopePaths !== undefined ? JSON.stringify(params.scopePaths) : null,
         id
       ) as MemoryFactRow
     return mapFactRow(row)

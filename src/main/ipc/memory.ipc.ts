@@ -27,6 +27,7 @@ import { memoryDocWatcherService } from '../services/memory-doc-watcher.service'
 import { buildMemoryGraph } from '../services/memory-graph'
 import { memoryIngestionService } from '../services/memory-ingestion.service'
 import { memoryBootstrapService } from '../services/memory-bootstrap.service'
+import { memoryConsolidationService } from '../services/memory-consolidation.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 
@@ -381,6 +382,16 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         content = readFileSync(filePath, 'utf-8')
       } catch { /* file doesn't exist */ }
       return { content, path: filePath }
+    }
+  )
+
+  // ── Consolidation ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_CONSOLIDATE,
+    async (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return memoryConsolidationService.runFullConsolidation(args.workspaceId)
     }
   )
 

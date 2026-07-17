@@ -429,6 +429,7 @@ export default function MessageInput({
     if (handleHistoryKey(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      resetHistory()
       handleSend()
     }
   }
@@ -520,7 +521,10 @@ export default function MessageInput({
 
         {/* Send button */}
         <button
-          onClick={handleSend}
+          onClick={() => {
+            resetHistory()
+            void handleSend()
+          }}
           disabled={isDisabled || !text.trim()}
           className="flex-shrink-0 p-2 rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-30 disabled:hover:bg-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
           aria-label="Send message (Enter)"

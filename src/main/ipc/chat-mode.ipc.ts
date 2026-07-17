@@ -17,7 +17,7 @@ import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString } from './validate-args'
 import { resolveContextLevel } from './context-usage-level'
-import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { lifecycleRegistry } from '../services/conversation-lifecycle'
 
 const log = chatIpcLogger
 
@@ -33,10 +33,7 @@ export function registerChatModeIpc(): void {
     const mode = requireString(args, 'mode', IPC_CHANNELS.CHAT_UPDATE_MODE)
 
     // CONV-MODIFY-RACE-01: Prevent mode changes during active streaming
-    if (
-      conversationLifecycle.conversationId === conversationId &&
-      conversationLifecycle.isActive
-    ) {
+    if (lifecycleRegistry.isStreaming(conversationId)) {
       throw new Error('Cannot change mode while streaming — stop or wait for completion')
     }
 
@@ -61,10 +58,7 @@ export function registerChatModeIpc(): void {
     const effort = requireString(args, 'effort', IPC_CHANNELS.CHAT_UPDATE_EFFORT)
 
     // CONV-MODIFY-RACE-01: Prevent effort changes during active streaming
-    if (
-      conversationLifecycle.conversationId === conversationId &&
-      conversationLifecycle.isActive
-    ) {
+    if (lifecycleRegistry.isStreaming(conversationId)) {
       throw new Error('Cannot change effort while streaming — stop or wait for completion')
     }
 

@@ -177,6 +177,7 @@ export const IPC_CHANNELS = {
   MEMORY_EMBEDDING_PROGRESS: 'memory:embedding:progress',
   MEMORY_DEDUP_SCAN: 'memory:dedup:scan',
   MEMORY_DEDUP_AUTORESOLVE: 'memory:dedup:autoresolve',
+  MEMORY_CONSOLIDATE: 'memory:consolidate',
   MEMORY_READ_CLAUDE_MD: 'memory:readClaudeMd',
 
   // Memory feed (retained: doc feed + CLAUDE.md regeneration)
@@ -451,6 +452,7 @@ export const IPC_CHANNELS = {
   AUDIT_DELETE_RUN: 'audit:deleteRun',
   AUDIT_GENERATE_PLAN: 'audit:generatePlan',
   AUDIT_GET_PLANS: 'audit:getPlans',
+  AUDIT_HANDOFF_TO_CHAT: 'audit:handoffToChat',
 
   // Plan Hub (unified plan registry)
   PLAN_GET_ALL: 'plan:getAll',

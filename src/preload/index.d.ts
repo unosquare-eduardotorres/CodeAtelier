@@ -141,6 +141,7 @@ interface Api {
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    sourceAuditRunId?: string
   }) => Promise<Conversation>
 
   updateMcpOverrides: (args: {
@@ -321,6 +322,7 @@ interface Api {
   onMemoryEmbeddingProgress: (callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void) => () => void
   memoryDedupScan: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number }>
   memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }) => Promise<{ resolvedCount: number }>
+  memoryConsolidate: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number; reviewItemsCreated: number; staleArchived: number; contradictionsPruned: number; reviewQueueCapped: number }>
   memoryReadClaudeMd: (args: { workspacePath: string }) => Promise<{ content: string | null; path: string }>
   memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
@@ -952,6 +954,12 @@ interface Api {
     workspaceId: string
     findings: AuditFinding[]
   }) => Promise<{ conversationId: string }>
+  auditHandoffToChat: (args: {
+    workspaceId: string
+    auditRunId: string
+    trackIds?: AuditTrackId[]
+    mode: 'consolidated' | 'split'
+  }) => Promise<{ conversationIds: string[]; count: number }>
   auditRerunTrack: (args: {
     workspaceId: string
     trackId: AuditTrackId

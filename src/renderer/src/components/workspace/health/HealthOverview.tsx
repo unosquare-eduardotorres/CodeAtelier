@@ -5,8 +5,8 @@
  * top issues across all tracks. Clicking a card or issue drills into the track.
  */
 
-import { useMemo } from 'react'
-import { ShieldCheck, CheckCheck } from 'lucide-react'
+import { useMemo, useState, useRef, useEffect } from 'react'
+import { ShieldCheck, CheckCheck, MessageSquare, ChevronDown, SplitSquareVertical } from 'lucide-react'
 import { useAuditStore } from '@renderer/store'
 import type { AuditRun, AuditTrackId, AuditFinding } from '../../../../../shared/types'
 import { AUDIT_TRACKS, deriveApplicability } from '../../../../../shared/constants'
@@ -48,11 +48,15 @@ function getInterpretation(score: number): string {
 interface HealthOverviewProps {
   currentRun: AuditRun
   onSelectTrack: (trackId: AuditTrackId) => void
+  onSendAllToChat?: () => void
+  onSplitByTrack?: () => void
 }
 
 export default function HealthOverview({
   currentRun,
-  onSelectTrack
+  onSelectTrack,
+  onSendAllToChat,
+  onSplitByTrack
 }: HealthOverviewProps): React.JSX.Element {
   const tracks = currentRun.selectedTracks
 
@@ -132,6 +136,16 @@ export default function HealthOverview({
           </div>
         </div>
 
+        {/* ── Send to Chat action ── */}
+        {completedCount > 0 && topIssues.length > 0 && onSendAllToChat && (
+          <SendToChatSection
+            issueCount={topIssues.length}
+            completedCount={completedCount}
+            onSendAllToChat={onSendAllToChat}
+            onSplitByTrack={onSplitByTrack}
+          />
+        )}
+
         {/* ── Top issues across all tracks ── */}
         {topIssues.length > 0 && (
           <div>
@@ -179,6 +193,81 @@ export default function HealthOverview({
               ))}
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Send to Chat section (dropdown with split option) ──
+
+function SendToChatSection({
+  issueCount,
+  completedCount,
+  onSendAllToChat,
+  onSplitByTrack
+}: {
+  issueCount: number
+  completedCount: number
+  onSendAllToChat: () => void
+  onSplitByTrack?: () => void
+}): React.JSX.Element {
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return
+    const handler = (e: MouseEvent): void => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [dropdownOpen])
+
+  return (
+    <div className="flex items-center justify-between pt-4 border-t border-border-subtle">
+      <span className="text-xs text-text-secondary">
+        {issueCount} issue{issueCount !== 1 ? 's' : ''} across{' '}
+        {completedCount} auditor{completedCount !== 1 ? 's' : ''}
+      </span>
+      <div className="relative flex items-center" ref={dropdownRef}>
+        <button
+          onClick={onSendAllToChat}
+          className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold rounded-l-lg bg-primary/15 text-primary-text hover:bg-primary/25 transition-colors"
+        >
+          <MessageSquare size={14} />
+          Send All to Chat
+        </button>
+        {onSplitByTrack && (
+          <>
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="flex items-center px-2 py-1.5 text-sm font-semibold rounded-r-lg bg-primary/15 text-primary-text hover:bg-primary/25 transition-colors border-l border-primary/30"
+              aria-label="More send options"
+            >
+              <ChevronDown size={14} />
+            </button>
+            {dropdownOpen && (
+              <div className="absolute right-0 top-full mt-1 z-20 min-w-[200px] rounded-lg bg-surface-float border border-border-subtle shadow-lg py-1">
+                <button
+                  onClick={() => {
+                    setDropdownOpen(false)
+                    onSplitByTrack()
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-surface-overlay transition-colors text-left"
+                >
+                  <SplitSquareVertical size={14} className="text-text-muted" />
+                  <div>
+                    <div className="font-medium">Split by Track</div>
+                    <div className="text-[11px] text-text-muted">Create one chat per auditor</div>
+                  </div>
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

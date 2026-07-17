@@ -94,7 +94,8 @@ export interface ChatState {
     llmProvider?: LLMProvider,
     routingOverrides?: Partial<ModelRoleMap>,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null
+    communicationTone?: CommunicationTone | null,
+    sourceAuditRunId?: string
   ) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
@@ -294,7 +295,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     llmProvider?: LLMProvider,
     routingOverrides?: Partial<ModelRoleMap>,
     mcpOverrides?: Record<string, boolean>,
-    communicationTone?: CommunicationTone | null
+    communicationTone?: CommunicationTone | null,
+    sourceAuditRunId?: string
   ) => {
     const conversation = await window.api.createConversation({
       workspaceId,
@@ -304,7 +306,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       llmProvider,
       routingOverrides,
       mcpOverrides,
-      communicationTone
+      communicationTone,
+      sourceAuditRunId
     })
     set((state) => ({
       conversations: [conversation, ...state.conversations],

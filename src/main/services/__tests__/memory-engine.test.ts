@@ -246,6 +246,122 @@ test('scanForDuplicates: returns clustersFound=0 when no embedded facts', async 
   }
 })
 
+// ── Regression tests for memory overhaul fixes ──
+
+// A1: drainClassifyQueue re-entrancy guard
+test('regression A1: MemoryEngineService has draining guard field', async () => {
+  // Verify the draining field exists on the service class (prevents re-entrant drain loops)
+  const { memoryEngineService } = await import('../memory-engine.service')
+  // The draining field is private, so we check via hasOwnProperty on the instance
+  assert.ok(
+    'draining' in (memoryEngineService as unknown as Record<string, unknown>),
+    'memoryEngineService should have a "draining" guard field'
+  )
+  assert.equal(
+    (memoryEngineService as unknown as Record<string, boolean>).draining,
+    false,
+    'draining should default to false'
+  )
+})
+
+// A3: Capture cap not consumed on handleDuplicate confirm
+test('regression A3: handleDuplicate returns a fact (non-null) but should NOT consume cap', () => {
+  // This test validates the design: handleDuplicate returns a MemoryFact (truthy),
+  // but cap increment was moved to handleUpdate/handleContradiction only.
+  // We verify by checking that the pipeline result branch in writeFact does NOT
+  // call incrementCaptureCap. Since handleDuplicate returns non-null, the old code
+  // `if (result !== null) incrementCaptureCap` would have consumed a cap.
+  // The fix removes that branch entirely — we verify the source doesn't contain it.
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'memory-engine.service.ts'),
+    'utf-8'
+  )
+
+  // The pipeline-result branch should NOT contain incrementCaptureCap
+  const pipelineBlock = source.slice(
+    source.indexOf('if (result !== undefined)'),
+    source.indexOf('// 4. No match or no embedding')
+  )
+  assert.ok(
+    !pipelineBlock.includes('incrementCaptureCap'),
+    'Pipeline-result branch should NOT call incrementCaptureCap (caps are in mutating handlers)'
+  )
+
+  // But handleUpdate and handleContradiction SHOULD contain it
+  const handleUpdateBlock = source.slice(
+    source.indexOf('private handleUpdate('),
+    source.indexOf('private classifyAmbiguous(')
+  )
+  assert.ok(
+    handleUpdateBlock.includes('incrementCaptureCap'),
+    'handleUpdate should call incrementCaptureCap'
+  )
+
+  const handleContradictionBlock = source.slice(
+    source.indexOf('private handleContradiction('),
+    source.indexOf('// ── Evidence-based promotion')
+  )
+  assert.ok(
+    handleContradictionBlock.includes('incrementCaptureCap'),
+    'handleContradiction should call incrementCaptureCap'
+  )
+})
+
+// A6: drainClassifyQueue fast-paths
+test('regression A6: drainClassifyQueue has fast-path branches for high similarity', () => {
+  // Verify the drain loop mirrors the pipeline's branch order
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'memory-engine.service.ts'),
+    'utf-8'
+  )
+
+  const drainBlock = source.slice(
+    source.indexOf('private async drainClassifyQueue'),
+    source.indexOf('/** Handle a contradiction')
+  )
+
+  // Should have volatile + same-category UPDATE fast-path
+  assert.ok(
+    drainBlock.includes('handleUpdate(bestMatch.fact, item.params, item.embedding)'),
+    'drainClassifyQueue should have handleUpdate fast-path for volatile+same-category'
+  )
+
+  // Should have duplicate fast-path
+  assert.ok(
+    drainBlock.includes('handleDuplicate(bestMatch.fact, item.params.sourceType)'),
+    'drainClassifyQueue should have handleDuplicate fast-path for ≥0.90 similarity'
+  )
+})
+
+// A4: scanForDuplicates reparents confirmations before merge
+test('regression A4: scanForDuplicates reparents confirmations before mergeFact', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'memory-engine.service.ts'),
+    'utf-8'
+  )
+
+  const scanBlock = source.slice(
+    source.indexOf('scanForDuplicates(workspaceId'),
+    source.indexOf('// ── Haiku classifier')
+  )
+
+  // reparentConfirmations should appear before mergeFact
+  const reparentIdx = scanBlock.indexOf('reparentConfirmations')
+  const mergeIdx = scanBlock.indexOf('mergeFact')
+  assert.ok(reparentIdx > 0, 'scanForDuplicates should call reparentConfirmations')
+  assert.ok(mergeIdx > 0, 'scanForDuplicates should call mergeFact')
+  assert.ok(
+    reparentIdx < mergeIdx,
+    'reparentConfirmations must be called BEFORE mergeFact in scanForDuplicates'
+  )
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

@@ -62,9 +62,9 @@ if (loaded) {
 
     test('initial_state_not_streaming', () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      assert.equal((service as any).streamingLock, false)
-      assert.equal((service as any).isStopped, false)
-      assert.equal((service as any).activeRequestId, null)
+      assert.equal((service as any).streamingLocks.size, 0)
+      assert.equal((service as any).stoppedConversations.size, 0)
+      assert.equal((service as any).activeRequestIds.size, 0)
     })
 
     test('isDisposed_starts_false', () => {
@@ -79,9 +79,9 @@ if (loaded) {
       assert.equal(ids.size, 0)
     })
 
-    test('keepaliveTimer_starts_null', () => {
+    test('keepaliveTimers_starts_empty', () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      assert.equal((service as any).keepaliveTimer, null)
+      assert.equal((service as any).keepaliveTimers.size, 0)
     })
   })
 
@@ -258,9 +258,9 @@ if (loaded) {
   // ── acquireStreamLock ───────────────────────────────────────────────
 
   describe('ChatStreamService — acquireStreamLock', () => {
-    test('throws_when_already_streaming', () => {
+    test('throws_when_same_conv_already_streaming', () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      ;(service as any).streamingLock = true
+      ;(service as any).streamingLocks.add('conv-1')
 
       const acquire = (service as any).acquireStreamLock.bind(service)
       assert.throws(() => acquire('conv-1'))
@@ -268,7 +268,7 @@ if (loaded) {
 
     test('returns_lock_shape_when_not_streaming', () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      ;(service as any).streamingLock = false
+      // streamingLocks is empty by default — no setup needed
 
       try {
         const acquire = (service as any).acquireStreamLock.bind(service)
@@ -303,28 +303,29 @@ if (loaded) {
   // ── stop() ──────────────────────────────────────────────────────────
 
   describe('ChatStreamService — stop', () => {
-    test('sets_isStopped_flag', async () => {
+    test('stop_with_convId_marks_stopped', async () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
       try {
-        await service.stop()
+        await service.stop('conv-stop-test')
       } catch {
         // May throw if dependencies not available
       }
-      assert.equal((service as any).isStopped, true)
+      assert.equal((service as any).stoppedConversations.has('conv-stop-test'), true)
     })
 
-    test('clears_keepalive_timer', async () => {
+    test('clears_keepalive_timer_for_conversation', async () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      ;(service as any).keepaliveTimer = setInterval(() => {}, 100000)
+      const timer = setInterval(() => {}, 100000)
+      ;(service as any).keepaliveTimers.set('conv-timer-test', timer)
 
       try {
-        await service.stop()
+        await service.stop('conv-timer-test')
       } catch {
         // Clear manually if stop fails
-        clearInterval((service as any).keepaliveTimer)
-        ;(service as any).keepaliveTimer = null
+        clearInterval(timer)
+        ;(service as any).keepaliveTimers.delete('conv-timer-test')
       }
-      assert.equal((service as any).keepaliveTimer, null)
+      assert.equal((service as any).keepaliveTimers.has('conv-timer-test'), false)
     })
   })
 
@@ -347,7 +348,11 @@ if (loaded) {
         planInjected: false
       }
       try {
-        const listeners = build(ctx, () => {}, () => {})
+        // buildStreamListeners now requires a lifecycle parameter
+        const { ConversationLifecycle } = require('../conversation-lifecycle')
+        const lifecycle = new ConversationLifecycle()
+        lifecycle.begin('conv-1')
+        const listeners = build(ctx, lifecycle, () => {}, () => {})
         assert.ok(typeof listeners.onChunk === 'function')
         assert.ok(typeof listeners.onComplete === 'function')
         assert.ok(typeof listeners.onIntent === 'function')
@@ -366,15 +371,20 @@ if (loaded) {
       const register = (service as any).registerStreamDisposers
       if (typeof register === 'function') {
         try {
+          const { ConversationLifecycle } = require('../conversation-lifecycle')
+          const lifecycle = new ConversationLifecycle()
+          lifecycle.begin('conv-disposer-test')
           register.call(
             service,
+            lifecycle,
+            'conv-disposer-test',
             () => {}, // onChunk
             () => {}, // onComplete
             async () => {}, // onIntent
             () => {} // onPlanEvent
           )
         } catch {
-          // Expected if conversationLifecycle not ready
+          // Expected if dependencies not ready
         }
       }
     })
@@ -383,9 +393,14 @@ if (loaded) {
   // ── finalizeStreamMessage ───────────────────────────────────────────
 
   describe('ChatStreamService — finalizeStreamMessage', () => {
-    test('skips_when_isStopped', async () => {
+    test('skips_when_stopped', async () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      ;(service as any).isStopped = true
+      ;(service as any).stoppedConversations.add('conv-1')
+
+      // finalizeStreamMessage now requires a lifecycle parameter
+      const { ConversationLifecycle } = require('../conversation-lifecycle')
+      const mockLifecycle = new ConversationLifecycle()
+      mockLifecycle.begin('conv-1')
 
       const finalize = (service as any).finalizeStreamMessage.bind(service)
       // Should return early without throwing
@@ -395,12 +410,16 @@ if (loaded) {
         streamingRole: 'specialist',
         streamedContent: 'test content',
         adapterAgentId: 'specialist'
-      })
+      }, mockLifecycle)
     })
 
     test('skips_when_requestId_mismatch', async () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
-      ;(service as any).isStopped = false
+
+      // Create a lifecycle with a different requestId
+      const { ConversationLifecycle } = require('../conversation-lifecycle')
+      const mockLifecycle = new ConversationLifecycle()
+      mockLifecycle.begin('conv-1')
 
       const finalize = (service as any).finalizeStreamMessage.bind(service)
       // Should return early due to requestId mismatch with lifecycle
@@ -410,7 +429,7 @@ if (loaded) {
         streamingRole: 'specialist',
         streamedContent: 'test content',
         adapterAgentId: 'specialist'
-      })
+      }, mockLifecycle)
       // No assertion needed — just verifying no throw
     })
   })

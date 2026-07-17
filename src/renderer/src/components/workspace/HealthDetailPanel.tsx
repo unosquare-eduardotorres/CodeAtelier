@@ -96,6 +96,10 @@ interface HealthDetailPanelProps {
   onAutoFix: (finding: AuditFinding, trackName: string) => void
   onClearSelected?: () => void
   onExport?: () => void
+  /** Audit → Chat handoff: send all findings to a single chat */
+  onSendAllToChat?: () => void
+  /** Audit → Chat handoff: open track picker for split mode */
+  onSplitByTrack?: () => void
 }
 
 export default function HealthDetailPanel({
@@ -110,7 +114,9 @@ export default function HealthDetailPanel({
   onRerunTrack,
   onAutoFix,
   onClearSelected,
-  onExport
+  onExport,
+  onSendAllToChat,
+  onSplitByTrack
 }: HealthDetailPanelProps): React.JSX.Element {
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
   const [runningView, setRunningView] = useState<'stream' | 'findings'>('stream')
@@ -119,7 +125,14 @@ export default function HealthDetailPanel({
   if (!activeTrackId) {
     // Default to the Overview dashboard once a run has produced results.
     if (currentRun && currentRun.results.some((r) => r.status === 'completed')) {
-      return <HealthOverview currentRun={currentRun} onSelectTrack={onSelectTrack} />
+      return (
+        <HealthOverview
+          currentRun={currentRun}
+          onSelectTrack={onSelectTrack}
+          onSendAllToChat={onSendAllToChat}
+          onSplitByTrack={onSplitByTrack}
+        />
+      )
     }
     return <EmptyState mode={mode} detectedTechs={currentRun?.detectedTechs ?? []} />
   }

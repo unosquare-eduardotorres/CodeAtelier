@@ -23,7 +23,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 120
+const CURRENT_SCHEMA_VERSION = 121
 
 export interface Migration {
   version: number
@@ -3251,6 +3251,19 @@ export const migrations: Migration[] = [
     up: (db) => {
       db.exec(`ALTER TABLE messages ADD COLUMN plan_action TEXT DEFAULT NULL`)
       dbLogger.info('[migration-120] ✓ Added plan_action column to messages')
+    }
+  },
+
+  // ── v121: Add source_audit_run_id to conversations (Audit → Chat handoff) ──
+  {
+    version: 121,
+    name: 'add-source-audit-run-id-to-conversations',
+    up: (db) => {
+      db.exec(`ALTER TABLE conversations ADD COLUMN source_audit_run_id TEXT DEFAULT NULL`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_conversations_audit_run ON conversations(source_audit_run_id) WHERE source_audit_run_id IS NOT NULL`
+      )
+      dbLogger.info('[migration-121] ✓ Added source_audit_run_id to conversations')
     }
   }
 ]

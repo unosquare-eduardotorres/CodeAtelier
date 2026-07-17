@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   claude_session_id TEXT,
   persona_specialist_id TEXT DEFAULT NULL REFERENCES specialists(id) ON DELETE SET NULL,
   llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
-  effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))
+  effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high')),
+  source_audit_run_id TEXT DEFAULT NULL
 );
 
 -- Messages: individual chat messages
