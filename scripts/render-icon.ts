@@ -61,14 +61,18 @@ async function applySquircleMask(
     deviceScaleFactor: 1,
   })
 
+  // Apple icon grid: artwork occupies 824/1024 (~80.5%) of canvas, centered
+  const inner = Math.round(size * (824 / 1024))
+
   const base64 = fs.readFileSync(srcPath).toString('base64')
   const html = `<!DOCTYPE html>
 <html><head><style>
   * { margin: 0; padding: 0; }
-  html, body { width: ${size}px; height: ${size}px; background: transparent; overflow: hidden; }
+  html, body { width: ${size}px; height: ${size}px; background: transparent; overflow: hidden;
+               display: flex; align-items: center; justify-content: center; }
   .icon {
-    width: ${size}px;
-    height: ${size}px;
+    width: ${inner}px;
+    height: ${inner}px;
     border-radius: 22.37%;
     overflow: hidden;
     background-image: url(data:image/png;base64,${base64});

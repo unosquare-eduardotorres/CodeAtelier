@@ -34,7 +34,7 @@ import { chatIpcLogger } from '../logger'
 import { getSessionEventRouter } from './session-event-router'
 import { IntentRouter } from './intent-router'
 import { conversationStateMachine } from './conversation-state-machine'
-import { conversationLifecycle } from './conversation-lifecycle'
+import { lifecycleRegistry, type ConversationLifecycle } from './conversation-lifecycle'
 import { hookEngine } from './hook-engine.service'
 import { planRegistryService } from './plan-registry.service'
 import { promptOptimizerService } from './prompt-optimizer.service'
@@ -91,12 +91,13 @@ export class ChatStreamService {
   private callbacks: PipelineCallbacks
   private intentRouter: IntentRouter
 
-  /** Instance-level flag to prevent duplicate message saves when stop is called mid-stream */
-  private isStopped = false
+  /** Per-conversation stop flags — prevents duplicate message saves when stop is called mid-stream */
+  private stoppedConversations = new Set<string>()
 
-  /** Prevents concurrent stream() calls — rejects if already streaming */
-  private streamingLock = false
-  private activeRequestId: string | null = null
+  /** Per-conversation streaming locks — rejects if that conversation is already streaming */
+  private streamingLocks = new Set<string>()
+  /** Per-conversation active request IDs */
+  private activeRequestIds = new Map<string, string>()
 
   /** Per-conversation set of already-injected memory fact IDs (prevents re-injection). */
   private injectedFactIds = new Map<string, Set<string>>()
@@ -110,7 +111,7 @@ export class ChatStreamService {
    * minutes. Without this, the renderer's 2-minute safety timer fires and
    * disconnects the UI while the backend is still working.
    */
-  private keepaliveTimer: ReturnType<typeof setInterval> | null = null
+  private keepaliveTimers = new Map<string, ReturnType<typeof setInterval>>()
 
   /** Cleanup functions for all persistent event listeners registered in registerEventForwarders(). */
   private eventCleanups: Array<() => void> = []
@@ -371,37 +372,39 @@ export class ChatStreamService {
   private acquireStreamLock(conversationId: string): {
     requestId: string
     signal: AbortSignal
+    lifecycle: ConversationLifecycle
     resolveDone: () => void
     rejectDone: (err: Error) => void
     done: Promise<void>
   } {
-    if (this.streamingLock || !conversationStateMachine.isIdle()) {
-      log.warn('[STREAM:concurrent-rejected] Already streaming or state machine not idle')
+    // Per-conversation lock: only reject if THIS conversation is already streaming
+    if (this.streamingLocks.has(conversationId) || !conversationStateMachine.isIdle(conversationId)) {
+      log.warn(`[STREAM:concurrent-rejected] Conversation ${conversationId} is already streaming`)
       throw new Error(
-        'A message is already being processed. Please wait for it to complete or stop it first.'
+        'A message is already being processed in this chat. Please wait for it to complete or stop it first.'
       )
     }
-    this.streamingLock = true
+    this.streamingLocks.add(conversationId)
     // CHAT-SM-TRANSITION-UNCHECKED-01: If state machine rejects the transition,
     // release the lock immediately to prevent a permanent streaming block.
     if (!conversationStateMachine.transition('sendMessage', conversationId)) {
-      this.streamingLock = false
+      this.streamingLocks.delete(conversationId)
       throw new Error(
-        `State machine rejected sendMessage — current state: ${conversationStateMachine.currentState}`
+        `State machine rejected sendMessage — current state: ${conversationStateMachine.getState(conversationId)}`
       )
     }
 
-    const signal = conversationLifecycle.begin(conversationId)
-    const requestId = conversationLifecycle.requestId!
-    this.activeRequestId = requestId
-    this.isStopped = false
+    const lifecycle = lifecycleRegistry.begin(conversationId)
+    const requestId = lifecycle.requestId!
+    this.activeRequestIds.set(conversationId, requestId)
+    this.stoppedConversations.delete(conversationId)
 
     // C3-FIX: Register lock-release disposer immediately at acquisition time.
     // This guarantees Stop (abort) during Stage 6.5's async optimization
     // releases the lock — even though registerStreamDisposers runs later (Stage 8).
-    conversationLifecycle.onDispose(() => {
-      this.streamingLock = false
-      this.activeRequestId = null
+    lifecycle.onDispose(() => {
+      this.streamingLocks.delete(conversationId)
+      this.activeRequestIds.delete(conversationId)
     })
 
     let resolveDone!: () => void
@@ -411,7 +414,7 @@ export class ChatStreamService {
       rejectDone = reject
     })
 
-    return { requestId, signal, resolveDone, rejectDone, done }
+    return { requestId, signal: lifecycle.signal!, lifecycle, resolveDone, rejectDone, done }
   }
 
   /**

@@ -3153,6 +3153,21 @@ export const migrations: Migration[] = [
         dbLogger.info(`[migration-119] Purged ${purged.changes} pending contradiction rows`)
       }
 
+      // ── 1b. Deduplicate resolved contradiction pairs before creating UNIQUE index ──
+      // handleContradiction may have inserted (A,B) and (B,A) as separate resolved rows.
+      // Keep only the newest row per normalized pair; delete the rest.
+      const deduped = db.prepare(`
+        DELETE FROM memory_contradictions
+        WHERE rowid NOT IN (
+          SELECT MAX(rowid)
+          FROM memory_contradictions
+          GROUP BY MIN(old_fact_id, new_fact_id), MAX(old_fact_id, new_fact_id)
+        )
+      `).run()
+      if (deduped.changes > 0) {
+        dbLogger.info(`[migration-119] Deduped ${deduped.changes} duplicate contradiction pairs`)
+      }
+
       // ── 2. Add order-normalized UNIQUE index on contradiction pairs ──
       // Prevents duplicate contradiction records for the same pair (A,B) or (B,A).
       db.exec(`
