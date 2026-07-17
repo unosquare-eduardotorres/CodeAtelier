@@ -276,6 +276,8 @@ export default function MessageInput({
     useChatActions()
   const { text, setText } = useDraftText(currentConversationId)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isStreaming = useChatStore((s) => s.isStreaming)
+  const conversationId = activeConversation?.id
 
   // ── Message history navigation (ArrowUp/Down) ──
   const { handleHistoryKey, resetHistory } = useInputHistory({
@@ -284,9 +286,6 @@ export default function MessageInput({
     textareaRef,
     conversationId
   })
-
-  const isStreaming = useChatStore((s) => s.isStreaming)
-  const conversationId = activeConversation?.id
   const conversationSpecialists = useConversationSpecialists(conversationId)
   const conversationTokenEstimates = useConversationTokenEstimates(conversationId)
   const agentStatus = useWorkspaceStore((s) => s.agentStatus)
