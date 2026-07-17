@@ -20,7 +20,8 @@ import {
   usePushToTalk,
   useSlashCommands,
   useDraftText,
-  useSpecialistWarningFlow
+  useSpecialistWarningFlow,
+  useInputHistory
 } from './message-input'
 
 // ─── Pure Helpers ─────────────────────────────────────────
@@ -275,6 +276,15 @@ export default function MessageInput({
     useChatActions()
   const { text, setText } = useDraftText(currentConversationId)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // ── Message history navigation (ArrowUp/Down) ──
+  const { handleHistoryKey, resetHistory } = useInputHistory({
+    text,
+    setText,
+    textareaRef,
+    conversationId
+  })
+
   const isStreaming = useChatStore((s) => s.isStreaming)
   const conversationId = activeConversation?.id
   const conversationSpecialists = useConversationSpecialists(conversationId)
@@ -417,6 +427,7 @@ export default function MessageInput({
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (showCommands && handleCommandKey(e, commandCtx)) return
+    if (handleHistoryKey(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -457,6 +468,7 @@ export default function MessageInput({
           onChange={(e) => {
             setText(e.target.value)
             setSelectedCommandIndex(0)
+            resetHistory()
           }}
           onKeyDown={handleKeyDown}
           placeholder={getPlaceholderText(isInitializing, activeConversation)}
