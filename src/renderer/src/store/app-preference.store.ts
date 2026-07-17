@@ -16,7 +16,8 @@ const defaultPreferences: AppPreferences = {
   updateGithubOwner: '',
   updateGithubRepo: '',
   context7ApiKey: '',
-  notificationsEnabled: true
+  notificationsEnabled: true,
+  parallelBuildAgents: 3
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -30,7 +31,8 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   updateGithubOwner: 'update_github_owner',
   updateGithubRepo: 'update_github_repo',
   context7ApiKey: 'context7_api_key',
-  notificationsEnabled: 'notifications_enabled'
+  notificationsEnabled: 'notifications_enabled',
+  parallelBuildAgents: 'parallel_build_agents'
 }
 
 interface AppPreferenceState {
@@ -41,7 +43,7 @@ interface AppPreferenceState {
   error: string | null
 
   loadPreferences: () => Promise<void>
-  setPreference: (key: AppPreferenceKey, value: boolean | string) => Promise<void>
+  setPreference: (key: AppPreferenceKey, value: boolean | string | number) => Promise<void>
   reset: () => void
 }
 
@@ -78,7 +80,7 @@ export const useAppPreferenceStore = create<AppPreferenceState>((set) => ({
     }
   },
 
-  setPreference: async (key: AppPreferenceKey, value: boolean | string) => {
+  setPreference: async (key: AppPreferenceKey, value: boolean | string | number) => {
     const previous = useAppPreferenceStore.getState().preferences
     set((state) => ({
       preferences: {
@@ -139,6 +141,9 @@ export const useAppTheme = (): AppTheme =>
 
 export const useNotificationsEnabled = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.notificationsEnabled)
+
+export const useParallelBuildAgents = (): number =>
+  useAppPreferenceStore((state) => state.preferences.parallelBuildAgents)
 
 export const useAppPreferenceActions = (): Pick<
   AppPreferenceState,

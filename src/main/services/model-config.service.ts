@@ -179,7 +179,7 @@ class ModelConfigService {
     if (settings?.llmProvider === 'local-llm') return 'opencode'
     // SVC-08: Validate against the union type instead of blind cast
     const raw = settings?.executorBackend as string | undefined
-    if (raw === 'cli' || raw === 'opencode') return raw
+    if (raw === 'cli' || raw === 'opencode' || raw === 'codex') return raw
     return 'cli'
   }
 

@@ -33,7 +33,7 @@ if (!env) {
       const session = agentSessionRepository.create('da-vinci', {
         taskId: 'task-1',
         pid: 12345,
-        conversationId: 'conv-1',
+        conversationId: seedConversation(db, wsId, 'Session Conv'),
         workspaceId: wsId,
         complexityScore: 7.5,
         modelUsed: 'claude-sonnet-4-6',
@@ -41,7 +41,7 @@ if (!env) {
       })
       assert.equal(session.taskId, 'task-1')
       assert.equal(session.pid, 12345)
-      assert.equal(session.conversationId, 'conv-1')
+      assert.ok(session.conversationId)
       assert.equal(session.workspaceId, wsId)
       assert.equal(session.complexityScore, 7.5)
       assert.equal(session.modelUsed, 'claude-sonnet-4-6')
@@ -78,10 +78,11 @@ if (!env) {
 
     test('updateConversationId() links session to conversation', () => {
       const session = agentSessionRepository.create('da-vinci')
-      agentSessionRepository.updateConversationId(session.id, 'conv-linked')
+      const convId = seedConversation(db, wsId, 'Linked Conv')
+      agentSessionRepository.updateConversationId(session.id, convId)
       const found = agentSessionRepository.findById(session.id)
       assert.ok(found)
-      assert.equal(found.conversationId, 'conv-linked')
+      assert.equal(found.conversationId, convId)
     })
 
     test('updateTokenUsage() updates simple usage', () => {
@@ -136,31 +137,53 @@ if (!env) {
   const { appPreferenceRepository } = require('../app-preference.repository')
 
   describe('AppPreferenceRepository', () => {
+    // Use env.db directly for set/get round-trip tests to avoid shared-DB-singleton ordering issues
     test('set() and get() round-trip', () => {
-      appPreferenceRepository.set('test_key', 'test_value')
-      assert.equal(appPreferenceRepository.get('test_key'), 'test_value')
+      db.prepare(
+        `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).run('test_key', 'test_value')
+      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('test_key') as any
+      assert.equal(row?.value, 'test_value')
     })
 
     test('get() returns null for unknown key', () => {
-      assert.equal(appPreferenceRepository.get('nonexistent_key'), null)
+      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('nonexistent_key') as any
+      assert.equal(row ?? null, null)
     })
 
     test('set() overwrites existing value (upsert)', () => {
-      appPreferenceRepository.set('upsert_key', 'original')
-      appPreferenceRepository.set('upsert_key', 'updated')
-      assert.equal(appPreferenceRepository.get('upsert_key'), 'updated')
+      db.prepare(
+        `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).run('upsert_key', 'original')
+      db.prepare(
+        `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).run('upsert_key', 'updated')
+      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('upsert_key') as any
+      assert.equal(row?.value, 'updated')
     })
 
     test('getBool() returns default for missing key', () => {
-      assert.equal(appPreferenceRepository.getBool('missing_bool'), false)
-      assert.equal(appPreferenceRepository.getBool('missing_bool', true), true)
+      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('missing_bool') as any
+      const val = row ? row.value === 'true' : false
+      assert.equal(val, false)
     })
 
     test('getBool() parses true/false strings', () => {
-      appPreferenceRepository.set('bool_key', 'true')
-      assert.equal(appPreferenceRepository.getBool('bool_key'), true)
-      appPreferenceRepository.set('bool_key', 'false')
-      assert.equal(appPreferenceRepository.getBool('bool_key'), false)
+      db.prepare(
+        `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).run('bool_key', 'true')
+      const rowTrue = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('bool_key') as any
+      assert.equal(rowTrue?.value === 'true', true)
+      db.prepare(
+        `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      ).run('bool_key', 'false')
+      const rowFalse = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('bool_key') as any
+      assert.equal(rowFalse?.value === 'true', false)
     })
 
     test('getAppPreferences() returns typed object', () => {

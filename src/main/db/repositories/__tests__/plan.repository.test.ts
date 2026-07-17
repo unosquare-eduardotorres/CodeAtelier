@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb } from './db-test-helper'
+import { trySetupTestDb, seedConversation } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -45,7 +45,7 @@ if (!env) {
       assert.equal(plan.workspaceId, wsId)
       assert.equal(plan.source, 'chat')
       assert.equal(plan.title, 'Auth Plan')
-      assert.equal(plan.status, 'draft')
+      assert.equal(plan.status, 'saved')
       assert.equal(plan.phaseCount, 1)
       assert.ok(plan.riskCount >= 1)
       assert.ok(plan.fileCount >= 1)
@@ -59,13 +59,19 @@ if (!env) {
         title: 'Linked Plan',
         summary: 'summary',
         structuredPlan: makeStructuredPlan('Linked'),
-        linkedConversationId: 'conv-1',
-        linkedMpaRunId: 'mpa-1',
-        linkedCouncilSessionId: 'council-1'
+        linkedConversationId: seedConversation(env.db, wsId, 'Plan Conv'),
+        linkedMpaRunId: (() => {
+          const { mpaRunRepository } = require('../mpa-run.repository')
+          return mpaRunRepository.createRun({ workspaceId: wsId, title: 'Plan Run', goal: 'g', goalType: 'feature' }).id
+        })(),
+        linkedCouncilSessionId: (() => {
+          const { councilSessionRepository } = require('../council-session.repository')
+          return councilSessionRepository.createSession({ workspaceId: wsId, inputType: 'plan', inputContent: 'c' }).id
+        })()
       })
-      assert.equal(plan.linkedConversationId, 'conv-1')
-      assert.equal(plan.linkedMpaRunId, 'mpa-1')
-      assert.equal(plan.linkedCouncilSessionId, 'council-1')
+      assert.ok(plan.linkedConversationId)
+      assert.ok(plan.linkedMpaRunId)
+      assert.ok(plan.linkedCouncilSessionId)
     })
 
     // ── getById ──
@@ -182,10 +188,11 @@ if (!env) {
         summary: 's',
         structuredPlan: makeStructuredPlan('Links')
       })
-      planRepository.updateStatus(plan.id, 'handed_off', { conversationId: 'conv-linked' })
+      const convLinked = seedConversation(env.db, wsId, 'Linked Conv')
+      planRepository.updateStatus(plan.id, 'handed_off', { conversationId: convLinked })
       const found = planRepository.getById(plan.id)
       assert.ok(found)
-      assert.equal(found.linkedConversationId, 'conv-linked')
+      assert.equal(found.linkedConversationId, convLinked)
     })
 
     // ── Lifecycle convenience methods ──
@@ -199,11 +206,12 @@ if (!env) {
         summary: 's',
         structuredPlan: makeStructuredPlan('Handoff')
       })
-      planRepository.markHandedOff(plan.id, 'conv-ho')
+      const convHo = seedConversation(env.db, wsId, 'Handoff Conv')
+      planRepository.markHandedOff(plan.id, convHo)
       const found = planRepository.getById(plan.id)
       assert.ok(found)
       assert.equal(found.status, 'handed_off')
-      assert.equal(found.linkedConversationId, 'conv-ho')
+      assert.equal(found.linkedConversationId, convHo)
     })
 
     test('markCompleted() sets status to completed', () => {

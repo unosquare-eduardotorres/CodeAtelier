@@ -91,7 +91,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
     clearBackfillError,
     scanForDuplicates,
     startFeed,
-    dismissFeed,
     setSearchQuery
   } = useMemoryStore()
 

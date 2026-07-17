@@ -59,7 +59,7 @@ export function seedWorkspace(db: Database.Database, id = 'test-workspace-1'): s
   db.prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`).run(
     id,
     'Test Project',
-    '/tmp/test-project'
+    `/tmp/test-project-${id}`
   )
   return id
 }

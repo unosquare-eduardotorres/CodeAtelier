@@ -61,6 +61,7 @@ import type {
   GrillTrackScore,
   GrillStructuredPlan,
   PlanRecord,
+  PlanStatusHistoryEntry,
   MemoryFact,
   MemoryFactCategory,
   MemoryFactTier,
@@ -995,6 +996,7 @@ interface Api {
     planId: string
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
+  planGetStatusHistory: (args: { planId: string }) => Promise<PlanStatusHistoryEntry[]>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void

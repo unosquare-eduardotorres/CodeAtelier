@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb } from './db-test-helper'
+import { trySetupTestDb, seedConversation } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -24,7 +24,7 @@ if (!env) {
         workspaceId: wsId,
         inputType: 'plan',
         inputContent: 'Review this plan',
-        conversationId: 'conv-1'
+        conversationId: seedConversation(env.db, wsId, 'Council Conv')
       })
       assert.ok(session.id)
       assert.equal(session.workspaceId, wsId)
@@ -41,7 +41,7 @@ if (!env) {
     test('createSession() accepts optional fields', () => {
       const session = councilSessionRepository.createSession({
         workspaceId: wsId,
-        inputType: 'code',
+        inputType: 'requirement',
         inputContent: 'Review code',
         grillSessionId: 'grill-1',
         structuredPlanJson: '{"plan":true}'
@@ -75,10 +75,10 @@ if (!env) {
         inputType: 'plan',
         inputContent: 'content'
       })
-      councilSessionRepository.updatePhase(session.id, 'advisor_review')
+      councilSessionRepository.updatePhase(session.id, 'deliberating')
       const found = councilSessionRepository.findById(session.id)
       assert.ok(found)
-      assert.equal(found.phase, 'advisor_review')
+      assert.equal(found.phase, 'deliberating')
     })
 
     // ── appendAdvisorReview ──

@@ -63,8 +63,6 @@ export default function ModelConfigTab(): React.JSX.Element {
         </div>
         <ProviderCards
           claudeCliStatus={config.claudeCliStatus}
-          fastMode={config.fastMode}
-          budgetCapUsd={config.budgetCapUsd}
           executorBackend={config.executorBackend}
           connectionDraft={config.connectionDraft}
           isConnectionDirty={config.isConnectionDirty}
@@ -75,8 +73,6 @@ export default function ModelConfigTab(): React.JSX.Element {
           localBaseUrl={config.localBaseUrl}
           isRemoteServer={config.isRemoteServer}
           platformInfo={config.platformInfo}
-          onFastModeToggle={config.handleFastModeToggle}
-          onBudgetCapChange={config.handleBudgetCapChange}
           onExecutorBackendChange={config.handleExecutorBackendChange}
           onHostChange={config.setLocalHost}
           onPortChange={config.setLocalPort}

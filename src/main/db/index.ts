@@ -23,7 +23,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 121
+const CURRENT_SCHEMA_VERSION = 122
 
 export interface Migration {
   version: number
@@ -1739,7 +1739,8 @@ export const migrations: Migration[] = [
             content_md TEXT NOT NULL,
             attachments_json TEXT DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            parent_message_id TEXT REFERENCES messages_new(id)
+            parent_message_id TEXT REFERENCES messages_new(id),
+            tool_activities_json TEXT DEFAULT NULL
           );
           INSERT INTO messages_new SELECT * FROM messages;
           DROP TABLE messages;
@@ -3264,6 +3265,34 @@ export const migrations: Migration[] = [
         `CREATE INDEX IF NOT EXISTS idx_conversations_audit_run ON conversations(source_audit_run_id) WHERE source_audit_run_id IS NOT NULL`
       )
       dbLogger.info('[migration-121] ✓ Added source_audit_run_id to conversations')
+    }
+  },
+
+  // ── Migration 122: Plan Detail — status history + revision linking ──
+  {
+    version: 122,
+    name: 'add-plan-status-history-and-revision-link',
+    up: (db) => {
+      db.exec(`
+        -- Status timeline for the Plan Detail page
+        CREATE TABLE IF NOT EXISTS plan_status_history (
+          id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          plan_id       TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+          from_status   TEXT DEFAULT NULL,
+          to_status     TEXT NOT NULL,
+          changed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          actor         TEXT NOT NULL DEFAULT 'user'
+        );
+        CREATE INDEX IF NOT EXISTS idx_plan_status_history_plan
+          ON plan_status_history(plan_id, changed_at);
+      `)
+
+      // Revision linking: soft-link to the plan this one supersedes
+      try {
+        db.exec(`ALTER TABLE plans ADD COLUMN previous_plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL`)
+      } catch { /* column may already exist */ }
+
+      dbLogger.info('[migration-122] ✓ Created plan_status_history table + previous_plan_id column')
     }
   }
 ]

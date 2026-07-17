@@ -460,6 +460,7 @@ export const IPC_CHANNELS = {
   PLAN_UPDATE_STATUS: 'plan:updateStatus',
   PLAN_DELETE: 'plan:delete',
   PLAN_IMPORT: 'plan:import',
+  PLAN_GET_STATUS_HISTORY: 'plan:getStatusHistory',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',

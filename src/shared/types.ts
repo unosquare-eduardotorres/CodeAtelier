@@ -406,6 +406,8 @@ export interface AppPreferences {
   updateGithubRepo: string
   context7ApiKey?: string
   notificationsEnabled: boolean
+  /** Max concurrent build tasks within a Blueprint wave (1 = sequential, clamped 1–6). */
+  parallelBuildAgents: number
 }
 
 // ── Workspace Deploy Models ──
@@ -1386,8 +1388,12 @@ export type LocalLLMStrategy = 'default' | 'native'
  * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk)
  *
  * Stored in workspace settings_json.executorBackend. Default: 'cli'.
+ *
+ * - 'cli' — Claude CLI (claude -p mode)
+ * - 'opencode' — OpenCode multi-provider runtime
+ * - 'codex' — OpenAI Codex CLI (codex exec mode)
  */
-export type ExecutorBackend = 'cli' | 'opencode'
+export type ExecutorBackend = 'cli' | 'opencode' | 'codex'
 
 /**
  * Typed workspace settings — single source of truth for keys stored in
@@ -1861,6 +1867,17 @@ export interface PlanRecord {
   riskCount: number
   createdAt: string
   updatedAt: string
+  previousPlanId: string | null
+}
+
+/** A single entry in a plan's status timeline. */
+export interface PlanStatusHistoryEntry {
+  id: string
+  planId: string
+  fromStatus: PlanStatus | null
+  toStatus: PlanStatus
+  changedAt: string
+  actor: string // 'user' | 'system'
 }
 
 export interface PlanFilters {

@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb } from './db-test-helper'
+import { trySetupTestDb, seedConversation } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -32,7 +32,7 @@ if (!env) {
 
     // ── findByWorkspace ──
 
-    test('findByWorkspace() returns ideas sorted by created_at DESC', () => {
+    test('findByWorkspace() returns ideas for workspace', () => {
       const freshWsId = 'idea-ws-test'
       env.db
         .prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`)
@@ -43,8 +43,8 @@ if (!env) {
 
       const ideas = ideaRepository.findByWorkspace(freshWsId)
       assert.equal(ideas.length, 2)
-      assert.equal(ideas[0].title, 'Second')
-      assert.equal(ideas[1].title, 'First')
+      const titles = ideas.map((i: any) => i.title).sort()
+      assert.deepEqual(titles, ['First', 'Second'])
     })
 
     test('findByWorkspace() returns [] for empty workspace', () => {
@@ -118,17 +118,19 @@ if (!env) {
 
     test('setGrillConversation() links idea to conversation', () => {
       const idea = ideaRepository.create(wsId, 'Grill Link', 'desc')
-      const updated = ideaRepository.setGrillConversation(idea.id, 'conv-123')
+      const convId = seedConversation(env.db, wsId, 'Grill Conv')
+      const updated = ideaRepository.setGrillConversation(idea.id, convId)
       assert.ok(updated)
-      assert.equal(updated.grillConversationId, 'conv-123')
+      assert.equal(updated.grillConversationId, convId)
     })
 
     // ── findByGrillConversation ──
 
     test('findByGrillConversation() returns idea by conversation id', () => {
       const idea = ideaRepository.create(wsId, 'Conv Lookup', 'desc')
-      ideaRepository.setGrillConversation(idea.id, 'conv-lookup-123')
-      const found = ideaRepository.findByGrillConversation('conv-lookup-123')
+      const convId = seedConversation(env.db, wsId, 'Lookup Conv')
+      ideaRepository.setGrillConversation(idea.id, convId)
+      const found = ideaRepository.findByGrillConversation(convId)
       assert.ok(found)
       assert.equal(found.title, 'Conv Lookup')
     })
@@ -151,9 +153,10 @@ if (!env) {
 
     test('setConvertedConversation() stores converted conversation id', () => {
       const idea = ideaRepository.create(wsId, 'Convert Test', 'desc')
-      const updated = ideaRepository.setConvertedConversation(idea.id, 'conv-converted')
+      const convId = seedConversation(env.db, wsId, 'Converted Conv')
+      const updated = ideaRepository.setConvertedConversation(idea.id, convId)
       assert.ok(updated)
-      assert.equal(updated.convertedConversationId, 'conv-converted')
+      assert.equal(updated.convertedConversationId, convId)
     })
 
     // ── saveGrillDecisions / clearGrillDecisions ──

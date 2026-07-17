@@ -12,6 +12,7 @@ import { usePlanStore, useFilteredPlans } from '@renderer/store/plan.store'
 import PlanCard from './plans/PlanCard'
 import PlanFilters from './plans/PlanFilters'
 import PlanEmptyState from './plans/PlanEmptyState'
+import PlanDetailPage from './plans/PlanDetailPage'
 import { usePlanActions } from './plans/usePlanActions'
 
 interface PlansPageProps {
@@ -26,7 +27,8 @@ export default function PlansPage({
   onNavigateToCouncil
 }: PlansPageProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
-  const { plans, isLoading, loadPlans, reset } = usePlanStore()
+  const { plans, isLoading, loadPlans, reset, selectedPlanId, selectPlan, clearSelectedPlan } =
+    usePlanStore()
   const filteredPlans = useFilteredPlans()
 
   const workspaceId = activeWorkspace?.id
@@ -51,6 +53,18 @@ export default function PlansPage({
       reset()
     }
   }, [workspaceId, loadPlans, reset])
+
+  // ── Detail view ──
+  if (selectedPlanId) {
+    return (
+      <PlanDetailPage
+        onBack={clearSelectedPlan}
+        onNavigateToChat={onNavigateToChat}
+        onNavigateToGoals={onNavigateToGoals}
+        onNavigateToCouncil={onNavigateToCouncil}
+      />
+    )
+  }
 
   // ── Loading skeleton ──
 
@@ -98,6 +112,7 @@ export default function PlansPage({
             <PlanCard
               key={plan.id}
               plan={plan}
+              onViewDetail={(p) => selectPlan(p.id)}
               onOpenInChat={handleOpenInChat}
               onStartGoal={handleStartGoal}
               onCouncilReview={handleCouncilReview}

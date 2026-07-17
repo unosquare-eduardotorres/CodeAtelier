@@ -15,7 +15,8 @@ import {
   mergeChatSegments,
   createStoppedMessage,
   createOptimisticUserMessage,
-  createErrorMessage
+  createErrorMessage,
+  parseBlockedByError
 } from './chat-action-utils'
 import type {
   CommunicationTone,
@@ -601,21 +602,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const rawErrorMsg = error instanceof Error ? error.message : String(error)
 
-      // G2-FIX: Parse the F6 blockedBy tag from the backend error and replace
-      // the raw UUID with the blocking conversation's title. The backend error
-      // arrives as: "…stop it first. (blockedBy:<uuid>)" — Electron's IPC may
-      // also prefix with "Error invoking remote method …:".
-      let errorMsg = rawErrorMsg
-      const blockedByMatch = rawErrorMsg.match(/\(blockedBy:([^)]+)\)/)
-      if (blockedByMatch) {
-        const blockedConvId = blockedByMatch[1]
-        const blockedConv = get().conversations.find((c) => c.id === blockedConvId)
-        const chatLabel = blockedConv
-          ? `"${blockedConv.title}"`
-          : 'another chat'
-        // Strip IPC wrapper prefix + blockedBy tag → clean, user-friendly message
-        errorMsg = `Another chat (${chatLabel}) is still processing. Please wait for it to complete or stop it first.`
-      }
+      // G2-FIX: Parse the F6 blockedBy tag and build a clean user-facing message.
+      // Extracted to parseBlockedByError (chat-action-utils.ts) for testability.
+      // @see chat-stream.service.ts acquireStreamLock — F6-FIX throws the tagged error.
+      const { errorMsg } = parseBlockedByError(rawErrorMsg, get().conversations)
 
       const { activeConversation: conv } = get()
       if (conv) {

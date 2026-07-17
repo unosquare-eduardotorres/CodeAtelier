@@ -159,11 +159,10 @@ test.describe('Model Config Detail', () => {
 
     await expect(section).toBeVisible()
 
-    // Should have Fast Mode and Budget content
+    // Should have Execution Backend selector
     const sectionText = await section.textContent()
-    const hasFastMode = /Fast Mode/i.test(sectionText ?? '')
-    const hasBudget = /Budget/i.test(sectionText ?? '')
-    expect(hasFastMode || hasBudget).toBeTruthy()
+    const hasExecutionBackend = /Execution Backend/i.test(sectionText ?? '')
+    expect(hasExecutionBackend).toBeTruthy()
   })
 
   test('model routing section shows role pickers (Plan/Build/Background)', async ({

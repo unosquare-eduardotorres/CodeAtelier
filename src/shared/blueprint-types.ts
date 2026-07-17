@@ -185,6 +185,8 @@ export interface BlueprintPhaseProgressPayload {
   kind?: 'text' | 'tool'
   /** Full tool activity data — enables expandable input/output panels in the UI */
   toolActivity?: Partial<ToolActivity> & { id: string; toolName: string }
+  /** Build-phase task ID — routes progress into the correct per-task lane. */
+  taskId?: string
 }
 
 export interface BlueprintPhaseCompletePayload {

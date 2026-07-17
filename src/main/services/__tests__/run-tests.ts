@@ -60,6 +60,7 @@ const TEST_FILES: string[] = [
   './chat-stream-role-tagging.test',
   // Run 9 — renderer utilities (pure logic, no DOM)
   './sentence-buffer.test',
+  './parse-blocked-by-error.test',
   // ─── Run 11: Prompt optimization (Opus 4.8) ───
   './prompt-verbosity.test',
   './prompt-lean-identity.test',

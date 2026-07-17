@@ -35,6 +35,7 @@ export function runDropSpecialistMcpColumnsMigration(db: Database.Database): voi
       alias TEXT DEFAULT NULL,
       avatar_url TEXT DEFAULT NULL,
       is_core INTEGER NOT NULL DEFAULT 0,
+      description TEXT DEFAULT NULL,
       workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
       build_status TEXT NOT NULL DEFAULT 'ready' CHECK (build_status IN ('pending', 'building', 'ready', 'failed')),
       stack_fingerprint TEXT,
@@ -48,13 +49,13 @@ export function runDropSpecialistMcpColumnsMigration(db: Database.Database): voi
   db.exec(`
     INSERT INTO specialists_new (
       id, agent_id, display_name, icon, color, prompt, priority, is_active,
-      source_yaml, alias, avatar_url, is_core,
+      source_yaml, alias, avatar_url, is_core, description,
       workspace_id, build_status, stack_fingerprint, detected_techs, last_built_at,
       created_at, updated_at
     )
     SELECT
       id, agent_id, display_name, icon, color, prompt, priority, is_active,
-      source_yaml, alias, avatar_url, is_core,
+      source_yaml, alias, avatar_url, is_core, description,
       workspace_id, build_status, stack_fingerprint, detected_techs, last_built_at,
       created_at, updated_at
     FROM specialists;

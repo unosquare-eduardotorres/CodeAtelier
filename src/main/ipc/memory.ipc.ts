@@ -58,7 +58,14 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         20,
         args.category
       )
-      return results.map((r) => ({ ...r.fact, _score: r.score, _matchType: r.matchType }))
+      const facts = results.map((r) => r.fact)
+      const evidence = memoryFactRepository.getEvidenceCounts(facts.map((f) => f.id))
+      return results.map((r) => ({
+        ...r.fact,
+        evidenceCount: evidence.get(r.fact.id) ?? 0,
+        _score: r.score,
+        _matchType: r.matchType
+      }))
     }
   )
 

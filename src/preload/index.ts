@@ -58,6 +58,7 @@ import type {
   GrillTrackScore,
   GrillStructuredPlan,
   PlanRecord,
+  PlanStatusHistoryEntry,
   MemoryFact,
   MemoryFactCategory,
   MemoryFactTier,
@@ -1901,6 +1902,11 @@ const api = {
     workspaceId: string
   }): Promise<{ conversationId: string; planId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
+
+  planGetStatusHistory: (args: {
+    planId: string
+  }): Promise<PlanStatusHistoryEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_STATUS_HISTORY, args),
 
 
 

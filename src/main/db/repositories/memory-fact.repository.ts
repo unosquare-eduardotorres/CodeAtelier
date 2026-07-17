@@ -691,6 +691,23 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return row.total
   }
 
+  /** Map of factId → non-auto_dedup confirmation count, for a set of facts. */
+  getEvidenceCounts(ids: string[]): Map<string, number> {
+    const counts = new Map<string, number>()
+    if (ids.length === 0) return counts
+    const placeholders = ids.map(() => '?').join(',')
+    const rows = this.db()
+      .prepare(
+        `SELECT fact_id, COUNT(*) AS n
+         FROM memory_confirmations
+         WHERE fact_id IN (${placeholders}) AND source_type != 'auto_dedup'
+         GROUP BY fact_id`
+      )
+      .all(...ids) as Array<{ fact_id: string; n: number }>
+    for (const r of rows) counts.set(r.fact_id, r.n)
+    return counts
+  }
+
   // ── Volatile / merge helpers ────────────────────────────────────────────
 
   /** Mark a fact as volatile (version/count patterns). */

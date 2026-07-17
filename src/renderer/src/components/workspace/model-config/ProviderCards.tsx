@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react'
-import { Loader2, Cloud, Cpu, Zap, DollarSign, CheckCircle2, ChevronDown, ChevronRight, Save } from 'lucide-react'
+import { Loader2, Cloud, Cpu, CheckCircle2, ChevronDown, ChevronRight, Save, Code2 } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import { useToastStore } from '@renderer/store'
 import { OMLX_DEFAULT_PORT } from '../../../../../shared/constants'
@@ -194,23 +194,43 @@ function ProviderCardHeader({
 
 interface ClaudeProviderCardProps {
   claudeCliStatus: ClaudeCliStatus | null
-  fastMode: boolean
-  budgetCapUsd: number | undefined
   executorBackend: ExecutorBackend
-  onFastModeToggle: () => void
-  onBudgetCapChange: (value: string) => void
   onExecutorBackendChange: (backend: ExecutorBackend) => void
 }
 
 function ClaudeProviderCard({
   claudeCliStatus,
-  fastMode,
-  budgetCapUsd,
   executorBackend,
-  onFastModeToggle,
-  onBudgetCapChange,
   onExecutorBackendChange
 }: ClaudeProviderCardProps): React.JSX.Element {
+  const addToast = useToastStore((s) => s.addToast)
+
+  const handleBackendChange = (backend: ExecutorBackend): void => {
+    if (backend === 'codex') {
+      // Validate Codex CLI is installed before switching
+      window.api
+        .validateSubscriptions()
+        .then((result) => {
+          if (result.codexCli?.installed) {
+            onExecutorBackendChange(backend)
+          } else {
+            addToast({
+              message: 'Codex CLI not found. Install it with: npm install -g @openai/codex',
+              type: 'error'
+            })
+          }
+        })
+        .catch(() => {
+          addToast({
+            message: 'Could not verify Codex CLI installation',
+            type: 'error'
+          })
+        })
+      return
+    }
+    onExecutorBackendChange(backend)
+  }
+
   const statusDot: StatusDotColor = claudeCliStatus
     ? claudeCliStatus.installed ? 'green' : 'gray'
     : 'gray'
@@ -237,11 +257,12 @@ function ClaudeProviderCard({
         <div className="flex gap-2">
           {([
             { value: 'cli' as ExecutorBackend, label: 'Claude CLI', desc: 'Max subscription billing', icon: <Cloud size={14} /> },
-            { value: 'opencode' as ExecutorBackend, label: 'OpenCode', desc: 'Multi-provider runtime', icon: <Cpu size={14} /> }
+            { value: 'opencode' as ExecutorBackend, label: 'OpenCode', desc: 'Multi-provider runtime', icon: <Cpu size={14} /> },
+            { value: 'codex' as ExecutorBackend, label: 'Codex', desc: 'OpenAI coding agent', icon: <Code2 size={14} /> }
           ]).map((opt) => (
             <button
               key={opt.value}
-              onClick={() => onExecutorBackendChange(opt.value)}
+              onClick={() => handleBackendChange(opt.value)}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors flex-1 ${
                 executorBackend === opt.value
                   ? 'border-primary bg-primary-muted text-primary-text'
@@ -257,72 +278,6 @@ function ClaudeProviderCard({
           ))}
         </div>
       </div>
-
-      {/* ── Fast Mode ── */}
-      <SettingsCard>
-        <div className="flex items-center justify-between">
-          <div className="flex-1 mr-4">
-            <div className="flex items-center gap-2">
-              <Zap size={14} className={fastMode ? 'text-mode-build-text' : 'text-text-muted'} />
-              <h4 className="text-sm font-medium text-text-primary">Fast Mode</h4>
-              {fastMode && (
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-mode-build-muted text-mode-build-text font-medium">
-                  ON
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-text-secondary mt-1">
-              {fastMode
-                ? 'Responses ~2.5× faster at 3× lower cost. Only affects chat.'
-                : 'Uses included Claude Max usage at standard speed. Enable for faster responses.'}
-            </p>
-          </div>
-          <button
-            onClick={onFastModeToggle}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-              fastMode ? 'bg-mode-build' : 'bg-border-default'
-            }`}
-            role="switch"
-            aria-checked={fastMode}
-            aria-label="Toggle fast mode"
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                fastMode ? 'translate-x-6' : 'translate-x-1'
-              }`}
-            />
-          </button>
-        </div>
-      </SettingsCard>
-
-      {/* ── Per-Turn Budget Cap ── */}
-      <SettingsCard>
-        <div className="flex items-start gap-3">
-          <DollarSign size={14} className="text-text-muted mt-0.5 shrink-0" />
-          <div className="flex-1">
-            <h4 className="text-sm font-medium text-text-primary">Per-Turn Budget Cap (USD)</h4>
-            <p className="text-xs text-text-secondary mt-0.5 mb-3">
-              Optional. Leave empty for no cap (recommended for Claude Max subscriptions). If set,
-              build mode gets 2× and audits get 3× this amount.
-            </p>
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              placeholder="No cap (recommended)"
-              value={budgetCapUsd ?? ''}
-              onChange={(e) => void onBudgetCapChange(e.target.value)}
-              className="w-48 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-            {budgetCapUsd != null && budgetCapUsd > 0 && (
-              <p className="text-xs text-text-muted mt-2">
-                Plan: ${budgetCapUsd.toFixed(2)} · Build: ${(budgetCapUsd * 2).toFixed(2)} ·
-                Audit: ${(budgetCapUsd * 3).toFixed(2)}
-              </p>
-            )}
-          </div>
-        </div>
-      </SettingsCard>
 
       {/* Footer */}
       <div className="mt-3 flex items-center gap-1 text-xs text-text-muted">
@@ -590,8 +545,6 @@ function OmlxProviderCard({
 
 export interface ProviderCardsProps {
   claudeCliStatus: ClaudeCliStatus | null
-  fastMode: boolean
-  budgetCapUsd: number | undefined
   executorBackend: ExecutorBackend
   connectionDraft: ConnectionDraft
   isConnectionDirty: boolean
@@ -602,8 +555,6 @@ export interface ProviderCardsProps {
   localBaseUrl: string
   isRemoteServer: boolean
   platformInfo: PlatformInfo | null
-  onFastModeToggle: () => void
-  onBudgetCapChange: (value: string) => void
   onExecutorBackendChange: (backend: ExecutorBackend) => void
   onHostChange: (host: string) => void
   onPortChange: (port: number) => void
@@ -623,11 +574,7 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
     <div data-testid="provider-toggle" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
       <ClaudeProviderCard
         claudeCliStatus={props.claudeCliStatus}
-        fastMode={props.fastMode}
-        budgetCapUsd={props.budgetCapUsd}
         executorBackend={props.executorBackend}
-        onFastModeToggle={props.onFastModeToggle}
-        onBudgetCapChange={props.onBudgetCapChange}
         onExecutorBackendChange={props.onExecutorBackendChange}
       />
       <OmlxProviderCard

@@ -65,6 +65,15 @@ export function registerPlanIpc(): void {
     return { deleted }
   })
 
+  // ── plan:getStatusHistory — Fetch plan status timeline ──
+  ipcMain.handle(
+    IPC_CHANNELS.PLAN_GET_STATUS_HISTORY,
+    (event, args: { planId: string }) => {
+      validateSender(event)
+      return planRepository.getStatusHistory(args.planId)
+    }
+  )
+
   // ── plan:import — Create new conversation pre-loaded with plan content ──
   ipcMain.handle(
     IPC_CHANNELS.PLAN_IMPORT,

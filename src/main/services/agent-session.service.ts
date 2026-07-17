@@ -1212,6 +1212,10 @@ export class AgentSessionService extends AgentBaseService {
 
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
+        case 'codex':
+          throw new Error(
+            'Codex executor backend is not yet implemented. Switch to Claude CLI or OpenCode in Model Configuration.'
+          )
         case 'opencode': {
           const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>)
           executorStream = this.executeOpenCodeStream({

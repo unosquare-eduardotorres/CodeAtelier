@@ -77,6 +77,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/chat-stream-role-tagging.test',
   // Run 9 — renderer utilities (pure logic, no DOM)
   '../services/__tests__/sentence-buffer.test',
+  '../services/__tests__/parse-blocked-by-error.test',
   // ─── Run 11: Prompt optimization (Opus 4.8) ───
   '../services/__tests__/prompt-verbosity.test',
   '../services/__tests__/prompt-lean-identity.test',
@@ -349,6 +350,7 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/mpa-run.repository.test',
   '../db/repositories/__tests__/council-session.repository.test',
   '../db/repositories/__tests__/plan.repository.test',
+  '../db/repositories/__tests__/plan-status-history.test',
   '../db/repositories/__tests__/remaining-repos.test',
   '../db/repositories/__tests__/code-graph-repos.test',
   '../db/repositories/__tests__/migration-suite.test',

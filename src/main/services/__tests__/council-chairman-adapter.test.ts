@@ -88,7 +88,7 @@ describe('CouncilChairmanRoleAdapter', () => {
 
   test('getMcpStrategy_returns_none', () => {
     const a = createAdapter()
-    assert.equal((a as any).getMcpStrategy(), 'none')
+    assert.equal((a as any).getMcpStrategy(), 'custom')
   })
 
   test('buildMcpConfig_returns_no_tools', () => {
@@ -100,7 +100,7 @@ describe('CouncilChairmanRoleAdapter', () => {
       conversationId: null,
       controlCallbacks: { onPlan: () => {}, onAskUser: () => {} }
     })
-    assert.deepEqual(result.allowedTools, [])
+    assert.deepEqual(result.allowedTools, ['mcp__memory__memory_search'])
     assert.ok(result.disallowedTools!.length > 0)
   })
 

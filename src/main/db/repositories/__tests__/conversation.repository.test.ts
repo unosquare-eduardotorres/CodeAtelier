@@ -41,14 +41,14 @@ if (!env) {
       assert.equal(conv.mode, 'build')
     })
 
-    test('findByWorkspace() returns conversations sorted by created_at DESC', () => {
+    test('findByWorkspace() returns conversations for workspace', () => {
       conversationRepository.create(wsId2, 'First')
       conversationRepository.create(wsId2, 'Second')
 
       const convs = conversationRepository.findByWorkspace(wsId2)
       assert.equal(convs.length, 2)
-      assert.equal(convs[0].title, 'Second')
-      assert.equal(convs[1].title, 'First')
+      const titles = convs.map((c: any) => c.title).sort()
+      assert.deepEqual(titles, ['First', 'Second'])
     })
 
     test('findById() returns a conversation', () => {

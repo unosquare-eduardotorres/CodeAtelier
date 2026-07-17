@@ -412,6 +412,8 @@ export class ChatStreamService {
       )
       // F6-FIX: Include the blocking conversationId so the renderer can
       // tell the user which chat is busy (e.g. map to a conversation title).
+      // The `(blockedBy:<uuid>)` tag is parsed by parseBlockedByError() in
+      // renderer/src/store/chat-action-utils.ts — keep the format in sync.
       throw new Error(
         `Another chat is still processing. Please wait for it to complete or stop it first. (blockedBy:${busyConvId})`
       )
@@ -1478,10 +1480,14 @@ export class ChatStreamService {
       ? (this.activeRequestIds.get(conversationId) ?? lifecycle?.requestId ?? `req-stop-${Date.now()}`)
       : `req-stop-${Date.now()}`
 
-    // Stop specialist pool via callback
-    await this.callbacks.onStopPipeline()
-
     try {
+      // P2-FIX: onStopPipeline() moved INSIDE the try block so that if it
+      // throws, the finally still runs completeStreamMetrics + lifecycleRegistry.abort.
+      // Previously it sat above try — a throw would strand this conversation's
+      // lock (gate 1 rejects sends until forceResetIfStuck's 5-min timer).
+      // The R1 loop catch in stop() protects siblings; this protects the self.
+      await this.callbacks.onStopPipeline()
+
       // Save partial content
       if (conversationId) {
         try {

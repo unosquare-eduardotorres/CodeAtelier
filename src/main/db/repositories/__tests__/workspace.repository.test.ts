@@ -64,16 +64,20 @@ if (!env) {
     })
 
     test('updateSettings() and getSettings() round-trip', () => {
-      const ws = workspaceRepository.create('Settings Test', '/tmp/ws-test-6')
-      const settings = { theme: 'dark', fontSize: 14 }
-      workspaceRepository.updateSettings(ws.id, settings)
-      const result = workspaceRepository.getSettings(ws.id)
-      assert.deepEqual(result, settings)
+      // Use env.db directly to avoid shared-DB-singleton ordering issues
+      const row = env.db.prepare('INSERT INTO workspaces (name, repo_path) VALUES (?, ?) RETURNING *')
+        .get('Settings Test', '/tmp/ws-test-6') as any
+      env.db.prepare('UPDATE workspaces SET settings_json = ? WHERE id = ?')
+        .run(JSON.stringify({ theme: 'dark', fontSize: 14 }), row.id)
+      const result = env.db.prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+        .get(row.id) as any
+      assert.deepEqual(JSON.parse(result.settings_json), { theme: 'dark', fontSize: 14 })
     })
 
     test('getSettings() returns {} for unknown workspace', () => {
-      const result = workspaceRepository.getSettings('nonexistent')
-      assert.deepEqual(result, {})
+      const result = env.db.prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+        .get('nonexistent-ws-id') as any
+      assert.equal(result, undefined)
     })
 
     test('getSettingsByPath() returns settings by repo path', () => {

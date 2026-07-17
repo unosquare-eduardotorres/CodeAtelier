@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb } from './db-test-helper'
+import { trySetupTestDb, seedConversation } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -43,14 +43,17 @@ if (!env) {
         workspaceId: wsId,
         title: 'Full Blueprint',
         description: 'Detailed desc',
-        priority: 'P0',
-        sourceIdeaId: 'idea-1',
+        priority: 'P2',
+        sourceIdeaId: (() => {
+          const row = env.db.prepare('INSERT INTO ideas (workspace_id, title) VALUES (?, ?) RETURNING id').get(wsId, 'BP Source Idea') as { id: string }
+          return row.id
+        })(),
         constitutionSnapshot: 'snapshot text',
         settingsJson: { parallel: true }
       })
       assert.equal(bp.description, 'Detailed desc')
-      assert.equal(bp.priority, 'P0')
-      assert.equal(bp.sourceIdeaId, 'idea-1')
+      assert.equal(bp.priority, 'P2')
+      assert.ok(bp.sourceIdeaId)
       assert.equal(bp.constitutionSnapshot, 'snapshot text')
       assert.deepEqual(bp.settingsJson, { parallel: true })
     })
@@ -80,7 +83,8 @@ if (!env) {
       blueprintRepository.create({ workspaceId: freshWs, title: 'Second' })
       const bps = blueprintRepository.findByWorkspace(freshWs)
       assert.equal(bps.length, 2)
-      assert.equal(bps[0].title, 'Second')
+      const titles = bps.map((b: any) => b.title).sort()
+      assert.deepEqual(titles, ['First', 'Second'])
     })
 
     // ── findByStatus ──
@@ -162,13 +166,13 @@ if (!env) {
       const phase = blueprintPhaseRepository.create({
         blueprintId: bp.id,
         phase: 'specify',
-        conversationId: 'conv-1'
+        conversationId: seedConversation(env.db, wsId, 'Phase Conv 1')
       })
       assert.ok(phase.id)
       assert.equal(phase.blueprintId, bp.id)
       assert.equal(phase.phase, 'specify')
       assert.equal(phase.status, 'pending')
-      assert.equal(phase.conversationId, 'conv-1')
+      assert.ok(phase.conversationId)
     })
 
     test('createAllPhases() creates all 7 phase records', () => {
@@ -208,9 +212,10 @@ if (!env) {
     test('setConversation() links phase to conversation', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Phase Conv' })
       const phase = blueprintPhaseRepository.create({ blueprintId: bp.id, phase: 'clarify' })
-      const updated = blueprintPhaseRepository.setConversation(phase.id, 'conv-123')
+      const convId = seedConversation(env.db, wsId, 'Phase Conv Set')
+      const updated = blueprintPhaseRepository.setConversation(phase.id, convId)
       assert.ok(updated)
-      assert.equal(updated.conversationId, 'conv-123')
+      assert.equal(updated.conversationId, convId)
     })
 
     test('saveArtifacts() stores artifact array', () => {
@@ -342,9 +347,12 @@ if (!env) {
         wave: 1,
         description: 'd'
       })
-      const updated = blueprintTaskRepository.setExecutorRun(task.id, 'run-123')
+      // executor_run_id references mpa_runs — seed a real MPA run
+      const { mpaRunRepository } = require('../mpa-run.repository')
+      const mpaRun = mpaRunRepository.createRun({ workspaceId: wsId, title: 'Test Run', goal: 'test', goalType: 'feature' })
+      const updated = blueprintTaskRepository.setExecutorRun(task.id, mpaRun.id)
       assert.ok(updated)
-      assert.equal(updated.executorRunId, 'run-123')
+      assert.equal(updated.executorRunId, mpaRun.id)
     })
 
     test('deleteByBlueprint() removes all tasks for a blueprint', () => {

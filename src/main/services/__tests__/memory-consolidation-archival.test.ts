@@ -53,46 +53,46 @@ if (dbAvailable) {
       // ── Create facts ──
       const factA = memoryFactRepository.createFact({
         workspaceId: ws,
-        category: 'codeContext',
+        category: 'convention',
         title: 'Fact A — stale T0, auto_dedup only',
         content: 'Should be selected',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
 
       const factB = memoryFactRepository.createFact({
         workspaceId: ws,
-        category: 'codeContext',
+        category: 'convention',
         title: 'Fact B — real evidence',
         content: 'Should NOT be selected',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
 
       const factC = memoryFactRepository.createFact({
         workspaceId: ws,
-        category: 'codeContext',
+        category: 'convention',
         title: 'Fact C — accessed',
         content: 'Should NOT be selected',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
 
       const factD = memoryFactRepository.createFact({
         workspaceId: ws,
-        category: 'codeContext',
+        category: 'convention',
         title: 'Fact D — fresh',
         content: 'Should NOT be selected',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
 
       const factE = memoryFactRepository.createFact({
         workspaceId: null,
-        category: 'codeContext',
+        category: 'convention',
         title: 'Fact E — global',
         content: 'Should NOT be selected',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
 
@@ -133,6 +133,64 @@ if (dbAvailable) {
       db.close()
     })
 
+    test('getEvidenceCounts returns only non-auto_dedup confirmations', () => {
+      const db = createTestDb()
+      _setDatabaseForTesting(db)
+      const ws = seedWorkspace(db)
+
+      // Fact with 2× auto_dedup + 1× human → evidence count 1
+      const factWithHuman = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Fact with human evidence',
+        content: 'Has real evidence',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+      memoryFactRepository.addConfirmation(factWithHuman.id, 'auto_dedup', 0)
+      memoryFactRepository.addConfirmation(factWithHuman.id, 'auto_dedup', 0)
+      memoryFactRepository.addConfirmation(factWithHuman.id, 'human', 1)
+
+      // Fact with only auto_dedup → absent from map (treated as 0)
+      const factDedupOnly = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Fact with auto_dedup only',
+        content: 'No real evidence',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+      memoryFactRepository.addConfirmation(factDedupOnly.id, 'auto_dedup', 0)
+      memoryFactRepository.addConfirmation(factDedupOnly.id, 'auto_dedup', 0)
+
+      // Fact with no confirmations at all
+      const factNone = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Fact with no confirmations',
+        content: 'Zero evidence',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+
+      // ── Test batch query ──
+      const counts = memoryFactRepository.getEvidenceCounts([
+        factWithHuman.id,
+        factDedupOnly.id,
+        factNone.id
+      ])
+
+      assert.equal(counts.get(factWithHuman.id), 1, 'Human-confirmed fact should have evidence count 1')
+      assert.equal(counts.has(factDedupOnly.id), false, 'Auto-dedup-only fact should be absent from map')
+      assert.equal(counts.has(factNone.id), false, 'No-confirmation fact should be absent from map')
+
+      // ── Empty input returns empty map ──
+      const empty = memoryFactRepository.getEvidenceCounts([])
+      assert.equal(empty.size, 0, 'Empty input should return empty map')
+
+      db.close()
+    })
+
     test('archival flips status to archived for selected facts', () => {
       const db = createTestDb()
       _setDatabaseForTesting(db)
@@ -141,10 +199,10 @@ if (dbAvailable) {
       // Create a fact that qualifies for archival
       const fact = memoryFactRepository.createFact({
         workspaceId: ws,
-        category: 'architecture',
+        category: 'convention',
         title: 'Stale fact for archival',
         content: 'Should be archived',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
 
@@ -159,10 +217,10 @@ if (dbAvailable) {
       // Also create a fact that should NOT be archived (has real evidence)
       const protectedFact = memoryFactRepository.createFact({
         workspaceId: ws,
-        category: 'architecture',
+        category: 'convention',
         title: 'Protected fact',
         content: 'Should stay active',
-        sourceType: 'extraction',
+        sourceType: 'session',
         embeddingPending: false
       })
       db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`)

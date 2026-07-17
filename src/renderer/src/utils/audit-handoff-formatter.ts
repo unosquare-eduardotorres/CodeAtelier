@@ -7,8 +7,8 @@
  * through the NewChatPage UI path (vs. the direct IPC "split" path).
  */
 
-import { AUDIT_TRACKS } from '../../../../shared/constants'
-import type { AuditRun, AuditTrackId, AuditFinding, AuditResult } from '../../../../shared/types'
+import { AUDIT_TRACKS } from '../../../shared/constants'
+import type { AuditRun, AuditTrackId, AuditFinding, AuditResult } from '../../../shared/types'
 
 const SEVERITY_ORDER: Record<string, number> = {
   critical: 0,

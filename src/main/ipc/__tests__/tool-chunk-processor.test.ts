@@ -284,9 +284,9 @@ describe('processToolChunk — plan-mode Write block suppression', () => {
       toolId: 'plan-blk-1',
       content: '<tool_use_error>: No such tool available: Write</tool_use_error>'
     }
-    // No formatTagsToSkip here: if reportToolError were called it would attempt
-    // app.getVersion() and throw in the test env. isExpectedPlanModeBlock must
-    // short-circuit the reporter, so this must NOT throw.
+    // No formatTagsToSkip here — isExpectedPlanModeBlock must prevent reportToolError
+    // from firing. Correctness is verified by the isExpectedPlanModeBlock unit tests
+    // above; this integration test confirms the wiring through processToolChunk.
     const result = processToolChunk(chunk, { agentType: 'specialist', mode: 'plan' })
     assert.ok(result)
     assert.equal(result.toolActivity.status, 'error')
@@ -365,8 +365,9 @@ describe('processToolChunk — conditional MCP tool suppression', () => {
       toolId: 'cond-mcp-1',
       content: '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
     }
-    // If reportToolError were called, it would attempt app.getVersion()
-    // and throw in the test env. isExpectedToolUnavailable must short-circuit.
+    // isExpectedToolUnavailable must prevent reportToolError from firing.
+    // Correctness is verified by the isExpectedToolUnavailable unit tests above;
+    // this integration test confirms the wiring through processToolChunk.
     const result = processToolChunk(chunk, { agentType: 'specialist' })
     assert.ok(result)
     assert.equal(result.toolActivity.status, 'error')

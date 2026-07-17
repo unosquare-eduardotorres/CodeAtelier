@@ -25,6 +25,8 @@ export interface BlueprintChunkForwarderCtx {
   /** Conversation mode — 'plan' for plan-mode phases suppresses false-positive
    *  bug reports for blocked Write/Edit calls. */
   mode?: ConversationMode
+  /** Build-phase task ID — routes progress into the correct per-task lane. */
+  taskId?: string
 }
 
 export type BlueprintEmitFn = (
@@ -55,7 +57,8 @@ export function forwardBlueprintChunk(
       blueprintId: ctx.blueprintId,
       workspaceId: ctx.workspaceId,
       phase: ctx.phase,
-      text: chunk.content
+      text: chunk.content,
+      ...(ctx.taskId ? { taskId: ctx.taskId } : {})
     })
     return
   }
@@ -93,7 +96,8 @@ export function forwardBlueprintChunk(
           filePath: processed.toolActivity.filePath,
           lineRange: processed.toolActivity.lineRange,
           operationType: processed.toolActivity.operationType
-        }
+        },
+        ...(ctx.taskId ? { taskId: ctx.taskId } : {})
       })
     }
     // If processToolChunk returns null (control tools), silently drop — same

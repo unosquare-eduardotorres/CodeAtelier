@@ -14,7 +14,8 @@ import type {
   PlanSource,
   PlanStatus,
   PlanType,
-  PlanFilters
+  PlanFilters,
+  PlanStatusHistoryEntry
 } from '../../../shared/types'
 
 // ── Row shape (snake_case from DB) ──
@@ -39,6 +40,27 @@ interface PlanRow {
   risk_count: number
   created_at: string
   updated_at: string
+  previous_plan_id: string | null
+}
+
+interface StatusHistoryRow {
+  id: string
+  plan_id: string
+  from_status: string | null
+  to_status: string
+  changed_at: string
+  actor: string
+}
+
+function mapStatusHistoryRow(row: StatusHistoryRow): PlanStatusHistoryEntry {
+  return {
+    id: row.id,
+    planId: row.plan_id,
+    fromStatus: row.from_status as PlanStatus | null,
+    toStatus: row.to_status as PlanStatus,
+    changedAt: row.changed_at,
+    actor: row.actor
+  }
 }
 
 function mapRow(row: PlanRow): PlanRecord {
@@ -64,7 +86,8 @@ function mapRow(row: PlanRow): PlanRecord {
     phaseCount: row.phase_count ?? 0,
     riskCount: row.risk_count ?? 0,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    previousPlanId: row.previous_plan_id ?? null
   }
 }
 
@@ -149,10 +172,40 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
         counts.riskCount
       ) as PlanRow
 
+    const savedPlan = mapRow(row)
+
+    // ── Revision linking: auto-archive previous plan from same source ──
+    if (params.source && params.sourceId) {
+      const existing = this.db()
+        .prepare(
+          `SELECT id, status FROM plans WHERE workspace_id = ? AND source = ? AND id != ? AND status != 'archived' ORDER BY created_at DESC LIMIT 1`
+        )
+        .get(params.workspaceId, params.source, savedPlan.id) as
+        | { id: string; status: string }
+        | undefined
+      if (existing) {
+        this.updateStatus(existing.id, 'archived', undefined, 'system')
+        this.db()
+          .prepare('UPDATE plans SET previous_plan_id = ? WHERE id = ?')
+          .run(existing.id, savedPlan.id)
+        // Re-read to pick up the previous_plan_id
+        const updated = this.getById(savedPlan.id)
+        if (updated) {
+          // Record initial status and enforce retention
+          this.recordStatusChange(savedPlan.id, null, 'saved', 'system')
+          this.enforceRetention(params.workspaceId)
+          return updated
+        }
+      }
+    }
+
+    // Record initial status
+    this.recordStatusChange(savedPlan.id, null, 'saved', 'system')
+
     // Enforce retention
     this.enforceRetention(params.workspaceId)
 
-    return mapRow(row)
+    return savedPlan
   }
 
   /** Get a single plan by ID. */
@@ -199,7 +252,7 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     return row ? mapRow(row) : null
   }
 
-  /** Update status + optional linked IDs. */
+  /** Update status + optional linked IDs. Also records status change in the timeline. */
   updateStatus(
     id: string,
     status: PlanStatus,
@@ -207,8 +260,12 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
       conversationId?: string
       mpaRunId?: string
       councilSessionId?: string
-    }
+    },
+    actor: string = 'user'
   ): void {
+    const current = this.getById(id)
+    const fromStatus = current?.status ?? null
+
     const sets = ['status = ?', "updated_at = datetime('now')"]
     const params: unknown[] = [status]
 
@@ -229,6 +286,8 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     this.db()
       .prepare(`UPDATE plans SET ${sets.join(', ')} WHERE id = ?`)
       .run(...params)
+
+    this.recordStatusChange(id, fromStatus, status, actor)
   }
 
   // ── Lifecycle convenience methods ──
@@ -265,6 +324,51 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
         )`
       )
       .run(workspaceId, workspaceId, limit)
+  }
+
+  // ── Status History ──
+
+  /** Record a status transition in the timeline. */
+  recordStatusChange(
+    planId: string,
+    fromStatus: PlanStatus | null,
+    toStatus: PlanStatus,
+    actor = 'user'
+  ): void {
+    this.db()
+      .prepare(
+        `INSERT INTO plan_status_history (plan_id, from_status, to_status, actor)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(planId, fromStatus, toStatus, actor)
+  }
+
+  /** Fetch full status timeline for a plan, oldest-first. */
+  getStatusHistory(planId: string): PlanStatusHistoryEntry[] {
+    const rows = this.db()
+      .prepare(
+        `SELECT id, plan_id, from_status, to_status, changed_at, actor
+         FROM plan_status_history WHERE plan_id = ? ORDER BY changed_at ASC`
+      )
+      .all(planId) as StatusHistoryRow[]
+    return rows.map(mapStatusHistoryRow)
+  }
+
+  // ── Revision Linking ──
+
+  /** Get the plan that superseded this one (if any). */
+  getSupersedingPlan(planId: string): PlanRecord | null {
+    const row = this.db()
+      .prepare('SELECT * FROM plans WHERE previous_plan_id = ?')
+      .get(planId) as PlanRow | undefined
+    return row ? mapRow(row) : null
+  }
+
+  /** Get the previous revision of this plan (if any). */
+  getPreviousPlan(planId: string): PlanRecord | null {
+    const current = this.getById(planId)
+    if (!current?.previousPlanId) return null
+    return this.getById(current.previousPlanId)
   }
 }
 

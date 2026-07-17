@@ -69,6 +69,13 @@ export interface CliMcpConfigWriterOptions {
    * cold-start contention that causes the MCP connection race.
    */
   skipServers?: string[]
+  /**
+   * G1: Unique instance identifier for per-session config isolation.
+   * When provided, the config file is written as `mcp-config-<instanceId>.json`
+   * instead of the shared `mcp-config.json`, preventing parallel build tasks
+   * from overwriting each other's config.
+   */
+  instanceId?: string
 }
 
 // ── Writer ──
@@ -94,20 +101,31 @@ export class CliMcpConfigWriter {
     if (!existsSync(tempDir)) {
       mkdirSync(tempDir, { recursive: true })
     }
-    const configPath = join(tempDir, 'mcp-config.json')
+    // G1: Per-session config files prevent parallel build tasks from overwriting
+    // each other's MCP configuration. Key includes instanceId when provided.
+    const configFileName = opts.instanceId
+      ? `mcp-config-${opts.instanceId}.json`
+      : 'mcp-config.json'
+    const configPath = join(tempDir, configFileName)
 
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
     configLog.info(`[cli-mcp-config] Wrote: ${configPath} (${serverCount} MCP servers)`)
 
-    // Store for cleanup
-    this.configPaths.set(opts.workspacePath, configPath)
+    // Store for cleanup — key includes instanceId for per-session tracking
+    const configKey = opts.instanceId
+      ? `${opts.workspacePath}:${opts.instanceId}`
+      : opts.workspacePath
+    this.configPaths.set(configKey, configPath)
 
     return configPath
   }
 
-  /** Clean up generated config file. */
-  dispose(workspacePath: string): void {
-    const configPath = this.configPaths.get(workspacePath)
+  /** Clean up generated config file. Pass instanceId for per-session configs. */
+  dispose(workspacePath: string, instanceId?: string): void {
+    const configKey = instanceId
+      ? `${workspacePath}:${instanceId}`
+      : workspacePath
+    const configPath = this.configPaths.get(configKey)
     if (configPath) {
       try {
         unlinkSync(configPath)
@@ -115,7 +133,7 @@ export class CliMcpConfigWriter {
       } catch {
         /* file may already be gone */
       }
-      this.configPaths.delete(workspacePath)
+      this.configPaths.delete(configKey)
     }
   }
 

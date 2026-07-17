@@ -82,7 +82,7 @@ if (!env) {
       edgeRepo.upsertEdges(wsId, edges)
     })
 
-    test('findBySourceFile() returns edges from a source file', () => {
+    test('findByWorkspace() returns edges including inserted ones', () => {
       const edges = [
         {
           workspaceId: wsId,
@@ -94,15 +94,15 @@ if (!env) {
         }
       ]
       edgeRepo.upsertEdges(wsId, edges)
-      const found = edgeRepo.findBySourceFile(wsId, 'src/caller.ts')
+      const found = edgeRepo.findByWorkspace(wsId)
       assert.ok(found.length >= 1)
       assert.ok(found.some((e: any) => e.sourceSymbol === 'callFn'))
     })
 
-    test('findByTargetFile() returns edges to a target file', () => {
-      const found = edgeRepo.findByTargetFile(wsId, 'src/callee.ts')
+    test('findCallersOf() returns edges targeting a symbol', () => {
+      const found = edgeRepo.findCallersOf(wsId, 'targetFn')
       assert.ok(found.length >= 1)
-      assert.ok(found.some((e: any) => e.targetSymbol === 'targetFn'))
+      assert.ok(found.some((e: any) => e.sourceSymbol === 'callFn'))
     })
 
     test('deleteByWorkspace() removes all edges', () => {

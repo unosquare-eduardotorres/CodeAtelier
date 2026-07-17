@@ -7,7 +7,7 @@
  * set()/get() or perform side effects.
  */
 
-import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
+import type { StreamSegment } from '../utils/stream-segment-accumulator'
 import type { Message, ToolActivity } from '../../../shared/types'
 
 // ── Streaming state reset ────────────────────────────────────────────────
@@ -114,6 +114,56 @@ export function createOptimisticUserMessage(
     createdAt: new Date().toISOString()
   }
 }
+
+// ── Error parsing ───────────────────────────────────────────────────────
+
+/** Prefix Electron IPC adds to remote-method errors. */
+const IPC_ERROR_PREFIX_RE = /^Error invoking remote method '[^']+': /
+
+/** Escape markdown-significant chars so a title can't break error-bubble formatting. */
+const escapeMarkdown = (s: string): string => s.replace(/([*_`~[\]])/g, '\\$1')
+
+/**
+ * Parse the F6 `(blockedBy:<uuid>)` tag from a raw backend error string,
+ * resolve the blocking conversation's title when possible, and build a
+ * clean user-facing message.
+ *
+ * The raw error arrives as:
+ *   "Another chat is still processing. … (blockedBy:<uuid>)"
+ * Electron's IPC may also wrap it with:
+ *   "Error invoking remote method 'chat:sendMessage': …"
+ *
+ * When the title is known → "Another chat ("<title>") is still processing…"
+ * When unknown           → "Another chat is still processing…" (no parenthetical)
+ *
+ * Pure function — no DOM/store deps; importable from the main-process test harness.
+ *
+ * @see chat-stream.service.ts acquireStreamLock — F6-FIX throws the tagged error.
+ */
+export function parseBlockedByError(
+  rawError: string,
+  conversations: Array<{ id: string; title: string }>
+): { errorMsg: string } {
+  const blockedByMatch = rawError.match(/\(blockedBy:([^)]+)\)/)
+  if (!blockedByMatch) {
+    // Not a blocked-by error — strip IPC prefix only
+    return { errorMsg: rawError.replace(IPC_ERROR_PREFIX_RE, '') }
+  }
+
+  const blockedConvId = blockedByMatch[1]
+  const blockedConv = conversations.find((c) => c.id === blockedConvId)
+
+  // P1-FIX: Build the whole message conditionally.
+  // Known title  → Another chat ("My Chat") is still processing…
+  // Unknown      → Another chat is still processing… (no redundant parenthetical)
+  const errorMsg = blockedConv
+    ? `Another chat ("${escapeMarkdown(blockedConv.title)}") is still processing. Please wait for it to complete or stop it first.`
+    : 'Another chat is still processing. Please wait for it to complete or stop it first.'
+
+  return { errorMsg }
+}
+
+// ── Message builders (continued) ────────────────────────────────────────
 
 /**
  * Build an error message shown to the user when sendMessage fails.

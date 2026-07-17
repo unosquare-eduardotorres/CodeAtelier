@@ -52,8 +52,6 @@ export interface ModelConfigState {
   fallbackModel: string | undefined
   // Workspace preferences (instant-save, not part of draft)
   costPreference: CostPreference
-  fastMode: boolean
-  budgetCapUsd: number | undefined
   communicationTone: CommunicationTone
   // Status
   platformInfo: PlatformInfo | null
@@ -91,8 +89,6 @@ export interface ModelConfigActions {
   scheduleAutoTest: () => void
   // Workspace setting actions
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
-  handleFastModeToggle: () => Promise<void>
-  handleBudgetCapChange: (value: string) => Promise<void>
   handleToneChange: (tone: CommunicationTone) => Promise<void>
 }
 
@@ -242,45 +238,20 @@ function useConnectionTest(opts: {
 
 function useWorkspaceSettingActions(activeWorkspace: Workspace | null): {
   costPreference: CostPreference
-  fastMode: boolean
-  budgetCapUsd: number | undefined
   communicationTone: CommunicationTone
   setCostPreference: React.Dispatch<React.SetStateAction<CostPreference>>
-  setFastMode: React.Dispatch<React.SetStateAction<boolean>>
-  setBudgetCapUsd: React.Dispatch<React.SetStateAction<number | undefined>>
   setCommunicationTone: React.Dispatch<React.SetStateAction<CommunicationTone>>
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
-  handleFastModeToggle: () => Promise<void>
-  handleBudgetCapChange: (value: string) => Promise<void>
   handleToneChange: (tone: CommunicationTone) => Promise<void>
 } {
   const addToast = useToastStore((s) => s.addToast)
   const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
-  const [fastMode, setFastMode] = useState(false)
-  const [budgetCapUsd, setBudgetCapUsd] = useState<number | undefined>(undefined)
   const [communicationTone, setCommunicationTone] = useState<CommunicationTone>('default')
 
   const handleCostPreferenceChange = async (pref: CostPreference): Promise<void> => {
     setCostPreference(pref)
     if (activeWorkspace) {
       await persistWorkspaceSetting(activeWorkspace.id, { costPreference: pref })
-    }
-  }
-
-  const handleFastModeToggle = async (): Promise<void> => {
-    const newValue = !fastMode
-    setFastMode(newValue)
-    if (activeWorkspace) {
-      await persistWorkspaceSetting(activeWorkspace.id, { fastMode: newValue })
-    }
-  }
-
-  const handleBudgetCapChange = async (value: string): Promise<void> => {
-    const parsed = value ? Number(value) : undefined
-    const capValue = parsed && parsed > 0 ? parsed : undefined
-    setBudgetCapUsd(capValue)
-    if (activeWorkspace) {
-      await persistWorkspaceSetting(activeWorkspace.id, { budgetCapUsd: capValue ?? null })
     }
   }
 
@@ -297,16 +268,10 @@ function useWorkspaceSettingActions(activeWorkspace: Workspace | null): {
 
   return {
     costPreference,
-    fastMode,
-    budgetCapUsd,
     communicationTone,
     setCostPreference,
-    setFastMode,
-    setBudgetCapUsd,
     setCommunicationTone,
     handleCostPreferenceChange,
-    handleFastModeToggle,
-    handleBudgetCapChange,
     handleToneChange
   }
 }
@@ -369,12 +334,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
       .then((settings) => {
         // Workspace preferences (delegated to sub-hook)
         wsSettings.setCostPreference((settings.costPreference as CostPreference) || 'balanced')
-        wsSettings.setFastMode(settings.fastMode === true)
-        wsSettings.setBudgetCapUsd(
-          typeof settings.budgetCapUsd === 'number' && settings.budgetCapUsd > 0
-            ? (settings.budgetCapUsd as number)
-            : undefined
-        )
         wsSettings.setCommunicationTone(
           (settings.communicationTone as CommunicationTone) ?? 'default'
         )
@@ -601,8 +560,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     claudeModelOverrides,
     fallbackModel,
     costPreference: wsSettings.costPreference,
-    fastMode: wsSettings.fastMode,
-    budgetCapUsd: wsSettings.budgetCapUsd,
     communicationTone: wsSettings.communicationTone,
     platformInfo,
     claudeCliStatus,
@@ -627,8 +584,6 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     handleLoadOmlxModel,
     handleUnloadOmlxModel,
     handleCostPreferenceChange: wsSettings.handleCostPreferenceChange,
-    handleFastModeToggle: wsSettings.handleFastModeToggle,
-    handleBudgetCapChange: wsSettings.handleBudgetCapChange,
     handleToneChange: wsSettings.handleToneChange,
     testConnection,
     scheduleAutoTest

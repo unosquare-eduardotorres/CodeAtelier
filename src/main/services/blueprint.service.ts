@@ -99,6 +99,8 @@ interface BlueprintPipelineState {
     taskCount: number
     tasks: Record<string, BlueprintTaskStatus>
   } | null
+  /** G3: Currently running tasks during Build phase parallel execution. */
+  runningTasks: Record<string, { taskId: string; description: string }> | null
 }
 
 // ── Service ──
@@ -126,7 +128,8 @@ export class BlueprintService extends EventEmitter {
         phaseStartedAt: null,
         pendingApproval: null,
         lastError: null,
-        waveState: null
+        waveState: null,
+        runningTasks: null
       }
       this.pipelines.set(workspaceId, state)
     }
@@ -180,6 +183,7 @@ export class BlueprintService extends EventEmitter {
       clarifyQuestions,
       pendingApproval: state?.pendingApproval ?? null,
       wave: state?.waveState ?? null,
+      runningTasks: state?.runningTasks ?? null,
       lastError: state?.lastError ?? null
     }
   }
@@ -226,6 +230,16 @@ export class BlueprintService extends EventEmitter {
   ): void {
     const state = this.getOrCreatePipeline(workspaceId)
     state.waveState = wave
+    this.publishSnapshot(workspaceId)
+  }
+
+  /** G3: Update running tasks map (from build service parallel scheduler). */
+  setRunningTasks(
+    workspaceId: string,
+    tasks: Record<string, { taskId: string; description: string }> | null
+  ): void {
+    const state = this.getOrCreatePipeline(workspaceId)
+    state.runningTasks = tasks
     this.publishSnapshot(workspaceId)
   }
 
@@ -320,6 +334,7 @@ export class BlueprintService extends EventEmitter {
       state.abortController = null
       state.phaseStartedAt = null
       state.waveState = null
+      state.runningTasks = null
     }
     const machine = this.getMachine(workspaceId)
     // phaseComplete is idempotent when idle — safe to call multiple times.

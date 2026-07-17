@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { AlertTriangle, Copy, Archive, Check, X } from 'lucide-react'
+import { AlertTriangle, Copy, Archive, X } from 'lucide-react'
 
 import TierBadge from './TierBadge'
 import type { MemoryContradiction, MemoryFact } from '../../../../../shared/types'

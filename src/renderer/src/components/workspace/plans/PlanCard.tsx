@@ -5,48 +5,21 @@
  * buttons following the IdeaCard/HealthRunCard patterns.
  */
 
-import type { PlanRecord, PlanSource, PlanStatus } from '../../../../../shared/types'
+import type { PlanRecord } from '../../../../../shared/types'
 import PlanCardActions from './PlanCardActions'
-
-// ── Source badge config ──
-
-const SOURCE_CONFIG: Record<PlanSource, { emoji: string; label: string; color: string }> = {
-  chat: { emoji: '💬', label: 'Chat', color: 'text-primary-text' },
-  grill: { emoji: '🔥', label: 'Grill', color: 'text-accent' },
-  audit: { emoji: '🔍', label: 'Audit', color: 'text-success' },
-  council: { emoji: '🏛️', label: 'Council', color: 'text-indigo-400' },
-  mpa: { emoji: '🎯', label: 'Goals', color: 'text-cyan-400' },
-  blueprint: { emoji: '📘', label: 'Blueprint', color: 'text-info' }
-}
-
-// ── Plan type badge config ──
-
-const TYPE_CONFIG: Record<string, { label: string; classes: string }> = {
-  feature: { label: 'Feature', classes: 'bg-info-muted text-info' },
-  refactor: { label: 'Refactor', classes: 'bg-warning-muted text-warning' },
-  bug: { label: 'Bug Fix', classes: 'bg-danger-muted text-danger' },
-  audit: { label: 'Audit', classes: 'bg-primary-muted text-primary-text' },
-  investigation: { label: 'Investigation', classes: 'bg-surface-overlay text-text-secondary' }
-}
-
-// ── Status config ──
-
-const STATUS_CONFIG: Record<PlanStatus, { label: string; dotColor: string; textColor: string }> = {
-  saved: { label: 'Saved', dotColor: 'bg-info', textColor: 'text-info' },
-  handed_off: { label: 'Handed off', dotColor: 'bg-warning', textColor: 'text-warning' },
-  in_progress: {
-    label: 'In Progress',
-    dotColor: 'bg-success animate-pulse',
-    textColor: 'text-success'
-  },
-  completed: { label: 'Completed', dotColor: 'bg-success', textColor: 'text-success' },
-  archived: { label: 'Archived', dotColor: 'bg-text-muted', textColor: 'text-text-muted' }
-}
+import {
+  SOURCE_CONFIG,
+  TYPE_CONFIG,
+  STATUS_CONFIG,
+  formatRelativeDate,
+  buildMetrics
+} from './plan-constants'
 
 // ── Props ──
 
 interface PlanCardProps {
   plan: PlanRecord
+  onViewDetail: (plan: PlanRecord) => void
   onOpenInChat: (plan: PlanRecord) => void
   onStartGoal: (plan: PlanRecord) => void
   onCouncilReview: (plan: PlanRecord) => void
@@ -57,32 +30,11 @@ interface PlanCardProps {
   onOpenConversation: (conversationId: string) => void
 }
 
-// ── Formatters ──
-
-function formatRelativeDate(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  if (diffDays === 0) return 'Today'
-  if (diffDays === 1) return 'Yesterday'
-  if (diffDays < 7) return `${diffDays}d ago`
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-function buildMetrics(plan: PlanRecord): string {
-  const parts: string[] = []
-  if (plan.phaseCount > 0) parts.push(`${plan.phaseCount} phase${plan.phaseCount !== 1 ? 's' : ''}`)
-  if (plan.riskCount > 0) parts.push(`${plan.riskCount} risk${plan.riskCount !== 1 ? 's' : ''}`)
-  if (plan.fileCount > 0) parts.push(`${plan.fileCount} file${plan.fileCount !== 1 ? 's' : ''}`)
-  return parts.join(' · ')
-}
-
 // ── Component ──
 
 export default function PlanCard({
   plan,
+  onViewDetail,
   onOpenInChat,
   onStartGoal,
   onCouncilReview,
@@ -98,7 +50,11 @@ export default function PlanCard({
   const metrics = buildMetrics(plan)
 
   return (
-    <div data-testid="plan-card" className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm">
+    <div
+      data-testid="plan-card"
+      className="group bg-surface-overlay border border-border-subtle rounded-lg p-4 hover:border-border-default transition-colors shadow-sm cursor-pointer"
+      onClick={() => onViewDetail(plan)}
+    >
       {/* Header: source badge + title + type badge */}
       <div className="flex items-start justify-between gap-3 mb-1">
         <div className="flex items-center gap-2 min-w-0">
@@ -138,7 +94,9 @@ export default function PlanCard({
         )}
       </div>
 
-      {/* Action buttons — config-driven */}
+      {/* Action buttons — config-driven (stop click propagation so card onClick isn't triggered) */}
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+      <div onClick={(e) => e.stopPropagation()}>
       <PlanCardActions
         status={plan.status}
         hasLinkedConversation={!!plan.linkedConversationId}
@@ -154,6 +112,7 @@ export default function PlanCard({
             plan.linkedConversationId && onOpenConversation(plan.linkedConversationId)
         }}
       />
+      </div>
     </div>
   )
 }
