@@ -108,6 +108,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
   const [graphData, setGraphData] = useState<MemoryGraphData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [velocityDecay, setVelocityDecay] = useState(DEFAULT_VELOCITY_DECAY)
   const [hoveredNode, setHoveredNode] = useState<NodeObject<GNode> | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
 
@@ -423,7 +424,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
 
       // Ensure physics + render loop are fully running before reheat
       fg.resumeAnimation()
-      ;(fg as any).d3VelocityDecay(DEFAULT_VELOCITY_DECAY)
+      setVelocityDecay(DEFAULT_VELOCITY_DECAY)
       if (physicsPaused) {
         queueMicrotask(() => setPhysicsPaused(false))
       }
@@ -783,12 +784,12 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
     if (!fg) return
     if (physicsPaused) {
       // Resume: restore normal velocity decay and reheat
-      ;(fg as any).d3VelocityDecay(DEFAULT_VELOCITY_DECAY)
+      setVelocityDecay(DEFAULT_VELOCITY_DECAY)
       fg.d3ReheatSimulation()
     } else {
       // Freeze physics: damp all velocity instantly.
       // Render loop stays alive so glow / particles / pulses keep animating.
-      ;(fg as any).d3VelocityDecay(1)
+      setVelocityDecay(1)
     }
     setPhysicsPaused((v) => !v)
   }, [physicsPaused])
@@ -868,6 +869,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         linkDirectionalParticleColor={linkParticleColor}
         // Force engine
         d3AlphaDecay={0.02}
+        d3VelocityDecay={velocityDecay}
         // Interaction
         onNodeHover={handleNodeHover}
         onNodeClick={handleNodeClick}

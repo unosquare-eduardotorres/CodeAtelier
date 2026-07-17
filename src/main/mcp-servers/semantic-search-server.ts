@@ -37,6 +37,8 @@ const server = new McpServer(
 type VectorService = typeof import('../services/vector-search.service').vectorSearchService
 
 let readyPromise: Promise<VectorService> | null = null
+let retryCount = 0
+const MAX_RETRIES = 3
 
 /** Memoized lazy init — imports service + hydrates vector index. */
 function ensureReady(): Promise<VectorService> {
@@ -63,6 +65,15 @@ function ensureReady(): Promise<VectorService> {
       console.error('[semantic-search-server] Services initialized')
       return vectorSearchService
     })()
+
+    // Clear cached promise on rejection so next call can retry
+    readyPromise.catch(() => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++
+        readyPromise = null // Allow next invocation to retry
+      }
+      // After MAX_RETRIES, leave the rejected promise cached (stop retrying)
+    })
   }
   return readyPromise
 }

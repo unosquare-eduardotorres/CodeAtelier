@@ -66,6 +66,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
     contradictions,
     contradictionsPage,
     contradictionsTotal,
+    contradictionsPendingCount,
     searchQuery,
     embeddingStatus,
     captureSettings,
@@ -171,7 +172,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
 
   const activeFacts = facts.filter((f) => f.status === 'active')
   const supersededFacts = facts.filter((f) => f.status === 'superseded')
-  const pendingContradictions = contradictions.filter((c) => c.status === 'pending')
 
   return (
     <div data-testid="memory-settings-page" className="space-y-6">
@@ -199,7 +199,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
           >
             {tab === 'facts' && `${TAB_LABELS[tab]} (${activeFacts.length})`}
             {tab === 'contradictions' &&
-              `${TAB_LABELS[tab]}${contradictionsTotal > 0 ? ` (${contradictionsTotal})` : ''}`}
+              `${TAB_LABELS[tab]}${contradictionsPendingCount > 0 ? ` (${contradictionsPendingCount})` : ''}`}
             {tab !== 'facts' && tab !== 'contradictions' && TAB_LABELS[tab]}
           </button>
         ))}

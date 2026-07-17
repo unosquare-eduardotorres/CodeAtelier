@@ -17,6 +17,8 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
+import { conversationStateMachine } from '../conversation-state-machine'
+import { lifecycleRegistry } from '../conversation-lifecycle'
 
 // ── Module loading with graceful fallback ────────────────────────────
 let ChatStreamService: any
@@ -258,7 +260,16 @@ if (loaded) {
   // ── acquireStreamLock ───────────────────────────────────────────────
 
   describe('ChatStreamService — acquireStreamLock', () => {
+    // F4-FIX: Isolate from global lifecycle/SM state. Without this,
+    // a prior test leaving an active lifecycle poisons every later
+    // acquireStreamLock test with the cross-conv gate error.
+    function resetStreamGlobals(): void {
+      conversationStateMachine.forceReset()
+      lifecycleRegistry.abortAll('test-isolation')
+    }
+
     test('throws_when_same_conv_already_streaming', () => {
+      resetStreamGlobals()
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
       ;(service as any).streamingLocks.add('conv-1')
 
@@ -267,6 +278,7 @@ if (loaded) {
     })
 
     test('returns_lock_shape_when_not_streaming', () => {
+      resetStreamGlobals()
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
       // streamingLocks is empty by default — no setup needed
 
@@ -279,6 +291,9 @@ if (loaded) {
         assert.ok(typeof result.requestId === 'string')
       } catch {
         // May throw if conversationStateMachine not ready — acceptable
+      } finally {
+        // F4-FIX: Clean up any lifecycle begun during the test
+        lifecycleRegistry.abortAll('test-isolation')
       }
     })
   })

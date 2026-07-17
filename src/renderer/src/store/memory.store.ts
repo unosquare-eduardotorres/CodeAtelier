@@ -10,7 +10,8 @@ import type {
   MemorySourceType,
   IngestionProgress,
   BootstrapProgress,
-  BootstrapMode
+  BootstrapMode,
+  ContradictionStatus
 } from '../../../shared/types'
 
 type FeedSource = MemorySourceType | 'claude-md' | 'codebase' | 'document'
@@ -28,6 +29,7 @@ interface MemoryState {
   contradictions: MemoryContradiction[]
   contradictionsPage: number
   contradictionsTotal: number
+  contradictionsPendingCount: number
   searchQuery: string
   embeddingStatus: MemoryEmbeddingStatus | null
   captureSettings: MemoryCaptureSettings | null
@@ -60,7 +62,7 @@ interface MemoryState {
   toggleScope: (id: string, global: boolean, workspaceId?: string) => Promise<void>
 
   // Contradiction actions
-  loadContradictions: (status?: string, page?: number) => Promise<void>
+  loadContradictions: (status?: ContradictionStatus, page?: number) => Promise<void>
   resolveContradiction: (id: string, resolution: string, keepFactId: string, archiveFactId?: string) => Promise<void>
   autoResolveDuplicates: (workspaceId: string, minCosine?: number) => Promise<{ resolvedCount: number }>
 
@@ -111,6 +113,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   contradictions: [],
   contradictionsPage: 0,
   contradictionsTotal: 0,
+  contradictionsPendingCount: 0,
   searchQuery: '',
   embeddingStatus: null,
   captureSettings: null,
@@ -211,11 +214,16 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     try {
       const PAGE_SIZE = 25
       const result = await window.api.memoryContradictionsList({
-        status: status as any,
+        status,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE
       })
-      set({ contradictions: result.items, contradictionsPage: page, contradictionsTotal: result.total })
+      set({
+        contradictions: result.items,
+        contradictionsPage: page,
+        contradictionsTotal: result.total,
+        contradictionsPendingCount: result.pendingCount
+      })
     } catch (error) {
       rendererLog.error('Failed to load contradictions:', error)
     }

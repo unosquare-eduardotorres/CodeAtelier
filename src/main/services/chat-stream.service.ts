@@ -410,8 +410,10 @@ export class ChatStreamService {
         `[STREAM:cross-conv-rejected] conversationId=${conversationId} ` +
           `blocked by active stream in ${busyConvId} (MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS})`
       )
+      // F6-FIX: Include the blocking conversationId so the renderer can
+      // tell the user which chat is busy (e.g. map to a conversation title).
       throw new Error(
-        'Another chat is still processing. Please wait for it to complete or stop it first.'
+        `Another chat is still processing. Please wait for it to complete or stop it first. (blockedBy:${busyConvId})`
       )
     }
 
@@ -1413,25 +1415,31 @@ export class ChatStreamService {
    * Passing no conversationId preserves backward compat with e2e helpers (fixes P6).
    */
   async stop(targetConversationId?: string): Promise<void> {
-    if (!targetConversationId) {
-      // Stop ALL active streams (backward compat / e2e)
-      const activeStreams = lifecycleRegistry.active()
-      if (activeStreams.length === 0) {
-        // Nothing streaming — fall through to legacy single-stop path
-        await this.stopSingleConversation(chatAgentService.getCurrentConversationId())
-      } else {
-        for (const stream of activeStreams) {
-          await this.stopSingleConversation(stream.conversationId)
+    // F3-FIX: Wrap in try/finally so cancelCurrentQuery() always runs.
+    // onStopPipeline() (inside stopSingleConversation) can throw — without
+    // the finally, the CLI query would never be cancelled → orphaned generation.
+    try {
+      if (!targetConversationId) {
+        // Stop ALL active streams (backward compat / e2e)
+        const activeStreams = lifecycleRegistry.active()
+        if (activeStreams.length === 0) {
+          // Nothing streaming — fall through to legacy single-stop path
+          await this.stopSingleConversation(chatAgentService.getCurrentConversationId())
+        } else {
+          for (const stream of activeStreams) {
+            await this.stopSingleConversation(stream.conversationId)
+          }
         }
+      } else {
+        await this.stopSingleConversation(targetConversationId)
       }
-    } else {
-      await this.stopSingleConversation(targetConversationId)
+    } finally {
+      // A3-FIX: Cancel the global query ONCE after all per-conversation stops
+      // have completed. Previously each stopSingleConversation iteration called
+      // cancelCurrentQuery(), which with N streams would kill whichever query
+      // was active on the first call, then no-op on subsequent calls.
+      chatAgentService.cancelCurrentQuery()
     }
-    // A3-FIX: Cancel the global query ONCE after all per-conversation stops
-    // have completed. Previously each stopSingleConversation iteration called
-    // cancelCurrentQuery(), which with N streams would kill whichever query
-    // was active on the first call, then no-op on subsequent calls.
-    chatAgentService.cancelCurrentQuery()
   }
 
   private async stopSingleConversation(conversationId: string | null): Promise<void> {
@@ -1470,6 +1478,15 @@ export class ChatStreamService {
           const partialContent = isActiveSession
             ? chatAgentService.getStreamedContent()
             : ''
+          // F5-FIX: Log loudly on the fallback path so Phase 2 work
+          // (per-conversation getStreamedContent) has a visible signal.
+          // This path saves only a plain marker — partial content is discarded.
+          if (!isActiveSession) {
+            log.warn(
+              `[STREAM:stop-fallback] saving plain marker — conversation ${conversationId} ` +
+              `does not own active session (active=${chatAgentService.getCurrentConversationId()})`
+            )
+          }
           const contentToSave = partialContent
             ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
             : '⏹ *Generation stopped by user.*'
@@ -1559,11 +1576,13 @@ export class ChatStreamService {
         completeStreamMetrics(stream.conversationId, 'aborted')
       }
       lifecycleRegistry.abortAll('workspace-switch')
-      // A9-FIX: When the state machine is stuck but the registry is empty,
-      // abortAll no-ops and the stale SM entries permanently block that
-      // conversation. Force-reset the SM as a fallback.
-      if (smStuck && activeStreams.length === 0) {
-        log.warn('[STREAM:force-reset] SM stuck with empty registry — forcing SM global reset')
+      // F2-FIX (replaces A9-FIX): After abortAll, re-check whether the SM
+      // is still stuck. The old condition (smStuck && activeStreams.length === 0)
+      // missed the mixed state: SM stuck for conv-B while the registry only
+      // held conv-A. abortAll clears conv-A's SM entry via forceReset(convId),
+      // but conv-B stays stuck. Unconditional re-check catches both cases.
+      if (!conversationStateMachine.isIdle()) {
+        log.warn('[STREAM:force-reset] SM still not idle after abortAll — forcing SM global reset')
         conversationStateMachine.forceReset()
       }
       // Belt-and-suspenders: clear any orphaned locks

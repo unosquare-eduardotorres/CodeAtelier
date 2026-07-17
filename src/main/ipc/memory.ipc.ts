@@ -159,7 +159,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       const offset = args?.offset ?? 0
       const items = memoryFactRepository.findContradictionsPaged(args?.status, limit, offset)
       const total = memoryFactRepository.countContradictions(args?.status)
-      return { items, total }
+      const pendingCount = memoryFactRepository.countContradictions('pending')
+      return { items, total, pendingCount }
     }
   )
 

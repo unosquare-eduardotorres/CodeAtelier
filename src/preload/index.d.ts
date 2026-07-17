@@ -313,7 +313,7 @@ interface Api {
   memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }) => Promise<MemoryFact>
   memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }) => Promise<MemoryFact>
   memoryFactsDelete: (args: { id: string }) => Promise<void>
-  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => Promise<{ items: MemoryContradiction[]; total: number }>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }>
   memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }) => Promise<MemoryContradiction>
   memoryCaptureSettingsGet: (args: { workspaceId: string }) => Promise<MemoryCaptureSettings>
   memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }) => Promise<void>

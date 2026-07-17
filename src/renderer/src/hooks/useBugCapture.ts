@@ -44,7 +44,18 @@ export function useBugCapture(): void {
       }
     }
 
+    /** Errors that are benign browser/engine noise — not actionable bugs. */
+    const BENIGN_ERROR_PATTERNS = [
+      /ResizeObserver loop/i // Chromium: loop completed with undelivered notifications / loop limit exceeded
+    ]
+
+    function isBenignError(message: string): boolean {
+      return BENIGN_ERROR_PATTERNS.some((p) => p.test(message))
+    }
+
     function handleError(event: ErrorEvent): void {
+      if (isBenignError(event.message)) return // Skip noise
+
       if (event.error instanceof Error) {
         reportError(event.error, 'error')
       } else {

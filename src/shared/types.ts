@@ -973,7 +973,7 @@ export interface MemoryConfirmation {
   id: string
   factId: string
   sourceType: ConfirmationSourceType
-  weight: number // auto_dedup = 0.5, human/tool = 1.0
+  weight: number // auto_dedup = 0.0, human/tool/extraction = 1.0
   createdAt: string
 }
 

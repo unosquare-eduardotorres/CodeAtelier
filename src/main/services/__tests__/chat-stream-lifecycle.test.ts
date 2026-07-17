@@ -795,6 +795,13 @@ describe('Concurrent streaming — A1 gate enforcement', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('LifecycleRegistry — A4 begin-from-disposer', () => {
+  // F8-DOC: This test verifies registry integrity but NOT state-machine state.
+  // lc.abort() runs forceReset(convId) *after* disposers, so a disposer that
+  // re-begins AND transitions the SM would have its fresh SM state clobbered
+  // by the trailing forceReset. No production code re-begins from disposers
+  // today, but if that changes, the SM transition must move inside begin()'s
+  // supersede path (before forceReset) or forceReset must be made conditional
+  // on whether the registry entry was replaced during dispose.
   test('abort does not delete a lifecycle begun from a disposer', () =>
     runExclusive(async () => {
       resetGlobals()

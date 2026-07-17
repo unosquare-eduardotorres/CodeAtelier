@@ -184,6 +184,17 @@ export class ConversationStateMachine extends EventEmitter {
       const prevState = this.getState(conversationId)
       log.warn(`[StateMachine] Force reset conversation=${conversationId} from ${prevState}`)
       this.states.delete(conversationId)
+
+      // F1(3)-FIX: Skip emission when prevState is already idle.
+      // The supersede path in lifecycleRegistry.begin() calls abort() on the
+      // stale entry, which triggers forceReset(convId). If the SM was already
+      // idle for that conversation, emitting idle→idle with the conversationId
+      // causes the renderer to remove the conversation from streamingConversationIds
+      // — dropping the sidebar spinner for the stream that is just starting.
+      if (prevState === 'idle') {
+        return
+      }
+
       // A8-FIX: Include conversationId so renderer knows which conversation
       // went idle. Previously sent null, losing attribution.
       const statePayload = {

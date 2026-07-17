@@ -47,6 +47,8 @@ type CodeGraphServices = {
 }
 
 let readyPromise: Promise<CodeGraphServices> | null = null
+let retryCount = 0
+const MAX_RETRIES = 3
 
 /**
  * Memoized lazy init — imports code graph service and repositories.
@@ -70,6 +72,15 @@ function ensureReady(): Promise<CodeGraphServices> {
       console.error('[code-graph-server] Services initialized')
       return { codeGraphService, codeGraphTagRepository, codeGraphEdgeRepository }
     })()
+
+    // Clear cached promise on rejection so next call can retry
+    readyPromise.catch(() => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++
+        readyPromise = null // Allow next invocation to retry
+      }
+      // After MAX_RETRIES, leave the rejected promise cached (stop retrying)
+    })
   }
   return readyPromise
 }

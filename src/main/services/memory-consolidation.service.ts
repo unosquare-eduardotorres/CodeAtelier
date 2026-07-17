@@ -224,18 +224,14 @@ class MemoryConsolidationService {
       }
     }
 
-    try {
-      memoryFactRepository.createContradiction({
-        oldFactId: embedded[bestI].fact.id,
-        newFactId: embedded[bestJ].fact.id,
-        status: 'pending',
-        resolution: `review cluster (${facts.length} facts, best cosine: ${bestSim.toFixed(3)})`
-      })
-      return 1
-    } catch {
-      // Unique constraint prevents duplicates
-      return 0
-    }
+    const created = memoryFactRepository.createContradiction({
+      oldFactId: embedded[bestI].fact.id,
+      newFactId: embedded[bestJ].fact.id,
+      status: 'pending',
+      resolution: `review cluster (${facts.length} facts, best cosine: ${bestSim.toFixed(3)})`
+    })
+    // ON CONFLICT DO NOTHING returns null when the pair already exists
+    return created ? 1 : 0
   }
 
   // ── Cleanup tasks ──────────────────────────────────────────────────────

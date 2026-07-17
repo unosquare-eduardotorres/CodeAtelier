@@ -52,7 +52,7 @@ flowchart LR
 
 ## Capture Sources
 
-Facts are extracted from three sources, each controlled by a toggle in **Settings**:
+Facts are extracted from three sources, each controlled by a toggle in the **Ingestion** tab:
 
 1. **Session transcripts** — After each chat session, decisions and conventions are extracted
 2. **Commit changes** — Git diffs are analyzed for architectural decisions

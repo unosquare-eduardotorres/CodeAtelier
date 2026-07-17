@@ -34,7 +34,7 @@ const log = dbLogger
 
 // ── Similarity thresholds ───────────────────────────────────────────────────
 const DUPLICATE_THRESHOLD = 0.90
-const AMBIGUOUS_THRESHOLD = 0.70
+const AMBIGUOUS_THRESHOLD = 0.82 // raised from 0.70 — reduces false-positive LLM classifier calls
 const AUTO_MERGE_THRESHOLD = 0.95
 const TOP_K_MATCHES = 5
 
@@ -44,9 +44,9 @@ const DECAY_CONFIDENCE_DELTA = 0.15
 const DECAY_THROTTLE_MS = 24 * 60 * 60 * 1000 // 24h
 
 // ── Capture caps ────────────────────────────────────────────────────────────
-const MAX_FACTS_PER_SESSION = 3
-const MAX_FACTS_PER_COMMIT = 2
-const MAX_FACTS_PER_DAY = 20
+const MAX_FACTS_PER_SESSION = 2 // lowered from 3 — quality over quantity
+const MAX_FACTS_PER_COMMIT = 1 // lowered from 2 — one key insight per commit
+const MAX_FACTS_PER_DAY = 8   // lowered from 20 — prevents memory bloat (~240/month vs 600)
 const CAPTURE_CAP_WINDOW_MS = 24 * 60 * 60 * 1000
 
 // ── Volatility detection patterns ───────────────────────────────────────────
@@ -111,13 +111,6 @@ class MemoryEngineService {
    */
   async writeFact(params: WriteFactParams): Promise<MemoryFact | null> {
     const { workspaceId } = params
-
-    // 0. Enforce capture caps
-    if (!this.checkCaptureCap(params)) {
-      log.debug(`[MemoryEngine] Capture cap reached for ${params.sourceType}/${params.sourceRef}, skipping`)
-      return null
-    }
-
     const factText = `${params.title}\n${params.content}`
 
     // 1. Detect volatility
@@ -138,7 +131,10 @@ class MemoryEngineService {
       log.warn('[MemoryEngine] Embedding failed, saving as pending:', err)
     }
 
-    // 3. If we have an embedding and a workspace, run similarity check
+    // 3. If we have an embedding and a workspace, run similarity check.
+    //    Similarity pipeline runs BEFORE the capture cap so that dedup confirms,
+    //    updates, and contradiction records succeed even on busy days. The cap
+    //    only gates brand-new fact inserts (step 4).
     if (embedding && workspaceId) {
       const result = await this.runSimilarityPipeline(
         workspaceId,
@@ -155,7 +151,13 @@ class MemoryEngineService {
       }
     }
 
-    // 4. No match or no embedding — insert as new
+    // 4. No match or no embedding — insert as new fact.
+    //    Capture cap only gates new-fact creation, not re-confirmations above.
+    if (!this.checkCaptureCap(params)) {
+      log.debug(`[MemoryEngine] Capture cap reached for ${params.sourceType}/${params.sourceRef}, skipping new fact`)
+      return null
+    }
+
     const fact = memoryFactRepository.createFact({
       workspaceId: params.workspaceId,
       category: params.category,
@@ -178,7 +180,7 @@ class MemoryEngineService {
 
     // 5. Do NOT record a confirmation at creation — the fact starts at T0 and must
     // earn its first confirmation through a separate re-observation event.
-    // This preserves the "2 confirms on 2 days" requirement for T0→T1.
+    // This preserves the "3 confirms on 3 days" requirement for T0→T1.
 
     this.incrementCaptureCap(params)
 
@@ -501,17 +503,13 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     // Supersede the old fact
     memoryFactRepository.supersedeFact(oldFact.id, newFact.id)
 
-    // Record the contradiction for UI review
-    try {
-      memoryFactRepository.createContradiction({
-        oldFactId: oldFact.id,
-        newFactId: newFact.id,
-        status: 'auto_resolved',
-        resolution: `New fact "${newFact.title}" superseded "${oldFact.title}"`
-      })
-    } catch {
-      // Unique constraint prevents duplicate contradiction records — expected
-    }
+    // Record the contradiction for UI review (ON CONFLICT DO NOTHING — idempotent)
+    memoryFactRepository.createContradiction({
+      oldFactId: oldFact.id,
+      newFactId: newFact.id,
+      status: 'auto_resolved',
+      resolution: `New fact "${newFact.title}" superseded "${oldFact.title}"`
+    })
 
     // Consume a capture-cap slot — this is a real mutation (new fact inserted + old superseded)
     this.incrementCaptureCap(newParams)
@@ -538,7 +536,9 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
   /** Core confirmation logic with evidence-based promotion. */
   private confirmFactWithEvidence(fact: MemoryFact, sourceType: ConfirmationSourceType): MemoryFact {
     // Record the confirmation event
-    const weight = sourceType === 'auto_dedup' ? 0.5 : 1.0
+    // auto_dedup only records the event for audit — zero weight prevents
+    // repetition from inflating tier promotions (dedup ≠ independent evidence)
+    const weight = sourceType === 'auto_dedup' ? 0.0 : 1.0
     memoryFactRepository.addConfirmation(fact.id, sourceType, weight)
 
     // Compute new tier based on evidence
@@ -549,9 +549,10 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
   /** Compute the new tier after a confirmation, using evidence-based rules. */
   private computePromotionTier(fact: MemoryFact): MemoryFactTier {
-    // Volatile facts never promote past T1
+    // Volatile facts (version numbers, counts) never promote — they are
+    // current-state snapshots, not knowledge. Capped at T0.
     if (fact.volatile) {
-      return Math.min(fact.tier, 1) as MemoryFactTier
+      return 0 as MemoryFactTier
     }
 
     const confirmations = memoryFactRepository.getConfirmations(fact.id)
@@ -820,16 +821,13 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         const a = Math.min(repI, repJ)
         const b = Math.max(repI, repJ)
         const sim = pairSimilarities.get(`${a}-${b}`) ?? THRESHOLD
-        try {
-          memoryFactRepository.createContradiction({
-            oldFactId: embedded[a].fact.id,
-            newFactId: embedded[b].fact.id,
-            status: 'pending',
-            resolution: `duplicate cluster (${cluster.length} facts, cosine: ${sim.toFixed(3)})`
-          })
-        } catch {
-          // Unique constraint prevents duplicate contradiction records
-        }
+        // ON CONFLICT DO NOTHING — idempotent, returns null on duplicate
+        memoryFactRepository.createContradiction({
+          oldFactId: embedded[a].fact.id,
+          newFactId: embedded[b].fact.id,
+          status: 'pending',
+          resolution: `duplicate cluster (${cluster.length} facts, cosine: ${sim.toFixed(3)})`
+        })
       }
     }
 
@@ -924,39 +922,45 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 // ── Evidence-based promotion (exported for unit testing) ────────────────────
 
 /**
- * Pure promotion logic — implements the evidence-based rules:
- *   T0→T1: ≥2 confirms on ≥2 distinct days
- *   T1→T2: ≥3 confirms across ≥2 distinct source types over 7+ days, confidence ≥ 0.65
- *   T2→T3: human confirmation required + ≥5 weighted confirms over 14+ days, confidence ≥ 0.80
+ * Pure promotion logic — implements evidence-based rules (tightened 2026-07):
+ *   T0→T1: ≥3 confirms on ≥3 distinct days
+ *   T1→T2: ≥5 confirms across ≥3 distinct source types over 14+ days, confidence ≥ 0.75
+ *   T2→T3: ≥2 human confirms required + ≥8 weighted confirms over 30+ days, confidence ≥ 0.90
  *
- * Auto-dedup confirms count at most once per day and weigh 0.5.
+ * Auto-dedup confirms record events but weigh 0.0 (repetition ≠ evidence).
  */
 function computePromotionTierPure(
   tier: MemoryFactTier,
   confidence: number,
   confirmations: Array<{ sourceType: ConfirmationSourceType; weight: number; createdAt: string }>
 ): MemoryFactTier {
-  const distinctDays = new Set(confirmations.map((c) => c.createdAt.slice(0, 10))).size
-  const distinctSources = new Set(confirmations.map((c) => c.sourceType)).size
-  const hasHuman = confirmations.some((c) => c.sourceType === 'human')
-  const weightedSum = confirmations.reduce((sum, c) => sum + c.weight, 0)
-  const totalCount = confirmations.length
+  // Filter out auto_dedup confirmations from promotion metrics entirely.
+  // auto_dedup records are kept for audit but repetition ≠ independent evidence.
+  const evidence = confirmations.filter((c) => c.sourceType !== 'auto_dedup')
 
-  // Compute day span (earliest to latest confirmation)
+  const distinctDays = new Set(evidence.map((c) => c.createdAt.slice(0, 10))).size
+  const distinctSources = new Set(evidence.map((c) => c.sourceType)).size
+  const weightedSum = evidence.reduce((sum, c) => sum + c.weight, 0)
+  const totalCount = evidence.length
+
+  // Compute day span (earliest to latest evidence confirmation)
   let daySpan = 0
-  if (confirmations.length >= 2) {
-    const dates = confirmations.map((c) => new Date(c.createdAt).getTime())
+  if (evidence.length >= 2) {
+    const dates = evidence.map((c) => new Date(c.createdAt).getTime())
     daySpan = Math.floor((Math.max(...dates) - Math.min(...dates)) / (24 * 60 * 60 * 1000))
   }
 
-  // T0 → T1: 2+ confirms on 2+ distinct days
-  if (tier === 0 && totalCount >= 2 && distinctDays >= 2) return 1
+  // Count human confirmations specifically for T2→T3
+  const humanCount = evidence.filter((c) => c.sourceType === 'human').length
 
-  // T1 → T2: 3+ confirms across 2+ source types over 7+ days, confidence ≥ 0.65
-  if (tier === 1 && totalCount >= 3 && distinctSources >= 2 && daySpan >= 7 && confidence >= 0.65) return 2
+  // T0 → T1: 3+ confirms on 3+ distinct days
+  if (tier === 0 && totalCount >= 3 && distinctDays >= 3) return 1
 
-  // T2 → T3: human confirm required + 5+ weighted confirms over 14+ days, confidence ≥ 0.80
-  if (tier === 2 && hasHuman && weightedSum >= 5 && daySpan >= 14 && confidence >= 0.80) return 3
+  // T1 → T2: 5+ confirms across 3+ source types over 14+ days, confidence ≥ 0.75
+  if (tier === 1 && totalCount >= 5 && distinctSources >= 3 && daySpan >= 14 && confidence >= 0.75) return 2
+
+  // T2 → T3: 2+ human confirms + 8+ weighted confirms over 30+ days, confidence ≥ 0.90
+  if (tier === 2 && humanCount >= 2 && weightedSum >= 8 && daySpan >= 30 && confidence >= 0.90) return 3
 
   return tier
 }

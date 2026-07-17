@@ -499,7 +499,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_DELETE, args),
 
   // Contradictions
-  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }): Promise<{ items: MemoryContradiction[]; total: number }> =>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }): Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST, args),
 
   memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }): Promise<MemoryContradiction> =>

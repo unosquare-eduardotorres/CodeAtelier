@@ -38,6 +38,29 @@ export interface ToolChunkOptions {
 // with false positives every time a model reaches for Write to author a plan).
 const PLAN_BLOCKED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 
+// ── Conditionally-loaded MCP tools ──
+// These tools belong to MCP servers that may not be running (e.g., memory server
+// when no workspace is configured). "No such tool available" for these is expected,
+// not a bug — suppress from the bug tracker.
+const CONDITIONAL_MCP_TOOLS = new Set([
+  'mcp__memory__memory_search',
+  'mcp__memory__memory_record',
+  'mcp__memory__memory_flag'
+])
+
+/**
+ * True when a tool_use_error is the expected outcome of calling a conditionally-loaded
+ * MCP tool that isn't currently available — not a real failure to report.
+ */
+function isExpectedToolUnavailable(
+  toolName: string | undefined,
+  content: string | undefined
+): boolean {
+  if (!toolName || !content) return false
+  if (!content.includes('No such tool available')) return false
+  return CONDITIONAL_MCP_TOOLS.has(toolName)
+}
+
 /**
  * True when a tool_use_error is the expected "blocked in Plan mode" outcome of a
  * Write/Edit attempt — i.e. a permission gate, not a real failure to report.
@@ -165,7 +188,8 @@ export function processToolChunk(
     // expected plan-mode Write/Edit permission blocks).
     const skipTags = new Set(options.formatTagsToSkip ?? [])
     const isPlanModeBlock = isExpectedPlanModeBlock(chunk.toolName, chunk.content, options.mode)
-    if (isToolError && chunk.content && !skipTags.has(chunk.toolName ?? '') && !isPlanModeBlock) {
+    const isConditionalToolMissing = isExpectedToolUnavailable(chunk.toolName, chunk.content)
+    if (isToolError && chunk.content && !skipTags.has(chunk.toolName ?? '') && !isPlanModeBlock && !isConditionalToolMissing) {
       reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
         agentType: options.agentType,
         workspaceId: options.workspaceId,

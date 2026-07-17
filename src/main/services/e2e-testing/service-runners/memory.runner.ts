@@ -4,7 +4,7 @@
  * - runMemoryTiers: tier confirmation counter
  * - runMemoryDedupExact: exact duplicate → 1 active row
  * - runMemoryDedupNear: near-duplicate (cosine >0.90) merge
- * - runMemoryAmbiguous: ambiguous band (0.70–0.90) contradiction detection
+ * - runMemoryAmbiguous: ambiguous band (0.82–0.90) contradiction detection
  * - runMemoryIsolation: workspace isolation — cross-workspace leakage check
  * - runMemoryScopeBoost: scope path boost ranking
  * - runMemorySessionDedupe: per-session injection dedup

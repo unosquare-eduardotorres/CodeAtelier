@@ -69,117 +69,220 @@ function makeConfirm(sourceType: 'auto_dedup' | 'human' | 'tool' | 'extraction' 
   date.setDate(date.getDate() - dayOffset) // dayOffset days ago
   return {
     sourceType,
-    weight: weight ?? (sourceType === 'auto_dedup' ? 0.5 : 1.0),
+    weight: weight ?? (sourceType === 'auto_dedup' ? 0.0 : 1.0),
     createdAt: date.toISOString()
   }
 }
 
-test('promotion: T0 stays T0 with only 1 confirm (needs 2)', () => {
+test('promotion: T0 stays T0 with only 1 confirm (needs 3)', () => {
   const confirms = [makeConfirm('extraction', 0)]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
 })
 
-test('promotion: T0 stays T0 with 2 confirms on SAME day (needs 2 distinct days)', () => {
+test('promotion: T0 stays T0 with 2 confirms on 2 days (needs 3 confirms on 3 days)', () => {
   const confirms = [
-    makeConfirm('extraction', 0),
+    makeConfirm('extraction', 1),
     makeConfirm('tool', 0)
   ]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
 })
 
-test('promotion: T0 → T1 with 2 confirms on 2 distinct days', () => {
+test('promotion: T0 stays T0 with 3 confirms on SAME day (needs 3 distinct days)', () => {
   const confirms = [
-    makeConfirm('extraction', 2),
-    makeConfirm('tool', 0)
+    makeConfirm('extraction', 0),
+    makeConfirm('tool', 0),
+    makeConfirm('human', 0)
+  ]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
+})
+
+test('promotion: T0 → T1 with 3 confirms on 3 distinct days', () => {
+  const confirms = [
+    makeConfirm('extraction', 3),
+    makeConfirm('tool', 1),
+    makeConfirm('human', 0)
   ]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 1)
 })
 
-test('promotion: T1 stays T1 with 3 confirms but only 1 source type', () => {
+test('promotion: T1 stays T1 with 5 confirms but only 1 source type', () => {
   const confirms = [
-    makeConfirm('auto_dedup', 10),
-    makeConfirm('auto_dedup', 5),
-    makeConfirm('auto_dedup', 0)
+    makeConfirm('extraction', 20),
+    makeConfirm('extraction', 15),
+    makeConfirm('extraction', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('extraction', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
+})
+
+test('promotion: T1 stays T1 with 5 confirms, 3 sources, but only 10 days span (needs 14)', () => {
+  const confirms = [
+    makeConfirm('extraction', 10),
+    makeConfirm('tool', 7),
+    makeConfirm('human', 5),
+    makeConfirm('extraction', 2),
+    makeConfirm('tool', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
+})
+
+test('promotion: T1 stays T1 with all criteria met but confidence < 0.75', () => {
+  const confirms = [
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('human', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('tool', 0)
   ]
   assert.equal(computePromotionTierPure(1, 0.7, confirms), 1)
 })
 
-test('promotion: T1 stays T1 with 3 confirms, 2 sources, but only 3 days span (needs 7)', () => {
+test('promotion: T1 stays T1 with only 3 confirms (needs 5)', () => {
   const confirms = [
-    makeConfirm('extraction', 3),
-    makeConfirm('tool', 1),
-    makeConfirm('auto_dedup', 0)
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 10),
+    makeConfirm('human', 0)
   ]
-  assert.equal(computePromotionTierPure(1, 0.7, confirms), 1)
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
 })
 
-test('promotion: T1 stays T1 with all criteria met but confidence < 0.65', () => {
+test('promotion: T1 → T2 with 5 confirms, 3+ sources, 14+ days, confidence ≥ 0.75', () => {
   const confirms = [
-    makeConfirm('extraction', 10),
-    makeConfirm('tool', 3),
-    makeConfirm('auto_dedup', 0)
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('human', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('tool', 0)
   ]
-  assert.equal(computePromotionTierPure(1, 0.5, confirms), 1)
-})
-
-test('promotion: T1 → T2 with 3 confirms, 2+ sources, 7+ days, confidence ≥ 0.65', () => {
-  const confirms = [
-    makeConfirm('extraction', 10),
-    makeConfirm('tool', 3),
-    makeConfirm('auto_dedup', 0)
-  ]
-  assert.equal(computePromotionTierPure(1, 0.7, confirms), 2)
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 2)
 })
 
 test('promotion: T2 stays T2 without human confirmation', () => {
   const confirms = [
+    makeConfirm('extraction', 35),
+    makeConfirm('tool', 25),
     makeConfirm('extraction', 20),
     makeConfirm('tool', 15),
-    makeConfirm('auto_dedup', 10),
-    makeConfirm('auto_dedup', 5),
-    makeConfirm('auto_dedup', 0)
+    makeConfirm('extraction', 10),
+    makeConfirm('tool', 5),
+    makeConfirm('extraction', 2),
+    makeConfirm('tool', 0)
   ]
-  // Weighted sum: 1.0 + 1.0 + 0.5 + 0.5 + 0.5 = 3.5 (needs 5.0 and human)
-  assert.equal(computePromotionTierPure(2, 0.85, confirms), 2)
+  // Weighted sum: 8.0, daySpan: 35, no human — fails humanCount >= 2
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 2)
 })
 
-test('promotion: T2 stays T2 with human but weighted sum < 5', () => {
+test('promotion: T2 stays T2 with only 1 human (needs 2)', () => {
   const confirms = [
+    makeConfirm('human', 35),
+    makeConfirm('tool', 25),
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('extraction', 10),
+    makeConfirm('tool', 5),
+    makeConfirm('extraction', 2),
+    makeConfirm('tool', 0)
+  ]
+  // Weighted sum: 8.0, daySpan: 35, humanCount: 1 (needs 2)
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 2)
+})
+
+test('promotion: T2 stays T2 with 2 human but weighted sum < 8', () => {
+  const confirms = [
+    makeConfirm('human', 35),
     makeConfirm('human', 20),
     makeConfirm('tool', 10),
-    makeConfirm('auto_dedup', 0)
+    makeConfirm('extraction', 0)
   ]
-  // Weighted sum: 1.0 + 1.0 + 0.5 = 2.5 (needs 5.0)
+  // Weighted sum: 1.0 + 1.0 + 1.0 + 1.0 = 4.0 (needs 8.0)
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 2)
+})
+
+test('promotion: T2 stays T2 with 2 human + weight but confidence < 0.90', () => {
+  const confirms = [
+    makeConfirm('human', 35),
+    makeConfirm('human', 25),
+    makeConfirm('tool', 20),
+    makeConfirm('extraction', 15),
+    makeConfirm('tool', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('tool', 2),
+    makeConfirm('extraction', 0)
+  ]
+  // Weighted sum: 8.0, daySpan: 35, humanCount: 2 — but confidence 0.85 < 0.90
   assert.equal(computePromotionTierPure(2, 0.85, confirms), 2)
 })
 
-test('promotion: T2 stays T2 with human + weight but confidence < 0.80', () => {
+test('promotion: T2 stays T2 with 2 human + weight + confidence but daySpan < 30', () => {
   const confirms = [
-    makeConfirm('human', 20),
-    makeConfirm('tool', 15),
+    makeConfirm('human', 25),
+    makeConfirm('human', 15),
+    makeConfirm('tool', 12),
     makeConfirm('extraction', 10),
+    makeConfirm('tool', 7),
     makeConfirm('extraction', 5),
-    makeConfirm('tool', 0)
+    makeConfirm('tool', 2),
+    makeConfirm('extraction', 0)
   ]
-  // Weighted sum: 5.0, daySpan: 20, has human — but confidence 0.7 < 0.8
-  assert.equal(computePromotionTierPure(2, 0.7, confirms), 2)
+  // Weighted sum: 8.0, daySpan: 25 (needs 30), humanCount: 2, conf 0.95
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 2)
 })
 
-test('promotion: T2 → T3 with human + weighted ≥ 5 + 14+ days + confidence ≥ 0.80', () => {
+test('promotion: T2 → T3 with 2 human + weighted ≥ 8 + 30+ days + confidence ≥ 0.90', () => {
   const confirms = [
-    makeConfirm('human', 20),
-    makeConfirm('tool', 15),
-    makeConfirm('extraction', 10),
+    makeConfirm('human', 35),
+    makeConfirm('human', 25),
+    makeConfirm('tool', 20),
+    makeConfirm('extraction', 15),
+    makeConfirm('tool', 10),
     makeConfirm('extraction', 5),
-    makeConfirm('tool', 0)
+    makeConfirm('tool', 2),
+    makeConfirm('extraction', 0)
   ]
-  // Weighted sum: 1.0 + 1.0 + 1.0 + 1.0 + 1.0 = 5.0
-  assert.equal(computePromotionTierPure(2, 0.85, confirms), 3)
+  // Weighted sum: 8.0, daySpan: 35, humanCount: 2, conf 0.95
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 3)
 })
 
 test('promotion: T3 stays T3 regardless of input', () => {
   const confirms = [makeConfirm('auto_dedup', 0)]
   assert.equal(computePromotionTierPure(3, 0.9, confirms), 3)
+})
+
+// ── auto_dedup exclusion from promotion metrics ──
+
+test('promotion: auto_dedup-only confirms do NOT promote T0→T1', () => {
+  // 5 auto_dedup confirms on 5 distinct days — should still stay T0
+  // because auto_dedup is filtered out of evidence metrics
+  const confirms = [
+    makeConfirm('auto_dedup', 10),
+    makeConfirm('auto_dedup', 8),
+    makeConfirm('auto_dedup', 5),
+    makeConfirm('auto_dedup', 2),
+    makeConfirm('auto_dedup', 0)
+  ]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
+})
+
+test('promotion: auto_dedup mixed with real confirms — only real ones count for T0→T1', () => {
+  // 2 real confirms on 2 days + 3 auto_dedup on different days
+  // totalCount with filtering: 2 (needs 3) — should NOT promote
+  const confirms = [
+    makeConfirm('extraction', 5),
+    makeConfirm('tool', 0),
+    makeConfirm('auto_dedup', 10),
+    makeConfirm('auto_dedup', 8),
+    makeConfirm('auto_dedup', 3)
+  ]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
+})
+
+test('promotion: auto_dedup-only confirms do NOT promote T1→T2', () => {
+  // 10 auto_dedup confirms spanning 20+ days — should stay T1
+  const confirms = Array.from({ length: 10 }, (_, i) =>
+    makeConfirm('auto_dedup', i * 3)
+  )
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
 })
 
 test('promotion: empty confirmations keeps current tier', () => {
@@ -214,10 +317,10 @@ test('volatile: does NOT match non-version content', () => {
 
 // ── Capture Caps ──
 
-test('capture caps: constants are reasonable', () => {
-  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_SESSION, 3, 'Session cap should be 3')
-  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_COMMIT, 2, 'Commit cap should be 2')
-  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_DAY, 20, 'Daily cap should be 20')
+test('capture caps: constants are tightened for quality over quantity', () => {
+  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_SESSION, 2, 'Session cap should be 2')
+  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_COMMIT, 1, 'Commit cap should be 1')
+  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_DAY, 8, 'Daily cap should be 8')
 })
 
 // ── backfillAllPendingEmbeddings — progress callback contract ──
@@ -306,6 +409,34 @@ test('regression A3: handleDuplicate returns a fact (non-null) but should NOT co
   assert.ok(
     handleContradictionBlock.includes('incrementCaptureCap'),
     'handleContradiction should call incrementCaptureCap'
+  )
+})
+
+// B2: Capture cap only gates new-fact inserts, not dedup/update/contradiction
+test('regression B2: checkCaptureCap appears AFTER similarity pipeline in writeFact', () => {
+  // Validates B2 design: the similarity pipeline runs before the cap check so that
+  // dedup confirms, updates, and contradictions proceed even on busy days.
+  // The cap only gates brand-new fact creation.
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'memory-engine.service.ts'),
+    'utf-8'
+  )
+
+  const writeFact = source.slice(
+    source.indexOf('async writeFact('),
+    source.indexOf('/**\n   * Similarity pipeline')
+  )
+
+  // runSimilarityPipeline should appear BEFORE checkCaptureCap in writeFact
+  const pipelineIdx = writeFact.indexOf('runSimilarityPipeline')
+  const capIdx = writeFact.indexOf('checkCaptureCap')
+  assert.ok(pipelineIdx > 0, 'writeFact should call runSimilarityPipeline')
+  assert.ok(capIdx > 0, 'writeFact should call checkCaptureCap')
+  assert.ok(
+    pipelineIdx < capIdx,
+    'runSimilarityPipeline must appear BEFORE checkCaptureCap in writeFact (cap gates only new inserts)'
   )
 })
 

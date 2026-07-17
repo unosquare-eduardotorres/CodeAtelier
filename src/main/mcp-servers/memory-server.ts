@@ -38,6 +38,8 @@ type Services = {
 }
 
 let readyPromise: Promise<Services> | null = null
+let retryCount = 0
+const MAX_RETRIES = 3
 
 /** Memoized lazy init — safe to call from every handler; only loads once. */
 function ensureReady(): Promise<Services> {
@@ -49,6 +51,15 @@ function ensureReady(): Promise<Services> {
       console.error('[memory-server] Services initialized')
       return { memoryRetrievalService, memoryEngineService, memoryFactRepository }
     })()
+
+    // Clear cached promise on rejection so next call can retry
+    readyPromise.catch(() => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++
+        readyPromise = null // Allow next invocation to retry
+      }
+      // After MAX_RETRIES, leave the rejected promise cached (stop retrying)
+    })
   }
   return readyPromise
 }
