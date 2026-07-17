@@ -478,11 +478,12 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     newFactId: string
     status?: ContradictionStatus
     resolution?: string
-  }): MemoryContradiction {
+  }): MemoryContradiction | null {
     const row = this.db()
       .prepare(
         `INSERT INTO memory_contradictions (old_fact_id, new_fact_id, status, resolution)
          VALUES (?, ?, ?, ?)
+         ON CONFLICT DO NOTHING
          RETURNING *`
       )
       .get(
@@ -490,8 +491,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
         params.newFactId,
         params.status ?? 'auto_resolved',
         params.resolution ?? null
-      ) as ContradictionRow
-    return mapContradictionRow(row)
+      ) as ContradictionRow | undefined
+    return row ? mapContradictionRow(row) : null
   }
 
   findContradictions(status?: ContradictionStatus): MemoryContradiction[] {
@@ -505,6 +506,70 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .prepare('SELECT * FROM memory_contradictions ORDER BY created_at DESC')
       .all() as ContradictionRow[]
     return rows.map(mapContradictionRow)
+  }
+
+  findContradictionsPaged(
+    status: ContradictionStatus | undefined,
+    limit: number,
+    offset: number
+  ): MemoryContradiction[] {
+    const sql = status
+      ? 'SELECT * FROM memory_contradictions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+      : 'SELECT * FROM memory_contradictions ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    const args = status ? [status, limit, offset] : [limit, offset]
+    const rows = this.db().prepare(sql).all(...args) as ContradictionRow[]
+    return rows.map(mapContradictionRow)
+  }
+
+  countContradictions(status?: ContradictionStatus): number {
+    const sql = status
+      ? 'SELECT COUNT(*) as cnt FROM memory_contradictions WHERE status = ?'
+      : 'SELECT COUNT(*) as cnt FROM memory_contradictions'
+    const args = status ? [status] : []
+    const row = this.db().prepare(sql).get(...args) as { cnt: number }
+    return row.cnt
+  }
+
+  /** Bulk-resolve pending duplicates with cosine ≥ threshold, archiving the older fact. */
+  bulkAutoResolveDuplicates(minCosine: number): number {
+    // Find pending contradictions whose resolution contains a cosine score ≥ threshold
+    const pending = this.db()
+      .prepare(
+        `SELECT * FROM memory_contradictions WHERE status = 'pending' AND resolution LIKE 'duplicate%'`
+      )
+      .all() as ContradictionRow[]
+
+    let resolved = 0
+    const resolveStmt = this.db().prepare(
+      `UPDATE memory_contradictions SET status = 'user_resolved', resolution = ?, resolved_at = datetime('now') WHERE id = ?`
+    )
+    const archiveStmt = this.db().prepare(
+      `UPDATE memory_facts SET status = 'archived', updated_at = datetime('now') WHERE id = ?`
+    )
+
+    this.db().transaction(() => {
+      for (const row of pending) {
+        // Extract cosine score from resolution like "duplicate cluster (3 facts, cosine: 0.923)"
+        const match = row.resolution?.match(/cosine:\s*(\d+\.\d+)/)
+        if (!match) continue
+        const cosine = parseFloat(match[1])
+        if (cosine < minCosine) continue
+
+        // Determine which fact is older by comparing created_at
+        const oldFact = this.findById(row.old_fact_id)
+        const newFact = this.findById(row.new_fact_id)
+        if (!oldFact || !newFact) continue
+
+        const oldIsOlder = new Date(oldFact.createdAt).getTime() <= new Date(newFact.createdAt).getTime()
+        const archiveId = oldIsOlder ? oldFact.id : newFact.id
+
+        resolveStmt.run(`auto-resolved duplicate (cosine: ${cosine.toFixed(3)}, archived older)`, row.id)
+        archiveStmt.run(archiveId)
+        resolved++
+      }
+    })()
+
+    return resolved
   }
 
   resolveContradiction(id: string, resolution: string, status: ContradictionStatus = 'user_resolved'): MemoryContradiction {

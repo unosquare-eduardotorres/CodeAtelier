@@ -312,14 +312,16 @@ interface Api {
   memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }) => Promise<MemoryFact>
   memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }) => Promise<MemoryFact>
   memoryFactsDelete: (args: { id: string }) => Promise<void>
-  memoryContradictionsList: (args?: { status?: ContradictionStatus }) => Promise<MemoryContradiction[]>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => Promise<{ items: MemoryContradiction[]; total: number }>
   memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }) => Promise<MemoryContradiction>
   memoryCaptureSettingsGet: (args: { workspaceId: string }) => Promise<MemoryCaptureSettings>
   memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }) => Promise<void>
   memoryEmbeddingStatus: (args?: { workspaceId?: string }) => Promise<MemoryEmbeddingStatus>
   memoryEmbeddingBackfill: () => Promise<{ backfilled: number; error?: string }>
   onMemoryEmbeddingProgress: (callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void) => () => void
-  memoryDedupScan: (args: { workspaceId: string }) => Promise<{ pairsFound: number }>
+  memoryDedupScan: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number }>
+  memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }) => Promise<{ resolvedCount: number }>
+  memoryReadClaudeMd: (args: { workspacePath: string }) => Promise<{ content: string | null; path: string }>
   memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
 

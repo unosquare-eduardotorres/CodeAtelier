@@ -26,11 +26,18 @@ interface MemoryState {
   // Fact state
   facts: MemoryFact[]
   contradictions: MemoryContradiction[]
+  contradictionsPage: number
+  contradictionsTotal: number
   searchQuery: string
   embeddingStatus: MemoryEmbeddingStatus | null
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
+
+  // CLAUDE.md state
+  claudeMdContent: string | null
+  claudeMdPath: string | null
+  claudeMdLoading: boolean
 
   // Feed state
   feedStatus: FeedStatus
@@ -53,8 +60,12 @@ interface MemoryState {
   toggleScope: (id: string, global: boolean, workspaceId?: string) => Promise<void>
 
   // Contradiction actions
-  loadContradictions: () => Promise<void>
+  loadContradictions: (status?: string, page?: number) => Promise<void>
   resolveContradiction: (id: string, resolution: string, keepFactId: string, archiveFactId?: string) => Promise<void>
+  autoResolveDuplicates: (workspaceId: string, minCosine?: number) => Promise<{ resolvedCount: number }>
+
+  // CLAUDE.md actions
+  loadClaudeMd: (workspacePath: string) => Promise<void>
 
   // Capture settings
   loadCaptureSettings: (workspaceId: string) => Promise<void>
@@ -66,7 +77,9 @@ interface MemoryState {
   clearBackfillError: () => void
 
   // Dedup
-  scanForDuplicates: (workspaceId: string) => Promise<{ pairsFound: number }>
+  scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
+
+  // Dedup scan return type already correct
 
   // Search
   setSearchQuery: (query: string) => void
@@ -294,7 +307,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
       return result
     } catch (error) {
       rendererLog.error('Failed to scan for duplicates:', error)
-      return { pairsFound: 0 }
+      return { clustersFound: 0, autoMerged: 0 }
     }
   },
 

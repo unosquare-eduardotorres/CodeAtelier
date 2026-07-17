@@ -498,7 +498,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_DELETE, args),
 
   // Contradictions
-  memoryContradictionsList: (args?: { status?: ContradictionStatus }): Promise<MemoryContradiction[]> =>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }): Promise<{ items: MemoryContradiction[]; total: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST, args),
 
   memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }): Promise<MemoryContradiction> =>
@@ -532,8 +532,14 @@ const api = {
   },
 
   // Dedup scan
-  memoryDedupScan: (args: { workspaceId: string }): Promise<{ pairsFound: number }> =>
+  memoryDedupScan: (args: { workspaceId: string }): Promise<{ clustersFound: number; autoMerged: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_SCAN, args),
+
+  memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }): Promise<{ resolvedCount: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_AUTORESOLVE, args),
+
+  memoryReadClaudeMd: (args: { workspacePath: string }): Promise<{ content: string | null; path: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_READ_CLAUDE_MD, args),
 
   // Memory graph
   memoryGraphGet: (args: { workspaceId: string }): Promise<MemoryGraphData> =>

@@ -27,7 +27,6 @@ import type {
   MemoryFactCategory,
   MemoryFactTier,
   MemorySourceType,
-  MemoryClassifierAction,
   ConfirmationSourceType
 } from '../../shared/types'
 
@@ -91,7 +90,7 @@ class MemoryEngineService {
     embedding: Buffer
     factText: string
     workspaceId: string
-    resolve: (fact: MemoryFact | null) => void
+    resolve: (fact: MemoryFact | null | undefined) => void
     reject: (err: Error) => void
   }> = []
   private classifyProcessing = false
@@ -313,10 +312,10 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
           embedding,
           factText: _newText,
           workspaceId: newParams.workspaceId!,
-          resolve: resolve as (fact: MemoryFact | null) => void,
+          resolve,
           reject
         })
-        this.drainClassifyQueue()
+        // drainClassifyQueue will be called from executeClassification's finally block
       })
     }
 
@@ -368,50 +367,75 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     }
   }
 
-  /** Process queued classification requests one at a time. */
+  /**
+   * Process queued classification requests one at a time.
+   * Loops until the queue is empty so no queued promise hangs forever.
+   * Each item gets fresh similarity scoring and a real classifier prompt.
+   */
   private async drainClassifyQueue(): Promise<void> {
     if (this.classifyProcessing || this.classifyQueue.length === 0) return
 
-    const item = this.classifyQueue.shift()!
-    const matchContext = `Match 1:\n  Title: (queued)\n  Content: (queued)`
-    const prompt = `You are a knowledge base curator. Compare this new fact against existing facts.
+    while (this.classifyQueue.length > 0) {
+      const item = this.classifyQueue.shift()!
+
+      try {
+        // Re-compute similarity against current embeddings (fresh, not stale)
+        const candidates = memoryFactRepository.findWithEmbeddings(item.workspaceId)
+        const queryVec = new Float32Array(
+          item.embedding.buffer,
+          item.embedding.byteOffset,
+          item.embedding.byteLength / 4
+        )
+        const scored = candidates
+          .map(({ fact, embedding: existingVec }) => ({
+            fact,
+            similarity: cosineSimilarity(queryVec, existingVec)
+          }))
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, TOP_K_MATCHES)
+
+        const bestMatch = scored[0]
+        if (!bestMatch || bestMatch.similarity < AMBIGUOUS_THRESHOLD) {
+          // No match — resolve undefined so writeFact inserts as new
+          item.resolve(undefined)
+          continue
+        }
+
+        // Build the real prompt with actual match context
+        const matchContext = scored
+          .slice(0, 3)
+          .map(
+            (m, i) =>
+              `Match ${i + 1} (similarity: ${m.similarity.toFixed(3)}):\n  Title: ${m.fact.title}\n  Content: ${m.fact.content}`
+          )
+          .join('\n\n')
+
+        const prompt = `You are a knowledge base curator. A new fact is being proposed. Compare it against the existing facts and decide what to do.
+
+EXISTING FACTS:
+${matchContext}
 
 NEW FACT:
 Title: ${item.params.title}
 Content: ${item.params.content}
 Category: ${item.params.category}
 
-Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".`
+Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
+- "ADD" = the new fact covers a genuinely new topic not in the existing facts
+- "UPDATE" = the new fact is an updated version of Match 1 (same topic, newer info) — rewrite Match 1 with this content
+- "NOOP" = the new fact says the same thing as an existing fact — skip it
+- "SUPERSEDE" = the new fact contradicts Match 1 — replace it`
 
-    try {
-      const candidates = memoryFactRepository.findWithEmbeddings(item.workspaceId)
-      const queryVec = new Float32Array(
-        item.embedding.buffer,
-        item.embedding.byteOffset,
-        item.embedding.byteLength / 4
-      )
-      const scored = candidates
-        .map(({ fact, embedding: existingVec }) => ({
-          fact,
-          similarity: cosineSimilarity(queryVec, existingVec)
-        }))
-        .sort((a, b) => b.similarity - a.similarity)
-
-      const bestMatch = scored[0]
-      if (!bestMatch || bestMatch.similarity < AMBIGUOUS_THRESHOLD) {
-        item.resolve(null) // Treat as new — caller will insert
-        return
+        const result = await this.executeClassification(
+          prompt,
+          bestMatch.fact,
+          item.params,
+          item.embedding
+        )
+        item.resolve(result as MemoryFact | null | undefined)
+      } catch (err) {
+        item.reject(err as Error)
       }
-
-      const result = await this.executeClassification(
-        prompt,
-        bestMatch.fact,
-        item.params,
-        item.embedding
-      )
-      item.resolve(result as MemoryFact | null)
-    } catch (err) {
-      item.reject(err as Error)
     }
   }
 

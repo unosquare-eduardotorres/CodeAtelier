@@ -176,7 +176,7 @@ function registerToolSchemas(): void {
       }
 
       if (args.intent === 'confirm') {
-        const confirmed = memoryEngineService.confirmFactWithPromotion(args.factId)
+        const confirmed = memoryEngineService.confirmFactWithPromotion(args.factId, 'tool')
         const tierLabel = ['Observed', 'Confirmed', 'Established', 'Wisdom'][confirmed.tier]
         return {
           content: [

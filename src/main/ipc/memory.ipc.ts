@@ -152,9 +152,13 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST,
-    (event, args?: { status?: ContradictionStatus }) => {
+    (event, args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => {
       validateSender(event)
-      return memoryFactRepository.findContradictions(args?.status)
+      const limit = args?.limit ?? 25
+      const offset = args?.offset ?? 0
+      const items = memoryFactRepository.findContradictionsPaged(args?.status, limit, offset)
+      const total = memoryFactRepository.countContradictions(args?.status)
+      return { items, total }
     }
   )
 
@@ -353,6 +357,30 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     (event, args: { workspaceId: string }) => {
       validateSender(event)
       return memoryEngineService.scanForDuplicates(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DEDUP_AUTORESOLVE,
+    (event, args: { workspaceId: string; minCosine?: number }) => {
+      validateSender(event)
+      const resolvedCount = memoryFactRepository.bulkAutoResolveDuplicates(args.minCosine ?? 0.95)
+      return { resolvedCount }
+    }
+  )
+
+  // ── Read CLAUDE.md ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_READ_CLAUDE_MD,
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
+      const filePath = join(args.workspacePath, 'CLAUDE.md')
+      let content: string | null = null
+      try {
+        content = readFileSync(filePath, 'utf-8')
+      } catch { /* file doesn't exist */ }
+      return { content, path: filePath }
     }
   )
 

@@ -176,6 +176,8 @@ export const IPC_CHANNELS = {
   MEMORY_EMBEDDING_BACKFILL: 'memory:embedding:backfill',
   MEMORY_EMBEDDING_PROGRESS: 'memory:embedding:progress',
   MEMORY_DEDUP_SCAN: 'memory:dedup:scan',
+  MEMORY_DEDUP_AUTORESOLVE: 'memory:dedup:autoresolve',
+  MEMORY_READ_CLAUDE_MD: 'memory:readClaudeMd',
 
   // Memory feed (retained: doc feed + CLAUDE.md regeneration)
   MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
