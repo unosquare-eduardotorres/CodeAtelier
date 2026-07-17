@@ -10,7 +10,12 @@ interface UseAuditActionCallbacksParams {
   mode: AuditMode
   selectedFindings: AuditFinding[]
   currentRunMode: AuditMode | undefined
-  setPendingFixContext: (ctx: { title: string; description: string }) => void
+  setPendingFixContext: (ctx: {
+    title: string
+    description: string
+    autoSend?: boolean
+    sourceAuditRunId?: string
+  }) => void
   clearSelectedFindings: () => void
   rerunTrack: (workspaceId: string, trackId: AuditTrackId, mode: AuditMode) => Promise<void>
   resumeAudit: (workspaceId: string) => Promise<void>

@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback } from 'react'
-import { useAuditStore } from '@renderer/store'
+import { useAuditStore, useChatStore } from '@renderer/store'
 import { AUDIT_TRACKS } from '../../../../../shared/constants'
 import type { AuditRun, AuditTrackId } from '../../../../../shared/types'
 import {
@@ -106,7 +106,8 @@ export function useAuditHandoff(
           trackIds,
           mode: 'split'
         })
-        // Navigate to chat — the sidebar will pick up new conversations
+        // Force sidebar to reload with newly created conversations
+        await useChatStore.getState().loadConversations(workspaceId)
         onNavigateToChat?.()
       } catch (err) {
         console.error('[audit-handoff] Split handoff failed:', err)

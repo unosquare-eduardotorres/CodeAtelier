@@ -284,6 +284,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/memory-retrieval.test',
   '../services/__tests__/memory-extraction.test',
   '../services/__tests__/memory-doc-watcher.test',
+  // ─── Memory Consolidation (cluster merge, idle job) ───
+  '../services/__tests__/memory-consolidation.test',
+  '../services/__tests__/memory-consolidation-archival.test',
   // ─── Memory Graph (knowledge graph edge derivation) ───
   '../services/__tests__/memory-graph.test',
   // ─── E2E Testing Infrastructure ───

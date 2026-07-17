@@ -286,6 +286,7 @@ function EmptyConversationState({
     useIsolatedBranch?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
+    sourceAuditRunId?: string
   }) => Promise<void>
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }): React.JSX.Element {

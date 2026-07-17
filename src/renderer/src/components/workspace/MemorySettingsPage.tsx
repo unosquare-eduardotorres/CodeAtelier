@@ -456,7 +456,7 @@ function FactsTab({
   }, [activeFacts])
 
   const validatedCount = useMemo(
-    () => activeFacts.filter((f) => f.tier >= 1 || f.confirmationCount > 0).length,
+    () => activeFacts.filter((f) => f.tier >= 1 || (f.evidenceCount ?? 0) > 0).length,
     [activeFacts]
   )
   const validatedPct = activeFacts.length > 0 ? Math.round((validatedCount / activeFacts.length) * 100) : 0
@@ -466,8 +466,8 @@ function FactsTab({
     let items = activeFacts.filter((f) => {
       if (!filterCategories.has(f.category)) return false
       if (!filterTiers.has(Math.min(f.tier, 3))) return false
-      if (filterStatus === 'validated' && f.tier < 1 && f.confirmationCount === 0) return false
-      if (filterStatus === 'unvalidated' && (f.tier >= 1 || f.confirmationCount > 0)) return false
+      if (filterStatus === 'validated' && f.tier < 1 && (f.evidenceCount ?? 0) === 0) return false
+      if (filterStatus === 'unvalidated' && (f.tier >= 1 || (f.evidenceCount ?? 0) > 0)) return false
       if (filterStatus === 'pending-embedding' && !f.embeddingPending) return false
       return true
     })

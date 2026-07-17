@@ -29,6 +29,37 @@ const MAX_REVIEW_QUEUE = 100
 const IDLE_JOB_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 hours
 const IDLE_JOB_DELAY_MS = 5 * 60 * 1000 // 5 minutes after startup
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * True when at least one confirmation is non-auto_dedup (real evidence).
+ * Pure variant exported for testing; the DB-backed wrapper is used internally.
+ */
+function hasRealEvidencePure(confirmations: Array<{ sourceType: string }>): boolean {
+  return confirmations.some((c) => c.sourceType !== 'auto_dedup')
+}
+
+/** DB-backed wrapper — exported so integration tests can exercise production wiring. */
+function hasRealEvidence(factId: string): boolean {
+  return hasRealEvidencePure(memoryFactRepository.getConfirmations(factId))
+}
+
+/** Facts eligible for stale-T0 archival: tier 0, never accessed,
+ *  workspace-owned, older than STALE_T0_DAYS, and no real evidence. */
+function selectStaleT0Facts(
+  facts: MemoryFact[],
+  workspaceId: string,
+  hasEvidence: (factId: string) => boolean
+): MemoryFact[] {
+  return facts.filter((f) =>
+    f.tier === 0 &&
+    !f.lastAccessedAt &&
+    f.workspaceId === workspaceId &&
+    daysSince(f.createdAt) > STALE_T0_DAYS &&
+    !hasEvidence(f.id)
+  )
+}
+
 interface ConsolidationResult {
   clustersFound: number
   autoMerged: number
@@ -236,17 +267,11 @@ class MemoryConsolidationService {
 
   // ── Cleanup tasks ──────────────────────────────────────────────────────
 
-  /** Archive T0 facts never accessed or confirmed in STALE_T0_DAYS days. */
+  /** Archive T0 facts never accessed or confirmed (with real evidence) in STALE_T0_DAYS days. */
   private archiveStaleT0Facts(workspaceId: string): number {
     try {
-      const stale = memoryFactRepository.findByWorkspace(workspaceId, 'active')
-        .filter((f) =>
-          f.tier === 0 &&
-          f.confirmationCount === 0 &&
-          !f.lastAccessedAt &&
-          f.workspaceId === workspaceId && // Skip global facts (workspaceId IS NULL)
-          daysSince(f.createdAt) > STALE_T0_DAYS
-        )
+      const active = memoryFactRepository.findByWorkspace(workspaceId, 'active')
+      const stale = selectStaleT0Facts(active, workspaceId, (id) => hasRealEvidence(id))
 
       for (const fact of stale) {
         memoryFactRepository.archiveFact(fact.id)
@@ -385,4 +410,5 @@ function emptyResult(): ConsolidationResult {
   }
 }
 
+export { hasRealEvidencePure, hasRealEvidence, selectStaleT0Facts }
 export const memoryConsolidationService = new MemoryConsolidationService()

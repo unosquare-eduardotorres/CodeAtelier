@@ -802,6 +802,17 @@ describe('LifecycleRegistry — A4 begin-from-disposer', () => {
   // today, but if that changes, the SM transition must move inside begin()'s
   // supersede path (before forceReset) or forceReset must be made conditional
   // on whether the registry entry was replaced during dispose.
+  //
+  // R3-DOC: Zombie-registry-entry variant under abortAll + disposer re-begin:
+  // If a disposer re-begins during abortAll(), the fresh lifecycle (lc2) is
+  // never aborted (abortAll's key snapshot excludes it). F2's global
+  // forceReset() then wipes its SM entry, and streamingLocks.clear() wipes
+  // its lock — leaving a zombie registry entry with no SM/lock backing.
+  // Gate 2 would block ALL cross-conversation sends citing the dead stream
+  // until the next forceResetIfStuck(). This is acceptable because no
+  // production code re-begins from disposers today; if that changes, the
+  // abortAll loop must re-snapshot or forceResetIfStuck must also drain
+  // the registry for conversations with idle SM state.
   test('abort does not delete a lifecycle begun from a disposer', () =>
     runExclusive(async () => {
       resetGlobals()
@@ -865,6 +876,118 @@ describe('forceResetIfStuck — A9 SM stuck with empty registry', () => {
 
       assert.equal(conversationStateMachine.isIdle(), true, 'SM should be idle after force reset')
       assert.equal(conversationStateMachine.getState('conv-stuck'), 'idle', 'conv-stuck should be idle')
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// K. F2 regression — mixed SM/registry state
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('forceResetIfStuck — F2 mixed SM/registry state', () => {
+  test('clears SM entries that have no matching registry lifecycle', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // Simulate mixed state: conv-A has both a registry entry AND an SM entry,
+      // but conv-B has ONLY an SM entry (no registry lifecycle).
+      // This can happen when a lifecycle was cleaned up but the SM entry wasn't.
+      const lcA = lifecycleRegistry.begin('conv-A')
+      conversationStateMachine.transition('sendMessage', 'conv-A')
+      svc.streamingLocks.add('conv-A')
+      lcA.onDispose(() => svc.streamingLocks.delete('conv-A'))
+
+      // conv-B: SM entry only, no registry lifecycle
+      conversationStateMachine.transition('sendMessage', 'conv-B')
+
+      // Preconditions
+      assert.equal(conversationStateMachine.isIdle(), false, 'SM should not be idle (2 entries)')
+      assert.equal(conversationStateMachine.getState('conv-A'), 'chat-agent-streaming')
+      assert.equal(conversationStateMachine.getState('conv-B'), 'chat-agent-streaming')
+      assert.equal(lifecycleRegistry.active().length, 1, 'only conv-A in registry')
+
+      svc.forceResetIfStuck()
+
+      // F2 guarantees: both SM entries cleared, registry empty
+      assert.equal(conversationStateMachine.isIdle(), true, 'SM should be globally idle after F2 reset')
+      assert.equal(conversationStateMachine.getState('conv-A'), 'idle', 'conv-A SM idle')
+      assert.equal(conversationStateMachine.getState('conv-B'), 'idle', 'conv-B SM idle')
+      assert.equal(lifecycleRegistry.active().length, 0, 'registry should be empty')
+      assert.equal(svc.streamingLocks.size, 0, 'all locks cleared')
+    }))
+
+  test('unconditional re-check fires global forceReset when SM stuck after abortAll', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // Only an SM entry — no registry entry at all.
+      // The old narrow condition (smStuck && activeStreams.length === 0) would
+      // only reset if there were ZERO active streams. The F2 fix re-checks
+      // unconditionally after abortAll.
+      conversationStateMachine.transition('sendMessage', 'conv-orphan')
+      assert.equal(conversationStateMachine.isIdle(), false)
+      assert.equal(lifecycleRegistry.active().length, 0)
+
+      svc.forceResetIfStuck()
+
+      assert.equal(conversationStateMachine.isIdle(), true, 'SM should be idle')
+      assert.equal(conversationStateMachine.getState('conv-orphan'), 'idle')
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// L. F1(3) regression — no idle→idle emission from forceReset
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('forceReset — F1(3) suppresses idle→idle emission', () => {
+  test('does NOT emit stateChange when conversation is already idle', () =>
+    runExclusive(async () => {
+      resetGlobals()
+
+      // Attach a stateChange listener to count emissions
+      const emissions: Array<{ from: string; to: string; conversationId: string | null }> = []
+      const listener = (payload: { from: string; to: string; conversationId: string | null }): void => {
+        emissions.push(payload)
+      }
+      conversationStateMachine.on('stateChange', listener)
+
+      try {
+        // conv-idle is already idle (no SM entry) → forceReset should NOT emit
+        conversationStateMachine.forceReset('conv-idle')
+
+        assert.equal(emissions.length, 0, 'should emit 0 stateChange events for idle→idle')
+      } finally {
+        conversationStateMachine.removeListener('stateChange', listener)
+      }
+    }))
+
+  test('DOES emit stateChange when conversation is streaming → idle', () =>
+    runExclusive(async () => {
+      resetGlobals()
+
+      const emissions: Array<{ from: string; to: string; conversationId: string | null }> = []
+      const listener = (payload: { from: string; to: string; conversationId: string | null }): void => {
+        emissions.push(payload)
+      }
+      conversationStateMachine.on('stateChange', listener)
+
+      try {
+        // Transition to streaming first
+        conversationStateMachine.transition('sendMessage', 'conv-streaming')
+        // Clear any transition emissions
+        emissions.length = 0
+
+        // forceReset from streaming → idle SHOULD emit exactly 1 event
+        conversationStateMachine.forceReset('conv-streaming')
+
+        assert.equal(emissions.length, 1, 'should emit exactly 1 stateChange event')
+        assert.equal(emissions[0].from, 'chat-agent-streaming', 'from should be streaming')
+        assert.equal(emissions[0].to, 'idle', 'to should be idle')
+        assert.equal(emissions[0].conversationId, 'conv-streaming', 'conversationId should match')
+      } finally {
+        conversationStateMachine.removeListener('stateChange', listener)
+      }
     }))
 })
 

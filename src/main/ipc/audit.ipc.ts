@@ -32,8 +32,10 @@ import {
   auditRepository,
   auditPlanRepository,
   conversationRepository,
+  conversationSpecialistRepository,
   messageRepository,
-  handoffRepository
+  handoffRepository,
+  specialistRepository
 } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
 import type { HandoffEnvelope } from '../../shared/handoff-types'
@@ -636,8 +638,8 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
       const { workspaceId, auditRunId, trackIds, mode } = args
 
       // Load the audit run with results
-      const run = auditRepository.getLatestForWorkspace(workspaceId)
-      if (!run || run.id !== auditRunId) {
+      const run = auditRepository.findRunById(auditRunId)
+      if (!run || run.workspaceId !== workspaceId) {
         throw new Error(`Audit run ${auditRunId} not found for workspace ${workspaceId}`)
       }
 
@@ -658,7 +660,10 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
       const conversationIds: string[] = []
 
       if (mode === 'split') {
-        // Create one conversation per track
+        // Create one conversation per track.
+        // NOTE: Split-flow conversations are created with the findings as a user message
+        // but do NOT auto-trigger an LLM response. The user clicks into a conversation
+        // and sends a follow-up message (e.g. "Fix these") to engage the LLM.
         for (const result of completedResults) {
           const actionableCount = result.findings.filter((f) => f.severity !== 'info').length
           const title = buildHandoffTitle('split', result.trackId, actionableCount)
@@ -677,6 +682,21 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
             snapshot,
             auditRunId
           )
+
+          // Initialize specialist defaults (mirrors conversation-crud.ipc.ts)
+          conversationSpecialistRepository.initFromWorkspaceDefaults(conv.id)
+          try {
+            const projectSpecialist = specialistRepository.findByAgentId(
+              `workspace-specialist-${workspaceId}`
+            )
+            if (projectSpecialist) {
+              conversationSpecialistRepository.upsert(conv.id, projectSpecialist.id, {
+                isActive: true
+              })
+            }
+          } catch (e) {
+            auditLog.warn('Project Specialist auto-attach failed:', e)
+          }
 
           messageRepository.create(conv.id, 'user', contextMessage)
           conversationIds.push(conv.id)
@@ -743,6 +763,21 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
           snapshot,
           auditRunId
         )
+
+        // Initialize specialist defaults (mirrors conversation-crud.ipc.ts)
+        conversationSpecialistRepository.initFromWorkspaceDefaults(conv.id)
+        try {
+          const projectSpecialist = specialistRepository.findByAgentId(
+            `workspace-specialist-${workspaceId}`
+          )
+          if (projectSpecialist) {
+            conversationSpecialistRepository.upsert(conv.id, projectSpecialist.id, {
+              isActive: true
+            })
+          }
+        } catch (e) {
+          auditLog.warn('Project Specialist auto-attach failed:', e)
+        }
 
         messageRepository.create(conv.id, 'user', contextMessage)
         conversationIds.push(conv.id)

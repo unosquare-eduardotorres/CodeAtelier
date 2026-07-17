@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
-import { processToolChunk, isExpectedPlanModeBlock } from '../tool-chunk-processor'
+import { processToolChunk, isExpectedPlanModeBlock, isExpectedToolUnavailable } from '../tool-chunk-processor'
 import type { StreamChunk } from '../../services/agent-base.service'
 
 const BASE_OPTIONS = { agentType: 'test' } as const
@@ -306,6 +306,68 @@ describe('processToolChunk — plan-mode Write block suppression', () => {
       mode: 'plan',
       formatTagsToSkip: ['Bash']
     })
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+})
+
+// ── Layer 4: conditional MCP tool "No such tool" is NOT reported as a bug ──
+
+describe('isExpectedToolUnavailable', () => {
+  const noSuchTool = '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
+
+  test('true for memory_search when tool unavailable', () => {
+    assert.equal(isExpectedToolUnavailable('mcp__memory__memory_search', noSuchTool), true)
+  })
+
+  test('true for memory_record when tool unavailable', () => {
+    assert.equal(
+      isExpectedToolUnavailable('mcp__memory__memory_record', '<tool_use_error>No such tool available: mcp__memory__memory_record</tool_use_error>'),
+      true
+    )
+  })
+
+  test('true for memory_flag when tool unavailable', () => {
+    assert.equal(
+      isExpectedToolUnavailable('mcp__memory__memory_flag', '<tool_use_error>No such tool available: mcp__memory__memory_flag</tool_use_error>'),
+      true
+    )
+  })
+
+  test('false for a non-conditional tool (Read)', () => {
+    assert.equal(
+      isExpectedToolUnavailable('Read', '<tool_use_error>No such tool available: Read</tool_use_error>'),
+      false
+    )
+  })
+
+  test('false for a genuine memory tool error (not "No such tool")', () => {
+    assert.equal(
+      isExpectedToolUnavailable('mcp__memory__memory_search', '<tool_use_error>Database connection failed</tool_use_error>'),
+      false
+    )
+  })
+
+  test('false when toolName is undefined', () => {
+    assert.equal(isExpectedToolUnavailable(undefined, noSuchTool), false)
+  })
+
+  test('false when content is undefined', () => {
+    assert.equal(isExpectedToolUnavailable('mcp__memory__memory_search', undefined), false)
+  })
+})
+
+describe('processToolChunk — conditional MCP tool suppression', () => {
+  test('memory_search "No such tool" does not call reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'mcp__memory__memory_search',
+      toolId: 'cond-mcp-1',
+      content: '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
+    }
+    // If reportToolError were called, it would attempt app.getVersion()
+    // and throw in the test env. isExpectedToolUnavailable must short-circuit.
+    const result = processToolChunk(chunk, { agentType: 'specialist' })
     assert.ok(result)
     assert.equal(result.toolActivity.status, 'error')
   })

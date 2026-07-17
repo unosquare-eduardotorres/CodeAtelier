@@ -46,6 +46,7 @@ interface MemoryFactRow {
   last_accessed_at: string | null
   created_at: string
   updated_at: string
+  evidence_count?: number // populated by UI-facing queries only
 }
 
 interface ConfirmationRow {
@@ -97,7 +98,8 @@ function mapFactRow(row: MemoryFactRow): MemoryFact {
     embeddingPending: row.embedding_pending === 1,
     lastAccessedAt: row.last_accessed_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    evidenceCount: row.evidence_count
   }
 }
 
@@ -146,10 +148,14 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   findByWorkspace(workspaceId: string, status: MemoryFactStatus = 'active'): MemoryFact[] {
     const rows = this.db()
       .prepare(
-        `SELECT * FROM memory_facts
-         WHERE (workspace_id = ? OR workspace_id IS NULL)
-           AND status = ?
-         ORDER BY tier DESC, confidence DESC, updated_at DESC`
+        `SELECT mf.*, (
+           SELECT COUNT(*) FROM memory_confirmations c
+           WHERE c.fact_id = mf.id AND c.source_type != 'auto_dedup'
+         ) AS evidence_count
+         FROM memory_facts mf
+         WHERE (mf.workspace_id = ? OR mf.workspace_id IS NULL)
+           AND mf.status = ?
+         ORDER BY mf.tier DESC, mf.confidence DESC, mf.updated_at DESC`
       )
       .all(workspaceId, status) as MemoryFactRow[]
     return rows.map(mapFactRow)
@@ -159,9 +165,13 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   findAllByWorkspace(workspaceId: string): MemoryFact[] {
     const rows = this.db()
       .prepare(
-        `SELECT * FROM memory_facts
-         WHERE workspace_id = ? OR workspace_id IS NULL
-         ORDER BY updated_at DESC`
+        `SELECT mf.*, (
+           SELECT COUNT(*) FROM memory_confirmations c
+           WHERE c.fact_id = mf.id AND c.source_type != 'auto_dedup'
+         ) AS evidence_count
+         FROM memory_facts mf
+         WHERE mf.workspace_id = ? OR mf.workspace_id IS NULL
+         ORDER BY mf.updated_at DESC`
       )
       .all(workspaceId) as MemoryFactRow[]
     return rows.map(mapFactRow)

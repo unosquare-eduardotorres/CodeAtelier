@@ -950,6 +950,8 @@ export interface MemoryFact {
   lastAccessedAt: string | null
   createdAt: string
   updatedAt: string
+  /** Count of non-auto_dedup confirmations (real evidence). Populated by UI-facing queries only. */
+  evidenceCount?: number
 }
 
 /** Resolution status for a contradiction between two facts. */

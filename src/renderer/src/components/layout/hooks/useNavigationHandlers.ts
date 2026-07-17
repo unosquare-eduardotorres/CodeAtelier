@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useChatStore, useWorkspaceStore, useIdeaStore } from '@renderer/store'
 import type { Workspace, Conversation } from '../../../../../shared/types'
 import type { SettingsTab } from '@renderer/components/workspace/WorkspaceSettingsPanel'
@@ -141,6 +141,16 @@ export function useNavigationHandlers(
       setPendingGrill
     ]
   )
+
+  // Listen for 'navigate-to-health' custom events (e.g. from AuditProvenanceBanner in chat)
+  useEffect(() => {
+    const handler = (): void => {
+      setSidebarView('settings')
+      setWorkspaceSettingsTab('health')
+    }
+    window.addEventListener('navigate-to-health', handler)
+    return () => window.removeEventListener('navigate-to-health', handler)
+  }, [setSidebarView, setWorkspaceSettingsTab])
 
   return {
     handleGoHome,

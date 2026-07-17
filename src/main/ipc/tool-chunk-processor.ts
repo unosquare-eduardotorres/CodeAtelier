@@ -42,17 +42,13 @@ const PLAN_BLOCKED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 // These tools belong to MCP servers that may not be running (e.g., memory server
 // when no workspace is configured). "No such tool available" for these is expected,
 // not a bug — suppress from the bug tracker.
-const CONDITIONAL_MCP_TOOLS = new Set([
-  'mcp__memory__memory_search',
-  'mcp__memory__memory_record',
-  'mcp__memory__memory_flag'
-])
+const CONDITIONAL_MCP_TOOLS = new Set(MCP_TOOLS.MEMORY._ALL_NAMES)
 
 /**
  * True when a tool_use_error is the expected outcome of calling a conditionally-loaded
  * MCP tool that isn't currently available — not a real failure to report.
  */
-function isExpectedToolUnavailable(
+export function isExpectedToolUnavailable(
   toolName: string | undefined,
   content: string | undefined
 ): boolean {

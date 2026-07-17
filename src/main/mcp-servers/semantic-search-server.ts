@@ -67,12 +67,14 @@ function ensureReady(): Promise<VectorService> {
     })()
 
     // Clear cached promise on rejection so next call can retry
-    readyPromise.catch(() => {
+    readyPromise.catch((err) => {
       if (retryCount < MAX_RETRIES) {
         retryCount++
+        console.error(`[semantic-search-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`, err)
         readyPromise = null // Allow next invocation to retry
+      } else {
+        console.error(`[semantic-search-server] Init failed after ${MAX_RETRIES} retries — giving up:`, err)
       }
-      // After MAX_RETRIES, leave the rejected promise cached (stop retrying)
     })
   }
   return readyPromise

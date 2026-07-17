@@ -279,6 +279,7 @@ const TEST_FILES: string[] = [
   './memory-graph.test',
   // ─── Memory Consolidation (cluster merge, idle job) ───
   './memory-consolidation.test',
+  './memory-consolidation-archival.test',
   // ─── E2E Testing Infrastructure ───
   './e2e-contracts.test',
   // ─── Blueprint document loader (splitBinaryDocs, buildReferenceDocsBlock) ───

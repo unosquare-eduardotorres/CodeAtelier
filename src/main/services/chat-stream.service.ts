@@ -1426,8 +1426,19 @@ export class ChatStreamService {
           // Nothing streaming — fall through to legacy single-stop path
           await this.stopSingleConversation(chatAgentService.getCurrentConversationId())
         } else {
+          // R1-FIX: Wrap each stopSingleConversation in try/catch so one
+          // failing stop (e.g. onStopPipeline throws) doesn't strand sibling
+          // streams' lifecycles — their locks stay held and gate 1 rejects
+          // all subsequent sends until forceResetIfStuck runs.
           for (const stream of activeStreams) {
-            await this.stopSingleConversation(stream.conversationId)
+            try {
+              await this.stopSingleConversation(stream.conversationId)
+            } catch (stopErr) {
+              log.error(
+                `[STREAM:stop-partial-failure] Failed to stop conversation=${stream.conversationId}:`,
+                stopErr
+              )
+            }
           }
         }
       } else {
@@ -1438,7 +1449,13 @@ export class ChatStreamService {
       // have completed. Previously each stopSingleConversation iteration called
       // cancelCurrentQuery(), which with N streams would kill whichever query
       // was active on the first call, then no-op on subsequent calls.
-      chatAgentService.cancelCurrentQuery()
+      // R2-FIX: Wrap in try/catch so a throw here doesn't mask the original
+      // stop error propagating through the finally block.
+      try {
+        chatAgentService.cancelCurrentQuery()
+      } catch (cancelErr) {
+        log.error('[STREAM:stop-cancel-failed] cancelCurrentQuery threw:', cancelErr)
+      }
     }
   }
 

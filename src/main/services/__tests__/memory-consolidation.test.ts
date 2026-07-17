@@ -35,6 +35,43 @@ test('memoryConsolidationService: runFullConsolidation returns result shape', as
   }
 })
 
+// ── hasRealEvidencePure — auto_dedup-only stale archival ──
+
+test('hasRealEvidencePure: returns false for empty confirmations', async () => {
+  const { hasRealEvidencePure } = await import('../memory-consolidation.service')
+  assert.equal(hasRealEvidencePure([]), false)
+})
+
+test('hasRealEvidencePure: returns false for auto_dedup-only confirmations', async () => {
+  const { hasRealEvidencePure } = await import('../memory-consolidation.service')
+  const confirmations = [
+    { sourceType: 'auto_dedup' },
+    { sourceType: 'auto_dedup' },
+    { sourceType: 'auto_dedup' }
+  ]
+  assert.equal(hasRealEvidencePure(confirmations), false,
+    'auto_dedup-only facts should be eligible for stale archival')
+})
+
+test('hasRealEvidencePure: returns true when at least one real confirmation exists', async () => {
+  const { hasRealEvidencePure } = await import('../memory-consolidation.service')
+  const confirmations = [
+    { sourceType: 'auto_dedup' },
+    { sourceType: 'extraction' },
+    { sourceType: 'auto_dedup' }
+  ]
+  assert.equal(hasRealEvidencePure(confirmations), true,
+    'facts with real evidence should NOT be eligible for stale archival')
+})
+
+test('hasRealEvidencePure: returns true for human/tool/bootstrap sources', async () => {
+  const { hasRealEvidencePure } = await import('../memory-consolidation.service')
+  for (const sourceType of ['human', 'tool', 'extraction', 'bootstrap']) {
+    assert.equal(hasRealEvidencePure([{ sourceType }]), true,
+      `${sourceType} should count as real evidence`)
+  }
+})
+
 test('memoryConsolidationService: stopIdleJob is idempotent', async () => {
   const mod = await import('../memory-consolidation.service')
   // Should not throw when called without startIdleJob

@@ -18,6 +18,9 @@ const SEVERITY_ORDER: Record<string, number> = {
   info: 4
 }
 
+/** Maximum findings to include inline per track to avoid oversized messages. */
+const MAX_FINDINGS_PER_TRACK = 30
+
 function sortBySeverity(findings: AuditFinding[]): AuditFinding[] {
   return [...findings].sort(
     (a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.severity] ?? 5)
@@ -44,12 +47,19 @@ export function formatDirectFindings(result: AuditResult): string {
     ''
   ]
 
-  for (let i = 0; i < sorted.length; i++) {
-    const f = sorted[i]
+  const capped = sorted.slice(0, MAX_FINDINGS_PER_TRACK)
+  for (let i = 0; i < capped.length; i++) {
+    const f = capped[i]
     lines.push(`### ${i + 1}. [${f.severity.toUpperCase()}] ${f.title}`)
     lines.push(f.description)
     if (f.filePath) lines.push(`**File:** \`${f.filePath}\``)
     if (f.recommendation) lines.push(`**Recommendation:** ${f.recommendation}`)
+    lines.push('')
+  }
+  if (sorted.length > MAX_FINDINGS_PER_TRACK) {
+    lines.push(
+      `*…and ${sorted.length - MAX_FINDINGS_PER_TRACK} more findings omitted for brevity.*`
+    )
     lines.push('')
   }
 
@@ -93,9 +103,15 @@ export function formatConsolidatedPlan(run: AuditRun): string {
       `## ${trackName} (${scoreLabel}) — ${sorted.length} issue${sorted.length !== 1 ? 's' : ''}`
     )
 
-    for (const f of sorted) {
+    const capped = sorted.slice(0, MAX_FINDINGS_PER_TRACK)
+    for (const f of capped) {
       const fileSuffix = f.filePath ? ` — \`${f.filePath}\`` : ''
       lines.push(`- [${f.severity.toUpperCase()}] ${f.title}: ${f.description}${fileSuffix}`)
+    }
+    if (sorted.length > MAX_FINDINGS_PER_TRACK) {
+      lines.push(
+        `- …and ${sorted.length - MAX_FINDINGS_PER_TRACK} more findings (omitted for brevity)`
+      )
     }
     lines.push('')
   }
