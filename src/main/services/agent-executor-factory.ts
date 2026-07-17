@@ -441,7 +441,8 @@ export class AgentExecutorFactory {
         featureFlags,
         controlCallbacks,
         ipcSocketPath: socketPath,
-        skipServers
+        skipServers,
+        instanceId: this.s.instanceId
       })
 
       this.s.log.info(`[buildCLIMcpConfigPath] MCP config written: ${configPath}`)

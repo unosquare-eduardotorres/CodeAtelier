@@ -1314,6 +1314,7 @@ interface Api {
       text: string
       kind?: 'text' | 'tool'
       toolActivity?: Record<string, unknown>
+      taskId?: string
     }) => void
   ) => () => void
   onBlueprintPhaseComplete: (
@@ -1398,6 +1399,7 @@ interface Api {
       clarifyQuestions: unknown
       pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
     }) => void
   ) => () => void
@@ -1415,6 +1417,7 @@ interface Api {
     clarifyQuestions: unknown
     pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+    runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
   }>
 

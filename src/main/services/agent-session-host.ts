@@ -77,6 +77,8 @@ export interface AgentSessionHost {
   readonly toolActivityAccumulator: ToolActivityAccumulator
   readonly adapter: AgentRoleAdapter
   readonly mcpConfigWriter: CliMcpConfigWriter
+  /** G1: Per-session instance ID for MCP config isolation (parallel build tasks). */
+  readonly instanceId: string | undefined
 
   // ── Mutable state ──
   sessionMap: Map<string, string>

@@ -207,23 +207,22 @@ function ClaudeProviderCard({
 
   const handleBackendChange = (backend: ExecutorBackend): void => {
     if (backend === 'codex') {
-      // Validate Codex CLI is installed before switching
+      // Phase A: Codex executor not yet implemented — show status toast only
       window.api
         .validateSubscriptions()
         .then((result) => {
-          if (result.codexCli?.installed) {
-            onExecutorBackendChange(backend)
-          } else {
-            addToast({
-              message: 'Codex CLI not found. Install it with: npm install -g @openai/codex',
-              type: 'error'
-            })
-          }
+          const cliStatus = result.codexCli?.installed
+            ? `CLI installed (${result.codexCli.version ?? 'unknown version'})`
+            : 'CLI not found — install with: npm install -g @openai/codex'
+          addToast({
+            message: `Codex backend coming soon. ${cliStatus}`,
+            type: 'info'
+          })
         })
         .catch(() => {
           addToast({
-            message: 'Could not verify Codex CLI installation',
-            type: 'error'
+            message: 'Codex backend coming soon',
+            type: 'info'
           })
         })
       return

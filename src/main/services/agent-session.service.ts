@@ -249,8 +249,12 @@ export class AgentSessionService extends AgentBaseService {
     askUser: false
   }
 
-  constructor(private readonly adapter: AgentRoleAdapter) {
+  /** G1: Per-session instance ID for MCP config file isolation (parallel build tasks). */
+  readonly instanceId: string | undefined
+
+  constructor(private readonly adapter: AgentRoleAdapter, instanceId?: string) {
     super()
+    this.instanceId = instanceId
     this.streamProcessor = new AgentStreamProcessor(this)
     this.recoveryManager = new AgentRecoveryManager(this)
     this.executorFactory = new AgentExecutorFactory(this)
@@ -696,7 +700,7 @@ export class AgentSessionService extends AgentBaseService {
 
       // Clean up CLI MCP config
       if (this.workspacePath) {
-        this.mcpConfigWriter.dispose(this.workspacePath)
+        this.mcpConfigWriter.dispose(this.workspacePath, this.instanceId)
       }
 
       // Stop OpenCode server

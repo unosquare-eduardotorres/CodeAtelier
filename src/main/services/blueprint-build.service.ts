@@ -13,6 +13,7 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { normalize } from 'node:path'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -40,6 +41,7 @@ import {
   blueprintPhaseRepository,
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
+import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 
 const bpLog = log.scope('blueprint-build')
 
@@ -56,10 +58,33 @@ interface BuildResult {
   discoveries: string[]
 }
 
+/** In-flight task metadata for the parallel scheduler. */
+interface InFlightEntry {
+  promise: Promise<{ success: boolean; completion: Record<string, unknown> | null; discoveries: string[] }>
+  files: Set<string>
+  task: BlueprintTask
+}
+
+/** Normalize file paths for overlap comparison. */
+function normalizePaths(paths: string[] | undefined): Set<string> {
+  if (!paths?.length) return new Set()
+  return new Set(paths.map((p) => normalize(p)))
+}
+
+/** Check whether two file sets overlap. */
+function filesOverlap(a: Set<string>, b: Set<string>): boolean {
+  for (const f of a) {
+    if (b.has(f)) return true
+  }
+  return false
+}
+
 export class BlueprintBuildService extends EventEmitter {
-  /** BP-05: Per-workspace active sessions to prevent cross-workspace cancel. */
-  private activeSessions = new Map<string, AgentSessionService>()
+  /** BP-05: Per-workspace active session sets (multiple for parallel tasks). */
+  private activeSessions = new Map<string, Set<AgentSessionService>>()
   private activeBlueprintIds = new Map<string, string>()
+  /** G2: Per-task status tracking for derived workspace status. */
+  private perTaskStatus = new Map<string, AgentStatus['status']>()
 
   async startBuildPhase(params: {
     blueprintId: string
@@ -340,11 +365,19 @@ export class BlueprintBuildService extends EventEmitter {
     }
   }
 
-  // ── Wave Execution ──
+  // ── Wave Execution (Parallel Scheduler) ──
 
   /**
-   * Execute all tasks in a single wave sequentially.
-   * Sets result.failed = true if any task fails or abort signal fires.
+   * Execute all tasks in a single wave with within-wave parallelism.
+   *
+   * Scheduling model: greedy in-order scan with runtime file-overlap guard.
+   * - Cap read per-wave from `parallelBuildAgents` preference (1–6, default 3).
+   * - Empty `filePathsJson` → exclusive task: dispatch only when inFlight empty.
+   * - Failure semantics: graceful drain — no new dispatches, peers finish,
+   *   unstarted → 'skipped'.
+   * - Discoveries: start-time snapshot per task, merge into shared accumulator
+   *   on completion (cap 20 kept).
+   * - Cap 1 degenerates to today’s sequential behavior.
    */
   private async executeWave(params: {
     waveNum: number
@@ -358,8 +391,9 @@ export class BlueprintBuildService extends EventEmitter {
     const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } =
       params
 
-    // BP-EMIT-UNHANDLED-01: Use safeEmit to isolate listener failures from wave execution.
-    // A listener throw (e.g. IPC channel closed) would otherwise kill the wave loop.
+    // Read cap per-wave from user preferences (clamped 1–6, default 3).
+    const cap = appPreferenceRepository.getAppPreferences().parallelBuildAgents
+
     this.safeEmit('waveStart', {
       blueprintId,
       workspaceId,
@@ -367,24 +401,12 @@ export class BlueprintBuildService extends EventEmitter {
       taskCount: waveTasks.length
     } satisfies BlueprintWaveStartPayload)
 
-    bpLog.info(`[executeWave] Wave ${waveNum}: ${waveTasks.length} tasks`)
+    bpLog.info(`[executeWave] Wave ${waveNum}: ${waveTasks.length} tasks, cap=${cap}`)
 
-    let waveFailed = false
+    // ── 1. Resume-skip already-completed tasks ──
+    const pending: BlueprintTask[] = []
     let skippedCount = 0
-
     for (const task of waveTasks) {
-      // Check for abort before starting each task
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
-      if (abortSignal?.aborted) {
-        bpLog.info(`[executeWave] Aborted before task ${task.taskId}`)
-        result.failed = true
-        break
-      }
-
-      // BP-RESUME-01: Skip tasks already completed in a previous run.
-      // On resume after crash/retry, only unfinished work re-runs.
-      // Check DB status (authoritative) for freshness — the in-memory task
-      // object may be stale if retryPhase reset statuses after loading.
       const dbTask = blueprintTaskRepository.findById(task.id)
       const effectiveStatus = dbTask?.status ?? task.status
       if (effectiveStatus === 'complete') {
@@ -393,127 +415,297 @@ export class BlueprintBuildService extends EventEmitter {
         skippedCount++
         bpLog.info(`[executeWave] Skipping complete task ${task.taskId} (resume)`)
         this.safeEmit('waveTaskComplete', {
-          blueprintId,
-          workspaceId,
-          wave: waveNum,
-          taskId: task.taskId,
-          status: 'complete'
+          blueprintId, workspaceId, wave: waveNum,
+          taskId: task.taskId, status: 'complete'
         } satisfies BlueprintWaveTaskCompletePayload)
-        continue
-      }
-
-      // BP-RESUME-02: Emit skip summary once before the first non-skipped task.
-      if (skippedCount > 0) {
-        this.safeEmit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'build',
-          text: `Skipping ${skippedCount} already-completed task${skippedCount > 1 ? 's' : ''} in Wave ${waveNum}`,
-          kind: 'system'
-        })
-        skippedCount = 0 // reset so we only emit once per wave
-      }
-
-      this.safeEmit('waveTaskStart', {
-        blueprintId,
-        workspaceId,
-        wave: waveNum,
-        taskId: task.taskId,
-        description: task.description,
-        goal: buildBuildGoalCondition(task.taskId, task.description)
-      } satisfies BlueprintWaveTaskStartPayload)
-
-      blueprintTaskRepository.updateStatus(task.id, 'running')
-
-      const taskResult = await this.executeTask({
-        task,
-        blueprintId,
-        workspaceId,
-        workspacePath,
-        phaseContext,
-        priorDiscoveries: result.discoveries
-      })
-
-      if (taskResult.success) {
-        blueprintTaskRepository.updateStatus(task.id, 'complete')
-        result.tasksCompleted++
-        if (taskResult.completion?.filesCreated) {
-          result.filesCreated.push(...(taskResult.completion.filesCreated as string[]))
-        }
-        if (taskResult.completion?.filesModified) {
-          result.filesModified.push(...(taskResult.completion.filesModified as string[]))
-        }
-
-        // BP-DISC-01: Accumulate per-task discoveries for intra-build continuity
-        if (taskResult.discoveries.length > 0) {
-          result.discoveries.push(...taskResult.discoveries)
-          // Cap at 20 to prevent unbounded growth
-          if (result.discoveries.length > 20) {
-            result.discoveries = result.discoveries.slice(-20)
-          }
-
-          // Persist per-task discoveries (survives crash, visible to VERIFY)
-          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-          if (buildPhase) {
-            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-              type: 'discoveries',
-              contentJson: { phase: 'build', taskId: task.taskId, entries: taskResult.discoveries }
-            })
-          }
-        }
       } else {
-        blueprintTaskRepository.updateStatus(task.id, 'failed')
-        waveFailed = true
-      }
-
-      this.safeEmit('waveTaskComplete', {
-        blueprintId,
-        workspaceId,
-        wave: waveNum,
-        taskId: task.taskId,
-        status: taskResult.success ? 'complete' : 'failed'
-      } satisfies BlueprintWaveTaskCompletePayload)
-
-      if (waveFailed) {
-        bpLog.warn(`[executeWave] Task ${task.taskId} failed — aborting wave ${waveNum}`)
-        break
+        pending.push(task)
       }
     }
-
-    // BP-RESUME-02: If all tasks in the wave were skipped (all complete), emit summary now.
     if (skippedCount > 0) {
       this.safeEmit('phaseProgress', {
-        blueprintId,
-        workspaceId,
-        phase: 'build',
+        blueprintId, workspaceId, phase: 'build',
         text: `Skipping ${skippedCount} already-completed task${skippedCount > 1 ? 's' : ''} in Wave ${waveNum}`,
         kind: 'system'
       })
     }
 
-    // BP-SKIP-01 + BP-CLEANUP-RUNNING-TASKS-01: Mark remaining pending/running tasks
-    // in this wave as 'skipped' so the UI distinguishes "never ran" from "pending".
-    if (waveFailed || result.failed) {
-      for (const task of waveTasks) {
-        const currentStatus = blueprintTaskRepository.findById(task.id)?.status
-        if (currentStatus === 'pending' || currentStatus === 'running') {
-          blueprintTaskRepository.updateStatus(task.id, 'skipped')
+    // ── 2. Parallel dispatch loop ──
+    const inFlight = new Map<string, InFlightEntry>()
+    let draining = false
+    let pendingIdx = 0
+
+    /** Collect all files currently in-flight. */
+    const allInFlightFiles = (): Set<string> => {
+      const merged = new Set<string>()
+      for (const entry of inFlight.values()) {
+        for (const f of entry.files) merged.add(f)
+      }
+      return merged
+    }
+
+    /** Update runningTasks snapshot on blueprint service (G3). */
+    const syncRunningTasks = (): void => {
+      const running: Record<string, { taskId: string; description: string }> = {}
+      for (const [taskId, entry] of inFlight) {
+        running[taskId] = { taskId, description: entry.task.description }
+      }
+      blueprintService.setRunningTasks(
+        workspaceId,
+        Object.keys(running).length > 0 ? running : null
+      )
+    }
+
+    while (pendingIdx < pending.length || inFlight.size > 0) {
+      // Check abort
+      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      if (abortSignal?.aborted) {
+        bpLog.info(`[executeWave] Aborted — draining ${inFlight.size} in-flight tasks`)
+        draining = true
+      }
+
+      // ── Fill slots ──
+      if (!draining) {
+        let scanStart = pendingIdx
+        while (inFlight.size < cap && scanStart < pending.length) {
+          const task = pending[scanStart]
+          const taskFiles = normalizePaths(task.filePathsJson)
+
+          // Exclusive task (no declared files): dispatch only when inFlight is empty
+          if (taskFiles.size === 0) {
+            if (inFlight.size === 0) {
+              // Dispatch exclusive task
+              this.dispatchTask({
+                task, blueprintId, workspaceId, workspacePath, phaseContext,
+                result, waveNum, inFlight, taskFiles
+              })
+              syncRunningTasks()
+              scanStart++
+              pendingIdx = scanStart
+              break // exclusive — no more slots this iteration
+            } else {
+              // Can't dispatch yet — wait for inFlight to drain
+              scanStart++
+              continue
+            }
+          }
+
+          // File-overlap guard
+          const currentFiles = allInFlightFiles()
+          if (filesOverlap(taskFiles, currentFiles)) {
+            scanStart++ // skip for now, try next
+            continue
+          }
+
+          // Dispatch
+          this.dispatchTask({
+            task, blueprintId, workspaceId, workspacePath, phaseContext,
+            result, waveNum, inFlight, taskFiles
+          })
+          syncRunningTasks()
+          scanStart++
+          if (scanStart === pendingIdx + 1) pendingIdx = scanStart // advance head if contiguous
+        }
+      }
+
+      // ── Await first completion ──
+      if (inFlight.size === 0) {
+        // All remaining pending tasks were skipped by the scan (exclusive/overlap)
+        // but draining is false — means no progress possible. Force sequential fallback.
+        if (pendingIdx < pending.length && !draining) {
+          // Advance past any skipped tasks by dispatching next one exclusively
+          const nextTask = pending[pendingIdx]
+          const taskFiles = normalizePaths(nextTask.filePathsJson)
+          this.dispatchTask({
+            task: nextTask, blueprintId, workspaceId, workspacePath, phaseContext,
+            result, waveNum, inFlight, taskFiles
+          })
+          syncRunningTasks()
+          pendingIdx++
+        } else {
+          break
+        }
+      }
+
+      // Wait for ANY in-flight task to complete
+      const settled = await Promise.race(
+        [...inFlight.entries()].map(async ([taskId, entry]) => {
+          const taskResult = await entry.promise
+          return { taskId, entry, taskResult }
+        })
+      )
+
+      // Process completion
+      inFlight.delete(settled.taskId)
+      this.handleTaskCompletion({
+        task: settled.entry.task,
+        taskResult: settled.taskResult,
+        blueprintId, workspaceId, waveNum, result
+      })
+      syncRunningTasks()
+
+      // Advance pendingIdx past completed tasks
+      while (pendingIdx < pending.length && inFlight.has(pending[pendingIdx].taskId)) {
+        pendingIdx++
+      }
+      // Also advance past tasks already dispatched
+      while (
+        pendingIdx < pending.length &&
+        !inFlight.has(pending[pendingIdx].taskId) &&
+        (() => {
+          const s = blueprintTaskRepository.findById(pending[pendingIdx].id)?.status
+          return s === 'complete' || s === 'failed'
+        })()
+      ) {
+        pendingIdx++
+      }
+
+      // On failure → graceful drain
+      if (!settled.taskResult.success && !draining) {
+        bpLog.warn(`[executeWave] Task ${settled.taskId} failed — draining wave ${waveNum}`)
+        draining = true
+      }
+    }
+
+    // Clear running tasks
+    blueprintService.setRunningTasks(workspaceId, null)
+
+    // ── 3. Residual-risk hedge: warn if completed tasks' files overlap (undeclared writes) ──
+    const completedFiles = new Map<string, Set<string>>()
+    for (const task of waveTasks) {
+      const dbTask = blueprintTaskRepository.findById(task.id)
+      if (dbTask?.status === 'complete') {
+        completedFiles.set(task.taskId, normalizePaths(task.filePathsJson))
+      }
+    }
+    const taskIds = [...completedFiles.keys()]
+    for (let i = 0; i < taskIds.length; i++) {
+      for (let j = i + 1; j < taskIds.length; j++) {
+        const a = completedFiles.get(taskIds[i])!
+        const b = completedFiles.get(taskIds[j])!
+        if (filesOverlap(a, b)) {
+          const overlap = [...a].filter((f) => b.has(f))
+          bpLog.warn(
+            `[executeWave] OVERLAP WARNING: Tasks ${taskIds[i]} and ${taskIds[j]} ` +
+            `share declared files: ${overlap.join(', ')}`
+          )
         }
       }
     }
 
-    const waveStatus = waveFailed || result.failed ? 'failed' : 'complete'
+    // ── 4. Mark leftover pending as 'skipped' ──
+    if (draining || result.failed) {
+      for (const task of pending) {
+        const currentStatus = blueprintTaskRepository.findById(task.id)?.status
+        if (currentStatus === 'pending' || currentStatus === 'running') {
+          blueprintTaskRepository.updateStatus(task.id, 'skipped')
+          this.safeEmit('waveTaskComplete', {
+            blueprintId, workspaceId, wave: waveNum,
+            taskId: task.taskId, status: 'skipped'
+          } satisfies BlueprintWaveTaskCompletePayload)
+        }
+      }
+    }
+
+    const waveFailed = draining || result.failed
+    const waveStatus = waveFailed ? 'failed' : 'complete'
     this.safeEmit('waveComplete', {
-      blueprintId,
-      workspaceId,
-      wave: waveNum,
-      status: waveStatus
+      blueprintId, workspaceId, wave: waveNum, status: waveStatus
     } satisfies BlueprintWaveCompletePayload)
 
     if (waveFailed) {
       bpLog.warn(`[executeWave] Wave ${waveNum} failed — aborting remaining waves`)
       result.failed = true
     }
+  }
+
+  // ── Task Dispatch Helper ──
+
+  /**
+   * Dispatch a task into the in-flight set. Emits waveTaskStart, marks DB running,
+   * and starts executeTask as a background promise.
+   */
+  private dispatchTask(params: {
+    task: BlueprintTask
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    phaseContext: import('../../shared/blueprint-types').PhaseContext
+    result: BuildResult
+    waveNum: number
+    inFlight: Map<string, InFlightEntry>
+    taskFiles: Set<string>
+  }): void {
+    const { task, blueprintId, workspaceId, workspacePath, phaseContext, result, waveNum, inFlight, taskFiles } = params
+
+    this.safeEmit('waveTaskStart', {
+      blueprintId, workspaceId, wave: waveNum,
+      taskId: task.taskId,
+      description: task.description,
+      goal: buildBuildGoalCondition(task.taskId, task.description)
+    } satisfies BlueprintWaveTaskStartPayload)
+
+    blueprintTaskRepository.updateStatus(task.id, 'running')
+
+    // Start-time snapshot of discoveries for this task
+    const discoverySnapshot = [...result.discoveries]
+
+    const promise = this.executeTask({
+      task, blueprintId, workspaceId, workspacePath, phaseContext,
+      priorDiscoveries: discoverySnapshot
+    })
+
+    inFlight.set(task.taskId, { promise, files: taskFiles, task })
+  }
+
+  // ── Task Completion Handler ──
+
+  /**
+   * Process a completed task: update DB, accumulate results, emit events.
+   */
+  private handleTaskCompletion(params: {
+    task: BlueprintTask
+    taskResult: { success: boolean; completion: Record<string, unknown> | null; discoveries: string[] }
+    blueprintId: string
+    workspaceId: string
+    waveNum: number
+    result: BuildResult
+  }): void {
+    const { task, taskResult, blueprintId, workspaceId, waveNum, result } = params
+
+    if (taskResult.success) {
+      blueprintTaskRepository.updateStatus(task.id, 'complete')
+      result.tasksCompleted++
+      if (taskResult.completion?.filesCreated) {
+        result.filesCreated.push(...(taskResult.completion.filesCreated as string[]))
+      }
+      if (taskResult.completion?.filesModified) {
+        result.filesModified.push(...(taskResult.completion.filesModified as string[]))
+      }
+
+      // BP-DISC-01: Accumulate per-task discoveries (merge on completion)
+      if (taskResult.discoveries.length > 0) {
+        result.discoveries.push(...taskResult.discoveries)
+        if (result.discoveries.length > 20) {
+          result.discoveries = result.discoveries.slice(-20)
+        }
+        const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+        if (buildPhase) {
+          blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+            type: 'discoveries',
+            contentJson: { phase: 'build', taskId: task.taskId, entries: taskResult.discoveries }
+          })
+        }
+      }
+    } else {
+      blueprintTaskRepository.updateStatus(task.id, 'failed')
+    }
+
+    this.safeEmit('waveTaskComplete', {
+      blueprintId, workspaceId, wave: waveNum,
+      taskId: task.taskId,
+      status: taskResult.success ? 'complete' : 'failed'
+    } satisfies BlueprintWaveTaskCompletePayload)
   }
 
   // ── Safe Event Emission ──
@@ -685,8 +877,17 @@ export class BlueprintBuildService extends EventEmitter {
     })
     adapter.setGoalCondition(buildBuildGoalCondition(task.taskId, task.description), 'enforce')
 
-    const session = new AgentSessionService(adapter)
-    this.activeSessions.set(workspaceId, session)
+    // G1: Per-task instanceId for MCP config file isolation
+    const instanceId = `build-${task.taskId}-${Date.now()}`
+    const session = new AgentSessionService(adapter, instanceId)
+
+    // Set-based session tracking (multiple parallel tasks per workspace)
+    let sessionSet = this.activeSessions.get(workspaceId)
+    if (!sessionSet) {
+      sessionSet = new Set()
+      this.activeSessions.set(workspaceId, sessionSet)
+    }
+    sessionSet.add(session)
 
     // Wire streaming — forward progress events + stall watchdog
     // BP-BUILD-TASK-RAW-EMIT-01: safeEmit prevents listener throws from
@@ -698,11 +899,16 @@ export class BlueprintBuildService extends EventEmitter {
       forwardBlueprintChunk(
         (event, payload) => this.safeEmit(event, payload),
         chunk,
-        { blueprintId, workspaceId, phase: 'build', workspacePath, mode: 'build' }
+        { blueprintId, workspaceId, phase: 'build', workspacePath, mode: 'build', taskId: task.taskId }
       )
     }
+    // G2: Per-task status — derive workspace status from all active tasks
     const onStatus = (status: AgentStatus): void => {
-      this.safeEmit('status', { workspaceId, status })
+      this.perTaskStatus.set(task.taskId, status.status)
+      // Derive: busy if any task is busy, idle only when all drained
+      const allStatuses = [...this.perTaskStatus.values()]
+      const derivedStatus = allStatuses.some((s) => s === 'busy') ? 'busy' : 'idle'
+      this.safeEmit('status', { workspaceId, status: { ...status, status: derivedStatus } })
     }
     session.on('chunk', onChunk)
     session.on('statusUpdate', onStatus)
@@ -791,9 +997,12 @@ export class BlueprintBuildService extends EventEmitter {
       } catch (stopErr) {
         bpLog.error(`[executeTask] session.stop() failed for task ${task.taskId}:`, stopErr)
       }
-      if (this.activeSessions.get(workspaceId) === session) {
-        this.activeSessions.delete(workspaceId)
+      const sessions = this.activeSessions.get(workspaceId)
+      if (sessions) {
+        sessions.delete(session)
+        if (sessions.size === 0) this.activeSessions.delete(workspaceId)
       }
+      this.perTaskStatus.delete(task.taskId)
     }
   }
 
@@ -879,10 +1088,12 @@ export class BlueprintBuildService extends EventEmitter {
     // BP-05: Find the workspace whose active blueprint matches
     for (const [wsId, bpId] of this.activeBlueprintIds) {
       if (bpId === blueprintId) {
-        const session = this.activeSessions.get(wsId)
-        if (session) {
-          bpLog.info(`[cancelBlueprint] Stopping active session for blueprint ${blueprintId}`)
-          await session.stop()
+        const sessions = this.activeSessions.get(wsId)
+        if (sessions) {
+          bpLog.info(`[cancelBlueprint] Stopping ${sessions.size} active session(s) for blueprint ${blueprintId}`)
+          for (const session of sessions) {
+            try { await session.stop() } catch { /* best effort */ }
+          }
           this.activeSessions.delete(wsId)
           this.activeBlueprintIds.delete(wsId)
         }
@@ -892,8 +1103,10 @@ export class BlueprintBuildService extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
-    for (const [wsId, session] of this.activeSessions) {
-      await session.stop()
+    for (const [wsId, sessions] of this.activeSessions) {
+      for (const session of sessions) {
+        try { await session.stop() } catch { /* best effort */ }
+      }
       this.activeBlueprintIds.delete(wsId)
     }
     this.activeSessions.clear()

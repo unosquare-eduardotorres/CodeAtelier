@@ -121,7 +121,7 @@ export function createOptimisticUserMessage(
 const IPC_ERROR_PREFIX_RE = /^Error invoking remote method '[^']+': /
 
 /** Escape markdown-significant chars so a title can't break error-bubble formatting. */
-const escapeMarkdown = (s: string): string => s.replace(/([*_`~[\]])/g, '\\$1')
+const escapeMarkdown = (s: string): string => s.replace(/([\\*_`~[\]])/g, '\\$1')
 
 /**
  * Parse the F6 `(blockedBy:<uuid>)` tag from a raw backend error string,

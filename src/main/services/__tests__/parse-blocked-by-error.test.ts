@@ -95,7 +95,21 @@ describe('parseBlockedByError', () => {
     const raw =
       'Another chat is still processing. Please wait for it to complete or stop it first. (blockedBy:conv-md)'
     const { errorMsg } = parseBlockedByError(raw, convs)
-    assert.ok(errorMsg.includes('"\\*\\*bold\\*\\* and \\`code\\`"'))
+    assert.equal(
+      errorMsg,
+      'Another chat ("\\*\\*bold\\*\\* and \\`code\\`") is still processing. Please wait for it to complete or stop it first.'
+    )
+  })
+
+  test('blocker title with backslash before markdown char is fully escaped', () => {
+    const convs = [{ id: 'conv-bs', title: '\\*paired\\*' }]
+    const raw =
+      'Another chat is still processing. Please wait for it to complete or stop it first. (blockedBy:conv-bs)'
+    const { errorMsg } = parseBlockedByError(raw, convs)
+    // \ escaped to \\, * escaped to \* → \\\* in the output
+    assert.ok(!errorMsg.includes('Error invoking remote method'))
+    assert.ok(errorMsg.startsWith('Another chat ("'))
+    assert.ok(errorMsg.includes('\\\\\\*paired\\\\\\*'))
   })
 })
 

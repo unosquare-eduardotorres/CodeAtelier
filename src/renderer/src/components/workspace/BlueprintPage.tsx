@@ -62,7 +62,7 @@ function BlueprintActiveView({
   clarifyGateReady,
   currentGoal,
   taskGoals,
-  currentTask,
+  runningTasks,
   phaseCompletions,
   totalTaskCount,
   totalWaves,
@@ -91,7 +91,7 @@ function BlueprintActiveView({
   clarifyGateReady: boolean
   currentGoal: string | null
   taskGoals: Record<string, string>
-  currentTask: { taskId: string; description: string } | null
+  runningTasks: Record<string, { taskId: string; description: string }>
   phaseCompletions: Partial<Record<BlueprintPhaseType, Record<string, unknown>>>
   totalTaskCount: number
   totalWaves: number
@@ -166,7 +166,7 @@ function BlueprintActiveView({
         taskTotal={taskTotal}
         totalWaves={totalWaves}
         currentWave={currentWave}
-        currentTask={currentTask}
+        runningTasks={runningTasks}
         currentGoal={currentGoal}
         panelOpen={panelOpen}
         onTogglePanel={() => setPanelOpen(!panelOpen)}
@@ -197,6 +197,8 @@ function BlueprintActiveView({
               <BlueprintChatView
                 messages={chatMessages}
                 isStreaming={isRunning && !clarifyGateReady && !clarifyQuestions && !clarifyAwaitingInput && !pendingApproval}
+                runningTasks={runningTasks}
+                waveTasks={waveTasks}
                 footer={
                   <>
                     {/* Approval gate card (review → build transition) */}
@@ -368,7 +370,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     waveTasks,
     currentGoal,
     taskGoals,
-    currentTask,
+    runningTasks,
     phaseCompletions,
     totalTaskCount,
     totalWaves,
@@ -792,7 +794,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             clarifyGateReady={clarifyGateReady}
             currentGoal={currentGoal}
             taskGoals={taskGoals}
-            currentTask={currentTask}
+            runningTasks={runningTasks}
             phaseCompletions={phaseCompletions}
             totalTaskCount={totalTaskCount}
             totalWaves={totalWaves}

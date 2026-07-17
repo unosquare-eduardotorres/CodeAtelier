@@ -6,7 +6,7 @@
  *   - Context window slider adjusts the token limit
  *   - System prompt override textarea accepts custom text
  *   - Connection test button validates endpoint and shows result
- *   - Claude card shows fast mode and budget settings
+ *   - Claude card shows execution backend selector
  *   - Model routing section shows role pickers
  *   - Workspace defaults shows communication tone selector
  *
@@ -147,7 +147,7 @@ test.describe('Model Config Detail', () => {
     }
   })
 
-  test('claude card shows fast mode and budget settings', async ({
+  test('claude card shows execution backend selector', async ({
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)

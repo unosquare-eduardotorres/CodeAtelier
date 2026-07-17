@@ -8,9 +8,9 @@
  * or wave progress — depending on phase state.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { Send, SkipForward, MessageSquare, CheckCircle2 } from 'lucide-react'
-import { useBlueprintStreamStore } from '@renderer/store/blueprint-stream.store'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { Send, SkipForward, MessageSquare, CheckCircle2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { useBlueprintStreamStore, useBlueprintLaneStore } from '@renderer/store/blueprint-stream.store'
 import { Avatar } from '@renderer/components/common'
 import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import { MessageBubble } from '@renderer/components/chat'
@@ -48,6 +48,10 @@ interface BlueprintChatViewProps {
   isStreaming: boolean
   /** Optional slot rendered below the live region (interactive footer). */
   footer?: React.ReactNode
+  /** G3: Currently running tasks during build phase. */
+  runningTasks?: Record<string, { taskId: string; description: string }>
+  /** Completed/failed task statuses for collapsing lanes. */
+  waveTasks?: Record<string, string>
 }
 
 // ── Q&A Read-Only Record ────────────────────────────────────────────────────
@@ -338,12 +342,76 @@ function renderBlueprintMessage(msg: BlueprintChatMessage, i: number, avatarSize
   }
 }
 
+// ── Build Lane Card (collapsible per-task stream) ───────────────────────────
+
+function BuildLaneCard({
+  taskId,
+  description,
+  status
+}: {
+  taskId: string
+  description: string
+  status: 'running' | 'complete' | 'failed' | string
+}): React.JSX.Element {
+  const [collapsed, setCollapsed] = useState(status !== 'running')
+  const laneStore = useBlueprintLaneStore((s) => s.lanes[taskId])
+  const segments = laneStore?.((s) => s.segments) ?? []
+  const currentContent = laneStore?.((s) => s.currentContent) ?? ''
+  const currentToolActivities = laneStore?.((s) => s.currentToolActivities) ?? []
+  const isRunning = status === 'running'
+
+  // Auto-expand when task starts running, auto-collapse when it completes
+  useEffect(() => {
+    setCollapsed(!isRunning)
+  }, [isRunning])
+
+  const statusIcon = isRunning
+    ? <Loader2 size={12} className="animate-spin text-info" />
+    : status === 'complete'
+      ? <CheckCircle2 size={12} className="text-success" />
+      : <span className="w-3 h-3 rounded-full bg-error/60" />
+
+  return (
+    <div className="rounded-lg border border-border/40 bg-surface-overlay/50 overflow-hidden">
+      <button
+        onClick={() => setCollapsed((c) => !c)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-surface-raised/30 transition-colors"
+      >
+        {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+        {statusIcon}
+        <span className="font-mono font-semibold text-text-secondary">{taskId}</span>
+        <span className="text-text-muted truncate flex-1 text-left">{description}</span>
+      </button>
+      {!collapsed && (
+        <div className="px-3 pb-3 pt-1 border-t border-border/20 max-h-96 overflow-y-auto">
+          <StreamingTranscript
+            messages={[]}
+            renderMessage={() => null}
+            segments={segments}
+            currentContent={currentContent}
+            currentToolActivities={currentToolActivities}
+            isStreaming={isRunning}
+            suppressLiveBubble
+            identity={BLUEPRINT_IDENTITY}
+            thinkingLabel="Building…"
+            transformContent={stripBlueprintBlocks}
+            scrollDeps={[isRunning, segments.length]}
+            innerClassName="space-y-2"
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function BlueprintChatView({
   messages,
   isStreaming,
-  footer
+  footer,
+  runningTasks,
+  waveTasks
 }: BlueprintChatViewProps): React.JSX.Element {
   const avatarSize = useChatAvatarSize()
 
@@ -352,21 +420,62 @@ export default function BlueprintChatView({
   const currentContent = useBlueprintStreamStore((s) => s.currentContent)
   const currentToolActivities = useBlueprintStreamStore((s) => s.currentToolActivities)
 
+  // Determine active lane task IDs (running or recently completed in current wave)
+  const laneIds = useBlueprintLaneStore((s) => Object.keys(s.lanes))
+  const hasMultipleLanes = laneIds.length > 1 || (runningTasks && Object.keys(runningTasks).length > 1)
+
+  // Build ordered lane list: running first, then completed
+  const orderedLanes = useMemo(() => {
+    if (!hasMultipleLanes) return []
+    const running: string[] = []
+    const completed: string[] = []
+    for (const id of laneIds) {
+      const taskStatus = waveTasks?.[id]
+      if (taskStatus === 'complete' || taskStatus === 'failed') {
+        completed.push(id)
+      } else {
+        running.push(id)
+      }
+    }
+    return [...running, ...completed]
+  }, [hasMultipleLanes, laneIds, waveTasks])
+
   return (
     <div data-testid="blueprint-chat-view" className="flex flex-col h-full min-h-0">
       <StreamingTranscript
         messages={messages}
         renderMessage={(msg, i) => renderBlueprintMessage(msg, i, avatarSize)}
-        segments={segments}
-        currentContent={currentContent}
-        currentToolActivities={currentToolActivities}
+        segments={hasMultipleLanes ? [] : segments}
+        currentContent={hasMultipleLanes ? '' : currentContent}
+        currentToolActivities={hasMultipleLanes ? [] : currentToolActivities}
         isStreaming={isStreaming}
-        suppressLiveBubble
+        suppressLiveBubble={hasMultipleLanes}
         identity={BLUEPRINT_IDENTITY}
         thinkingLabel="Analyzing…"
         transformContent={stripBlueprintBlocks}
-        footer={footer}
-        scrollDeps={[isStreaming, messages.length]}
+        footer={
+          <>
+            {/* Lane cards for parallel build tasks */}
+            {hasMultipleLanes && (
+              <div className="space-y-2 px-1">
+                {orderedLanes.map((taskId) => {
+                  const task = runningTasks?.[taskId]
+                  const status = waveTasks?.[taskId] ?? (task ? 'running' : 'complete')
+                  return (
+                    <BuildLaneCard
+                      key={taskId}
+                      taskId={taskId}
+                      description={task?.description ?? taskId}
+                      status={status}
+                    />
+                  )
+                })}
+              </div>
+            )}
+            {footer}
+          </>
+        }
+        scrollDeps={[isStreaming, messages.length, laneIds.length]}
         innerClassName="max-w-7xl w-full mx-auto space-y-4"
       />
     </div>

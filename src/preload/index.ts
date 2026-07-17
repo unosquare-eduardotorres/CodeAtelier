@@ -2645,6 +2645,7 @@ const api = {
       text: string
       kind?: 'text' | 'tool'
       toolActivity?: Record<string, unknown>
+      taskId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2656,6 +2657,7 @@ const api = {
         text: string
         kind?: 'text' | 'tool'
         toolActivity?: Record<string, unknown>
+        taskId?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS, handler)
@@ -2863,6 +2865,7 @@ const api = {
       clarifyQuestions: unknown
       pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
     }) => void
   ): (() => void) => {
@@ -2885,6 +2888,7 @@ const api = {
     clarifyQuestions: unknown
     pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+    runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT, args),
 

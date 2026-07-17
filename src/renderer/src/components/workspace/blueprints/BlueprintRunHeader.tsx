@@ -64,7 +64,7 @@ export interface BlueprintRunHeaderProps {
   taskTotal: number
   totalWaves: number
   currentWave: { wave: number; taskCount: number } | null
-  currentTask: { taskId: string; description: string } | null
+  runningTasks: Record<string, { taskId: string; description: string }>
   currentGoal: string | null
   // Panel
   panelOpen: boolean
@@ -89,7 +89,7 @@ export function BlueprintRunHeader({
   taskTotal,
   totalWaves,
   currentWave,
-  currentTask,
+  runningTasks,
   currentGoal,
   panelOpen,
   onTogglePanel,
@@ -278,26 +278,32 @@ export function BlueprintRunHeader({
             </span>
           )}
 
-          {/* Current task chip — freed space, no max-w cap */}
-          {currentTask && currentPhase === 'build' && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md flex-1 min-w-0 truncate ${
-                currentTask.taskId.startsWith('R')
-                  ? 'text-info bg-info/10'
-                  : 'text-info bg-info/10'
-              }`}
-              title={`${currentTask.taskId} · ${stripTaskMarkers(currentTask.description)}`}
-            >
-              {currentTask.taskId.startsWith('R') ? (
-                <Wrench size={12} className="flex-shrink-0" />
-              ) : (
+          {/* Running task chips — shows active parallel tasks */}
+          {Object.keys(runningTasks).length > 0 && currentPhase === 'build' && (
+            Object.keys(runningTasks).length === 1 ? (() => {
+              const task = Object.values(runningTasks)[0]
+              return (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md flex-1 min-w-0 truncate text-info bg-info/10"
+                  title={`${task.taskId} · ${stripTaskMarkers(task.description)}`}
+                >
+                  {task.taskId.startsWith('R') ? (
+                    <Wrench size={12} className="flex-shrink-0" />
+                  ) : (
+                    <Loader2 size={12} className="animate-spin flex-shrink-0" />
+                  )}
+                  {task.taskId.startsWith('R') && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0">Remediation</span>
+                  )}
+                  {task.taskId} · {stripTaskMarkers(task.description)}
+                </span>
+              )
+            })() : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md text-info bg-info/10">
                 <Loader2 size={12} className="animate-spin flex-shrink-0" />
-              )}
-              {currentTask.taskId.startsWith('R') && (
-                <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0">Remediation</span>
-              )}
-              {currentTask.taskId} · {stripTaskMarkers(currentTask.description)}
-            </span>
+                {Object.keys(runningTasks).length} tasks running
+              </span>
+            )
           )}
         </div>
       ) : currentGoal && isRunning ? (

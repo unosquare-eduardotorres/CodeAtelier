@@ -3,6 +3,7 @@ import { rendererLog } from '@renderer/utils/logger'
 import { useWorkspaceStore } from './workspace.store'
 import {
   useBlueprintStreamStore,
+  useBlueprintLaneStore,
   getFlatContent,
   getFlatToolActivities
 } from './blueprint-stream.store'
@@ -151,8 +152,8 @@ interface BlueprintState {
   currentGoal: string | null
   /** Per-task goals keyed by taskId */
   taskGoals: Record<string, string>
-  /** Currently executing task (shown as chip in header) */
-  currentTask: { taskId: string; description: string } | null
+  /** G3: Currently executing tasks during parallel build (shown as chips in header). */
+  runningTasks: Record<string, { taskId: string; description: string }>
   /** Phase completion metrics (from phaseComplete event) */
   phaseCompletions: Partial<Record<BlueprintPhaseType, Record<string, unknown>>>
   /** Total task count across all waves (for progress bar) */
@@ -245,7 +246,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   clarifyBlueprintId: null,
   currentGoal: null,
   taskGoals: {},
-  currentTask: null,
+  runningTasks: {},
   phaseCompletions: {},
   totalTaskCount: 0,
   totalWaves: 0,
@@ -319,7 +320,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyBlueprintId: null,
         currentGoal: null,
         taskGoals: {},
-        currentTask: null,
+        runningTasks: {},
         phaseCompletions: {},
         totalTaskCount: 0,
         totalWaves: 0,
@@ -373,7 +374,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyBlueprintId: null,
         currentGoal: null,
         taskGoals: {},
-        currentTask: null,
+        runningTasks: {},
         phaseCompletions: {},
         totalTaskCount: 0,
         totalWaves: 0,
@@ -553,7 +554,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
-      currentTask: null,
+      runningTasks: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,
@@ -754,8 +755,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           chatMessages: msgs,
           // Store phase goal for UI display
           currentGoal: payloadData.goal as string | null ?? null,
-          // Part A: Clear current task on phase start
-          currentTask: null,
+          // Part A: Clear running tasks on phase start
+          runningTasks: {},
           // Self-heal: adopt the workspace if it wasn't set
           activeWorkspaceId: state.activeWorkspaceId ?? data.workspaceId,
           // Clear old text for this phase so rewinds (reject → re-plan) start fresh
@@ -779,15 +780,19 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       const key = data.phase
       const kind: StreamEvent['kind'] = (data as Record<string, unknown>).kind === 'tool' ? 'tool' : 'text'
 
-      // Feed the blueprint stream store for chat bubble rendering (ALL phases)
-      const bss = useBlueprintStreamStore.getState()
+      // Resolve target stream store: keyed lane for build-phase tasks, un-keyed for all others.
+      const taskId = data.taskId
+      const targetStore = taskId
+        ? useBlueprintLaneStore.getState().getOrCreateLane(taskId).getState()
+        : useBlueprintStreamStore.getState()
+
       if (kind === 'tool') {
         // Use real toolActivity from the forwarder when available; fall back
         // to a name-only stub for backward compatibility with old payloads.
         const rawTA = (data as Record<string, unknown>).toolActivity as
           | Record<string, unknown>
           | undefined
-        bss.handleStreamChunk({
+        targetStore.handleStreamChunk({
           type: 'tool_activity',
           toolActivity: rawTA
             ? {
@@ -812,7 +817,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
               }
         })
       } else {
-        bss.handleStreamChunk({ type: 'text', content: data.text })
+        targetStore.handleStreamChunk({ type: 'text', content: data.text })
       }
 
       if (kind === 'tool') {
@@ -1095,11 +1100,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} started (${data.taskCount} tasks)`)
+      // Reset lane stores on wave start
+      useBlueprintLaneStore.getState().resetAll()
       set((state) => ({
         currentWave: { wave: data.wave, taskCount: data.taskCount },
         // Part B: totalTaskCount now comes from phaseStart — don't overwrite here.
         // Fallback for historical runs: use currentBlueprint.tasks.length via totalTaskCount default.
         waveTasks: {},
+        runningTasks: {},
         chatMessages: [
           ...state.chatMessages,
           { type: 'system' as const, content: `Wave ${data.wave} started — ${data.taskCount} tasks`, timestamp: Date.now() }
@@ -1119,8 +1127,11 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         taskGoals: taskGoal
           ? { ...state.taskGoals, [data.taskId]: taskGoal }
           : state.taskGoals,
-        // Part A: Track currently executing task for header chip.
-        currentTask: { taskId: data.taskId, description: data.description }
+        // Part A: Track currently executing tasks for header chip (G3: multi-task).
+        runningTasks: {
+          ...state.runningTasks,
+          [data.taskId]: { taskId: data.taskId, description: data.description }
+        }
       }))
       // Part E: Refresh currentBlueprint.tasks from DB for accurate statuses
       throttledRefetch()
@@ -1135,8 +1146,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           ...state.waveTasks,
           [data.taskId]: data.status as BlueprintTaskStatus
         },
-        // Part A: Clear current task on completion
-        currentTask: state.currentTask?.taskId === data.taskId ? null : state.currentTask
+        // Part A: Remove completed task from running set (G3)
+        runningTasks: (() => {
+          const next = { ...state.runningTasks }
+          delete next[data.taskId]
+          return next
+        })()
       }))
       // Part E: Refresh currentBlueprint.tasks from DB for accurate statuses
       throttledRefetch()
@@ -1147,8 +1162,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (resolveAction(data.workspaceId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} complete — ${data.status}`)
       set((state) => ({
-        // Part A: Clear current task on wave complete
-        currentTask: null,
+        // Part A: Clear running tasks on wave complete
+        runningTasks: {},
         chatMessages: [
           ...state.chatMessages,
           { type: 'system' as const, content: `Wave ${data.wave} complete — ${data.status}`, timestamp: Date.now() }
@@ -1260,6 +1275,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         waveTasks: snap.wave?.tasks
           ? (snap.wave.tasks as Record<string, BlueprintTaskStatus>)
           : {},
+        // G3: Running tasks from snapshot
+        runningTasks: (snap as Record<string, unknown>).runningTasks as Record<string, { taskId: string; description: string }> ?? {},
         // Error state
         lastError: snap.lastError
           ? { blueprintId: snap.blueprintId ?? 'unknown', message: snap.lastError }
@@ -1316,7 +1333,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
-      currentTask: null,
+      runningTasks: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,
@@ -1353,7 +1370,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
-      currentTask: null,
+      runningTasks: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,
