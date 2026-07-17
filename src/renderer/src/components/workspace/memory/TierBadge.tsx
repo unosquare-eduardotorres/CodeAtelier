@@ -12,19 +12,19 @@ const TIER_META: Record<
     label: 'T0',
     name: 'Observed',
     color: 'text-text-muted',
-    nextHint: '2 confirmations promote to T1 Confirmed.'
+    nextHint: '3 confirmations promote to T1 Confirmed.'
   },
   1: {
     label: 'T1',
     name: 'Confirmed',
     color: 'text-info',
-    nextHint: '3 total confirmations promote to T2 Established.'
+    nextHint: '5 total confirmations promote to T2 Established.'
   },
   2: {
     label: 'T2',
     name: 'Established',
     color: 'text-success',
-    nextHint: '5 total confirmations promote to T3 Wisdom.'
+    nextHint: '8 total confirmations promote to T3 Wisdom.'
   },
   3: {
     label: 'T3',
