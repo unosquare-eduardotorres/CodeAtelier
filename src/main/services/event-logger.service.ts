@@ -318,7 +318,7 @@ class EventLoggerService {
       `Plan detected via ${opts.detectionPath} (structured=${opts.structured}, ${opts.contentLength} chars)`,
       {
         ...opts,
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         data: {
           detectionPath: opts.detectionPath,
           structured: opts.structured,

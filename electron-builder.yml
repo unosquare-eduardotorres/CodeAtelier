@@ -39,17 +39,19 @@ mac:
   notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
+  title: "${productName}"
   background: build/background.png
-  iconSize: 80
+  iconSize: 120
+  iconTextSize: 13
   window:
-    width: 540
-    height: 380
+    width: 660
+    height: 400
   contents:
-    - x: 130
-      y: 220
+    - x: 175
+      y: 210
       type: file
-    - x: 410
-      y: 220
+    - x: 485
+      y: 210
       type: link
       path: /Applications
 linux:

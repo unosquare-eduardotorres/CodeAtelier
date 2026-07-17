@@ -101,6 +101,10 @@ These CANNOT be verified by code analysis — flag them explicitly:
 - **External**: Do third-party API integrations work with real credentials?
 - **Performance**: Does the app meet response time targets under load?
 
+**IMPORTANT**: Do NOT put automated checks (lint, typecheck, tests, complexity) in `humanVerificationNeeded`.
+Run them yourself via MCP tools or Bash. Only flag items that genuinely require a human in the loop:
+visual inspection, manual user flows, real credential testing, and performance under load.
+
 ## Status Determination Decision Tree
 
 ```

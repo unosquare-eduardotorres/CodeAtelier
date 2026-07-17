@@ -12,8 +12,7 @@ const usageLogger = log.scope('UsageTracker')
  */
 export function featureForAgentRole(role: AgentRole): string {
   switch (role) {
-    case 'da-vinci':
-    case 'project-specialist':
+    case 'specialist':
       return 'chat'
     case 'grill':
       return 'grill'

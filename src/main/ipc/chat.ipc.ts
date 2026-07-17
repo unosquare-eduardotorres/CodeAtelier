@@ -8,7 +8,7 @@ import { conversationStateMachine } from '../services/conversation-state-machine
  * Registers all chat-related IPC handlers.
  *
  * All chat traffic routes directly to the workspace's Project Specialist (or
- * Da Vinci fallback) through the normal chat-message send path — there is no
+ * specialist fallback) through the normal chat-message send path — there is no
  * task-pipeline or specialist-pool.
  *
  * Split into domain modules for maintainability:

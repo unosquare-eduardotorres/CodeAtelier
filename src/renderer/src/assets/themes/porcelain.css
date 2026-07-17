@@ -143,6 +143,10 @@
   /* ── Porcelain-specific: disable grain overlay ── */
   --grain-opacity: 0;
 
+  /* ── Knowledge-graph: dark island inside the light UI ── */
+  --graph-bg: #0d1120;
+  --graph-link: rgba(80, 120, 200, 0.30);
+
   /* ── Porcelain-specific: chat-icon pulse for light bg ── */
   --color-chat-icon-pulse: rgba(2, 132, 199, 0.35);
 }
@@ -178,4 +182,16 @@
 
 [data-theme="porcelain"] .hover-lift:hover {
   box-shadow: 0 4px 16px rgba(100, 116, 139, 0.16), 0 2px 4px rgba(100, 116, 139, 0.06);
+}
+
+/* ── Graph-scoped: dark-glass chrome for floating controls on the dark canvas island ── */
+[data-theme="porcelain"] [data-testid="memory-graph-canvas"] {
+  --color-surface-raised: rgba(15, 18, 35, 0.88);
+  --color-surface-overlay: rgba(22, 28, 50, 0.75);
+  --color-surface-float: rgba(15, 20, 40, 0.95);
+  --color-text-primary: #c8d4e8;
+  --color-text-body: #a8b8d0;
+  --color-text-secondary: #8898b4;
+  --color-text-muted: #5e6e8a;
+  --color-border-default: rgba(148, 163, 184, 0.18);
 }

@@ -51,6 +51,41 @@ describe('parsePhaseCompletionBlock', () => {
   })
 })
 
+describe('parsePhaseCompletionBlock — verify-style fallback', () => {
+  test('parses JSON block with overallStatus but no phase/status', () => {
+    const text =
+      'Verify report:\n```json\n{"overallStatus":"gaps_found","remediationTasks":[{"taskId":"R001","description":"Fix gap"}]}\n```\nDone'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal(result.phase, 'verify')
+    assert.equal(result.status, 'complete')
+    assert.equal((result as Record<string, unknown>).overallStatus, 'gaps_found')
+  })
+
+  test('handles nested objects in verify-style JSON', () => {
+    const text =
+      '```json\n{"overallStatus":"passed","artifacts":{"missing":0,"stub":0},"keyLinks":{"broken":0}}\n```'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal((result as Record<string, unknown>).overallStatus, 'passed')
+    const artifacts = (result as Record<string, unknown>).artifacts as Record<string, number>
+    assert.equal(artifacts.missing, 0)
+  })
+
+  test('primary tagged block takes priority over verify-style fallback', () => {
+    const text =
+      '```blueprint-phase-complete\n{"phase":"review","status":"complete"}\n```\n```json\n{"overallStatus":"passed"}\n```'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal(result.phase, 'review')  // primary wins, not verify fallback
+  })
+
+  test('returns null for malformed JSON in verify-style block', () => {
+    const text = '```json\n{"overallStatus": broken}\n```'
+    assert.equal(parsePhaseCompletionBlock(text), null)
+  })
+})
+
 describe('parseBlueprintTasks', () => {
   test('parses valid blueprint-tasks block', () => {
     const text =
@@ -127,6 +162,55 @@ describe('all goal conditions return non-empty strings', () => {
   test('review', () => assert.ok(buildReviewGoalCondition('T').length > 50))
   test('build', () => assert.ok(buildBuildGoalCondition('T001', 'Test').length > 50))
   test('verify', () => assert.ok(buildVerifyGoalCondition('T').length > 50))
+})
+
+// ── Robustness / Stress Tests ──
+
+describe('parsePhaseCompletionBlock — robustness', () => {
+  test('handles large input without timeout (ReDoS guard)', () => {
+    const large = '{"x": "' + 'y'.repeat(100_000) + '"}'
+    const start = Date.now()
+    const result = parsePhaseCompletionBlock(large)
+    const elapsed = Date.now() - start
+    assert.ok(elapsed < 500, `Took ${elapsed}ms — suspected ReDoS`)
+    assert.equal(result, null)
+  })
+
+  test('rejects input exceeding 500KB', () => {
+    const huge = 'a'.repeat(600_000)
+    assert.equal(parsePhaseCompletionBlock(huge), null)
+  })
+
+  test('extracts first JSON object, not cross-block match', () => {
+    const text = '{"phase":"specify","status":"complete"}\nsome text\n{"phase":"verify","status":"complete"}'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal(result.phase, 'specify') // first block wins
+  })
+
+  test('handles nested JSON in verify-style fallback', () => {
+    const text = '```json\n{"overallStatus":"gaps_found","artifacts":{"missing":2,"stub":1},"keyLinks":{"broken":1}}\n```'
+    const result = parsePhaseCompletionBlock(text, 'verify')
+    assert.ok(result)
+    assert.equal((result as Record<string, unknown>).overallStatus, 'gaps_found')
+    const artifacts = (result as Record<string, unknown>).artifacts as Record<string, number>
+    assert.equal(artifacts.missing, 2)
+    assert.equal(artifacts.stub, 1)
+  })
+
+  test('verify fallback does not activate for non-verify phases', () => {
+    const text = '```json\n{"overallStatus":"passed"}\n```'
+    assert.equal(parsePhaseCompletionBlock(text, 'build'), null)
+    assert.equal(parsePhaseCompletionBlock(text, 'plan'), null)
+    assert.equal(parsePhaseCompletionBlock(text, 'specify'), null)
+  })
+
+  test('Fallback 1 handles escaped quotes in strings', () => {
+    const text = '{"phase":"specify","status":"complete","summary":"a \\"quoted\\" value"}'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal(result.phase, 'specify')
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

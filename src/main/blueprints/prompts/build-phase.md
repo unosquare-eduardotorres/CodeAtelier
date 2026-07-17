@@ -62,8 +62,8 @@ After completing each task:
 After each task, verify:
 - [ ] All files listed in the task exist
 - [ ] No placeholder/stub code left behind
-- [ ] Tests pass (if applicable)
-- [ ] No lint errors: run `mcp__code-analysis__eslint_check` on modified files
+- [ ] Tests pass (if applicable): `mcp__code-analysis__analyze_test_coverage` or `Bash` (`npm test -- --passWithNoTests 2>&1 | head -100`)
+- [ ] No lint errors: `mcp__code-analysis__eslint_check` or `Bash` (`npx eslint <modified files>`)
 - [ ] Constitution rules followed
 - [ ] **CLAUDE.md conventions followed** (design tokens, naming, domain rules)
 - [ ] Code follows existing patterns found in the codebase
@@ -108,6 +108,9 @@ When all assigned tasks are complete:
 | Find related code semantically | `mcp__semantic-search__semantic_search` | `Grep` |
 | Search workspace knowledge | `mcp__memory__memory_search` | — |
 | Record a discovery for later phases | `mcp__memory__memory_record` | — |
+| Lint check | `mcp__code-analysis__eslint_check` | `Bash` (`npx eslint <paths>`) |
+| Type check | — | `Bash` (`npx tsc --noEmit`) |
+| Run tests | `mcp__code-analysis__analyze_test_coverage` | `Bash` (`npm test`) |
 
 **Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly — code-intelligence tools need indexed files.
 

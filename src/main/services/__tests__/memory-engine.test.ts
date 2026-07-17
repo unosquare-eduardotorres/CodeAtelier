@@ -1,15 +1,20 @@
 /**
  * memory-engine.test.ts — Tests for MemoryEngineService write pipeline.
  *
- * Covers: cosineSimilarity math, promotion tier logic, decay sweep scheduling.
- * Engine integration tests are deferred (require embedding provider mock).
+ * Covers: cosineSimilarity math, evidence-based promotion tier logic,
+ * volatile detection, capture caps, cluster-based dedup.
  */
 
 import assert from 'node:assert/strict'
 import { test, summaryAsync } from './test-harness'
 
-// Import the pure math function directly
-import { cosineSimilarity, computePromotionTierPure } from '../memory-engine.service'
+// Import the pure math function and exported constants
+import {
+  cosineSimilarity,
+  computePromotionTierPure,
+  VOLATILE_PATTERNS,
+  CAPTURE_CAPS
+} from '../memory-engine.service'
 
 // ── Cosine Similarity ──
 
@@ -56,73 +61,168 @@ test('cosineSimilarity: zero vector = 0.0', () => {
   assert.equal(cosineSimilarity(a, b), 0)
 })
 
-// ── Promotion Tier Logic ──
+// ── Evidence-Based Promotion Tier Logic ──
 
-test('promotion: T0 with 2 confirms → T1', () => {
-  assert.equal(computePromotionTierPure(0, 1), 1) // nextCount=1+1=2 handled inside, but we pass current count
+// Helper to create confirmation events
+function makeConfirm(sourceType: 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap', dayOffset: number, weight?: number) {
+  const date = new Date()
+  date.setDate(date.getDate() - dayOffset) // dayOffset days ago
+  return {
+    sourceType,
+    weight: weight ?? (sourceType === 'auto_dedup' ? 0.5 : 1.0),
+    createdAt: date.toISOString()
+  }
+}
+
+test('promotion: T0 stays T0 with only 1 confirm (needs 2)', () => {
+  const confirms = [makeConfirm('extraction', 0)]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
 })
 
-test('promotion: T0 with 1 confirm stays T0', () => {
-  assert.equal(computePromotionTierPure(0, 0), 0)
+test('promotion: T0 stays T0 with 2 confirms on SAME day (needs 2 distinct days)', () => {
+  const confirms = [
+    makeConfirm('extraction', 0),
+    makeConfirm('tool', 0)
+  ]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
 })
 
-test('promotion: T1 with 3 confirms → T2', () => {
-  assert.equal(computePromotionTierPure(1, 2), 2)
+test('promotion: T0 → T1 with 2 confirms on 2 distinct days', () => {
+  const confirms = [
+    makeConfirm('extraction', 2),
+    makeConfirm('tool', 0)
+  ]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 1)
 })
 
-test('promotion: T1 with 2 confirms stays T1', () => {
-  assert.equal(computePromotionTierPure(1, 1), 1)
+test('promotion: T1 stays T1 with 3 confirms but only 1 source type', () => {
+  const confirms = [
+    makeConfirm('auto_dedup', 10),
+    makeConfirm('auto_dedup', 5),
+    makeConfirm('auto_dedup', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.7, confirms), 1)
 })
 
-test('promotion: T2 with 5 confirms → T3', () => {
-  assert.equal(computePromotionTierPure(2, 4), 3)
+test('promotion: T1 stays T1 with 3 confirms, 2 sources, but only 3 days span (needs 7)', () => {
+  const confirms = [
+    makeConfirm('extraction', 3),
+    makeConfirm('tool', 1),
+    makeConfirm('auto_dedup', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.7, confirms), 1)
 })
 
-test('promotion: T2 with 4 confirms stays T2', () => {
-  assert.equal(computePromotionTierPure(2, 3), 2)
+test('promotion: T1 stays T1 with all criteria met but confidence < 0.65', () => {
+  const confirms = [
+    makeConfirm('extraction', 10),
+    makeConfirm('tool', 3),
+    makeConfirm('auto_dedup', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.5, confirms), 1)
 })
 
-test('promotion: T3 stays T3 regardless of confirms', () => {
-  assert.equal(computePromotionTierPure(3, 99), 3)
+test('promotion: T1 → T2 with 3 confirms, 2+ sources, 7+ days, confidence ≥ 0.65', () => {
+  const confirms = [
+    makeConfirm('extraction', 10),
+    makeConfirm('tool', 3),
+    makeConfirm('auto_dedup', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.7, confirms), 2)
 })
 
-// ── confirmFactWithPromotion regression (A1 bug fix) ──
-// These tests verify the pure promotion logic matches what
-// confirmFactWithPromotion delegates to — the actual DB call
-// is mocked away but the tier computation is what matters.
-
-test('promotion: confirm at T0 with 1 prior confirm should promote to T1 (A1 regression)', () => {
-  // confirmFactWithPromotion passes fact.confirmationCount to computePromotionTierPure.
-  // A fact at T0 with confirmationCount=1 gets one more confirm → nextCount=2 → T1
-  const result = computePromotionTierPure(0, 1)
-  assert.equal(result, 1, 'T0 fact with 1 prior confirm should promote to T1 on next confirm')
+test('promotion: T2 stays T2 without human confirmation', () => {
+  const confirms = [
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('auto_dedup', 10),
+    makeConfirm('auto_dedup', 5),
+    makeConfirm('auto_dedup', 0)
+  ]
+  // Weighted sum: 1.0 + 1.0 + 0.5 + 0.5 + 0.5 = 3.5 (needs 5.0 and human)
+  assert.equal(computePromotionTierPure(2, 0.85, confirms), 2)
 })
 
-test('promotion: confirm at T0 with 0 prior confirms stays T0', () => {
-  // First confirm: nextCount=1 < TIER_0_TO_1_CONFIRMS(2) → stays T0
-  const result = computePromotionTierPure(0, 0)
-  assert.equal(result, 0, 'T0 fact with 0 confirms should stay T0 on first confirm')
+test('promotion: T2 stays T2 with human but weighted sum < 5', () => {
+  const confirms = [
+    makeConfirm('human', 20),
+    makeConfirm('tool', 10),
+    makeConfirm('auto_dedup', 0)
+  ]
+  // Weighted sum: 1.0 + 1.0 + 0.5 = 2.5 (needs 5.0)
+  assert.equal(computePromotionTierPure(2, 0.85, confirms), 2)
 })
 
-test('promotion: confirm at T1 with 2 prior confirms should promote to T2', () => {
-  // T1 fact with confirmationCount=2 gets confirm → nextCount=3 → T2
-  const result = computePromotionTierPure(1, 2)
-  assert.equal(result, 2, 'T1 fact with 2 prior confirms should promote to T2')
+test('promotion: T2 stays T2 with human + weight but confidence < 0.80', () => {
+  const confirms = [
+    makeConfirm('human', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('extraction', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('tool', 0)
+  ]
+  // Weighted sum: 5.0, daySpan: 20, has human — but confidence 0.7 < 0.8
+  assert.equal(computePromotionTierPure(2, 0.7, confirms), 2)
 })
 
-test('promotion: confirm at T2 with 4 prior confirms should promote to T3 (wisdom)', () => {
-  // T2 fact with confirmationCount=4 gets confirm → nextCount=5 → T3
-  const result = computePromotionTierPure(2, 4)
-  assert.equal(result, 3, 'T2 fact with 4 prior confirms should reach T3 wisdom')
+test('promotion: T2 → T3 with human + weighted ≥ 5 + 14+ days + confidence ≥ 0.80', () => {
+  const confirms = [
+    makeConfirm('human', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('extraction', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('tool', 0)
+  ]
+  // Weighted sum: 1.0 + 1.0 + 1.0 + 1.0 + 1.0 = 5.0
+  assert.equal(computePromotionTierPure(2, 0.85, confirms), 3)
+})
+
+test('promotion: T3 stays T3 regardless of input', () => {
+  const confirms = [makeConfirm('auto_dedup', 0)]
+  assert.equal(computePromotionTierPure(3, 0.9, confirms), 3)
+})
+
+test('promotion: empty confirmations keeps current tier', () => {
+  assert.equal(computePromotionTierPure(0, 0.5, []), 0)
+  assert.equal(computePromotionTierPure(1, 0.7, []), 1)
+  assert.equal(computePromotionTierPure(2, 0.8, []), 2)
+})
+
+// ── Volatile Pattern Detection ──
+
+test('volatile: detects schemaVersion patterns', () => {
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('database.schemaVersion: 118')))
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('CURRENT_SCHEMA_VERSION = 118')))
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('schema_version is now 85')))
+})
+
+test('volatile: detects electronVersion patterns', () => {
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('electronVersion: 42.4.1')))
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('electron_version set to 40.9.3')))
+})
+
+test('volatile: detects semver patterns', () => {
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('upgraded to v3.2.1')))
+  assert.ok(VOLATILE_PATTERNS.some((p) => p.test('uses v42.4.1')))
+})
+
+test('volatile: does NOT match non-version content', () => {
+  const text = 'The codebase uses a three-tier context management system'
+  const matched = VOLATILE_PATTERNS.some((p) => p.test(text))
+  assert.equal(matched, false, `"${text}" should not match volatile patterns`)
+})
+
+// ── Capture Caps ──
+
+test('capture caps: constants are reasonable', () => {
+  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_SESSION, 3, 'Session cap should be 3')
+  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_COMMIT, 2, 'Commit cap should be 2')
+  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_DAY, 20, 'Daily cap should be 20')
 })
 
 // ── backfillAllPendingEmbeddings — progress callback contract ──
-// The method is async and requires provider + DB, but we can verify that
-// it returns 0 immediately when the embedding provider is not ready.
 
 test('backfillAllPendingEmbeddings: returns 0 when provider not ready', async () => {
-  // memoryEngineService is a singleton — its backfillAllPendingEmbeddings checks
-  // omlxEmbeddingProvider.isReady, which defaults false in test env.
   const { memoryEngineService } = await import('../memory-engine.service')
   const progressCalls: Array<[number, number]> = []
   const result = await memoryEngineService.backfillAllPendingEmbeddings(
@@ -132,16 +232,14 @@ test('backfillAllPendingEmbeddings: returns 0 when provider not ready', async ()
   assert.equal(progressCalls.length, 0, 'Should not call onProgress when provider is not ready')
 })
 
-// ── scanForDuplicates — returns pairsFound ──
+// ── scanForDuplicates — returns cluster-based results ──
 
-test('scanForDuplicates: returns pairsFound=0 when no embedded facts', async () => {
+test('scanForDuplicates: returns clustersFound=0 when no embedded facts', async () => {
   const { memoryEngineService } = await import('../memory-engine.service')
-  // With no DB initialized, findWithEmbeddings throws or returns empty —
-  // scanForDuplicates should handle gracefully
   try {
     const result = memoryEngineService.scanForDuplicates('nonexistent-workspace-id')
-    // If it doesn't throw, it should return 0 pairs
-    assert.equal(result.pairsFound, 0)
+    assert.equal(result.clustersFound, 0)
+    assert.equal(result.autoMerged, 0)
   } catch {
     // Expected in test env without DB — the method tried to query
     assert.ok(true, 'scanForDuplicates throws without DB — acceptable in unit test')

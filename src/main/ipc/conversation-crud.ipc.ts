@@ -230,6 +230,16 @@ export function registerConversationCrudIpc(): void {
     return messageRepository.findByConversation(conversationId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.CHAT_SET_PLAN_ACTION, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.CHAT_SET_PLAN_ACTION
+    const args = requireObject(rawArgs, ch)
+    const messageId = requireString(args, 'messageId', ch)
+    const action = requireString(args, 'action', ch)
+    messageRepository.updatePlanAction(messageId, action)
+    return { success: true }
+  })
+
   ipcMain.handle(IPC_CHANNELS.CHAT_DELETE_CONVERSATION, async (event, rawArgs: unknown) => {
     validateSender(event)
     const ch = IPC_CHANNELS.CHAT_DELETE_CONVERSATION

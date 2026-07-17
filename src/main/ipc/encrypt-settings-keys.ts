@@ -8,7 +8,13 @@
  * Each key gets a companion `${key}Encrypted` boolean flag so the reader
  * can distinguish legacy plaintext values from encrypted ones.
  */
-import { safeStorage } from 'electron'
+// Lazy Electron import — this module gets bundled into a shared chunk that
+// MCP server child processes load transitively. `safeStorage` is only called
+// from the Electron main process, never from standalone servers.
+function getSafeStorage(): typeof import('electron').safeStorage {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('electron').safeStorage
+}
 
 /** All settings keys that contain API secrets and must be encrypted at rest. */
 const ENCRYPTED_SETTINGS_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey'] as const
@@ -26,7 +32,7 @@ export function encryptSettingsKeys(settings: Record<string, unknown>): Record<s
     const value = result[key]
     const alreadyEncrypted = result[`${key}Encrypted`]
     if (typeof value === 'string' && value.length > 0 && !alreadyEncrypted) {
-      result[key] = safeStorage.encryptString(value).toString('base64')
+      result[key] = getSafeStorage().encryptString(value).toString('base64')
       result[`${key}Encrypted`] = true
     }
   }
@@ -45,7 +51,7 @@ export function decryptSettingsKey(
   if (!value) return undefined
   if (isEncrypted) {
     try {
-      return safeStorage.decryptString(Buffer.from(value, 'base64'))
+      return getSafeStorage().decryptString(Buffer.from(value, 'base64'))
     } catch (err) {
       // SEC-04b: Decryption failed — the flag/value pair is inconsistent.
       // This happens when:

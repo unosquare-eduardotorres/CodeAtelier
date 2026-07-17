@@ -5,13 +5,14 @@ import type { Message, ToolActivity } from '../../../shared/types'
 interface MessageRow {
   id: string
   conversation_id: string
-  role: 'user' | 'specialist' | 'da-vinci'
+  role: 'user' | 'specialist'
   agent_id: string | null
   content_md: string
   attachments_json: string
   created_at: string
   parent_message_id: string | null
   tool_activities_json: string | null
+  plan_action: string | null
 }
 
 function mapRow(row: MessageRow): Message {
@@ -25,7 +26,8 @@ function mapRow(row: MessageRow): Message {
     createdAt: row.created_at,
     parentMessageId: row.parent_message_id ?? undefined,
     // DB-01: Use safeParseJSON to prevent a corrupted row from crashing conversation load
-    toolActivities: safeParseJSON<ToolActivity[] | undefined>(row.tool_activities_json, undefined)
+    toolActivities: safeParseJSON<ToolActivity[] | undefined>(row.tool_activities_json, undefined),
+    planAction: row.plan_action ?? undefined
   }
 }
 
@@ -37,7 +39,7 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
 
   create(
     conversationId: string,
-    role: 'user' | 'specialist' | 'da-vinci',
+    role: 'user' | 'specialist',
     contentMd: string,
     agentId?: string,
     attachmentsJson?: string
@@ -110,6 +112,12 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
     this.db()
       .prepare('UPDATE messages SET tool_activities_json = ? WHERE id = ?')
       .run(JSON.stringify(activities), messageId)
+  }
+
+  updatePlanAction(messageId: string, action: string): void {
+    this.db()
+      .prepare('UPDATE messages SET plan_action = ? WHERE id = ?')
+      .run(action, messageId)
   }
 }
 

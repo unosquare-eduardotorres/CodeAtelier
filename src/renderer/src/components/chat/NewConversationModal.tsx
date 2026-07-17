@@ -226,7 +226,7 @@ export default function NewConversationModal({
     // Chat creation should not silently rewrite workspace-wide settings.
 
     // Derive provider from routing overrides or workspace routing
-    const effectiveProvider = routingOverrides['da-vinci:plan']?.provider ?? derivedProvider
+    const effectiveProvider = routingOverrides['specialist:plan']?.provider ?? derivedProvider
 
     onSubmit({
       title: trimmedTitle,

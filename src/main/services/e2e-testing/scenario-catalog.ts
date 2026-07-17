@@ -932,7 +932,7 @@ const WAVE1_SCENARIOS: E2EScenario[] = [
       streamCompleted(),
       responseExists(),
       // At minimum the model should mention its role/persona identity
-      responseMatches(/DaVinci|assistant|development|partner|workspace|specialist|role/i)
+      responseMatches(/assistant|development|partner|workspace|specialist|role/i)
     ],
     falsePositiveRisk: 'Specialist swap is deprecated and assertions only check persona mention in text. Use specialists.dispatch for real persona verification.'
   },

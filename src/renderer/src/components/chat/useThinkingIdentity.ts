@@ -13,21 +13,21 @@ interface ThinkingIdentity {
 /**
  * Resolves the current streaming identity for the thinking indicator.
  * Checks (in order): explicit streaming specialist → specialist by ID →
- * project specialist → generalist fallback.
+ * project specialist → default specialist fallback.
  */
 export function useThinkingIdentity(): ThinkingIdentity {
   const streamingRole = useChatStore((s) => s.streamingRole)
   const streamingSpecialist = useChatStore((s) => s.streamingSpecialist)
 
-  const generalistSpec = useSpecialistStore(
-    (s) => s.specialists.find((sp) => sp.agentId === 'da-vinci') ?? null
+  const defaultSpec = useSpecialistStore(
+    (s) => s.specialists.find((sp) => sp.agentId === 'specialist') ?? null
   )
-  const generalistAlias =
-    generalistSpec?.alias ??
-    generalistSpec?.displayName ??
-    CORE_AGENT_DEFAULTS['da-vinci'].displayName
-  const thinkingAvatarKey = CORE_AGENT_DEFAULTS['da-vinci'].avatarKey
-  const thinkingAccentColor = generalistSpec?.color ?? CORE_AGENT_DEFAULTS['da-vinci'].color
+  const defaultAlias =
+    defaultSpec?.alias ??
+    defaultSpec?.displayName ??
+    CORE_AGENT_DEFAULTS['specialist'].displayName
+  const thinkingAvatarKey = CORE_AGENT_DEFAULTS['specialist'].avatarKey
+  const thinkingAccentColor = defaultSpec?.color ?? CORE_AGENT_DEFAULTS['specialist'].color
 
   const streamingSpecialistData = useSpecialistStore((s) =>
     streamingSpecialist
@@ -74,7 +74,7 @@ export function useThinkingIdentity(): ThinkingIdentity {
       }
     }
     return {
-      name: generalistAlias,
+      name: defaultAlias,
       avatarKey: thinkingAvatarKey,
       accentColor: thinkingAccentColor
     }
@@ -83,7 +83,7 @@ export function useThinkingIdentity(): ThinkingIdentity {
     streamingSpecialistData,
     streamingSpecialist,
     specialistMannequinKey,
-    generalistAlias,
+    defaultAlias,
     thinkingAvatarKey,
     thinkingAccentColor,
     projectSpecialist

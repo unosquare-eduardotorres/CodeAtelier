@@ -83,9 +83,9 @@ describe('MpaVerifierAdapter', () => {
     )
   })
 
-  // ── buildMcpConfig (inherits read-only from MpaBaseAdapter) ──
+  // ── buildMcpConfig (overrides base with Bash+ListDir for test execution) ──
 
-  test('buildMcpConfig_inherits_readonly_allowed_tools', () => {
+  test('buildMcpConfig_allows_read_and_bash_for_verification', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
@@ -97,9 +97,11 @@ describe('MpaVerifierAdapter', () => {
     assert.ok(allowedTools.includes('Read'))
     assert.ok(allowedTools.includes('Glob'))
     assert.ok(allowedTools.includes('Grep'))
+    assert.ok(allowedTools.includes('Bash'), 'Bash should be allowed for running tests')
+    assert.ok(allowedTools.includes('ListDir'), 'ListDir should be allowed for directory traversal')
   })
 
-  test('buildMcpConfig_disallows_write_edit_bash', () => {
+  test('buildMcpConfig_disallows_write_edit', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
@@ -110,7 +112,7 @@ describe('MpaVerifierAdapter', () => {
     assert.ok(disallowedTools, 'disallowedTools should be defined')
     assert.ok(disallowedTools.includes('Write'))
     assert.ok(disallowedTools.includes('Edit'))
-    assert.ok(disallowedTools.includes('Bash'))
+    assert.ok(!disallowedTools.includes('Bash'), 'Bash should NOT be disallowed for verifier')
   })
 
   // ── onSessionStop clears state ──

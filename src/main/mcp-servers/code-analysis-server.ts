@@ -24,6 +24,26 @@ const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 const CONTEXT7_API_KEY = process.env.CONTEXT7_API_KEY ?? ''
 
+// ── ESLint availability pre-check (memoized) ──
+
+let eslintAvailable: boolean | null = null
+
+function checkEslintAvailable(): boolean {
+  if (eslintAvailable !== null) return eslintAvailable
+  try {
+    execSync('npx eslint --version', {
+      cwd: WORKSPACE_PATH,
+      timeout: 15_000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    eslintAvailable = true
+  } catch {
+    eslintAvailable = false
+  }
+  return eslintAvailable
+}
+
 // Service instance — standalone (no Electron) so we instantiate directly
 const libraryDocService = new LibraryDocService()
 
@@ -89,10 +109,19 @@ async function handleAnalyzeComplexity(args: {
     }
   }
 
+  if (!checkEslintAvailable()) {
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `[analyze_complexity] ESLint not available in workspace. Ensure eslint is installed (npm install eslint).`
+      }]
+    }
+  }
+
   try {
     // Run ESLint with complexity rule at max:0 to report ALL functions
     const { stdout } = runEslint(
-      ['--format', 'json', '--rule', '"complexity: [\\"warn\\", {\\"max\\": 0}]"', quotePaths([targetPath])],
+      ['--format', 'json', '--rule', `'{"complexity": ["warn", {"max": 0}]}'`, quotePaths([targetPath])],
       WORKSPACE_PATH
     )
 
@@ -735,12 +764,16 @@ async function handleAuditScan(args: {
   const sections: string[] = ['## Audit Scan Results\n']
 
   // ── 1. Run ESLint with complexity rule (single pass for lint + complexity) ──
-  try {
+  if (!checkEslintAvailable()) {
+    sections.push(
+      `### ESLint + Complexity\n⚠️ ESLint not available in workspace. Ensure eslint is installed (npm install eslint).\n`
+    )
+  } else try {
     const targetPaths = args.paths.map(sanitizePath)
     const { stdout } = runEslint(
       [
         '--format', 'json',
-        '--rule', '"complexity: [\\"warn\\", {\\"max\\": 0}]"',
+        '--rule', `'{"complexity": ["warn", {"max": 0}]}'`,
         quotePaths(targetPaths)
       ],
       WORKSPACE_PATH
@@ -811,9 +844,13 @@ async function handleAuditScan(args: {
       sections.push('')
     }
   } catch (err) {
-    sections.push(
-      `### ESLint + Complexity\n⚠️ Error: ${err instanceof Error ? err.message : String(err)}\n`
-    )
+    const msg = err instanceof Error ? err.message : String(err)
+    const hint = !checkEslintAvailable()
+      ? ' ESLint is not installed in this workspace — install it with `npm install -D eslint`.'
+      : msg.includes('exit code 2')
+        ? ' ESLint could not parse the project config. Check eslint.config.* for syntax errors.'
+        : ''
+    sections.push(`### ESLint + Complexity\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
   }
 
   // ── 2. Dead code via code-graph (if available) ──
@@ -836,12 +873,28 @@ async function handleAuditScan(args: {
         sections.push('')
       }
     } catch (err) {
-      sections.push(
-        `### Dead Code\n⚠️ Error: ${err instanceof Error ? err.message : String(err)}\n`
-      )
+      const msg = err instanceof Error ? err.message : String(err)
+      const isAbi = msg.includes('NODE_MODULE_VERSION') || msg.includes('ABI') || msg.includes('was compiled against')
+      const hint = isAbi
+        ? ' The native SQLite module was compiled for a different Node.js version. Run `npm rebuild better-sqlite3` to fix.'
+        : ''
+      sections.push(`### Dead Code\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
     }
   } else {
     sections.push('### Dead Code\n⚠️ Skipped — code graph unavailable (no WORKSPACE_ID).\n')
+  }
+
+  // ── Summary if both sub-scans failed ──
+  const eslintFailed = sections.some(s => s.includes('### ESLint + Complexity\n⚠️'))
+  const deadCodeFailed = sections.some(s => s.includes('### Dead Code\n⚠️'))
+
+  if (eslintFailed && deadCodeFailed) {
+    sections.push(
+      `### Summary\n⚠️ Both sub-scans failed. Common causes:\n`
+      + `- ESLint not installed: run \`npm install -D eslint\`\n`
+      + `- Native module ABI mismatch: run \`npm rebuild better-sqlite3\`\n`
+      + `- Missing workspace config: ensure eslint.config.* exists at the workspace root\n`
+    )
   }
 
   return {

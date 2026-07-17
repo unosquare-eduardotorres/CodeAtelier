@@ -1,3 +1,4 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Bot,
   Zap,
@@ -14,11 +15,12 @@ import { StatusIndicator } from './status-bar/StatusIndicator'
 import {
   computeAuditIndicator,
   computeGrillIndicator,
-  computeGoalIndicator,
-  computeCouncilIndicator,
+  computeBlueprintIndicator,
   computeIndexingIndicator
 } from './status-bar/status-indicator-helpers'
-import type { MpaStatusInfo, IndexingStateInfo } from './status-bar/status-indicator-helpers'
+import type { IndexingStateInfo } from './status-bar/status-indicator-helpers'
+import type { BlueprintStatusBarInfo } from './hooks/useBlueprintStatusBar'
+import { BlueprintDropdown } from './status-bar/BlueprintDropdown'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -34,6 +36,55 @@ function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
     default:
       return <span className={`${dotBase} bg-text-muted`} title="Agent stopped" />
   }
+}
+
+// ── BlueprintIndicatorWithDropdown ───────────────────────────────────────────
+
+function BlueprintIndicatorWithDropdown({
+  blueprintStatus,
+  onNavigateToBlueprint,
+  onSwitchToWorkspaceBlueprint
+}: {
+  blueprintStatus: BlueprintStatusBarInfo
+  onNavigateToBlueprint: () => void
+  onSwitchToWorkspaceBlueprint: (workspaceId: string) => void
+}): React.JSX.Element {
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown on click outside
+  const handleClickOutside = useCallback((e: MouseEvent) => {
+    if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+      setDropdownOpen(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (dropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+    return undefined
+  }, [dropdownOpen, handleClickOutside])
+
+  const indicatorProps = computeBlueprintIndicator(
+    blueprintStatus,
+    onNavigateToBlueprint,
+    () => setDropdownOpen((v) => !v)
+  )
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <StatusIndicator {...indicatorProps} />
+      {dropdownOpen && blueprintStatus.backgroundEntries.length > 0 && (
+        <BlueprintDropdown
+          entries={blueprintStatus.backgroundEntries}
+          onSelect={onSwitchToWorkspaceBlueprint}
+          onClose={() => setDropdownOpen(false)}
+        />
+      )}
+    </div>
+  )
 }
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -55,10 +106,8 @@ interface StatusBarProps {
   lastAuditScore: number | null
   // Grill
   grillStatus: { status: string; ideaId: string } | null
-  // MPA Goals
-  mpaStatus?: MpaStatusInfo | null
-  // Council
-  councilPhase?: string | null
+  // Blueprint
+  blueprintStatus: BlueprintStatusBarInfo
   // Indexing
   indexingState: IndexingStateInfo | null
   // Callbacks
@@ -66,6 +115,8 @@ interface StatusBarProps {
   onOpenContextModal: () => void
   onOpenTokenModal: () => void
   onNavigateToGrill: (ideaId: string) => void
+  onNavigateToBlueprint: () => void
+  onSwitchToWorkspaceBlueprint: (workspaceId: string) => void
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomReset: () => void
@@ -89,13 +140,14 @@ export default function StatusBar({
   isAuditPaused,
   lastAuditScore,
   grillStatus,
-  mpaStatus,
-  councilPhase,
+  blueprintStatus,
   indexingState,
   onNavigateToSettings,
   onOpenContextModal,
   onOpenTokenModal,
   onNavigateToGrill,
+  onNavigateToBlueprint,
+  onSwitchToWorkspaceBlueprint,
   onZoomIn,
   onZoomOut,
   onZoomReset,
@@ -223,11 +275,10 @@ export default function StatusBar({
         <StatusIndicator
           {...computeGrillIndicator(grillStatus, onNavigateToGrill, onNavigateToSettings)}
         />
-        <StatusIndicator
-          {...computeGoalIndicator(mpaStatus, () => onNavigateToSettings('goals'))}
-        />
-        <StatusIndicator
-          {...computeCouncilIndicator(councilPhase ?? null, () => onNavigateToSettings('council'))}
+        <BlueprintIndicatorWithDropdown
+          blueprintStatus={blueprintStatus}
+          onNavigateToBlueprint={onNavigateToBlueprint}
+          onSwitchToWorkspaceBlueprint={onSwitchToWorkspaceBlueprint}
         />
         <StatusIndicator
           {...computeIndexingIndicator(indexingState, () =>

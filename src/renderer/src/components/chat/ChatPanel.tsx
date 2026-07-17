@@ -18,7 +18,6 @@ import SessionRecoveryBanner from './SessionRecoveryBanner'
 import BudgetCapBanner from './BudgetCapBanner'
 import TurnLimitBanner from './TurnLimitBanner'
 import NewChatPage from './NewChatPage'
-import PersonaSelector from './PersonaSelector'
 import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
@@ -455,7 +454,6 @@ export default function ChatPanel({
                 providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
               />
               <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
-              <PersonaSelector conversation={activeConversation} />
             </div>
           )}
         </div>

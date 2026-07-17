@@ -109,7 +109,8 @@ npm install --include=dev                             # --include=dev is critica
 | Signing identity | `Developer ID Application: UNOSQUARE LLC (PZY6PW4386)` |
 | Keychain profile | `code-atelier` |
 | Native module | `better-sqlite3` (only one) |
-| DMG output | `dist/code-atelier-1.0.0.dmg` (~170 MB) |
+| DMG output | `dist/code-atelier-{version}.dmg` (~170 MB) |
+| DMG window | 660×400 (120px icons) |
 
 ## Timing
 

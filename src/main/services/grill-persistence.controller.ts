@@ -16,6 +16,8 @@ import { getDatabase } from '../db/index'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { getSessionEventRouter, type SessionEventRouter } from './session-event-router'
 import { TextDeltaBatcher } from '../ipc/text-delta-batcher'
+import { notificationService } from './notification.service'
+import { resolveWorkspaceName } from '../ipc/resolve-workspace-name'
 
 const ctrlLog = log.scope('grill-persistence')
 
@@ -64,6 +66,13 @@ export class GrillPersistenceController {
   /** Get tracking state for a workspace (returns null if not tracking). */
   private getTracking(workspaceId: string): WorkspaceTrackingState | null {
     return this.activeSessions.get(workspaceId) ?? null
+  }
+
+  /** Public read-only access to tracking state (used by grill.ipc.ts to check evaluationHandled). */
+  getTrackingForWorkspace(workspaceId: string): { evaluationHandled: boolean } | null {
+    const tracking = this.activeSessions.get(workspaceId)
+    if (!tracking) return null
+    return { evaluationHandled: tracking.evaluationHandled }
   }
 
   // ── Public API ────────────────────────────────────────────────────────
@@ -257,6 +266,15 @@ export class GrillPersistenceController {
     } catch {
       /* router may not be initialized or window destroyed */
     }
+
+    notificationService.dispatch({
+      workspaceId,
+      workspaceName: resolveWorkspaceName(workspaceId),
+      service: 'grill',
+      status: 'needs_input',
+      summary: 'Grill Me has questions — your answers improve the plan',
+      targetPage: 'grill'
+    })
 
     ctrlLog.info(
       `[grill-persistence] Evaluation complete — session=${tracking.sessionId} score=${evaluation.score}`

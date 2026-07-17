@@ -9,7 +9,7 @@ import { test, describe, summaryAsync } from './test-harness'
 
 // ── Replicated types ──
 
-type ConversationPhase = 'da-vinci-responding' | 'specialist-executing' | string
+type ConversationPhase = 'specialist-responding' | 'specialist-executing' | string
 
 interface ImageAttachment {
   base64: string
@@ -23,20 +23,20 @@ interface ImageAttachment {
  * Replicated from ChatStreamService.resolveStreamIdentity (chat-stream.service.ts:390-414).
  */
 function resolveStreamIdentity(params: {
-  messageRole: 'da-vinci' | 'specialist'
+  messageRole: 'specialist'
   adapterAgentId: string
   persona: { agentId: string } | null
 }): {
-  streamingRole: 'da-vinci' | 'specialist'
+  streamingRole: 'specialist'
   phase: ConversationPhase
   specialistMeta: { specialist: string; taskId?: string } | undefined
   adapterAgentId: string
 } {
   const { messageRole, adapterAgentId, persona } = params
 
-  const streamingRole: 'da-vinci' | 'specialist' = persona ? 'specialist' : messageRole
+  const streamingRole: 'specialist' = persona ? 'specialist' : messageRole
   const phase: ConversationPhase =
-    streamingRole === 'specialist' ? 'specialist-executing' : 'da-vinci-responding'
+    streamingRole === 'specialist' ? 'specialist-executing' : 'specialist-responding'
   const specialistMeta = persona
     ? { specialist: persona.agentId, taskId: '' }
     : messageRole === 'specialist'
@@ -141,20 +141,21 @@ function resolveWorkspaceName(
 // ── Tests ──
 
 describe('resolveStreamIdentity', () => {
-  test('no_persona_da_vinci_role', () => {
+  test('no_persona_specialist_default', () => {
     const result = resolveStreamIdentity({
-      messageRole: 'da-vinci',
-      adapterAgentId: 'da-vinci-1',
+      messageRole: 'specialist',
+      adapterAgentId: 'specialist-1',
       persona: null
     })
-    assert.equal(result.streamingRole, 'da-vinci')
-    assert.equal(result.phase, 'da-vinci-responding')
-    assert.equal(result.specialistMeta, undefined)
+    assert.equal(result.streamingRole, 'specialist')
+    assert.equal(result.phase, 'specialist-executing')
+    assert.ok(result.specialistMeta)
+    assert.equal(result.specialistMeta!.specialist, 'specialist-1')
   })
 
   test('persona_present_becomes_specialist', () => {
     const result = resolveStreamIdentity({
-      messageRole: 'da-vinci',
+      messageRole: 'specialist',
       adapterAgentId: 'da-vinci-1',
       persona: { agentId: 'spec-code-reviewer' }
     })
@@ -178,7 +179,7 @@ describe('resolveStreamIdentity', () => {
 
   test('persona_includes_specialist_agentId_in_meta', () => {
     const result = resolveStreamIdentity({
-      messageRole: 'da-vinci',
+      messageRole: 'specialist',
       adapterAgentId: 'da-vinci-1',
       persona: { agentId: 'my-specialist' }
     })
@@ -188,7 +189,7 @@ describe('resolveStreamIdentity', () => {
 
   test('adapterAgentId_is_preserved', () => {
     const result = resolveStreamIdentity({
-      messageRole: 'da-vinci',
+      messageRole: 'specialist',
       adapterAgentId: 'agent-xyz',
       persona: null
     })

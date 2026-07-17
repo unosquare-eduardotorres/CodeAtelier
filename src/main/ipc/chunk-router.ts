@@ -90,7 +90,7 @@ export function getAndClearToolActivities(conversationId: string): ToolActivity[
 export interface ChunkRouterContext {
   mainWindow: BrowserWindow
   conversationId: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   contentAccumulator: { value: string }
   workspacePath?: string
   specialistMeta?: { specialist: string; taskId?: string }
@@ -293,7 +293,7 @@ function safeSend(ctx: ChunkRouterContext, channel: string, ...args: unknown[]):
 /** Base payload fields shared by all IPC messages */
 interface BasePayload {
   conversationId: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   requestId?: string
   specialist?: string
   taskId?: string

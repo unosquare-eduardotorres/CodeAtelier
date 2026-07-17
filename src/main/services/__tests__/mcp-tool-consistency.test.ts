@@ -166,6 +166,10 @@ describe('MCP tool consistency — prompt guidance text references real tools', 
     for (const match of matches) {
       const name = match[1]
       if (knownNonTools.has(name)) continue
+      // Skip fragments of fully-qualified mcp__server__tool names split on hyphens
+      // (e.g. "mcp__code" and "analysis__audit_scan" from "mcp__code-analysis__audit_scan")
+      // Real short tool names never contain double underscores.
+      if (name.includes('__')) continue
       assert.ok(
         allShortNames.has(name),
         `CODE_ANALYSIS_GUIDANCE_PROMPT references "${name}" which is not in MCP_TOOLS`

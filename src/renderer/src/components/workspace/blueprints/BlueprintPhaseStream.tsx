@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState, useCallback, type JSX } from 'react'
-import { Terminal, AlertTriangle, StopCircle, ChevronDown, Copy, Check } from 'lucide-react'
+import { Terminal, AlertTriangle, StopCircle, Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
 import type { StreamEvent } from '@renderer/store/blueprint.store'
 import { stripBlueprintBlocks } from '../../../../../shared/blueprint-clarify-parsers'
+import ScrollToBottomButton from '@renderer/components/chat/ScrollToBottomButton'
+import { useStreamScroll } from '@renderer/components/streaming'
 
 // ── Stale detection threshold ──
 
 const STALE_THRESHOLD_MS = 90_000 // 90 seconds
-/** Distance from bottom (px) to consider "pinned" to live scroll */
-const SCROLL_PIN_THRESHOLD = 60
 
 interface BlueprintPhaseStreamProps {
   phaseType: string
@@ -61,43 +61,16 @@ export default function BlueprintPhaseStream({
   streamEvents,
   awaitingUser = false
 }: BlueprintPhaseStreamProps): JSX.Element {
-  // B4-FIX: Strip fenced JSON blocks from clarify stream display
-  const displayText = phaseType === 'clarify' ? stripBlueprintBlocks(streamText) : streamText
+  // B4-FIX: Strip fenced JSON blocks from ALL phase stream displays
+  const displayText = stripBlueprintBlocks(streamText)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [now, setNow] = useState(Date.now())
-  const [isPinned, setIsPinned] = useState(true)
   const [copied, setCopied] = useState(false)
 
-  // ── Smart auto-scroll (sticky-bottom pattern) ──
-  const checkIfPinned = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    setIsPinned(distanceFromBottom < SCROLL_PIN_THRESHOLD)
-  }, [])
-
-  // Auto-scroll only when pinned
-  useEffect(() => {
-    if (isPinned && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [streamText, isPinned, streamEvents?.length])
-
-  // Track scroll position
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    el.addEventListener('scroll', checkIfPinned, { passive: true })
-    return () => el.removeEventListener('scroll', checkIfPinned)
-  }, [checkIfPinned])
-
-  // Jump to bottom
-  const jumpToBottom = useCallback(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-      setIsPinned(true)
-    }
-  }, [])
+  const { isPinned, scrollToBottom } = useStreamScroll(scrollRef, [
+    streamText,
+    streamEvents?.length
+  ])
 
   // Tick every second for elapsed time display
   // B5-FIX: Pause the ticker while awaiting user action (no need to show stale time)
@@ -131,7 +104,7 @@ export default function BlueprintPhaseStream({
   const toolEvents = streamEvents?.filter((e) => e.kind === 'tool') ?? []
 
   return (
-    <div className="flex flex-col h-full min-h-0 relative">
+    <div className="flex flex-col h-full min-h-0">
       {/* Header with activity indicator */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border-subtle">
         <Icon size={14} className={isRunning ? 'text-accent' : 'text-text-muted'} />
@@ -197,60 +170,49 @@ export default function BlueprintPhaseStream({
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto p-4"
-      >
-        {displayText ? (
-          <div className="space-y-1">
-            {/* B4-FIX: Render displayText (stripped of fenced blocks for clarify) */}
-            <div className="prose prose-sm max-w-none text-text-body
-              prose-headings:text-text-primary prose-headings:font-semibold
-              prose-p:leading-relaxed prose-p:text-sm
-              prose-code:font-mono prose-code:text-xs prose-code:bg-surface-base prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-accent prose-code:before:content-none prose-code:after:content-none
-              prose-pre:bg-surface-base prose-pre:border prose-pre:border-border-subtle prose-pre:rounded-lg
-              prose-strong:text-text-primary prose-strong:font-semibold
-              prose-a:text-accent prose-a:no-underline hover:prose-a:underline
-              prose-li:text-sm prose-li:text-text-body
-              prose-th:text-text-secondary prose-td:text-text-body
-            ">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                {displayText}
-              </ReactMarkdown>
-            </div>
-
-            {/* Tool activity badges */}
-            {toolEvents.length > 0 && (
-              <div className="border-t border-border-subtle/50 pt-1 mt-2">
-                {toolEvents.slice(-10).map((event, i) => (
-                  <ToolBadge key={i} name={event.content} />
-                ))}
-              </div>
-            )}
-
-            {/* Pulsing cursor while live */}
-            {isRunning && (
-              <span className="inline-block w-1.5 h-4 bg-accent/60 animate-pulse ml-0.5 align-text-bottom" />
-            )}
-          </div>
-        ) : (
-          <span className="text-text-muted text-sm animate-pulse">Waiting for agent output...</span>
-        )}
-      </div>
-
-      {/* Jump to latest pill (when unpinned) */}
-      {!isPinned && isRunning && (
-        <button
-          type="button"
-          onClick={jumpToBottom}
-          className="absolute bottom-4 right-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
-            bg-surface-float border border-border-default rounded-full shadow-lg
-            hover:bg-surface-overlay transition-colors text-text-secondary"
+      <div className="relative flex-1 min-h-0 overflow-hidden">
+        <div
+          ref={scrollRef}
+          className="overflow-y-auto h-full p-4"
         >
-          <ChevronDown size={14} />
-          Jump to latest
-        </button>
-      )}
+          {displayText ? (
+            <div className="space-y-1">
+              {/* B4-FIX: Render displayText (stripped of fenced blocks for clarify) */}
+              <div className="prose prose-sm max-w-none text-text-body
+                prose-headings:text-text-primary prose-headings:font-semibold
+                prose-p:leading-relaxed prose-p:text-sm
+                prose-code:font-mono prose-code:text-xs prose-code:bg-surface-base prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-accent prose-code:before:content-none prose-code:after:content-none
+                prose-pre:bg-surface-base prose-pre:border prose-pre:border-border-subtle prose-pre:rounded-lg
+                prose-strong:text-text-primary prose-strong:font-semibold
+                prose-a:text-accent prose-a:no-underline hover:prose-a:underline
+                prose-li:text-sm prose-li:text-text-body
+                prose-th:text-text-secondary prose-td:text-text-body
+              ">
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                  {displayText}
+                </ReactMarkdown>
+              </div>
+
+              {/* Tool activity badges */}
+              {toolEvents.length > 0 && (
+                <div className="border-t border-border-subtle/50 pt-1 mt-2">
+                  {toolEvents.slice(-10).map((event, i) => (
+                    <ToolBadge key={i} name={event.content} />
+                  ))}
+                </div>
+              )}
+
+              {/* Pulsing cursor while live */}
+              {isRunning && (
+                <span className="inline-block w-1.5 h-4 bg-accent/60 animate-pulse ml-0.5 align-text-bottom" />
+              )}
+            </div>
+          ) : (
+            <span className="text-text-muted text-sm animate-pulse">Waiting for agent output...</span>
+          )}
+        </div>
+        <ScrollToBottomButton visible={!isPinned} onClick={scrollToBottom} />
+      </div>
     </div>
   )
 }

@@ -47,7 +47,7 @@ const log = chatIpcLogger
 interface StreamContext {
   readonly conversationId: string
   readonly requestId: string
-  readonly streamingRole: 'da-vinci' | 'specialist'
+  readonly streamingRole: 'specialist'
   readonly phase: ConversationPhase
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
@@ -73,10 +73,10 @@ export interface PipelineCallbacks {
 /**
  * Handle returned from stream() — makes the IPC handler lifecycle-aware.
  * Callers can optionally await `done` to know when the entire pipeline
- * (generalist + specialists) completes, or call `abort()` to cancel.
+ * the streaming pipeline completes, or call `abort()` to cancel.
  */
 export interface StreamHandle {
-  /** Resolves when the entire pipeline (generalist + specialists) completes */
+  /** Resolves when the entire streaming pipeline completes */
   done: Promise<void>
   /** Abort the stream and all sub-operations */
   abort: () => void
@@ -102,7 +102,7 @@ export class ChatStreamService {
   private injectedFactIds = new Map<string, Set<string>>()
 
   /** Per-stream identity — set at stream() start, cleared on cleanup. */
-  private currentStreamingRole: 'da-vinci' | 'specialist' = 'da-vinci'
+  private currentStreamingRole: 'specialist' = 'specialist'
 
   /**
    * Keepalive timer — sends periodic IPC events to the renderer during streaming.
@@ -151,7 +151,7 @@ export class ChatStreamService {
   // ── Persistent Event Forwarders ──
 
   /**
-   * Register once-at-startup event forwarders from generalist → renderer.
+   * Register once-at-startup event forwarders from agent → renderer.
    *
    * The typed 'intent' event handles all control actions (plan, askUser,
    * grill events) via IntentRouter. Legacy events (plan, grillQuestion,
@@ -296,7 +296,7 @@ export class ChatStreamService {
           { value: '' }, // hook chunks don't accumulate content
           chatAgentService.getWorkspacePath() ?? undefined,
           undefined,
-          'da-vinci-responding',
+          'specialist-responding',
           this.activeRequestId ?? undefined,
           chatAgentService.getMode()
         )
@@ -419,7 +419,7 @@ export class ChatStreamService {
    * Returns role, phase, and specialist metadata.
    */
   private resolveStreamIdentity(): {
-    streamingRole: 'da-vinci' | 'specialist'
+    streamingRole: 'specialist'
     phase: ConversationPhase
     specialistMeta: { specialist: string; taskId?: string } | undefined
     adapterAgentId: string
@@ -427,14 +427,14 @@ export class ChatStreamService {
     const messageRole = chatAgentService.getActiveMessageRole()
     const adapterAgentId = chatAgentService.getActiveAgentId()
 
-    // Persona overlay (Da Vinci impersonating a Specialist) — when active, the
-    // adapter is still Da Vinci internally, but both streaming chunks AND the
+    // Persona overlay (specialist impersonating a named specialist) — when active, the
+    // adapter uses the base specialist internally, but both streaming chunks AND the
     // persisted DB message use the specialist's identity (role + agentId) so
     // the avatar is consistent across streaming, finalization, and DB reload.
     const persona = chatAgentService.getActivePersona()
-    const streamingRole: 'da-vinci' | 'specialist' = persona ? 'specialist' : messageRole
+    const streamingRole: 'specialist' = persona ? 'specialist' : messageRole
     const phase: ConversationPhase =
-      streamingRole === 'specialist' ? 'specialist-executing' : 'da-vinci-responding'
+      streamingRole === 'specialist' ? 'specialist-executing' : 'specialist-responding'
     const specialistMeta = persona
       ? { specialist: persona.agentId, taskId: '' }
       : messageRole === 'specialist'
@@ -514,7 +514,7 @@ export class ChatStreamService {
     conversationId: string
     requestId: string
     signal: AbortSignal
-    streamingRole: 'da-vinci' | 'specialist'
+    streamingRole: 'specialist'
     workspaceId: string
     mode: 'plan' | 'build'
     attachments?: string[]
@@ -698,7 +698,7 @@ export class ChatStreamService {
   private announceStreamStart(
     conversationId: string,
     requestId: string,
-    streamingRole: 'da-vinci' | 'specialist',
+    streamingRole: 'specialist',
     phase: ConversationPhase,
     specialistMeta: { specialist: string; taskId?: string } | undefined
   ): void {
@@ -817,7 +817,7 @@ export class ChatStreamService {
         error: (error as Error).message
       })
 
-      const roleLabel = ctx.streamingRole === 'specialist' ? 'Specialist' : 'Generalist'
+      const roleLabel = 'Specialist'
       log.error(`${roleLabel} send failed:`, (error as Error).message)
       const errorMsg = `**${roleLabel} Error:** ${(error as Error).message}\n\nMake sure Claude CLI is installed and a workspace is open.`
       const savedMessage = messageRepository.create(
@@ -1000,7 +1000,7 @@ export class ChatStreamService {
         })
       )
     } catch (error) {
-      log.error('Failed to save generalist message:', error)
+      log.error('Failed to save agent message:', error)
       this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createTextChunk({
@@ -1212,7 +1212,7 @@ export class ChatStreamService {
   // ── Stream Lifecycle ──
 
   /**
-   * Full generalist streaming lifecycle — orchestrates the decomposed stages.
+   * Full streaming lifecycle — orchestrates the decomposed stages.
    */
   async stream(
     conversationId: string,

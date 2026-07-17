@@ -1,7 +1,7 @@
 import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult } from './executor-types'
 import type { CLIExecutor } from './cli-executor'
-import { DA_VINCI_AGENT_ID, MCP_TOOLS } from '../../shared/constants'
+import { MCP_TOOLS } from '../../shared/constants'
 import { chatAgentLogger } from '../logger'
 import { conversationRepository } from '../db/repositories'
 import { usageTrackerService } from './usage-tracker.service'
@@ -15,7 +15,7 @@ export interface RecoveryNudgeOptions {
   workspacePath: string
   /** Model identifier for the recovery query */
   model: string
-  /** Whether the generalist is in build mode (affects permissionMode) */
+  /** Whether the agent is in build mode (affects permissionMode) */
   isBuildMode: boolean
   /** Current session ID for resume */
   sessionId: string | undefined
@@ -190,7 +190,7 @@ export class RecoveryNudgeService {
           ],
           maxTurns: 1,
           resume: opts.sessionId,
-          agentId: DA_VINCI_AGENT_ID,
+          agentId: 'specialist',
           // Recovery is lightweight summarization — omit thinking entirely.
           effort: 'low'
         })
@@ -307,7 +307,7 @@ export class RecoveryNudgeService {
         mcpConfigPath: opts.mcpConfigPath,
         maxTurns: 2,
         resume: opts.sessionId,
-        agentId: DA_VINCI_AGENT_ID,
+        agentId: 'specialist',
         effort: 'low'
       })
 

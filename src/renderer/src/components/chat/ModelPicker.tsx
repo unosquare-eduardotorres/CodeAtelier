@@ -103,8 +103,8 @@ function modelLabel(modelId: string): string {
 // ── Routing summary roles ──
 
 const SUMMARY_ROLES = [
-  { label: 'Plan', action: 'da-vinci:plan' as ModelAction },
-  { label: 'Build', action: 'da-vinci:build' as ModelAction },
+  { label: 'Plan', action: 'specialist:plan' as ModelAction },
+  { label: 'Build', action: 'specialist:build' as ModelAction },
   { label: 'Background', action: 'haiku' as ModelAction }
 ]
 
@@ -136,8 +136,8 @@ export function ModelPicker({
 
   // Check if plan and build use different providers (cross-provider warning)
   const hasMixedProviders = useMemo(() => {
-    const planProvider = resolved.find((r) => r.action === 'da-vinci:plan')?.provider
-    const buildProvider = resolved.find((r) => r.action === 'da-vinci:build')?.provider
+    const planProvider = resolved.find((r) => r.action === 'specialist:plan')?.provider
+    const buildProvider = resolved.find((r) => r.action === 'specialist:build')?.provider
     return planProvider && buildProvider && planProvider !== buildProvider
   }, [resolved])
 
@@ -153,7 +153,7 @@ export function ModelPicker({
       ...(opt.provider === 'local-llm' ? { localBackend: 'omlx' as const } : {})
     }
 
-    // Set this and related actions (e.g. da-vinci:plan → project-specialist:plan)
+    // Set this and related actions (e.g. specialist:plan → specialist:build)
     const updated = { ...overrides, [action]: assignment }
     onOverridesChange(updated)
   }

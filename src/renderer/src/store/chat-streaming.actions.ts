@@ -24,7 +24,7 @@ import type { ChatState } from './chat.store'
 /** Minimal interface for the streaming-related state slice */
 export interface ChatStreamingState {
   streamingContent: string
-  streamingRole: 'da-vinci' | 'specialist'
+  streamingRole: 'specialist'
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
@@ -152,7 +152,7 @@ export function appendStreamChunkAction(
   get: GetFn,
   set: SetFn,
   chunk: string,
-  role?: 'da-vinci' | 'specialist',
+  role?: 'specialist',
   taskId?: string,
   specialist?: string,
   requestId?: string
@@ -199,7 +199,7 @@ export function appendStreamChunkAction(
   // so clearing here is safe (flush output was consumed by the accumulator's onFlush).
   set((state) => ({
     isStreaming: true, // Ensure streaming bubble renders for specialist chunks
-    streamingPhase: role === 'specialist' ? 'specialist-executing' : 'da-vinci-responding',
+    streamingPhase: role === 'specialist' ? 'specialist-executing' : 'specialist-responding',
     streamingSegments: isNewTask ? [] : state.streamingSegments,
     streamingContent: isNewTask ? '' : state.streamingContent,
     streamingRole: role ?? state.streamingRole,
@@ -392,7 +392,7 @@ export function finalizeTurnBubbleAction(
   get: GetFn,
   set: SetFn,
   turnId: string,
-  turnRole?: 'da-vinci' | 'specialist',
+  turnRole?: 'specialist',
   turnSpecialist?: string
 ): void {
   // Flush any remaining buffered content before finalizing the turn.

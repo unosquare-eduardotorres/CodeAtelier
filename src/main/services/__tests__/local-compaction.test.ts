@@ -29,7 +29,7 @@ import type { ControlActionCallbacks } from '../control-actions.tool'
 // ── Minimal adapter ─────────────────────────────────────────────────────
 function makeAdapter(): AgentRoleAdapter {
   return {
-    role: 'da-vinci',
+    role: 'specialist',
     agentId: 'da-vinci-test',
     supportsEmitPlanRecovery: false,
     onSessionStart: async () => {},

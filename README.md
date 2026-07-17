@@ -8,7 +8,7 @@ Code Atelier is a desktop application that puts a single, opinionated AI enginee
 
 ```mermaid
 flowchart LR
-    You([You]) <-->|chat| R["Workspace Agent<br/>DaVinci or Project Specialist"]
+    You([You]) <-->|chat| R["Workspace Agent<br/>Specialist"]
     R --> MCP["MCP Toolbox<br/>code-graph · semantic-search<br/>git · checkpoint · github<br/>control-actions"]
     R --> CLI[("Claude CLI<br/>+ Claude Max")]
 
@@ -17,17 +17,17 @@ flowchart LR
     style CLI fill:#dc2626,color:#fff,stroke:#dc2626
 ```
 
-1. **One agent per workspace.** Every workspace runs exactly one role — DaVinci (default) or a Project Specialist (LLM-tailored for the workspace's stack).
-2. **Same pipeline, different identity.** Both roles share mode rules, MCP servers, intent detection, and memory persistence. Only the system-prompt identity differs.
+1. **One agent per workspace.** Every workspace runs exactly one specialist — the default generalist, or an LLM-tailored expert built from the workspace's stack.
+2. **Same pipeline, different identity.** All specialists share mode rules, MCP servers, intent detection, and memory persistence. Only the system-prompt identity differs.
 3. **Local-first.** Everything runs on your machine via Claude CLI.
 
-## The two roles
+## Specialist roles
 
-**DaVinci** — the default assistant, available per workspace with no setup. Can optionally take on a persona by borrowing a Project Specialist's identity.
+**Default Specialist** — the built-in assistant, available per workspace with no setup. Can optionally take on a persona by borrowing a Project Specialist's identity.
 
 **Project Specialist** — an opinionated, LLM-tailored expert built from your workspace's detected stack + CLAUDE.md. Built on demand, rebuilt when the stack drifts.
 
-Both adapters share the same execution model, MCP toolbox, and plan/build mode rules. The specialist is the persona; the adapter is the execution.
+All specialists share the same execution model, MCP toolbox, and plan/build mode rules. The specialist is the persona; the adapter is the execution.
 
 ## Tech Stack
 
@@ -142,15 +142,12 @@ sequenceDiagram
 flowchart TD
     U([User message]) --> S[AgentSessionService]
     S --> A{Role Adapter}
-    A -->|da-vinci| D[DaVinciRoleAdapter]
-    A -->|project-specialist| P[ProjectSpecialistRoleAdapter]
-    D --> Q[claude CLI stream]
-    P --> Q
+    A -->|specialist| P[ProjectSpecialistRoleAdapter]
+    P --> Q[claude CLI stream]
     Q --> S
     S -->|chunk / intent / memory| U
 
-    style D fill:#7c3aed,color:#fff,stroke:#7c3aed
-    style P fill:#059669,color:#fff,stroke:#059669
+    style P fill:#7c3aed,color:#fff,stroke:#7c3aed
 ```
 
 - `AgentSessionService` owns lifecycle (start, send, switchMode, stop).

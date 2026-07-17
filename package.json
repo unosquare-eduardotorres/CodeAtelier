@@ -1,6 +1,6 @@
 {
   "name": "code-atelier",
-  "version": "1.0.7",
+  "version": "1.0.19",
   "description": "Code Atelier — Where Craft Meets Code",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -68,7 +68,8 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.2.0",
     "c8": "^11.0.0",
-    "electron": "^42.4.1",
+    "canvas": "^3.2.3",
+    "electron": "^42.7.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",

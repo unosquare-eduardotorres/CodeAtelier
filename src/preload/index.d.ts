@@ -142,10 +142,7 @@ interface Api {
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
   }) => Promise<Conversation>
-  updatePersona: (args: {
-    conversationId: string
-    personaSpecialistId: string | null
-  }) => Promise<Conversation>
+
   updateMcpOverrides: (args: {
     conversationId: string
     overrides: Record<string, boolean>
@@ -174,8 +171,7 @@ interface Api {
     requestId: string | null
   }>
   compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
-  /** Accept DaVinci's specialist-swap proposal — rebuilds the session as the Project Specialist. */
-  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }) => Promise<void>
+
 
   // Chat commands
   completeConversation: (args: {
@@ -569,7 +565,7 @@ interface Api {
   // Core Agent Aliases
   listCoreAgentAliases: () => Promise<CoreAgentAlias[]>
   upsertCoreAgentAlias: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     alias: string | null
     avatarKey: string | null
   }) => Promise<CoreAgentAlias>
@@ -577,16 +573,16 @@ interface Api {
   // Core Agent Prompts
   listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
   getCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }) => Promise<CoreAgentPrompt | undefined>
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
     promptText: string
   }) => Promise<CoreAgentPrompt>
   resetCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }) => Promise<CoreAgentPrompt>
 
@@ -903,6 +899,9 @@ interface Api {
     error?: string
   }>
 
+  // Persist plan card action on a message
+  chatSetPlanAction: (args: { messageId: string; action: string }) => Promise<{ success: boolean }>
+
   // Chat resume at checkpoint
   chatResumeAt: (args: { conversationId: string; messageId: string }) => Promise<void>
 
@@ -1021,7 +1020,7 @@ interface Api {
     }) => void
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
-  grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
+  grillCondenseRequirement: (args: { text: string; workspaceId?: string }) => Promise<{ condensed: string }>
   grillGeneratePlan: (args: {
     sessionId: string
     ideaId?: string
@@ -1319,7 +1318,7 @@ interface Api {
       blueprintId: string
       workspaceId: string
       phase: string
-      artifact: { type: string; contentMd?: string; contentJson?: unknown }
+      artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
     }) => void
   ) => () => void
   blueprintApprovalRespond: (args: {
@@ -1478,7 +1477,12 @@ interface Api {
       service: string
       status: string
       summary: string
+      targetPage?: string
+      entityId?: string
     }) => void
+  ) => () => void
+  onNotificationNavigate: (
+    cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
   ) => () => void
 
   // E2E Testing

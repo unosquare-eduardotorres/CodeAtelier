@@ -17,7 +17,6 @@ import {
   createOptimisticUserMessage,
   createErrorMessage
 } from './chat-action-utils'
-import { executeSwapToSpecialist } from './swap-to-specialist.action'
 import type {
   CommunicationTone,
   CompleteResult,
@@ -42,7 +41,7 @@ export interface ChatState {
   activeConversation: Conversation | null
   messages: Message[]
   streamingContent: string
-  streamingRole: 'da-vinci' | 'specialist'
+  streamingRole: 'specialist'
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
@@ -78,10 +77,9 @@ export interface ChatState {
   // General chat pending questions (ask_user tool)
   pendingQuestions: GrillQuestion[] | null
   /**
-   * Programmatic action tag emitted alongside pendingQuestions (e.g.
-   * "swap-to-specialist"). When the user accepts the first option on an
-   * action-tagged question, submitQuestionAnswers maps the action to an IPC
-   * call (e.g. swapToSpecialist) instead of sending a plain-text answer.
+   * Programmatic action tag emitted alongside pendingQuestions.
+   * When set, submitQuestionAnswers can map the action to custom
+   * handling instead of sending a plain-text answer.
    */
   pendingQuestionAction: string | null
   /** Request ID from IPC bridge ask_user — presence indicates CLI/bridge backend */
@@ -98,7 +96,6 @@ export interface ChatState {
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null
   ) => Promise<void>
-  switchPersona: (personaSpecialistId: string | null) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
   updateMode: (mode: ConversationMode) => Promise<void>
@@ -107,7 +104,7 @@ export interface ChatState {
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
   appendStreamChunk: (
     chunk: string,
-    role?: 'da-vinci' | 'specialist',
+    role?: 'specialist',
     taskId?: string,
     specialist?: string,
     requestId?: string
@@ -115,14 +112,14 @@ export interface ChatState {
   /** Reset safety timer without processing content — used by keepalive signals from backend. */
   handleKeepalive: () => void
   updateStreamingIdentity: (
-    role: 'da-vinci' | 'specialist',
+    role: 'specialist',
     taskId?: string,
     specialist?: string
   ) => void
   finalizeStream: (messageId: string, taskId?: string, requestId?: string) => void
   finalizeTurnBubble: (
     turnId: string,
-    turnRole?: 'da-vinci' | 'specialist',
+    turnRole?: 'specialist',
     turnSpecialist?: string
   ) => void
   addToolActivity: (activity: ToolActivity) => void
@@ -225,7 +222,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeConversation: previousChatState?.activeConversation ?? null,
   messages: previousChatState?.messages ?? [],
   streamingContent: previousChatState?.streamingContent ?? '',
-  streamingRole: previousChatState?.streamingRole ?? ('da-vinci' as const),
+  streamingRole: previousChatState?.streamingRole ?? ('specialist' as const),
   streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
@@ -316,23 +313,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: '',
       streamingSegments: [],
       isStreaming: false,
-      // Reset streaming identity — prevents stale specialist/DaVinci avatar leak
-      streamingRole: 'da-vinci' as const,
+      // Reset streaming identity — prevents stale specialist avatar leak
+      streamingRole: 'specialist' as const,
       streamingSpecialist: null,
       streamingTaskId: null
-    }))
-  },
-
-  switchPersona: async (personaSpecialistId: string | null) => {
-    const { activeConversation } = get()
-    if (!activeConversation) return
-    const updated = await window.api.updatePersona({
-      conversationId: activeConversation.id,
-      personaSpecialistId
-    })
-    set((state) => ({
-      activeConversation: updated,
-      conversations: state.conversations.map((c) => (c.id === updated.id ? updated : c))
     }))
   },
 
@@ -421,8 +405,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingContent: '',
       // RESTORE streaming if backend says this conversation is still active
       isStreaming: isConversationStillStreaming,
-      // Reset streaming identity — prevents stale specialist/DaVinci avatar leak
-      streamingRole: 'da-vinci' as const,
+      // Reset streaming identity — prevents stale specialist avatar leak
+      streamingRole: 'specialist' as const,
       streamingSpecialist: null,
       streamingTaskId: null,
       // Clear ephemeral UI state from previous conversation
@@ -450,7 +434,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Restore state machine mirror based on backend
       conversationState: isConversationStillStreaming
         ? {
-            phase: 'da-vinci-responding' as ConversationPhase,
+            phase: 'specialist-responding' as ConversationPhase,
             from: null,
             event: null,
             conversationId: id
@@ -533,7 +517,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeConversation.id,
         '',
         [],
-        'da-vinci',
+        'specialist',
         null,
         []
       )
@@ -630,7 +614,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   appendStreamChunk: (
     chunk: string,
-    role?: 'da-vinci' | 'specialist',
+    role?: 'specialist',
     taskId?: string,
     specialist?: string,
     requestId?: string
@@ -670,7 +654,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   finalizeTurnBubble: (
     turnId: string,
-    turnRole?: 'da-vinci' | 'specialist',
+    turnRole?: 'specialist',
     turnSpecialist?: string
   ) => {
     finalizeTurnBubbleAction(get, set, turnId, turnRole, turnSpecialist)
@@ -775,33 +759,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   submitQuestionAnswers: (answers) => {
-    const action = get().pendingQuestionAction
-
-    // Programmatic action: "swap-to-specialist" — the renderer handles the
-    // swap directly via IPC instead of echoing an answer back to DaVinci.
-    // The tool-emitted proposal always has the "accept" option as the first
-    // option label ("Swap now"). If the user selected it, invoke the IPC.
-    if (action === 'swap-to-specialist') {
-      const firstQuestion = get().pendingQuestions?.[0]
-      const firstAnswer = answers.find((a) => a.questionId === firstQuestion?.id)
-      const acceptLabel = firstQuestion?.options?.[0]?.label
-      const accepted =
-        !!firstAnswer &&
-        !firstAnswer.skipped &&
-        !!acceptLabel &&
-        firstAnswer.selectedOptions.includes(acceptLabel)
-
-      set({ pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null })
-
-      if (accepted) {
-        executeSwapToSpecialist(get, set)
-      } else {
-        // User declined — let DaVinci know so it doesn't re-propose immediately.
-        get().sendMessage("I'll keep DaVinci for now.")
-      }
-      return
-    }
-
     const lines: string[] = ['Here are my answers:\n']
     for (const answer of answers) {
       const question = get().pendingQuestions?.find((q) => q.id === answer.questionId)
@@ -852,7 +809,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const localMessage: Message = {
       id: `local-${Date.now()}`,
       conversationId: activeConversation.id,
-      role: opts?.role ?? 'da-vinci',
+      role: opts?.role ?? 'specialist',
       ...(opts?.agentId ? { agentId: opts.agentId } : {}),
       contentMd: content,
       attachmentsJson: '[]',
@@ -869,7 +826,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: active,
       conversationState: active
         ? {
-            phase: 'da-vinci-responding' as ConversationPhase,
+            phase: 'specialist-responding' as ConversationPhase,
             from: null,
             event: null,
             conversationId: state.activeConversation?.id ?? null
@@ -946,7 +903,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       streamingContent: '',
       streamingSegments: [],
-      streamingRole: 'da-vinci' as const,
+      streamingRole: 'specialist' as const,
       streamingSpecialist: null,
       streamingTaskId: null,
       isStreaming: false,
@@ -984,7 +941,6 @@ export const useChatActions = (): Pick<
   | 'completeConversation'
   | 'closeConversation'
   | 'createConversation'
-  | 'switchPersona'
   | 'selectConversation'
   | 'deleteConversation'
   | 'updateMode'
@@ -1019,7 +975,6 @@ export const useChatActions = (): Pick<
       completeConversation: s.completeConversation,
       closeConversation: s.closeConversation,
       createConversation: s.createConversation,
-      switchPersona: s.switchPersona,
       selectConversation: s.selectConversation,
       deleteConversation: s.deleteConversation,
       updateMode: s.updateMode,

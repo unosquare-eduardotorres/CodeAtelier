@@ -15,8 +15,8 @@ export function registerCoreAgentPromptIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CORE_AGENT_PROMPT_GET)
     const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_PROMPT_GET)
     const mode = requireString(args, 'mode', IPC_CHANNELS.CORE_AGENT_PROMPT_GET)
-    if (agentRole !== 'da-vinci') {
-      throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_GET}: agentRole must be "da-vinci"`)
+    if (agentRole !== 'specialist') {
+      throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_GET}: agentRole must be "specialist"`)
     }
     if (mode !== 'plan' && mode !== 'build' && mode !== 'danger') {
       throw new Error(
@@ -32,8 +32,8 @@ export function registerCoreAgentPromptIpc(): void {
     const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
     const mode = requireString(args, 'mode', IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
     const promptText = requireString(args, 'promptText', IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT)
-    if (agentRole !== 'da-vinci') {
-      throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT}: agentRole must be "da-vinci"`)
+    if (agentRole !== 'specialist') {
+      throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT}: agentRole must be "specialist"`)
     }
     if (mode !== 'plan' && mode !== 'build' && mode !== 'danger') {
       throw new Error(
@@ -48,8 +48,8 @@ export function registerCoreAgentPromptIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CORE_AGENT_PROMPT_RESET)
     const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_PROMPT_RESET)
     const mode = requireString(args, 'mode', IPC_CHANNELS.CORE_AGENT_PROMPT_RESET)
-    if (agentRole !== 'da-vinci') {
-      throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_RESET}: agentRole must be "da-vinci"`)
+    if (agentRole !== 'specialist') {
+      throw new Error(`${IPC_CHANNELS.CORE_AGENT_PROMPT_RESET}: agentRole must be "specialist"`)
     }
     if (mode !== 'plan' && mode !== 'build' && mode !== 'danger') {
       throw new Error(

@@ -37,7 +37,7 @@ export type { PipelineCallbacks } from './chat-stream.service'
 export { IntentDetector, intentDetector } from './intent-detector'
 export { IntentRouter } from './intent-router'
 
-// Extracted generalist sub-services (Phase 5-9 decomposition)
+// Extracted chat sub-services (Phase 5-9 decomposition)
 export { AgentTokenTracker } from './agent-token-tracker'
 export type { TurnBreakdownEntry, CacheEfficiencyReport } from './agent-token-tracker'
 export { AgentCircuitBreaker } from './agent-circuit-breaker'

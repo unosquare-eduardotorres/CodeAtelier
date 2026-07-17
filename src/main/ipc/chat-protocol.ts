@@ -6,7 +6,7 @@
  * channels should use these builders instead of inline object literals.
  *
  * This ensures: requestId is never accidentally omitted, phase is always included,
- * and message shapes are consistent across generalist and specialist paths.
+ * and message shapes are consistent across all agent paths.
  */
 
 import type { ConversationPhase, ContextUsageBreakdown, ToolActivity } from '../../shared/types'
@@ -17,7 +17,7 @@ import type { ConversationPhase, ContextUsageBreakdown, ToolActivity } from '../
 export interface BaseChunkMessage {
   conversationId: string
   requestId?: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   phase?: ConversationPhase
 }
 
@@ -74,7 +74,7 @@ export function createTextChunk(opts: {
   conversationId: string
   requestId?: string
   text: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   phase?: ConversationPhase
   specialist?: string
   taskId?: string
@@ -96,7 +96,7 @@ export function createTextChunk(opts: {
 export function createToolActivityChunk(opts: {
   conversationId: string
   requestId?: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   toolActivity: Partial<ToolActivity> & { id: string; toolName: string }
   specialist?: string
   taskId?: string
@@ -118,7 +118,7 @@ export function createToolActivityChunk(opts: {
 export function createTurnBoundary(opts: {
   conversationId: string
   requestId?: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   turnId: string
   specialist?: string
   taskId?: string
@@ -141,7 +141,7 @@ export function createTurnBoundary(opts: {
 export function createCompactNeeded(opts: {
   conversationId: string
   requestId?: string
-  role: 'da-vinci' | 'specialist'
+  role: 'specialist'
   compactNeeded: {
     level: string
     inputTokens: number

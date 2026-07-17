@@ -565,6 +565,16 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
   deleteByBlueprint(blueprintId: string): number {
     return this.deleteBy('blueprint_id', blueprintId)
   }
+
+  /**
+   * Delete all remediation tasks (R-prefixed taskIds) for a blueprint.
+   * Used when retrying verify to clean up stale remediation from prior rounds.
+   */
+  deleteRemediationTasks(blueprintId: string): number {
+    return this.db()
+      .prepare(`DELETE FROM blueprint_tasks WHERE blueprint_id = ? AND task_id LIKE 'R%'`)
+      .run(blueprintId).changes
+  }
 }
 
 // ── Singleton Exports ──

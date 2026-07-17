@@ -38,8 +38,8 @@ import {
   IMAGE_ATTACHMENTS_PROMPT,
   IMAGE_ATTACHMENTS_PROMPT_LEAN,
   TONE_STYLE_DIRECTIVES,
-  buildDaVinciIdentityPrompt,
-  buildDaVinciIdentityPromptLean,
+  buildSpecialistIdentityPrompt,
+  buildSpecialistIdentityPromptLean,
   PLAN_MODE_SECTION,
   BUILD_MODE_SECTION,
   DANGER_MODE_SECTION,
@@ -115,38 +115,39 @@ describe('default-prompts — TONE_STYLE_DIRECTIVES', () => {
   }
 })
 
-describe('default-prompts — buildDaVinciIdentityPrompt', () => {
+describe('default-prompts — buildSpecialistIdentityPrompt', () => {
   test('returns string for each tone', () => {
     const tones = ['default', 'calm', 'optimistic', 'brutal', 'caveman'] as const
     for (const tone of tones) {
-      const result = buildDaVinciIdentityPrompt(tone)
+      const result = buildSpecialistIdentityPrompt(tone)
       assert.equal(typeof result, 'string')
       assert.ok(result.length > 100, `Prompt for ${tone} should be substantial`)
     }
   })
 
   test('includes tone-specific style', () => {
-    const prompt = buildDaVinciIdentityPrompt('brutal')
+    const prompt = buildSpecialistIdentityPrompt('brutal')
     assert.ok(prompt.length > 0)
   })
 })
 
-describe('default-prompts — buildDaVinciIdentityPromptLean', () => {
+describe('default-prompts — buildSpecialistIdentityPromptLean', () => {
   test('returns string for each tone', () => {
     const tones = ['default', 'calm', 'optimistic', 'brutal', 'caveman'] as const
     for (const tone of tones) {
-      const result = buildDaVinciIdentityPromptLean(tone)
+      const result = buildSpecialistIdentityPromptLean(tone)
       assert.equal(typeof result, 'string')
       assert.ok(result.length > 50)
     }
   })
 
   test('lean version is within 25% of full', () => {
-    const full = buildDaVinciIdentityPrompt('default')
-    const lean = buildDaVinciIdentityPromptLean('default')
-    // After trimming, both are compact. Lean may be slightly longer.
+    const full = buildSpecialistIdentityPrompt('default')
+    const lean = buildSpecialistIdentityPromptLean('default')
+    // After trimming, both are compact. Lean may be longer due to inline Code
+    // Exploration guidance with fully-qualified MCP tool names (mcp__server__tool).
     const ratio = lean.length / full.length
-    assert.ok(ratio < 1.25, `Lean/full ratio (${ratio.toFixed(2)}) should be < 1.25`)
+    assert.ok(ratio < 1.40, `Lean/full ratio (${ratio.toFixed(2)}) should be < 1.40`)
   })
 })
 

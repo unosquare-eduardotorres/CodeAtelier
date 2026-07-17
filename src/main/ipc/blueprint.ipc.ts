@@ -22,8 +22,11 @@ import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
 import { workspaceRepository } from '../db/repositories'
+import { blueprintRepository, blueprintPhaseRepository } from '../db/repositories/blueprint.repository'
 import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
 import { getSessionEventRouter } from '../services/session-event-router'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 import type { AgentStatus } from '../../shared/types'
 import type {
   BlueprintPhaseType,
@@ -954,6 +957,24 @@ function wireOnceEventForwarding(): void {
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyAwaitingInput', IPC_CHANNELS.BLUEPRINT_CLARIFY_AWAITING_INPUT, 'spec-event')
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyFindings', IPC_CHANNELS.BLUEPRINT_CLARIFY_FINDINGS, 'spec-event')
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyQuestions', IPC_CHANNELS.BLUEPRINT_CLARIFY_QUESTIONS, 'spec-event')
+
+  // OS notification: Blueprint needs user input (clarify phase)
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyAwaitingInput', (...args: unknown[]) => {
+    try {
+      const payload = args[0] as Record<string, unknown>
+      const wsId = payload?.workspaceId as string | undefined
+      if (!wsId) return
+      notificationService.dispatch({
+        workspaceId: wsId,
+        workspaceName: resolveWorkspaceName(wsId),
+        service: 'blueprint',
+        status: 'needs_input',
+        summary: 'Blueprint has questions — your input shapes the spec',
+        targetPage: 'blueprints',
+        entityId: payload.blueprintId as string | undefined
+      })
+    } catch { /* non-fatal */ }
+  })
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyGateReady', IPC_CHANNELS.BLUEPRINT_CLARIFY_GATE, 'spec-event')
   forwardStatus(blueprintSpecService as unknown as EventEmitterLike)
 
@@ -979,12 +1000,61 @@ function wireOnceEventForwarding(): void {
   forwardStatus(blueprintReviewService as unknown as EventEmitterLike)
   forward(blueprintReviewService as unknown as EventEmitterLike, 'approvalNeeded', IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, 'review-event')
 
+  // OS notification: Blueprint review complete — needs approval
+  ;(blueprintReviewService as unknown as EventEmitterLike).on('approvalNeeded', (...args: unknown[]) => {
+    try {
+      const payload = args[0] as Record<string, unknown>
+      const wsId = payload?.workspaceId as string | undefined
+      if (!wsId) return
+      notificationService.dispatch({
+        workspaceId: wsId,
+        workspaceName: resolveWorkspaceName(wsId),
+        service: 'blueprint',
+        status: 'needs_input',
+        summary: 'Blueprint review complete — approve to start build',
+        targetPage: 'blueprints',
+        entityId: payload.blueprintId as string | undefined
+      })
+    } catch { /* non-fatal */ }
+  })
+
   // ── BlueprintVerifyService events (Phase 7: Verify) ──
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'verify-event')
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseProgress', IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS)
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'verify-event')
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'verify-event')
   forwardStatus(blueprintVerifyService as unknown as EventEmitterLike)
+
+  // OS notification: Blueprint build/verify phase completed or failed
+  // Only fires for build-complete and verify-complete (not every phase)
+  for (const svc of [
+    blueprintBuildService as unknown as EventEmitterLike,
+    blueprintVerifyService as unknown as EventEmitterLike
+  ]) {
+    svc.on('phaseComplete', (...args: unknown[]) => {
+      try {
+        const payload = args[0] as Record<string, unknown>
+        const wsId = payload?.workspaceId as string | undefined
+        if (!wsId) return
+        // AUDIT-R2: remediation handoff is not a terminal completion — no notification
+        if (payload.remediationTriggered === true) return
+        const phase = payload.phase as string
+        const status = payload.status as string
+        notificationService.dispatch({
+          workspaceId: wsId,
+          workspaceName: resolveWorkspaceName(wsId),
+          service: 'blueprint',
+          status: status === 'complete' ? 'completed' : 'failed',
+          summary:
+            phase === 'verify'
+              ? 'Blueprint finished — all phases complete'
+              : `Build phase ${status}: ${(payload.completion as Record<string, unknown>)?.tasksCompleted ?? 0} tasks done`,
+          targetPage: 'blueprints',
+          entityId: payload.blueprintId as string | undefined
+        })
+      } catch { /* non-fatal */ }
+    })
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // M8: Journal writers — append events to blueprint_events table.
@@ -1114,13 +1184,48 @@ function wireOnceEventForwarding(): void {
   })
 
   // ── Remediation dispatch (gaps_found → rebuild → re-verify) ──
-  // BP-REMEDIATION-01: blueprintVerifyService emits 'remediationNeeded' after a 5s
-  // delay when verification finds gaps and remediation tasks are appended.
-  // Same dispatch pattern as autoRetry — build phase re-runs, BP-RESUME-01 skips
-  // all complete tasks, only new remediation waves execute.
+  // BP-REMEDIATION-01: blueprintVerifyService emits 'remediationNeeded' via deferred
+  // dispatch (setImmediate after finally) when verification finds gaps and remediation
+  // tasks are appended. Same dispatch pattern as autoRetry — build phase re-runs,
+  // BP-RESUME-01 skips all complete tasks, only new remediation waves execute.
   ;(blueprintVerifyService as unknown as EventEmitterLike).on('remediationNeeded', (...args: unknown[]) => {
     const payload = args[0] as { blueprintId: string; workspaceId: string; workspacePath: string }
     const { blueprintId, workspaceId, workspacePath } = payload
+
+    // BP-REMEDIATION-CANCEL-GUARD: Verify blueprint wasn't cancelled during
+    // the deferred dispatch window before dispatching build.
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint || blueprint.status === 'cancelled' || blueprint.status === 'failed') {
+      bpLog.info(
+        `[remediation] Skipping build dispatch — blueprint ${blueprintId} is ${blueprint?.status ?? 'missing'}`
+      )
+      return
+    }
+
+    // BP-REMEDIATION-PIPELINE-GUARD: If the pipeline is occupied, decide
+    // based on WHICH blueprint owns it.
+    if (blueprintService.isRunning(workspaceId)) {
+      // Same blueprint already running (e.g. user clicked Resume during the
+      // dispatch window) → skip silently. Do NOT mark it failed while it runs.
+      if (blueprintService.getActiveBlueprintId(workspaceId) === blueprintId) {
+        bpLog.info(`[remediation] Blueprint ${blueprintId} already running — skipping duplicate dispatch`)
+        return
+      }
+      // A DIFFERENT blueprint took the pipeline → mark this one failed
+      bpLog.warn(
+        `[remediation] Pipeline occupied for workspace ${workspaceId} — ` +
+        `cannot dispatch remediation build for blueprint ${blueprintId}. Marking failed.`
+      )
+      // Reset orphaned phase statuses from remediation setup
+      // (verify set build='active', verify='pending' before releasing the pipeline)
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase?.status === 'active') {
+        blueprintPhaseRepository.updateStatus(buildPhase.id, 'failed')
+      }
+      blueprintRepository.updateStatus(blueprintId, 'failed')
+      return
+    }
+
     bpLog.info(`[remediation] Dispatching build for remediation tasks — blueprint ${blueprintId}`)
     blueprintBuildService.startBuildPhase({ blueprintId, workspaceId, workspacePath })
       .catch((err) => {

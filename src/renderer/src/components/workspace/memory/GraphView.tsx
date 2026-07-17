@@ -28,7 +28,7 @@ import {
 import { useMemoryStore } from '@renderer/store'
 import NodeDetailPanel from './NodeDetailPanel'
 import FilterPopover from './FilterPopover'
-import { CATEGORY_COLOR_VAR, TIER_LABELS } from './graph-constants'
+import { CATEGORY_COLOR_VAR, EDGE_COLOR_VAR, TIER_LABELS } from './graph-constants'
 import type {
   MemoryFact,
   MemoryGraphData,
@@ -54,15 +54,30 @@ interface GLink {
   weight: number
 }
 
+// ── CSS vars resolved during the paint loop (cached to avoid per-frame getComputedStyle) ──
+
+const GRAPH_CSS_VARS = [
+  '--graph-node-decision',
+  '--graph-node-convention',
+  '--graph-node-gotcha',
+  '--graph-node-preference',
+  '--graph-node-reference',
+  '--graph-text',
+  '--graph-link',
+  '--graph-glow',
+  '--graph-edge-superseded',
+  '--graph-edge-contradiction'
+] as const
+
 // ── Edge styles ──
 
 const EDGE_STYLES: Record<
   MemoryGraphEdgeKind,
   { dash: number[] | null; colorVar: string; alpha: number }
 > = {
-  similarity: { dash: null, colorVar: '--color-border-default', alpha: 0.35 },
-  superseded: { dash: [6, 4], colorVar: '--color-warning', alpha: 0.6 },
-  contradiction: { dash: [4, 3], colorVar: '--color-danger', alpha: 0.7 }
+  similarity: { dash: null, colorVar: EDGE_COLOR_VAR.similarity, alpha: 0.35 },
+  superseded: { dash: [6, 4], colorVar: EDGE_COLOR_VAR.superseded, alpha: 0.6 },
+  contradiction: { dash: [4, 3], colorVar: EDGE_COLOR_VAR.contradiction, alpha: 0.7 }
 }
 
 // ── Tier → radius mapping ──
@@ -70,6 +85,10 @@ const EDGE_STYLES: Record<
 function tierRadius(tier: number): number {
   return 6 + tier * 3 // T0=6, T1=9, T2=12, T3=15
 }
+
+// ── Physics freeze constant (d3-force default) ──
+
+const DEFAULT_VELOCITY_DECAY = 0.4
 
 // ── Props ──
 
@@ -117,11 +136,25 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
   const [filterTiers, setFilterTiers] = useState<Set<number>>(new Set([0, 1, 2, 3]))
   const [hideSuperseded, setHideSuperseded] = useState(true)
 
-  // ── Read CSS colors ──
+  // ── Cached CSS colors (avoids ~30k getComputedStyle calls/sec) ──
 
-  const getColor = useCallback((varName: string): string => {
-    if (!containerRef.current) return '#666'
-    return getComputedStyle(containerRef.current).getPropertyValue(varName).trim() || '#666'
+  const colorCacheRef = useRef<Record<string, string>>({})
+
+  /** Resolve all graph CSS vars into the cache (called on mount + theme change) */
+  const readColors = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    const style = getComputedStyle(el)
+    const cache: Record<string, string> = {}
+    for (const v of GRAPH_CSS_VARS) {
+      cache[v] = style.getPropertyValue(v).trim() || '#666'
+    }
+    colorCacheRef.current = cache
+  }, [])
+
+  /** Fast cache lookup — O(1), no DOM access */
+  const cachedColor = useCallback((varName: string): string => {
+    return colorCacheRef.current[varName] || '#666'
   }, [])
 
   // ── Callback ref for container — fixes sizing bug ──
@@ -154,8 +187,11 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       if (rect.width > 0 && rect.height > 0) {
         setDimensions({ width: rect.width, height: rect.height })
       }
+
+      // Populate color cache now that the container is in the DOM
+      readColors()
     }
-  }, [])
+  }, [readColors])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -163,6 +199,74 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       observerRef.current?.disconnect()
     }
   }, [])
+
+  // Refresh color cache when the theme changes (data-theme attribute)
+  useEffect(() => {
+    const observer = new MutationObserver(() => readColors())
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    })
+    return () => observer.disconnect()
+  }, [readColors])
+
+  // ── Animation clock (ref-based, reactive to OS reduce-motion toggle) ──
+
+  const timeRef = useRef(0)
+  const reducedMotion = useRef(
+    typeof window !== 'undefined' &&
+      (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+  )
+  const rafRef = useRef(0)
+
+  useEffect(() => {
+    const mql = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    if (!mql) return
+
+    const startClock = (): void => {
+      if (rafRef.current) return
+      const loop = (t: number): void => {
+        timeRef.current = t
+        rafRef.current = requestAnimationFrame(loop)
+      }
+      rafRef.current = requestAnimationFrame(loop)
+    }
+
+    const stopClock = (): void => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = 0
+      }
+    }
+
+    const handleChange = (e: MediaQueryListEvent): void => {
+      reducedMotion.current = e.matches
+      if (e.matches) {
+        stopClock()
+        ;(fgRef.current as any)?.autoPauseRedraw(true)
+      } else {
+        startClock()
+        ;(fgRef.current as any)?.autoPauseRedraw(false)
+      }
+    }
+
+    // Sync initial state
+    reducedMotion.current = mql.matches
+    if (!mql.matches) startClock()
+
+    mql.addEventListener('change', handleChange)
+    return () => {
+      mql.removeEventListener('change', handleChange)
+      stopClock()
+    }
+  }, [])
+
+  /** Read --graph-glow CSS var as a number (defaults to 0.55) */
+  const getGlowStrength = useCallback((): number => {
+    const raw = cachedColor('--graph-glow')
+    const n = parseFloat(raw)
+    return Number.isFinite(n) ? n : 0.55
+  }, [cachedColor])
 
   // ── Load graph data ──
 
@@ -317,8 +421,9 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         )
       )
 
-      // Always ensure animation is running before reheat
+      // Ensure physics + render loop are fully running before reheat
       fg.resumeAnimation()
+      ;(fg as any).d3VelocityDecay(DEFAULT_VELOCITY_DECAY)
       if (physicsPaused) {
         queueMicrotask(() => setPhysicsPaused(false))
       }
@@ -362,8 +467,8 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       const x = node.x ?? 0
       const y = node.y ?? 0
       const r = tierRadius(node.tier ?? 0)
-      const colorVar = CATEGORY_COLOR_VAR[node.category] ?? '--color-text-muted'
-      const color = getColor(colorVar)
+      const colorVar = CATEGORY_COLOR_VAR[node.category] ?? '--graph-node-reference'
+      const color = cachedColor(colorVar)
 
       // Dimming logic
       const isDimmed = node.status === 'superseded' || node.status === 'archived'
@@ -384,33 +489,42 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
 
       ctx.globalAlpha = nodeAlpha
 
-      // Glow for hovered / selected / search-matched node
-      if (isHovered || isSelected || isSearchMatch) {
+      // ── Pulsing neon glow (per-node phase offset from x position) ──
+      if (!reducedMotion.current) {
+        const pulse = 0.5 + 0.5 * Math.sin(timeRef.current / 700 + (x * 0.1))
+        const tierBoost = 1 + (node.tier ?? 0) * 0.08 // higher-tier nodes glow slightly stronger
+        const glowR = r + 4 + pulse * 3
+        const grad = ctx.createRadialGradient(x, y, r * 0.4, x, y, glowR)
+        grad.addColorStop(0, color)
+        grad.addColorStop(1, 'transparent')
+        ctx.globalAlpha = nodeAlpha * getGlowStrength() * tierBoost * (0.6 + pulse * 0.4)
+        ctx.fillStyle = grad
         ctx.beginPath()
-        ctx.arc(x, y, r + 4, 0, Math.PI * 2)
-        ctx.fillStyle = color
-        ctx.globalAlpha = isSelected ? 0.35 : 0.2
+        ctx.arc(x, y, glowR, 0, Math.PI * 2)
         ctx.fill()
         ctx.globalAlpha = nodeAlpha
       }
 
-      // Node circle
+      // Node circle (crisp solid core)
       ctx.beginPath()
       ctx.arc(x, y, r, 0, Math.PI * 2)
       ctx.fillStyle = color
       ctx.fill()
 
-      // Subtle border (highlight selected)
-      if (isSelected) {
-        ctx.strokeStyle = getColor('--color-primary')
-        ctx.globalAlpha = 0.8
+      // ── Animated hover / select / search-match ring ──
+      if (isHovered || isSelected || isSearchMatch) {
+        const ringPulse = reducedMotion.current
+          ? 0
+          : (Math.sin(timeRef.current / 300) + 1) * 3
+        const ring = r + 6 + ringPulse
+        ctx.strokeStyle = color
+        ctx.globalAlpha = nodeAlpha * (isSelected ? 0.9 : 0.6)
         ctx.lineWidth = 1.5
-      } else {
-        ctx.strokeStyle = getColor('--color-border-default')
-        ctx.globalAlpha = nodeAlpha * 0.5
-        ctx.lineWidth = 0.5
+        ctx.beginPath()
+        ctx.arc(x, y, ring, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = nodeAlpha
       }
-      ctx.stroke()
 
       // Label: when labels toggled on, show for visible zoom and tier ≥ 2;
       // always show label for the hovered/selected node
@@ -420,7 +534,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       if (showLabel) {
         ctx.globalAlpha = nodeAlpha * 0.85
         ctx.font = `${Math.max(9, 11 / globalScale)}px system-ui, sans-serif`
-        ctx.fillStyle = getColor('--color-text-primary')
+        ctx.fillStyle = cachedColor('--graph-text')
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
         const label =
@@ -432,7 +546,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
 
       ctx.globalAlpha = 1
     },
-    [getColor, hoveredNode, effectiveSelectedNode, labelsOn, searchMatchIds, neighborIds]
+    [cachedColor, getGlowStrength, hoveredNode, effectiveSelectedNode, labelsOn, searchMatchIds, neighborIds]
   )
 
   // ── Node pointer area (for hit detection) ──
@@ -453,7 +567,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
   const linkColor = useCallback(
     (link: LinkObject<GNode, GLink>) => {
       const style = EDGE_STYLES[link.kind as MemoryGraphEdgeKind] ?? EDGE_STYLES.similarity
-      const color = getColor(style.colorVar)
+      const color = cachedColor(style.colorVar)
       // Apply alpha — search dimming takes precedence over hover dimming
       let alpha = style.alpha
       if (searchMatchIds.size > 0) {
@@ -471,6 +585,11 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         const isNeighborEdge = neighborIds.has(s as string) && neighborIds.has(t as string)
         alpha = isNeighborEdge ? Math.min(style.alpha * 1.5, 1) : style.alpha * 0.1
       }
+      // Pulsing alpha for contradiction / superseded edges
+      if (!reducedMotion.current && (link.kind === 'contradiction' || link.kind === 'superseded')) {
+        const p = 0.5 + 0.5 * Math.sin(timeRef.current / 400)
+        alpha = Math.min(1, alpha * (0.7 + p * 0.6))
+      }
       // Simple hex→rgba conversion
       if (color.startsWith('#') && color.length >= 7) {
         const r = parseInt(color.slice(1, 3), 16)
@@ -478,9 +597,17 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         const b = parseInt(color.slice(5, 7), 16)
         return `rgba(${r},${g},${b},${alpha})`
       }
+      // handle rgba() colors (from --graph-link)
+      if (color.startsWith('rgba(') || color.startsWith('rgb(')) {
+        // Inject our computed alpha into the rgb value
+        const match = color.match(/[\d.]+/g)
+        if (match && match.length >= 3) {
+          return `rgba(${match[0]},${match[1]},${match[2]},${alpha})`
+        }
+      }
       return color
     },
-    [getColor, hoveredNode, neighborIds, searchMatchIds]
+    [cachedColor, hoveredNode, neighborIds, searchMatchIds]
   )
 
   const linkLineDash = useCallback((link: LinkObject<GNode, GLink>) => {
@@ -488,8 +615,27 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
   }, [])
 
   const linkWidth = useCallback((link: LinkObject<GNode, GLink>) => {
-    return link.kind === 'similarity' ? 0.5 + (link.weight ?? 0) * 1.5 : 1.5
+    if (link.kind === 'similarity') return 0.5 + (link.weight ?? 0) * 1.5
+    if (!reducedMotion.current && link.kind === 'contradiction') {
+      return 1.5 + (0.5 + 0.5 * Math.sin(timeRef.current / 400)) * 1.5
+    }
+    if (!reducedMotion.current && link.kind === 'superseded') {
+      return 1.2 + (0.5 + 0.5 * Math.sin(timeRef.current / 400)) * 1.0
+    }
+    return 1.5
   }, [])
+
+  const linkParticleColor = useCallback(
+    (l: LinkObject<GNode, GLink>) =>
+      cachedColor(
+        l.kind === 'contradiction'
+          ? EDGE_COLOR_VAR.contradiction
+          : l.kind === 'superseded'
+            ? EDGE_COLOR_VAR.superseded
+            : '--graph-node-decision'
+      ),
+    [cachedColor]
+  )
 
   // ── Hover handler ──
 
@@ -636,9 +782,13 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
     const fg = fgRef.current
     if (!fg) return
     if (physicsPaused) {
-      fg.resumeAnimation()
+      // Resume: restore normal velocity decay and reheat
+      ;(fg as any).d3VelocityDecay(DEFAULT_VELOCITY_DECAY)
+      fg.d3ReheatSimulation()
     } else {
-      fg.pauseAnimation()
+      // Freeze physics: damp all velocity instantly.
+      // Render loop stays alive so glow / particles / pulses keep animating.
+      ;(fg as any).d3VelocityDecay(1)
     }
     setPhysicsPaused((v) => !v)
   }, [physicsPaused])
@@ -688,7 +838,8 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
     <div
       ref={setContainerRef}
       data-testid="memory-graph-canvas"
-      className="relative w-full h-[calc(100vh-280px)] min-h-[500px] rounded-lg border border-border-default bg-surface-raised overflow-hidden"
+      className="relative w-full h-[calc(100vh-280px)] min-h-[500px] rounded-lg border border-border-default overflow-hidden"
+      style={{ backgroundColor: 'var(--graph-bg)' }}
     >
       <ForceGraph2D
         ref={fgRef}
@@ -704,6 +855,17 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         linkColor={linkColor}
         linkLineDash={linkLineDash}
         linkWidth={linkWidth}
+        // Flowing link particles (skip similarity edges to avoid visual noise)
+        linkDirectionalParticles={(l: LinkObject<GNode, GLink>) =>
+          reducedMotion.current || l.kind === 'similarity' ? 0 : 3
+        }
+        linkDirectionalParticleSpeed={(l: LinkObject<GNode, GLink>) =>
+          l.kind === 'contradiction' ? 0.012 : 0.006
+        }
+        linkDirectionalParticleWidth={(l: LinkObject<GNode, GLink>) =>
+          l.kind === 'contradiction' ? 3 : 2
+        }
+        linkDirectionalParticleColor={linkParticleColor}
         // Force engine
         d3AlphaDecay={0.02}
         // Interaction
@@ -721,7 +883,9 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         enablePanInteraction={true}
         minZoom={0.2}
         maxZoom={4}
-        autoPauseRedraw={true}
+        // Keep the paint loop alive for animations (physics still settles via d3AlphaDecay).
+        // Reduced-motion: revert to static repaint so we don't waste CPU.
+        autoPauseRedraw={reducedMotion.current}
       />
 
       {/* ── Find-in-graph search (top-center) ── */}
@@ -856,8 +1020,8 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         <span className="text-border-default">|</span>
         <div className="flex items-center gap-2">
           <span>— similarity</span>
-          <span className="text-warning">┄ superseded</span>
-          <span className="text-danger">┄ contradiction</span>
+          <span style={{ color: 'var(--graph-edge-superseded)' }}>┄ superseded</span>
+          <span style={{ color: 'var(--graph-edge-contradiction)' }}>┄ contradiction</span>
         </div>
       </div>
 

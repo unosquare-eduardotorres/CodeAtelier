@@ -168,7 +168,7 @@ function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.J
         </div>
       )}
       {(activity.resultDetail || activity.result) && (
-        <div className="px-3 py-2 max-h-64 overflow-y-auto">
+        <div className="px-3 py-2 max-h-[45vh] overflow-y-auto">
           <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
             {statusStyle.outputLabel}
             <CopyButton text={activity.resultDetail || activity.result || ''} />

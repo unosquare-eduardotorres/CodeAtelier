@@ -3,7 +3,7 @@ import type { Specialist } from '../../../../shared/types'
 
 interface PersonaCardProps {
   specialist: Specialist
-  /** Show "Default" badge (for Da Vinci) */
+  /** Show "Default" badge for specialist */
   isDefault?: boolean
   selected: boolean
   /** Grayed out for inactive specialists */

@@ -71,3 +71,5 @@ export { E2ETestRunRepository, e2eTestRunRepository } from './e2e-test-run.repos
 export type { E2ETestRunRecord } from './e2e-test-run.repository'
 export { E2ETestResultRepository, e2eTestResultRepository } from './e2e-test-result.repository'
 export type { E2ETestResultRecord } from './e2e-test-result.repository'
+
+export { HandoffRepository, handoffRepository } from './handoff.repository'

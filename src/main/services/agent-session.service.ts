@@ -15,9 +15,8 @@
  *   - generic session/stream/compaction/recovery lifecycle (THIS FILE)
  *   - role-specific prompt/MCP/intent logic (AgentRoleAdapter)
  *
- * The Generalist's public behavior is preserved by plugging in
- * DaVinciRoleAdapter. The same service will later drive Project
- * Specialists via ProjectSpecialistRoleAdapter.
+ * Chat agent behavior is delivered by ProjectSpecialistRoleAdapter.
+ * The same service drives all specialist roles.
  */
 
 import type {
@@ -164,7 +163,7 @@ export class AgentSessionService extends AgentBaseService {
   // The real thresholds are resolved dynamically based on the model's effective context
   // window (200K for Opus/Haiku, 1M for Sonnet) — see resolveCompactionThresholds().
   // These statics serve as the fallback initialization; 60%/75% of 200K (the most
-  // common default since Da Vinci plan mode uses Opus).
+  // common default since specialist plan mode uses Opus).
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
@@ -966,7 +965,7 @@ export class AgentSessionService extends AgentBaseService {
 
     return {
       agentId: this.adapter.agentId,
-      agentType: this.adapter.role === 'da-vinci' ? 'da-vinci' : 'specialist',
+      agentType: 'specialist',
       status: this.currentStatus,
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
       tokenUsage: this.tokenUsage,
@@ -1651,7 +1650,7 @@ export class AgentSessionService extends AgentBaseService {
 
       this._openCodeConfigPath = configPath
 
-      // #6: Generate OpenCode agent definitions (DaVinci + Specialist)
+      // #6: Generate OpenCode agent definitions (specialist + OpenCode agents)
       try {
         openCodeAgentWriter.writeAgents({
           workspacePath: this.workspacePath!,

@@ -66,7 +66,7 @@ export interface AdapterIntentContext {
   controlToolState: ControlToolState
   mode: ConversationMode
   conversationId: string
-  /** Emits onto the session's EventEmitter — same channels the Generalist uses today. */
+  /** Emits onto the session's EventEmitter — used by the chat agent. */
   emit: (event: AgentSessionEventName, payload: unknown) => void
 }
 
@@ -78,7 +78,7 @@ export interface AdapterSessionLifecycleCtx {
 
 // ── Events emitted by AgentSessionService ────────────────────────────
 //
-// These names mirror the events the Generalist already emits today. Any
+// These names mirror the events the chat agent emits. Any
 // change to this list is a breaking change for IPC consumers — keep in
 // sync with src/main/ipc/agent.ipc.ts.
 
@@ -102,8 +102,8 @@ export interface AgentRoleAdapter {
 
   /**
    * Stable identifier written to event logs, agent_sessions.agent_id,
-   * and passed to the SDK as `agentId`. Generalist returns DA_VINCI_AGENT_ID;
-   * Project Specialist returns `workspace-specialist-<workspaceId>`.
+   * and passed to the SDK as `agentId`. The specialist adapter returns
+   * the configured agent identifier.
    */
   readonly agentId: string
 
@@ -112,7 +112,7 @@ export interface AgentRoleAdapter {
 
   /**
    * Whether this adapter supports the emit_plan recovery flow.
-   * Only chat (Da Vinci) uses plan cards — blueprint / grill / audit /
+   * Only chat (specialist) uses plan cards — blueprint / grill / audit /
    * council adapters return false so recovery never fires for them.
    */
   readonly supportsEmitPlanRecovery: boolean
@@ -153,17 +153,33 @@ export interface AgentRoleAdapter {
 
   /**
    * Post-stream: detect + emit intents from accumulated text and control-tool state.
-   * Generalist runs the full intent detector; Project Specialist emits a single
-   * 'response' intent unconditionally.
+   * The adapter runs intentDetector.detectAll to extract all intents.
    */
   emitDetectedIntents(ctx: AdapterIntentContext): void
 
   /**
    * SDK-COMPACT-01: Queue a compaction instruction for the next send().
-   * The DaVinci adapter prepends this to the effective message; other adapters
-   * may no-op. Called from the SDK backend compact path.
+   * Prepended to the effective message on the next buildPrompts() call.
    */
   setPendingCompaction?(conversationId: string, prompt: string): void
+
+  /**
+   * Queue a mode-switch notification prefix for the next buildPrompts() call.
+   * The adapter injects `[Mode switched from X to Y]` into the effective message.
+   */
+  setPendingModeSwitch?(from: ConversationMode, to: ConversationMode): void
+
+  /**
+   * Store pending context injection (Strategy A). Accumulates multiple injections
+   * with a cap to prevent unbounded growth.
+   */
+  addPendingContext?(conversationId: string, context: string): void
+
+  /** Get pending context size for logging. */
+  getPendingContextSize?(conversationId: string): number
+
+  /** Clear all per-conversation pending state (compaction, context injection). */
+  clearConversation?(conversationId: string): void
 
   /**
    * COMPACT-LOST-01: Called after executeStream() succeeds.

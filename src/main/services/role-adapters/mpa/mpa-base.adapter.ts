@@ -82,7 +82,7 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
 
   /** Return the ModelAction to use for model resolution (overridden by builder). */
   protected getModelAction(): import('../../../../shared/types').ModelAction {
-    return 'da-vinci:plan' // Planner/verifier share plan-tier model
+    return 'specialist:plan' // Planner/verifier share plan-tier model
   }
 
   /** Subclasses implement to build phase-specific prompts. */

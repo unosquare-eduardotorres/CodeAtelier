@@ -32,7 +32,7 @@ function basePromptCtx(overrides: Partial<AdapterPromptContext> = {}): AdapterPr
 describe('ProjectSpecialistRoleAdapter', () => {
   test('role_is_project_specialist', () => {
     const adapter = new ProjectSpecialistRoleAdapter({ workspaceId: 'ws-1' })
-    assert.equal(adapter.role, 'project-specialist')
+    assert.equal(adapter.role, 'specialist')
   })
 
   test('agentId_defaults_to_workspace_specialist_prefix', () => {
@@ -131,7 +131,7 @@ describe('ProjectSpecialistRoleAdapter', () => {
       emit: (evt, payload) => emitted.push({ evt, payload })
     })
     // With a grill block present, the adapter should emit a grillComplete intent
-    // (proving it now runs through intentDetector.detectAll, identical to DaVinci).
+    // (proving it now runs through intentDetector.detectAll, via intentDetector.detectAll).
     assert.equal(emitted.length, 1)
     assert.equal(emitted[0]!.evt, 'intent')
     assert.equal((emitted[0]!.payload as { type: string }).type, 'grillComplete')
@@ -198,7 +198,7 @@ describe('ProjectSpecialistRoleAdapter', () => {
     assert.equal(adapter.getDisplayName(), null)
     assert.equal(adapter.getBuildStatus(), null)
     // Verify the adapter is still usable after stop
-    assert.equal(adapter.role, 'project-specialist')
+    assert.equal(adapter.role, 'specialist')
     assert.equal(adapter.getWorkspaceId(), 'ws-1')
   })
 

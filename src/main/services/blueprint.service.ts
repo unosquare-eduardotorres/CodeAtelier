@@ -272,6 +272,17 @@ export class BlueprintService extends EventEmitter {
   /** Mark a pipeline as running for a workspace. Called by phase services. */
   markPipelineRunning(workspaceId: string, blueprintId: string, phase: BlueprintPhaseType): void {
     const machine = this.getMachine(workspaceId)
+
+    // Auto-recover from terminal states when starting a NEW blueprint.
+    // A previous blueprint's failed/cancelled state should not block a fresh run.
+    if (machine.isTerminal() && machine.blueprintId !== blueprintId) {
+      bpLog.info(
+        `[markPipelineRunning] Auto-resetting terminal machine (state=${machine.currentState}, ` +
+          `old=${machine.blueprintId}) for new blueprint ${blueprintId}`
+      )
+      machine.forceReset()
+    }
+
     // BP-01: State machine guards against concurrent starts — startPhase is only
     // valid from idle. If the machine is in any other state, the transition fails.
     if (!machine.transition('startPhase', { blueprintId, phase })) {
@@ -304,6 +315,8 @@ export class BlueprintService extends EventEmitter {
     const state = this.pipelines.get(workspaceId)
     if (state) {
       state.running = false
+      state.blueprintId = null       // Clear stale identity
+      state.currentPhase = null      // Clear stale phase
       state.abortController = null
       state.phaseStartedAt = null
       state.waveState = null
@@ -418,7 +431,16 @@ export class BlueprintService extends EventEmitter {
     // Delay to let finally blocks (session.stop, markPipelineStopped) complete
     setTimeout(() => {
       try {
-        this.retryPhase(ctx.blueprintId)
+        // Guard: if the pipeline is now running (user started another blueprint),
+        // skip the auto-retry — don't interrupt the active pipeline.
+        if (this.isRunning(ctx.workspaceId)) {
+          bpLog.info(
+            `[phase-auto-retry] Pipeline now running for workspace ${ctx.workspaceId} ` +
+              `— skipping scheduled retry for blueprint ${ctx.blueprintId}`
+          )
+          return
+        }
+        this.retryPhase(ctx.blueprintId, { resetRemediation: false })
         this.emit('autoRetry', {
           blueprintId: ctx.blueprintId,
           workspaceId: ctx.workspaceId,
@@ -725,7 +747,10 @@ export class BlueprintService extends EventEmitter {
    *
    * Resets the target phase to 'pending' and restores blueprint status.
    */
-  retryPhase(blueprintId: string): { phase: BlueprintPhaseType; workspaceId: string } {
+  retryPhase(
+    blueprintId: string,
+    opts?: { resetRemediation?: boolean }
+  ): { phase: BlueprintPhaseType; workspaceId: string } {
     const blueprint = blueprintRepository.findById(blueprintId)
     if (!blueprint) {
       throw new Error(`Blueprint not found: ${blueprintId}`)
@@ -760,6 +785,16 @@ export class BlueprintService extends EventEmitter {
       }
       throw new Error(
         `Cannot retry blueprint ${blueprintId} — status is '${blueprint.status}', expected 'failed', 'cancelled', or an orphaned in-progress status`
+      )
+    }
+
+    // BP-RETRY-PIPELINE-EARLY-GUARD: Check pipeline availability BEFORE any DB
+    // mutations. Without this, the state machine guard at line 890 can throw
+    // AFTER tasks, status, and remediationRound have already been modified,
+    // orphaning the blueprint in a partially-reset state.
+    if (this.isRunning(blueprint.workspaceId)) {
+      throw new Error(
+        `Cannot retry blueprint ${blueprintId} — pipeline is currently active for workspace ${blueprint.workspaceId}`
       )
     }
 
@@ -805,6 +840,14 @@ export class BlueprintService extends EventEmitter {
           if (buildPhaseRecord) {
             targetPhase = buildPhaseRecord
           }
+        } else {
+          // BP-RTASK-CLEANUP-01: All R-tasks complete — clean them up so verify
+          // gets a fresh start. Keeps the DB tidy and prevents accumulation
+          // across multiple retry cycles.
+          const deletedCount = blueprintTaskRepository.deleteRemediationTasks(blueprintId)
+          if (deletedCount > 0) {
+            bpLog.info(`[retryPhase] Cleaned up ${deletedCount} completed R-task(s) for blueprint ${blueprintId}`)
+          }
         }
       }
     }
@@ -837,13 +880,37 @@ export class BlueprintService extends EventEmitter {
       status: PHASE_TO_STATUS[targetPhase.phase]
     })
 
+    // BP-RETRY-RESET-REMEDIATION: Reset remediationRound when manually retrying
+    // so remediation can trigger again if verify finds new gaps.
+    // Skip reset during auto-retry — preserves the round counter so the 2-round
+    // cap is enforced across transient failures (BUG-N).
+    if (opts?.resetRemediation !== false &&
+        (targetPhase.phase === 'build' || targetPhase.phase === 'verify')) {
+      const settings = blueprint.settingsJson ?? {}
+      if ((settings as Record<string, unknown>).remediationRound != null) {
+        blueprintRepository.update(blueprintId, {
+          settingsJson: { ...settings, remediationRound: 0 }
+        })
+        bpLog.info(`[retryPhase] Reset remediationRound to 0 for blueprint ${blueprintId}`)
+      }
+    }
+
     // Drive the state machine: retry transitions cancelled/failed → idle,
     // making the machine ready for the next startPhase call.
     const machine = this.getMachine(blueprint.workspaceId)
     if (machine.isTerminal()) {
       machine.transition('retry')
     } else if (!machine.isIdle()) {
-      // Orphan recovery — machine may be stuck in a non-terminal state after crash.
+      // Guard: if machine is phase-running, a pipeline IS actively executing.
+      // Don't force-reset it — that would kill the running blueprint.
+      if (machine.isRunning()) {
+        throw new Error(
+          `Cannot retry blueprint ${blueprintId} — pipeline is currently active ` +
+            `for workspace ${blueprint.workspaceId} (machine=${machine.currentState})`
+        )
+      }
+      // Orphan recovery — machine may be stuck in a non-terminal, non-running
+      // state after crash (e.g. awaiting-clarify-input with no active session).
       machine.forceReset()
     }
 
@@ -1054,6 +1121,37 @@ export class BlueprintService extends EventEmitter {
     bpLog.info(
       `[appendTasks] Appending ${parsedTasks.length} remediation tasks as wave ${nextWave} for blueprint ${blueprintId}`
     )
+
+    // TASK-02: Validate remediation task graph — cycles and duplicates only.
+    // Reference integrity and cross-wave ordering produce false positives for
+    // partial batches (all tasks share one wave, may depend on existing T-tasks).
+    const batchTaskIds = new Set(parsedTasks.map((t) => t.taskId))
+    const duplicates = parsedTasks.filter((t, i) =>
+      parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
+    )
+    if (duplicates.length > 0) {
+      bpLog.warn(
+        `[appendTasks] Duplicate taskIds in remediation batch: ${duplicates.map((t) => t.taskId).join(', ')}`
+      )
+    }
+
+    // Check for cycles within the batch (ignore deps on external tasks)
+    const internalDeps = parsedTasks.map((t) => ({
+      taskId: t.taskId,
+      wave: nextWave,
+      dependsOn: (t.dependsOn ?? []).filter((dep) => batchTaskIds.has(dep))
+    }))
+    const validation = validateTaskGraph(internalDeps)
+    if (!validation.valid) {
+      // Filter out cross-wave warnings (all tasks share nextWave, expected)
+      const realErrors = validation.errors.filter((e) => !e.includes('must be in an earlier wave'))
+      if (realErrors.length > 0) {
+        bpLog.warn(
+          `[appendTasks] Remediation task graph has ${realErrors.length} issue(s) for blueprint=${blueprintId}: ` +
+          realErrors.join('; ')
+        )
+      }
+    }
 
     return blueprintTaskRepository.createBulk(
       blueprintId,

@@ -763,10 +763,13 @@ class MemoryExtractionService {
 
 const VALID_CATEGORIES: MemoryFactCategory[] = ['decision', 'convention', 'gotcha', 'preference', 'reference']
 
-function buildExtractionPrompt(source: string): string {
-  return `You are a knowledge extraction engine. Analyze the following source material and extract structured facts that would be valuable for a developer working on this codebase.
+/** Max facts to accept from a single extraction call. */
+const MAX_EXTRACTED_FACTS = 3
 
-For each important fact, output a JSON object on its own line:
+function buildExtractionPrompt(source: string): string {
+  return `You are a knowledge extraction engine. Analyze the following source material and extract ONLY the most durable, high-value facts.
+
+For each fact, output a JSON object on its own line:
 - "category": one of "decision", "convention", "gotcha", "preference", "reference"
   - decision: architectural choices, tech stack selections, design patterns chosen
   - convention: coding style rules, naming patterns, file organization rules
@@ -778,12 +781,15 @@ For each important fact, output a JSON object on its own line:
 - "tags": array of relevant tags
 - "scopePaths": array of file/directory paths this fact relates to (optional)
 
-Rules:
+Strictness rules:
 - Output ONLY valid JSON objects, one per line. No markdown, no explanation.
-- Extract only NON-OBVIOUS facts — skip things trivially discoverable from a single file read.
-- Focus on decisions, constraints, and gotchas that save time.
-- Keep each fact self-contained and actionable.
-- Limit to 5-10 facts maximum (quality over quantity).
+- MAXIMUM 3 facts. Fewer is better — only extract what’s genuinely durable.
+- Skip version numbers, schema versions, dependency versions — these change frequently.
+- Skip things trivially discoverable from a single file read (imports, file structure).
+- Skip facts that restate what the code already says ("X uses Y" when X imports Y).
+- Focus on WHY decisions were made, non-obvious constraints, and cross-cutting patterns.
+- Each fact must be self-contained — useful without reading the source material.
+- Prefer conventions that span multiple files over single-file observations.
 
 Source material:
 ${source}`
@@ -812,7 +818,8 @@ function parseExtractedFacts(text: string): ExtractedFact[] {
     }
   }
 
-  return facts
+  // Enforce cap: take only the first MAX_EXTRACTED_FACTS
+  return facts.slice(0, MAX_EXTRACTED_FACTS)
 }
 
 // ── CLAUDE.md regeneration prompt (retained from memory-feed.service.ts) ──

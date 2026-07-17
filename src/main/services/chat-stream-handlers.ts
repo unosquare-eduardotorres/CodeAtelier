@@ -65,16 +65,16 @@ export function assembleAttachmentText(parts: string[]): string {
 // ── Stream Identity ──
 
 export interface StreamIdentityInput {
-  /** The active message role from the adapter ('da-vinci' | 'specialist') */
-  messageRole: 'da-vinci' | 'specialist'
+  /** The active message role from the adapter ('specialist') */
+  messageRole: 'specialist'
   /** The adapter's current agent ID */
   adapterAgentId: string
-  /** Optional persona overlay (Da Vinci impersonating a Specialist) */
+  /** Optional persona overlay (specialist impersonating a named specialist) */
   persona: { agentId: string } | null
 }
 
 export interface StreamIdentityResult {
-  streamingRole: 'da-vinci' | 'specialist'
+  streamingRole: 'specialist'
   phase: ConversationPhase
   specialistMeta: { specialist: string; taskId?: string } | undefined
   adapterAgentId: string
@@ -83,15 +83,15 @@ export interface StreamIdentityResult {
 /**
  * Compute the streaming identity from adapter state inputs.
  *
- * When a persona overlay is active, Da Vinci impersonates a specialist so the
- * avatar is consistent across streaming, finalization, and DB reload.
+ * When a persona overlay is active, the specialist impersonates a named specialist
+ * so the avatar is consistent across streaming, finalization, and DB reload.
  */
 export function computeStreamIdentity(input: StreamIdentityInput): StreamIdentityResult {
   const { messageRole, adapterAgentId, persona } = input
 
-  const streamingRole: 'da-vinci' | 'specialist' = persona ? 'specialist' : messageRole
+  const streamingRole: 'specialist' = persona ? 'specialist' : messageRole
   const phase: ConversationPhase =
-    streamingRole === 'specialist' ? 'specialist-executing' : 'da-vinci-responding'
+    streamingRole === 'specialist' ? 'specialist-executing' : 'specialist-responding'
   const specialistMeta = persona
     ? { specialist: persona.agentId, taskId: '' }
     : messageRole === 'specialist'

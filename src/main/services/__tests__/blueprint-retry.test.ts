@@ -875,6 +875,409 @@ describe('getOutcomeStats — findLast verify artifact', () => {
   })
 })
 
+// ── Fix P: Remediation-specific scenario tests ──
+
+describe('discovery cap — verify findings integration', () => {
+  test('cap_reapplied_after_verify_findings_push', () => {
+    // Simulate 20 discoveries + 1 verify finding push
+    const discoveries: string[] = Array.from({ length: 20 }, (_, i) => `discovery-${i}`)
+    discoveries.push('[VERIFY GAPS - Round 1] Missing auth middleware; Stub handler')
+    // Re-apply cap (as in Fix K/L)
+    const capped = discoveries.length > 20 ? discoveries.slice(-20) : discoveries
+    assert.equal(capped.length, 20)
+    // Verify the verify finding is kept (it was pushed last)
+    assert.ok(capped[19].startsWith('[VERIFY GAPS'))
+    // Verify the oldest discovery was dropped
+    assert.ok(!capped.some((d) => d === 'discovery-0'))
+  })
+})
+
+describe('appendTasks — remediation batch validation', () => {
+  test('internal_cycle_detected_despite_external_deps', () => {
+    // Replicate the Fix D validation logic
+    const parsedTasks = [
+      { taskId: 'R001', description: 'Fix A', dependsOn: ['T003', 'R002'] },
+      { taskId: 'R002', description: 'Fix B', dependsOn: ['R001'] }  // cycle: R001 → R002 → R001
+    ]
+    const batchTaskIds = new Set(parsedTasks.map((t) => t.taskId))
+    const internalDeps = parsedTasks.map((t) => ({
+      taskId: t.taskId,
+      wave: 4,
+      dependsOn: (t.dependsOn ?? []).filter((dep) => batchTaskIds.has(dep))
+    }))
+    // R001 depends on R002, R002 depends on R001 — cycle should be detected
+    assert.equal(internalDeps[0].dependsOn.length, 1) // Only R002 kept
+    assert.equal(internalDeps[0].dependsOn[0], 'R002')
+    assert.equal(internalDeps[1].dependsOn.length, 1) // Only R001 kept
+    assert.equal(internalDeps[1].dependsOn[0], 'R001')
+    // External dep T003 was correctly filtered out
+    assert.ok(!internalDeps[0].dependsOn.includes('T003'))
+  })
+
+  test('external_deps_filtered_no_false_positives', () => {
+    const parsedTasks = [
+      { taskId: 'R001', description: 'Fix A', dependsOn: ['T001', 'T003'] },
+      { taskId: 'R002', description: 'Fix B', dependsOn: ['R001'] }
+    ]
+    const batchTaskIds = new Set(parsedTasks.map((t) => t.taskId))
+    const internalDeps = parsedTasks.map((t) => ({
+      taskId: t.taskId,
+      wave: 4,
+      dependsOn: (t.dependsOn ?? []).filter((dep) => batchTaskIds.has(dep))
+    }))
+    // R001 has no internal deps (T001, T003 are external)
+    assert.equal(internalDeps[0].dependsOn.length, 0)
+    // R002 depends on R001 (internal)
+    assert.deepEqual(internalDeps[1].dependsOn, ['R001'])
+  })
+
+  test('duplicate_taskIds_detected', () => {
+    const parsedTasks = [
+      { taskId: 'R001', description: 'Fix A' },
+      { taskId: 'R002', description: 'Fix B' },
+      { taskId: 'R001', description: 'Fix A copy' }  // duplicate
+    ]
+    const duplicates = parsedTasks.filter((t, i) =>
+      parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
+    )
+    assert.equal(duplicates.length, 1)
+    assert.equal(duplicates[0].taskId, 'R001')
+  })
+})
+
+describe('BuildResult — tasksResumed tracking', () => {
+  test('resumed_count_tracks_only_skipped_complete_tasks', () => {
+    // Simulate wave execution with resumed + new tasks
+    const result = { tasksCompleted: 0, tasksResumed: 0 }
+    const tasks = [
+      { id: '1', status: 'complete' },  // resumed
+      { id: '2', status: 'complete' },  // resumed
+      { id: '3', status: 'pending' },   // will execute
+      { id: '4', status: 'pending' }    // will execute
+    ]
+    for (const task of tasks) {
+      if (task.status === 'complete') {
+        result.tasksCompleted++
+        result.tasksResumed++
+      } else {
+        // Simulate execution success
+        result.tasksCompleted++
+      }
+    }
+    assert.equal(result.tasksCompleted, 4)
+    assert.equal(result.tasksResumed, 2)
+  })
+
+  test('artifact_summary_shows_resumed_count', () => {
+    // Replicate buildArtifactSummary logic
+    let taskLine = `**Tasks**: 13/13 completed`
+    const tasksResumed = 10
+    if (tasksResumed && tasksResumed > 0) {
+      taskLine += ` (${tasksResumed} resumed from prior run)`
+    }
+    assert.ok(taskLine.includes('(10 resumed from prior run)'))
+  })
+
+  test('artifact_summary_omits_resumed_when_zero', () => {
+    let taskLine = `**Tasks**: 5/5 completed`
+    const tasksResumed = 0
+    if (tasksResumed && tasksResumed > 0) {
+      taskLine += ` (${tasksResumed} resumed from prior run)`
+    }
+    assert.ok(!taskLine.includes('resumed'))
+  })
+})
+
+describe('verify findings context seeding', () => {
+  test('strategy_1_extracts_structured_findings', () => {
+    const contentJson = {
+      overallStatus: 'gaps_found',
+      findings: [
+        { description: 'Missing auth middleware', files: ['src/auth.ts'] },
+        { issue: 'Stub handler in routes', files: ['src/routes.ts', 'src/api.ts'] }
+      ]
+    } as Record<string, unknown>
+
+    const parts: string[] = []
+    const findings = contentJson.findings as Array<Record<string, unknown>>
+    for (const f of (findings ?? []).slice(0, 10)) {
+      const desc = String(f.description ?? f.issue ?? 'Unknown gap')
+      const files = Array.isArray(f.files) ? ` [${(f.files as string[]).slice(0, 5).join(', ')}]` : ''
+      parts.push(`${desc}${files}`)
+    }
+
+    assert.equal(parts.length, 2)
+    assert.ok(parts[0].includes('auth middleware'))
+    assert.ok(parts[0].includes('src/auth.ts'))
+    assert.ok(parts[1].includes('Stub handler'))
+  })
+
+  test('strategy_1_falls_back_to_artifact_counts', () => {
+    const contentJson = {
+      overallStatus: 'gaps_found',
+      artifacts: { missing: 3, stub: 1, orphaned: 0 }
+    } as Record<string, unknown>
+
+    const parts: string[] = []
+    const findings = contentJson.findings as Array<Record<string, unknown>> | undefined
+    if (!Array.isArray(findings) || findings.length === 0) {
+      const artifacts = contentJson.artifacts as Record<string, unknown> | undefined
+      if (artifacts) {
+        const missing = (artifacts.missing as number) ?? 0
+        const stub = (artifacts.stub as number) ?? 0
+        const orphaned = (artifacts.orphaned as number) ?? 0
+        if (missing + stub + orphaned > 0) {
+          parts.push(`Artifacts: ${missing} missing, ${stub} stub, ${orphaned} orphaned`)
+        }
+      }
+    }
+
+    assert.equal(parts.length, 1)
+    assert.ok(parts[0].includes('3 missing'))
+  })
+
+  test('strategy_2_falls_back_to_tail_of_raw_markdown', () => {
+    // 3000 chars of preamble + 500 chars of findings at the end
+    const preamble = 'I will now verify the blueprint implementation. '.repeat(60) // ~2880 chars
+    const findings = '\n## Gaps Found\n- MISSING: src/auth.ts\n- STUB: src/routes.ts'
+    const contentMd = preamble + findings
+
+    // Strategy 2: slice from END (not beginning)
+    const summary = contentMd.length > 1500
+      ? '…' + contentMd.slice(-1500)
+      : contentMd
+
+    assert.ok(summary.includes('Gaps Found'))
+    assert.ok(summary.includes('src/auth.ts'))
+    // Should NOT start with preamble
+    assert.ok(!summary.startsWith('I will now verify'))
+  })
+})
+
+// ── RC-1/RC-3/RC-4 Regression tests: Remediation dispatch ──
+
+describe('remediation deferred dispatch (RC-1 regression)', () => {
+  /**
+   * Replicates the core logic that was broken: the old code used setTimeout(5000)
+   * inside try + clearTimeout in finally — the timer was always cancelled before
+   * it could fire. The fix uses a deferred payload set in the try body, dispatched
+   * AFTER the finally block.
+   */
+  test('pendingRemediation_survives_finally_and_dispatches', async () => {
+    // Simulate the deferred dispatch pattern
+    let pendingRemediation: { blueprintId: string } | null = null
+    let dispatched = false
+    const events: string[] = []
+
+    // Simulate try/finally + deferred dispatch
+    try {
+      // Success path — remediation needed
+      pendingRemediation = { blueprintId: 'bp-1' }
+      events.push('try-body-complete')
+    } finally {
+      // Pipeline cleanup (markPipelineStopped, session.stop, etc.)
+      events.push('finally-cleanup')
+      // Old code had: if (remediationTimeoutId) clearTimeout(remediationTimeoutId)
+      // which killed the timer. The new code has NO timer to clear.
+    }
+
+    // Dispatch AFTER finally — this is the fix
+    if (pendingRemediation) {
+      dispatched = true
+      events.push('dispatch')
+    }
+
+    assert.ok(dispatched, 'Remediation should dispatch after finally')
+    assert.deepEqual(events, ['try-body-complete', 'finally-cleanup', 'dispatch'])
+  })
+
+  test('pendingRemediation_stays_null_on_error_path', () => {
+    let pendingRemediation: { blueprintId: string } | null = null
+    let dispatched = false
+
+    try {
+      // Error before remediation branch
+      throw new Error('VERIFY phase timeout')
+      pendingRemediation = { blueprintId: 'bp-1' } // eslint-disable-line
+    } catch {
+      // Error handler
+    } finally {
+      // Cleanup
+    }
+
+    if (pendingRemediation) {
+      dispatched = true
+    }
+
+    assert.ok(!dispatched, 'Remediation should NOT dispatch on error path')
+    assert.equal(pendingRemediation, null)
+  })
+
+  test('old_setTimeout_pattern_was_broken', () => {
+    // Demonstrate that the old pattern was fundamentally broken:
+    // setTimeout in try + clearTimeout in finally = timer never fires
+    let timerFired = false
+    let timerId: ReturnType<typeof setTimeout> | undefined
+
+    try {
+      timerId = setTimeout(() => { timerFired = true }, 5000)
+    } finally {
+      if (timerId) clearTimeout(timerId)
+    }
+
+    // Even after waiting 0ms, the timer was cancelled
+    assert.ok(!timerFired, 'Timer should have been cancelled by finally (demonstrating the bug)')
+    assert.ok(timerId !== undefined, 'Timer was created')
+  })
+})
+
+describe('dispatch guard same-blueprint check (RC-4 regression)', () => {
+  /**
+   * Replicated dispatch guard decision logic from blueprint.ipc.ts.
+   * Pure function: (isRunning, activeBlueprintId, blueprintId) → action
+   */
+  function remediationDispatchGuard(
+    isRunning: boolean,
+    activeBlueprintId: string | null,
+    blueprintId: string,
+    blueprintStatus: string | null
+  ): 'dispatch' | 'skip-same' | 'fail-other' | 'skip-terminal' {
+    // Pre-check: blueprint cancelled/failed/missing
+    if (!blueprintStatus || blueprintStatus === 'cancelled' || blueprintStatus === 'failed') {
+      return 'skip-terminal'
+    }
+    if (!isRunning) return 'dispatch'
+    // Pipeline busy — check who owns it
+    if (activeBlueprintId === blueprintId) return 'skip-same'
+    return 'fail-other'
+  }
+
+  test('dispatches_when_pipeline_idle', () => {
+    assert.equal(
+      remediationDispatchGuard(false, null, 'bp-1', 'building'),
+      'dispatch'
+    )
+  })
+
+  test('skips_when_same_blueprint_running', () => {
+    assert.equal(
+      remediationDispatchGuard(true, 'bp-1', 'bp-1', 'building'),
+      'skip-same'
+    )
+  })
+
+  test('fails_when_different_blueprint_running', () => {
+    assert.equal(
+      remediationDispatchGuard(true, 'bp-other', 'bp-1', 'building'),
+      'fail-other'
+    )
+  })
+
+  test('skips_when_blueprint_cancelled', () => {
+    assert.equal(
+      remediationDispatchGuard(false, null, 'bp-1', 'cancelled'),
+      'skip-terminal'
+    )
+  })
+
+  test('skips_when_blueprint_failed', () => {
+    assert.equal(
+      remediationDispatchGuard(false, null, 'bp-1', 'failed'),
+      'skip-terminal'
+    )
+  })
+
+  test('skips_when_blueprint_missing', () => {
+    assert.equal(
+      remediationDispatchGuard(false, null, 'bp-1', null),
+      'skip-terminal'
+    )
+  })
+})
+
+describe('phaseComplete payload remediationTriggered flag (RC-3 regression)', () => {
+  test('top_level_flag_present_when_completion_is_valid', () => {
+    const completion = { overallStatus: 'gaps_found', remediationTasks: [] }
+    const payload = {
+      blueprintId: 'bp-1',
+      workspaceId: 'ws-1',
+      phase: 'verify' as const,
+      status: 'complete' as const,
+      remediationTriggered: true,
+      completion: { ...completion, _remediationTriggered: true }
+    }
+
+    // Both flags present
+    assert.equal(payload.remediationTriggered, true)
+    assert.equal(payload.completion._remediationTriggered, true)
+  })
+
+  test('top_level_flag_survives_null_completion', () => {
+    // This is the RC-3 scenario: agent omitted the completion block,
+    // fallback tasks were generated, but completion is null/undefined.
+    const completion = null
+    const payload = {
+      blueprintId: 'bp-1',
+      workspaceId: 'ws-1',
+      phase: 'verify' as const,
+      status: 'complete' as const,
+      remediationTriggered: true,
+      completion: completion ? { ...(completion as Record<string, unknown>), _remediationTriggered: true } : undefined
+    }
+
+    // Top-level flag is present even though completion is undefined
+    assert.equal(payload.remediationTriggered, true)
+    assert.equal(payload.completion, undefined)
+  })
+
+  test('no_flag_on_non_remediation_complete', () => {
+    const payload = {
+      blueprintId: 'bp-1',
+      workspaceId: 'ws-1',
+      phase: 'verify' as const,
+      status: 'complete' as const,
+      completion: { overallStatus: 'passed' }
+    }
+
+    assert.equal('remediationTriggered' in payload, false)
+  })
+
+  test('renderer_detection_logic_handles_both_flag_locations', () => {
+    // Replicate the renderer's detection logic
+    function detectRemediation(data: Record<string, unknown>): boolean {
+      return (
+        data.remediationTriggered === true ||
+        (data.completion as Record<string, unknown> | undefined)?._remediationTriggered === true
+      )
+    }
+
+    // Case 1: Both flags
+    assert.ok(detectRemediation({
+      remediationTriggered: true,
+      completion: { _remediationTriggered: true }
+    }))
+
+    // Case 2: Only top-level (null completion)
+    assert.ok(detectRemediation({
+      remediationTriggered: true,
+      completion: undefined
+    }))
+
+    // Case 3: Only inner flag (backward compat)
+    assert.ok(detectRemediation({
+      completion: { _remediationTriggered: true }
+    }))
+
+    // Case 4: No flags
+    assert.ok(!detectRemediation({
+      completion: { overallStatus: 'passed' }
+    }))
+
+    // Case 5: No completion at all
+    assert.ok(!detectRemediation({}))
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

@@ -3,7 +3,7 @@ import type { CoreAgentPrompt } from '../../../shared/types'
 
 interface CoreAgentPromptRow {
   id: string
-  agent_role: 'da-vinci'
+  agent_role: 'specialist'
   mode: 'plan' | 'build' | 'danger'
   prompt_text: string
   default_prompt_text: string
@@ -38,7 +38,7 @@ export class CoreAgentPromptRepository extends BaseRepository<CoreAgentPromptRow
   }
 
   findByRoleAndMode(
-    agentRole: 'da-vinci',
+    agentRole: 'specialist',
     mode: 'plan' | 'build' | 'danger'
   ): CoreAgentPrompt | undefined {
     const db = this.db()
@@ -49,7 +49,7 @@ export class CoreAgentPromptRepository extends BaseRepository<CoreAgentPromptRow
   }
 
   upsert(
-    agentRole: 'da-vinci',
+    agentRole: 'specialist',
     mode: 'plan' | 'build' | 'danger',
     promptText: string
   ): CoreAgentPrompt {
@@ -73,7 +73,7 @@ export class CoreAgentPromptRepository extends BaseRepository<CoreAgentPromptRow
     return mapRow(row)
   }
 
-  resetToDefault(agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger'): CoreAgentPrompt {
+  resetToDefault(agentRole: 'specialist', mode: 'plan' | 'build' | 'danger'): CoreAgentPrompt {
     const db = this.db()
     const row = db
       .prepare(

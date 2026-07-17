@@ -139,4 +139,7 @@
   /* ── Specialist radial gradient ── */
   --color-specialist-glow: rgba(184, 151, 106, 0.08);
   --color-specialist-mid: rgba(30, 46, 51, 0.4);
+
+  /* ── Knowledge-graph: teal-black canvas ── */
+  --graph-bg: #0a1416;
 }

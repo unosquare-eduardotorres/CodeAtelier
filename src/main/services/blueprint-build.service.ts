@@ -48,6 +48,7 @@ const TASK_TIMEOUT_MS = 30 * 60_000 // 30 min per task
 /** Mutable accumulator passed through wave/task execution. */
 interface BuildResult {
   tasksCompleted: number
+  tasksResumed: number
   filesCreated: string[]
   filesModified: string[]
   failed: boolean
@@ -71,6 +72,7 @@ export class BlueprintBuildService extends EventEmitter {
 
     const result: BuildResult = {
       tasksCompleted: 0,
+      tasksResumed: 0,
       filesCreated: [],
       filesModified: [],
       failed: false,
@@ -126,6 +128,75 @@ export class BlueprintBuildService extends EventEmitter {
         result.discoveries = result.discoveries.slice(-20)
       }
 
+      // BP-REMEDIATION-CONTEXT-01: During remediation builds, seed verify findings
+      // into discoveries so agents know exactly what gaps to fix.
+      // Uses structured contentJson (parsed completion) over raw contentMd to avoid
+      // seeding the agent's preamble and to keep the context concise.
+      const currentBlueprint = blueprintRepository.findById(blueprintId)
+      const remediationRound = (currentBlueprint?.settingsJson as Record<string, unknown>)?.remediationRound as number | undefined
+      if (remediationRound && remediationRound > 0) {
+        const verifyPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
+        if (verifyPhaseRecord) {
+          const verifyArtifact = verifyPhaseRecord.artifactsJson.findLast((a) => a.type === 'verify')
+          let gapSummary: string | undefined
+
+          // Strategy 1: Extract structured findings from parsed completion JSON
+          const completion = verifyArtifact?.contentJson as Record<string, unknown> | undefined
+          if (completion) {
+            const parts: string[] = []
+            // Extract findings array (descriptions + file paths)
+            const findings = completion.findings as Array<Record<string, unknown>> | undefined
+            if (Array.isArray(findings) && findings.length > 0) {
+              for (const f of findings.slice(0, 10)) {
+                const desc = String(f.description ?? f.issue ?? 'Unknown gap')
+                const files = Array.isArray(f.files) ? ` [${(f.files as string[]).slice(0, 5).join(', ')}]` : ''
+                parts.push(`${desc}${files}`)
+              }
+              if (findings.length > 10) parts.push(`…and ${findings.length - 10} more`)
+            }
+            // Fallback: artifact gap counts
+            if (parts.length === 0) {
+              const artifacts = completion.artifacts as Record<string, unknown> | undefined
+              if (artifacts) {
+                const missing = (artifacts.missing as number) ?? 0
+                const stub = (artifacts.stub as number) ?? 0
+                const orphaned = (artifacts.orphaned as number) ?? 0
+                if (missing + stub + orphaned > 0) {
+                  parts.push(`Artifacts: ${missing} missing, ${stub} stub, ${orphaned} orphaned`)
+                }
+              }
+            }
+            if (parts.length > 0) {
+              gapSummary = parts.join('; ')
+            }
+          }
+
+          // Strategy 2: Fall back to raw contentMd (truncated from the END, where
+          // findings are typically located, not the beginning which is preamble)
+          if (!gapSummary && verifyArtifact?.contentMd) {
+            const md = verifyArtifact.contentMd
+            gapSummary = md.length > 1500
+              ? '…' + md.slice(-1500)
+              : md
+          }
+
+          if (gapSummary) {
+            // Ensure summary fits in a single discovery entry (max 2000 chars)
+            if (gapSummary.length > 2000) {
+              gapSummary = gapSummary.slice(0, 2000) + '…[truncated]'
+            }
+            result.discoveries.push(
+              `[VERIFY GAPS - Round ${remediationRound}] ${gapSummary}`
+            )
+            bpLog.info(`[startBuildPhase] Seeded verify findings (${gapSummary.length} chars) into remediation context`)
+            // Re-apply cap after adding verify summary
+            if (result.discoveries.length > 20) {
+              result.discoveries = result.discoveries.slice(-20)
+            }
+          }
+        }
+      }
+
       // 3. Get tasks by wave
       waveMap = blueprintService.getTasksByWave(blueprintId)
       sortedWaves = [...waveMap.keys()].sort((a, b) => a - b)
@@ -177,13 +248,15 @@ export class BlueprintBuildService extends EventEmitter {
           result.tasksCompleted,
           totalTasks,
           result.filesCreated,
-          result.filesModified
+          result.filesModified,
+          result.tasksResumed
         )
         blueprintPhaseRepository.appendArtifact(buildPhase.id, {
           type: 'build',
           contentMd: summary,
           contentJson: {
             tasksCompleted: result.tasksCompleted,
+            tasksResumed: result.tasksResumed,
             totalTasks,
             filesCreated: result.filesCreated,
             filesModified: result.filesModified
@@ -245,7 +318,8 @@ export class BlueprintBuildService extends EventEmitter {
             result.tasksCompleted,
             totalTasks,
             result.filesCreated,
-            result.filesModified
+            result.filesModified,
+            result.tasksResumed
           )
           blueprintPhaseRepository.appendArtifact(buildPhase.id, {
             type: 'build-partial',
@@ -315,6 +389,7 @@ export class BlueprintBuildService extends EventEmitter {
       const effectiveStatus = dbTask?.status ?? task.status
       if (effectiveStatus === 'complete') {
         result.tasksCompleted++
+        result.tasksResumed++
         skippedCount++
         bpLog.info(`[executeWave] Skipping complete task ${task.taskId} (resume)`)
         this.safeEmit('waveTaskComplete', {
@@ -545,7 +620,8 @@ export class BlueprintBuildService extends EventEmitter {
           result.tasksCompleted,
           totalTasks,
           result.filesCreated,
-          result.filesModified
+          result.filesModified,
+          result.tasksResumed
         )
       }
     } satisfies BlueprintPhaseArtifactPayload)
@@ -675,8 +751,11 @@ export class BlueprintBuildService extends EventEmitter {
 
       // Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text)
+      const completion = parsePhaseCompletionBlock(text, 'build') ?? null
 
+      if (!completion && text.length > 200) {
+        bpLog.warn(`[executeTask] Task ${task.taskId}: no completion block in ${text.length}-char output`)
+      }
       bpLog.info(
         `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
       )
@@ -761,12 +840,17 @@ export class BlueprintBuildService extends EventEmitter {
     tasksCompleted: number,
     totalTasks: number,
     filesCreated: string[],
-    filesModified: string[]
+    filesModified: string[],
+    tasksResumed?: number
   ): string {
+    let taskLine = `**Tasks**: ${tasksCompleted}/${totalTasks} completed`
+    if (tasksResumed && tasksResumed > 0) {
+      taskLine += ` (${tasksResumed} resumed from prior run)`
+    }
     const lines = [
       `# Build Phase Summary`,
       '',
-      `**Tasks**: ${tasksCompleted}/${totalTasks} completed`,
+      taskLine,
       ''
     ]
 

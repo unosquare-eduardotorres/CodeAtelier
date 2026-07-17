@@ -23,7 +23,7 @@ import type {
  */
 export class AgentSyncService {
   /** Core agent IDs that are managed via DB prompts, not YAML sync */
-  private readonly CORE_AGENT_IDS = new Set(['da-vinci', 'generalist', 'generalist-agent'])
+  private readonly CORE_AGENT_IDS = new Set(['specialist', 'generalist', 'generalist-agent'])
 
   /**
    * Compare workspace YAMLs against DB state.

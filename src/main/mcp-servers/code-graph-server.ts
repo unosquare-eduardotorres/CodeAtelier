@@ -58,6 +58,12 @@ let readyPromise: Promise<CodeGraphServices> | null = null
 function ensureReady(): Promise<CodeGraphServices> {
   if (!readyPromise) {
     readyPromise = (async (): Promise<CodeGraphServices> => {
+      // Pre-flight: verify native module compatibility before importing DB-backed services
+      const { checkNativeModuleCompat } = await import('./native-module-check')
+      const compat = checkNativeModuleCompat()
+      if (!compat.ok) {
+        throw new Error(compat.error ?? 'Native module check failed')
+      }
       const { codeGraphService } = await import('../services/code-graph.service')
       const { codeGraphTagRepository } = await import('../db/repositories/code-graph-tag.repository')
       const { codeGraphEdgeRepository } = await import('../db/repositories/code-graph-edge.repository')

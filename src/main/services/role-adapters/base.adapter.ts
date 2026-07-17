@@ -132,7 +132,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   }
 
   /**
-   * Full MCP config — shared by DaVinci + Specialist.
+   * Full MCP config — shared by all specialist adapters.
    * Handles: locked flags, external MCP resolution, local MCP overrides.
    */
   protected buildFullMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
@@ -202,7 +202,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   }
 
   /**
-   * Override per adapter: DaVinci scans all workspaces, Specialist uses bound workspace.
+   * Override per adapter: each specialist adapter determines its workspace binding.
    * Returns null for adapters without workspace binding.
    */
   protected resolveWorkspaceId(): string | null {

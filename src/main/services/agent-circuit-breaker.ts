@@ -161,7 +161,7 @@ export class AgentCircuitBreaker {
           `continuable break (recovery manager will auto-continue)`
       )
       eventLoggerService.logAgentToolCall({
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         conversationId: opts.conversationId,
         toolName: '__circuit_breaker__',
         toolCallNumber: this._toolCallCount
@@ -198,7 +198,7 @@ export class AgentCircuitBreaker {
   /** Log a tool call to event log (for non-control tools) */
   logToolCall(conversationId: string, toolName: string): void {
     eventLoggerService.logAgentToolCall({
-      agentId: 'da-vinci',
+      agentId: 'specialist',
       conversationId,
       toolName,
       toolCallNumber: this._toolCallCount

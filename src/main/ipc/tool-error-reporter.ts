@@ -11,7 +11,7 @@ const log = chatIpcLogger
 
 /**
  * Auto-capture MCP tool errors to the bug tracker.
- * Called when `isToolError` is true in any pipeline (DaVinci, Grill, Audit).
+ * Called when `isToolError` is true in any pipeline (Specialist, Grill, Audit).
  */
 export function reportToolError(
   toolName: string,

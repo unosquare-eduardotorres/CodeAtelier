@@ -198,12 +198,12 @@ describe('PromptOptimizerService', () => {
         const svc = promptOptimizerService as unknown as AnyService
         const origLocal = svc._localRunner
         svc._localRunner = async () => ({
-          text: '```optimized-prompt\nClearer version of the prompt\n```'
+          text: '```optimized-prompt\nReview the authentication middleware in the Express application for security vulnerabilities in JWT token validation\n```'
         })
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, true)
-          assert.equal(result.optimizedText, 'Clearer version of the prompt')
+          assert.equal(result.optimizedText, 'Review the authentication middleware in the Express application for security vulnerabilities in JWT token validation')
         } finally {
           svc._localRunner = origLocal
         }
@@ -324,7 +324,7 @@ describe('PromptOptimizerService', () => {
 
   describe('optimize — fence variants', () => {
     test('parses plain ``` fence (no info string) as fallback', async () => {
-      const optimized = 'Review the auth middleware for JWT token validation vulnerabilities.'
+      const optimized = 'Review the authentication middleware in the Express application and identify security vulnerabilities in JWT token validation.'
       return withSettings(DEFAULT_SETTINGS, async () => {
         const runner = withRunner(`\`\`\`\n${optimized}\n\`\`\``)
         try {
@@ -339,7 +339,7 @@ describe('PromptOptimizerService', () => {
     })
 
     test('parses <think> block + generic fence from local model', async () => {
-      const optimized = 'Improved prompt after thinking'
+      const optimized = 'Analyze the authentication middleware in the Express application for security vulnerabilities in JWT token validation'
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const svc = promptOptimizerService as unknown as AnyService
         const origLocal = svc._localRunner
@@ -463,7 +463,7 @@ describe('PromptOptimizerService', () => {
     }
 
     test('parses fence block from local model', async () => {
-      const optimized = 'Review the auth middleware for JWT vulnerabilities including expiry handling.'
+      const optimized = 'Review the authentication middleware for security vulnerabilities in JWT token validation including expiry handling.'
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const lr = withLocalRunner(`\`\`\`optimized-prompt\n${optimized}\n\`\`\``)
         try {
@@ -477,7 +477,7 @@ describe('PromptOptimizerService', () => {
     })
 
     test('strips <think> blocks from local model reasoning leakage', async () => {
-      const optimized = 'Improved prompt text'
+      const optimized = 'Review the authentication middleware in Express for security vulnerabilities in JWT token validation'
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const lr = withLocalRunner(
           '<think>Let me think about this...</think>\n```optimized-prompt\n' + optimized + '\n```'
@@ -529,6 +529,188 @@ describe('PromptOptimizerService', () => {
           assert.equal(result.optimizedText, LONG_PROMPT)
         } finally {
           lr.restore()
+        }
+      })
+    })
+  })
+
+  // ── Anti-hallucination hardening tests ──
+
+  describe('optimize — oversize guard (proportional + floor)', () => {
+    test('accepts output under 2000-char floor for short originals', async () => {
+      // 200-char original → 4× = 800, but floor is 2000, so 1800-char output should pass
+      const shortOriginal = 'A'.repeat(80) + ' review the authentication middleware and check for JWT vulnerabilities in our Express app'
+      const optimized1800 = 'B'.repeat(1800)
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner(`\`\`\`optimized-prompt\n${optimized1800}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: shortOriginal
+          })
+          // Should not be rejected as oversize (1800 < 2000 floor)
+          assert.notEqual(result.skippedReason, 'oversize')
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+
+    test('rejects output exceeding 4× for large originals', async () => {
+      // 3000-char original → 4× = 12000, so 13000-char output should be rejected
+      const largeOriginal = 'Review the authentication middleware. '.repeat(80) // ~2960 chars
+      const oversizedOutput = 'x'.repeat(13000)
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner(`\`\`\`optimized-prompt\n${oversizedOutput}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: largeOriginal
+          })
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'oversize')
+          assert.equal(result.optimizedText, largeOriginal)
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+  })
+
+  describe('optimize — keyword drift guard', () => {
+    test('rejects when optimizer introduces completely different topic', async () => {
+      // Original talks about README and charts, optimized talks about database schema
+      const original = 'Based on the context and information that you currently have regarding our app, can you regenerate the ReadMe and add charts showing the architecture'
+      const drifted = 'Design a comprehensive database schema migration strategy with PostgreSQL indexing optimization and query performance benchmarking for the distributed microservices backend'
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner(`\`\`\`optimized-prompt\n${drifted}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: original
+          })
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'keyword-drift')
+          assert.equal(result.optimizedText, original)
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+
+    test('accepts rephrased version that preserves core keywords', async () => {
+      const original = 'Please review the authentication middleware in our Express application and identify any security vulnerabilities related to JWT token validation'
+      const rephrased = 'Analyze the authentication middleware in the Express application for security vulnerabilities in JWT token validation, including expired tokens and signature verification'
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner(`\`\`\`optimized-prompt\n${rephrased}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: original
+          })
+          assert.equal(result.changed, true)
+          assert.equal(result.optimizedText, rephrased)
+          assert.equal(result.skippedReason, undefined)
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+
+    test('skips keyword check when original has fewer than 3 significant keywords', async () => {
+      // Very short prompts with few meaningful words should not trigger keyword drift
+      const original = 'Fix the bug in the code right now please help me with it quickly'
+      const optimized = 'Resolve the software defect in the implementation immediately'
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const runner = withRunner(`\`\`\`optimized-prompt\n${optimized}\n\`\`\``)
+        try {
+          const result = await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: original
+          })
+          // Should not be rejected as keyword-drift (too few keywords to judge)
+          assert.notEqual(result.skippedReason, 'keyword-drift')
+        } finally {
+          runner.restore()
+        }
+      })
+    })
+  })
+
+  describe('optimize — proportional max_tokens', () => {
+    test('short prompt gets 512 token floor', async () => {
+      // 100-char prompt → ceil(100/2)=50, but floor is 512
+      const shortText = 'Review the auth middleware in our Express app and check JWT validation for security issues'
+      let capturedArgs: string[] = []
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const svc = promptOptimizerService as unknown as AnyService
+        const origRunner = svc._runner
+        svc._runner = async (args: string[]) => {
+          capturedArgs = args
+          return fakeCliResponse('NO_CHANGES')
+        }
+        try {
+          await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: shortText
+          })
+          const maxTokensIdx = capturedArgs.indexOf('--max-tokens')
+          assert.ok(maxTokensIdx >= 0, '--max-tokens should be in args')
+          assert.equal(capturedArgs[maxTokensIdx + 1], '512')
+        } finally {
+          svc._runner = origRunner
+        }
+      })
+    })
+
+    test('medium prompt gets proportional tokens', async () => {
+      // 2000-char prompt → ceil(2000/2)=1000
+      const mediumText = 'Review '.repeat(286) // ~2002 chars
+      let capturedArgs: string[] = []
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const svc = promptOptimizerService as unknown as AnyService
+        const origRunner = svc._runner
+        svc._runner = async (args: string[]) => {
+          capturedArgs = args
+          return fakeCliResponse('NO_CHANGES')
+        }
+        try {
+          await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: mediumText
+          })
+          const maxTokensIdx = capturedArgs.indexOf('--max-tokens')
+          assert.ok(maxTokensIdx >= 0, '--max-tokens should be in args')
+          const budget = Number(capturedArgs[maxTokensIdx + 1])
+          assert.ok(budget >= 512 && budget <= 4096, `Budget ${budget} should be between 512-4096`)
+          assert.equal(budget, Math.ceil(mediumText.length / 2))
+        } finally {
+          svc._runner = origRunner
+        }
+      })
+    })
+
+    test('long prompt gets capped at 4096 tokens', async () => {
+      // 10000-char prompt → ceil(10000/2)=5000, but cap is 4096
+      const longText = 'A'.repeat(80) + ' ' + 'review the code '.repeat(620) // >10000 chars
+      let capturedArgs: string[] = []
+      return withSettings(DEFAULT_SETTINGS, async () => {
+        const svc = promptOptimizerService as unknown as AnyService
+        const origRunner = svc._runner
+        svc._runner = async (args: string[]) => {
+          capturedArgs = args
+          return fakeCliResponse('NO_CHANGES')
+        }
+        try {
+          await promptOptimizerService.optimize({
+            ...DEFAULT_PARAMS,
+            text: longText
+          })
+          const maxTokensIdx = capturedArgs.indexOf('--max-tokens')
+          assert.ok(maxTokensIdx >= 0, '--max-tokens should be in args')
+          assert.equal(capturedArgs[maxTokensIdx + 1], '4096')
+        } finally {
+          svc._runner = origRunner
         }
       })
     })

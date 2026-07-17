@@ -490,7 +490,7 @@ describe('IPC handler bodies — low-coverage files', () => {
 
   test('project-specialist handlers execute', async () => {
     await testHandlersForModule(
-      'project-specialist',
+      'specialist',
       '../project-specialist.ipc',
       false,
       {

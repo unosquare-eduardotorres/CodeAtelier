@@ -28,11 +28,9 @@ import {
   useSpecialistStore,
   useBugStore,
   useAuditStore,
-  useIndexingStore,
-  useMpaStore
+  useIndexingStore
 } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
-import { useCouncilStore } from '@renderer/store/council.store'
 import { useBlueprintStore } from '@renderer/store/blueprint.store'
 
 import StatusBar from './StatusBar'
@@ -44,6 +42,7 @@ import {
   useWorkspaceListeners,
   useNavigationHandlers
 } from './hooks'
+import { useBlueprintStatusBar } from './hooks/useBlueprintStatusBar'
 
 const isMac = navigator.platform.toUpperCase().includes('MAC')
 
@@ -197,6 +196,14 @@ export default function AppLayout(): React.JSX.Element {
     [guardNavigation]
   )
 
+  const handleNotificationNavigate = useCallback(
+    (sidebar: 'chat' | 'settings', tab?: string) => {
+      guardedSetSidebarView(sidebar)
+      if (tab) guardedSetTab(tab as SettingsTab)
+    },
+    [guardedSetSidebarView, guardedSetTab]
+  )
+
   const handleUnsavedSave = useCallback(async () => {
     const guard = useSettingsStore.getState().unsavedGuard
     if (guard) await guard.save()
@@ -257,10 +264,23 @@ export default function AppLayout(): React.JSX.Element {
     setPendingGrill
   )
 
-  const mpaStatus = useMpaStore((s) =>
-    s.isRunning || s.status.status === 'paused' ? s.status : null
+  // Blueprint status for StatusBar indicator
+  const blueprintStatus = useBlueprintStatusBar()
+  const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
+
+  const handleNavigateToBlueprint = useCallback(() => {
+    guardedSetSidebarView('settings')
+    guardedSetTab('blueprints')
+  }, [guardedSetSidebarView, guardedSetTab])
+
+  const handleSwitchToWorkspaceBlueprint = useCallback(
+    async (workspaceId: string) => {
+      await openWorkspace(workspaceId)
+      setSidebarView('settings')
+      setWorkspaceSettingsTab('blueprints')
+    },
+    [openWorkspace]
   )
-  const councilPhase = useCouncilStore((s) => (s.isActive ? s.phase : null))
 
   // Bug tracker + audit status for UI
   const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
@@ -270,10 +290,10 @@ export default function AppLayout(): React.JSX.Element {
   const isAuditPaused = useAuditStore((s) => s.isPaused)
   const lastAuditScore = useAuditStore((s) => s.currentRun?.overallScore ?? null)
 
-  // MCP tools from Da Vinci status
+  // MCP tools from specialist status
   const activeMcpTools = useAgentStore((s) => {
-    const davinci = s.statuses.find((st) => st.agentType === 'da-vinci')
-    return davinci?.activeMcpTools
+    const specialist = s.statuses.find((st) => st.agentType === 'specialist')
+    return specialist?.activeMcpTools
   })
 
   // Context usage for status bar
@@ -425,7 +445,7 @@ export default function AppLayout(): React.JSX.Element {
       </div>
 
       <ToastContainer onNavigate={(target) => guardedSetView(target as typeof view)} />
-      <NotificationStack />
+      <NotificationStack onNavigateToPage={handleNotificationNavigate} />
 
       <TokenDetailsModal
         isOpen={tokenModalOpen}
@@ -450,8 +470,7 @@ export default function AppLayout(): React.JSX.Element {
         isAuditPaused={isAuditPaused}
         lastAuditScore={lastAuditScore}
         grillStatus={grillStatus}
-        mpaStatus={mpaStatus}
-        councilPhase={councilPhase}
+        blueprintStatus={blueprintStatus}
         indexingState={indexingState}
         sidebarView={sidebarView}
         onNavigateToSettings={(tab) => {
@@ -470,6 +489,8 @@ export default function AppLayout(): React.JSX.Element {
         }}
         onOpenTokenModal={() => setTokenModalOpen(true)}
         onNavigateToGrill={handleNavigateToGrill}
+        onNavigateToBlueprint={handleNavigateToBlueprint}
+        onSwitchToWorkspaceBlueprint={handleSwitchToWorkspaceBlueprint}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomReset={handleZoomReset}

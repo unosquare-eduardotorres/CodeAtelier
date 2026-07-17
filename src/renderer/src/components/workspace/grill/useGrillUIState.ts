@@ -38,7 +38,8 @@ export function useGrillUIState(requirementDocument: string): GrillUIStateResult
     setIsCondensing(true)
     try {
       const { condensed } = await window.api.grillCondenseRequirement({
-        text: requirementDocument
+        text: requirementDocument,
+        workspaceId: activeWorkspace?.id
       })
       setCondensedDocument(condensed)
     } catch (error) {
@@ -46,7 +47,7 @@ export function useGrillUIState(requirementDocument: string): GrillUIStateResult
     } finally {
       setIsCondensing(false)
     }
-  }, [requirementDocument, isCondensing])
+  }, [requirementDocument, isCondensing, activeWorkspace?.id])
 
   return {
     activeTab,

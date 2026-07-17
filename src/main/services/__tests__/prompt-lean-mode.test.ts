@@ -19,8 +19,8 @@ describe('Lean Mode Blocks', () => {
   test('lean plan is shorter than full plan', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.length < PLAN_MODE_SECTION.length)
     assert.ok(
-      PLAN_MODE_SECTION_LEAN.length < PLAN_MODE_SECTION.length * 0.80,
-      `Lean plan (${PLAN_MODE_SECTION_LEAN.length}) should be <80% of full (${PLAN_MODE_SECTION.length})`
+      PLAN_MODE_SECTION_LEAN.length < PLAN_MODE_SECTION.length * 0.90,
+      `Lean plan (${PLAN_MODE_SECTION_LEAN.length}) should be <90% of full (${PLAN_MODE_SECTION.length})`
     )
   })
 

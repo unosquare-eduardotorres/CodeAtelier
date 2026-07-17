@@ -10,7 +10,7 @@
  */
 
 import { useState, useMemo, useCallback } from 'react'
-import { ChevronDown, ChevronRight, Layers, CheckCircle2, AlertTriangle, AlertCircle } from 'lucide-react'
+import { ChevronDown, ChevronRight, Layers, CheckCircle2, AlertTriangle, AlertCircle, Lock } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import {
   AVAILABLE_MODELS,
@@ -52,19 +52,19 @@ const CHAT_ROLES: RoleRowDef[] = [
   {
     label: 'Plan',
     description: 'Analysis, brainstorming, code review, and planning',
-    actions: ['da-vinci:plan', 'project-specialist:plan'],
-    primaryAction: 'da-vinci:plan'
+    actions: ['specialist:plan', 'specialist:plan'],
+    primaryAction: 'specialist:plan'
   },
   {
     label: 'Build',
     description: 'Code generation, file edits, and implementation',
-    actions: ['da-vinci:build', 'project-specialist:build'],
-    primaryAction: 'da-vinci:build'
+    actions: ['specialist:build', 'specialist:build'],
+    primaryAction: 'specialist:build'
   },
   {
     label: 'Background',
-    description: 'Memory feed, activation, and lightweight tasks',
-    actions: ['haiku', 'memoryFeed', 'activation'],
+    description: 'Activation and lightweight tasks',
+    actions: ['haiku', 'activation'],
     primaryAction: 'haiku'
   }
 ]
@@ -87,6 +87,63 @@ const BLUEPRINT_ROLES: RoleRowDef[] = [
     description: 'Adversarial verification of build output',
     actions: ['blueprint:verify'],
     primaryAction: 'blueprint:verify'
+  }
+]
+
+const QUALITY_ROLES: RoleRowDef[] = [
+  {
+    label: 'Audit',
+    description: 'Post-implementation code audit',
+    actions: ['audit'],
+    primaryAction: 'audit'
+  },
+  {
+    label: 'Grill',
+    description: 'Adversarial design review sessions',
+    actions: ['grill', 'grill:plan'],
+    primaryAction: 'grill'
+  }
+]
+
+const COUNCIL_ROLES: RoleRowDef[] = [
+  {
+    label: 'Council Member',
+    description: 'Multi-advisor deliberation (×5 parallel)',
+    actions: ['council-member'],
+    primaryAction: 'council-member'
+  },
+  {
+    label: 'Council Chairman',
+    description: 'Synthesize advisor verdicts into final decision',
+    actions: ['council-chairman'],
+    primaryAction: 'council-chairman'
+  }
+]
+
+const BACKGROUND_ROLES: RoleRowDef[] = [
+  {
+    label: 'Memory Extraction',
+    description: 'Extract facts from conversations into workspace memory',
+    actions: ['memoryFeed'],
+    primaryAction: 'memoryFeed'
+  },
+  {
+    label: 'Commit Message',
+    description: 'Generate git commit messages from diffs',
+    actions: ['commit-message'],
+    primaryAction: 'commit-message'
+  },
+  {
+    label: 'Conversation Condense',
+    description: 'Compress conversation context before compaction',
+    actions: ['condense'],
+    primaryAction: 'condense'
+  },
+  {
+    label: 'Prompt Optimization',
+    description: 'Background prompt quality tuning',
+    actions: ['prompt:optimize'],
+    primaryAction: 'prompt:optimize'
   }
 ]
 
@@ -225,6 +282,15 @@ function RoleRow({
           </optgroup>
         )}
       </select>
+      {/* Thinking Budget — Phase C placeholder */}
+      <select
+        disabled
+        aria-label={`${role.label} thinking budget`}
+        title="Thinking Budget — coming in a future release"
+        className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-muted focus:outline-none shrink-0 w-24 opacity-50 cursor-not-allowed"
+      >
+        <option>Medium</option>
+      </select>
       {isUnavailable && (
         <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
       )}
@@ -270,8 +336,8 @@ export default function ModelRolesSection({
 
   // Cross-provider warning: plan and build use different providers
   const crossProviderWarning = useMemo(() => {
-    const planProvider = modelRoles['da-vinci:plan']?.provider
-    const buildProvider = modelRoles['da-vinci:build']?.provider
+    const planProvider = modelRoles['specialist:plan']?.provider
+    const buildProvider = modelRoles['specialist:build']?.provider
     if (planProvider && buildProvider && planProvider !== buildProvider) {
       return planProvider === 'claude' ? 'Claude' : 'Local LLM'
     }
@@ -438,6 +504,72 @@ export default function ModelRolesSection({
         </SettingsCard>
       </div>
 
+      {/* ── Quality & Review ── */}
+      <div>
+        <h4 className="text-xs font-medium text-text-secondary mb-2">Quality & Review</h4>
+        <SettingsCard>
+          <div className="divide-y divide-border-subtle">
+            {QUALITY_ROLES.map((role) => (
+              <RoleRow
+                key={role.label}
+                role={role}
+                modelRoles={modelRoles}
+                claudeModelOverrides={claudeModelOverrides}
+                workspaceProvider={workspaceProvider}
+                modelOptions={modelOptions}
+                onAssign={handleAssign}
+              />
+            ))}
+          </div>
+        </SettingsCard>
+      </div>
+
+      {/* ── Council ── */}
+      <div>
+        <h4 className="text-xs font-medium text-text-secondary mb-2">Council</h4>
+        <SettingsCard>
+          <div className="divide-y divide-border-subtle">
+            {COUNCIL_ROLES.map((role) => (
+              <RoleRow
+                key={role.label}
+                role={role}
+                modelRoles={modelRoles}
+                claudeModelOverrides={claudeModelOverrides}
+                workspaceProvider={workspaceProvider}
+                modelOptions={modelOptions}
+                onAssign={handleAssign}
+              />
+            ))}
+          </div>
+        </SettingsCard>
+      </div>
+
+      {/* ── Background Tasks ── */}
+      <div>
+        <h4 className="text-xs font-medium text-text-secondary mb-2">Background Tasks</h4>
+        <SettingsCard>
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs text-text-muted italic flex items-center gap-1">
+              <Lock size={10} />
+              Thinking Budget — per-action reasoning depth control coming soon
+            </p>
+          </div>
+          <div className="divide-y divide-border-subtle">
+            {BACKGROUND_ROLES.map((role) => (
+              <RoleRow
+                key={role.label}
+                role={role}
+                modelRoles={modelRoles}
+                claudeModelOverrides={claudeModelOverrides}
+                workspaceProvider={workspaceProvider}
+                modelOptions={modelOptions}
+                onAssign={handleAssign}
+              />
+            ))}
+          </div>
+        </SettingsCard>
+      </div>
+
       {/* ── Cross-provider warning ── */}
       {crossProviderWarning && (
         <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
@@ -462,7 +594,7 @@ export default function ModelRolesSection({
               </p>
             </div>
             <select
-              value={fallbackModel ?? DEFAULT_MODEL_CONFIG['da-vinci']}
+              value={fallbackModel ?? DEFAULT_MODEL_CONFIG['specialist']}
               onChange={(e) => onFallbackModelChange(e.target.value)}
               aria-label="Fallback model"
               className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 shrink-0 max-w-xs"

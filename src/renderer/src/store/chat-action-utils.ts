@@ -77,7 +77,7 @@ export function createStoppedMessage(
   conversationId: string,
   mergedContent: string,
   mergedTools: ToolActivity[],
-  role: 'da-vinci' | 'specialist',
+  role: 'specialist',
   specialist: string | null,
   segments: StreamSegment[]
 ): Message {
@@ -122,7 +122,7 @@ export function createErrorMessage(conversationId: string, errorMsg: string): Me
   return {
     id: `error-${Date.now()}`,
     conversationId,
-    role: 'da-vinci',
+    role: 'specialist',
     contentMd: `**Failed to send message:** ${errorMsg}`,
     attachmentsJson: '[]',
     createdAt: new Date().toISOString()

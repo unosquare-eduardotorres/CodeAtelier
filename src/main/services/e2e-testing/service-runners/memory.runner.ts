@@ -43,6 +43,10 @@ export async function runMemoryTiers(ctx: E2EServiceContext): Promise<E2ETranscr
       sourceType: 'tool',
       sourceRef: 'e2e-test'
     })
+    if (!fact1) {
+      transcript.push(errorEntry('First fact write returned null (capped/deduped)'))
+      return transcript
+    }
 
     // Small delay to let dedup/embedding run
     await new Promise((r) => setTimeout(r, 1500))

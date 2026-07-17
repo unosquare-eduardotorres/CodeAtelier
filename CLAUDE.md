@@ -2,7 +2,7 @@
 
 ## Overview
 
-Code Atelier is an Electron desktop application. Each workspace runs exactly one of two equivalent AI roles — **DaVinci** (the default expert partner) or a **Project Specialist** (an LLM-tailored expert built from the workspace's stack and CLAUDE.md). Both roles share the same execution pipeline — same MCP toolbox, same plan/build mode rules, same memory + intent pipelines. Only the identity prompt differs. Everything runs locally via Claude CLI backed by a Claude Max subscription; no API keys, no proxy servers.
+Code Atelier is an Electron desktop application. Each workspace runs exactly one **Specialist** — the default generalist or a **Project Specialist** (an LLM-tailored expert built from the workspace's stack and CLAUDE.md). All specialists share the same execution pipeline — same MCP toolbox, same plan/build mode rules, same memory + intent pipelines. Only the identity prompt differs. Everything runs locally via Claude CLI backed by a Claude Max subscription; no API keys, no proxy servers.
 
 ## Tech stack
 
@@ -36,7 +36,7 @@ src/
 │   ├── index.ts    # Entry point — window creation, app lifecycle
 │   ├── ipc/        # IPC handler registrations (agent, chat, workspace, etc.)
 │   ├── services/   # Business logic (role adapters, prompt assembly, MCP config, specialist builder)
-│   │   └── role-adapters/ # DaVinciRoleAdapter, ProjectSpecialistRoleAdapter
+│   │   └── role-adapters/ # ProjectSpecialistRoleAdapter (unified)
 │   └── db/         # SQLite via better-sqlite3 (schema.sql, repositories/)
 │       └── migrations/ # Extracted complex migrations (project-specialist, drop-mcp-columns)
 ├── preload/        # contextBridge only (index.ts + index.d.ts)
@@ -153,10 +153,9 @@ npm run format        # Prettier
 
 ## Architecture notes
 
-- **Two role adapters, one execution pipeline**
-  - `DaVinciRoleAdapter` — default per workspace, long-lived AgentSession.
-  - `ProjectSpecialistRoleAdapter` — bound to one workspace, LLM-tailored system prompt.
-  - Both share `buildWorkspaceMcpConfig`, `intentDetector.detectAll`, `memoryRepository`, `prompt-assembly-helpers`.
+- **One role adapter, one execution pipeline**
+  - `ProjectSpecialistRoleAdapter` — unified adapter for all specialist roles (default generalist and project specialists).
+  - Shares `buildWorkspaceMcpConfig`, `intentDetector.detectAll`, `memoryRepository`, `prompt-assembly-helpers`.
 - **Two executor backends: CLI (Claude Max subscription) and OpenCode (local LLMs via Ollama/oMLX).** `ExecutorBackend = 'cli' | 'opencode'`.
 - **No handoffs, no orchestrator, no sub-agents.** `Agent` and `ToolSearch` tools are blocked globally.
 - **Tool execution runs unattended in build mode** (`permissionMode: 'acceptEdits'`). This auto-approves working-dir file edits + common fs Bash commands deterministically (no account gating). Safety relies on the workspace scope guard + `disallowedTools` (Agent, ToolSearch, ExitPlanMode, AskUserQuestion). No in-app permission popup. Danger mode uses `bypassPermissions` (unrestricted).

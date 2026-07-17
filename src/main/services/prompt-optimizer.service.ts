@@ -6,7 +6,9 @@
  *  - Skips short prompts (<80 chars), slash commands, disabled setting, local-LLM
  *  - Wraps the original in <original_prompt> tags to prevent injection
  *  - Parses a ```optimized-prompt fenced block or NO_CHANGES sentinel
- *  - Rejects oversize output (>min(4× original, 4000) chars)
+ *  - Rejects oversize output (>max(4× original, 2000) chars)
+ *  - Rejects keyword drift (<60% of original keywords preserved)
+ *  - Caps max_tokens proportionally (~text.length/2, floor 512, cap 4096)
  *  - Falls back to the original prompt on any error
  *
  * Follows the GoalDecomposerService singleton pattern.
@@ -31,6 +33,9 @@ Rules:
 - Stay self-contained — don't reference prior conversation context you don't have.
 - Never answer the prompt — only rewrite it.
 - Never invent requirements, constraints, or technologies the user didn't mention.
+- Keep the rewritten prompt roughly the same length as the original (±50%). Do NOT expand a short sentence into a detailed specification.
+- Do NOT decompose a single request into numbered sub-tasks unless the original already lists multiple steps.
+- Do NOT add examples, technologies, or file formats the user didn't mention.
 - If the prompt is already clear and actionable, output the literal text NO_CHANGES.
 - You MUST output ONLY a single fenced block with the optimized prompt, or the literal NO_CHANGES. No explanation, no commentary.
 
@@ -136,6 +141,8 @@ class PromptOptimizerService {
 
     // ── Claude one-shot path (original) ──
     const model = modelConfigService.getModelById(workspaceId, 'prompt:optimize')
+    // Proportional token budget: ~2 chars/token, floor 512, cap 4096
+    const tokenBudget = Math.min(Math.max(Math.ceil(text.length / 2), 512), 4096)
     try {
       const { text: responseText } = await runOneShotClaude({
         feature: 'prompt_optimize',
@@ -147,7 +154,8 @@ class PromptOptimizerService {
           '--model', model,
           '--system-prompt', META_PROMPT,
           '--permission-mode', 'plan',
-          '--max-turns', '1'
+          '--max-turns', '1',
+          '--max-tokens', String(tokenBudget)
         ],
         cli: { timeout: 15_000 },
         _runner: this._runner
@@ -196,7 +204,7 @@ class PromptOptimizerService {
           apiKey: localCfg.localApiKey,
           feature: 'prompt_optimize',
           workspaceId,
-          maxTokens: 1024,
+          maxTokens: Math.min(Math.max(Math.ceil(text.length / 2), 512), 4096),
           timeoutMs: 30_000
           // No claudeFallbackArgs — empty response → skippedReason: 'error' → original prompt used
         })
@@ -224,6 +232,40 @@ class PromptOptimizerService {
   /** Strip <think>…</think> blocks that local reasoning models sometimes emit */
   private stripThinkingBlocks(text: string): string {
     return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+  }
+
+  /**
+   * Extract significant words (≥4 chars, lowercased, deduplicated) from text.
+   * Filters out common English stop words.
+   */
+  private extractKeywords(text: string): Set<string> {
+    const STOP_WORDS = new Set([
+      'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will',
+      'would', 'could', 'should', 'their', 'there', 'about', 'which',
+      'when', 'what', 'your', 'also', 'more', 'some', 'make', 'like',
+      'them', 'then', 'than', 'each', 'into', 'only', 'very', 'just',
+      'does', 'here', 'much', 'well', 'back', 'even', 'most', 'made',
+      'after', 'those', 'these', 'other', 'being', 'over', 'such',
+      'before', 'between', 'under', 'using', 'based', 'please',
+      'ensure', 'include', 'following', 'currently',
+    ])
+    const words = text.toLowerCase().match(/[a-z]{4,}/g) ?? []
+    return new Set(words.filter(w => !STOP_WORDS.has(w)))
+  }
+
+  /**
+   * Check that the optimized prompt preserves ≥60% of the original's keywords.
+   * Returns the preservation ratio (0–1).
+   */
+  private keywordPreservation(original: string, optimized: string): number {
+    const origKeywords = this.extractKeywords(original)
+    if (origKeywords.size < 3) return 1 // too few keywords to judge
+    const optKeywords = this.extractKeywords(optimized)
+    let preserved = 0
+    for (const kw of origKeywords) {
+      if (optKeywords.has(kw)) preserved++
+    }
+    return preserved / origKeywords.size
   }
 
   private parseResponse(response: string, original: string): PromptOptimizeResult {
@@ -257,13 +299,24 @@ class PromptOptimizerService {
       return { optimizedText: original, changed: false, skippedReason: 'empty-output' }
     }
 
-    // Guard: oversize — reject output > min(4× original, 4000 chars)
-    const maxLen = Math.min(original.length * 4, 4000)
+    // Guard: oversize — reject output > max(4× original, 2000 chars)
+    // Floor of 2000 lets short prompts (~250 chars) expand into structured rewrites.
+    // The 4× ratio is the proportional safety net at every scale.
+    const maxLen = Math.max(original.length * 4, 2000)
     if (optimized.length > maxLen) {
       optimizerLog.warn(
         `[optimize] Oversize output (${optimized.length} > ${maxLen}), using original`
       )
       return { optimizedText: original, changed: false, skippedReason: 'oversize' }
+    }
+
+    // Guard: keyword drift — reject if <60% of original keywords survive
+    const preservation = this.keywordPreservation(original, optimized)
+    if (preservation < 0.6) {
+      optimizerLog.warn(
+        `[optimize] Keyword drift (${(preservation * 100).toFixed(0)}% preserved), using original`
+      )
+      return { optimizedText: original, changed: false, skippedReason: 'keyword-drift' }
     }
 
     // Guard: no actual change

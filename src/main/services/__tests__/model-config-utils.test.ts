@@ -73,24 +73,24 @@ describe('ModelConfigService.fallbackAction (private)', () => {
   const fallback = (action: string) =>
     (modelConfigService as any).fallbackAction(action)
 
-  test('sub-action "da-vinci:plan" → falls back to "da-vinci" base', () => {
-    const result = fallback('da-vinci:plan')
-    assert.equal(result, DEFAULT_MODEL_CONFIG['da-vinci'])
+  test('sub-action "specialist:plan" → falls back to "specialist" base', () => {
+    const result = fallback('specialist:plan')
+    assert.equal(result, DEFAULT_MODEL_CONFIG['specialist'])
   })
 
-  test('direct action "da-vinci" → looks up directly', () => {
-    const result = fallback('da-vinci')
-    assert.equal(result, DEFAULT_MODEL_CONFIG['da-vinci'])
+  test('direct action "specialist" → looks up directly', () => {
+    const result = fallback('specialist')
+    assert.equal(result, DEFAULT_MODEL_CONFIG['specialist'])
   })
 
-  test('unknown base action → falls back to DEFAULT_MODEL_CONFIG["da-vinci"]', () => {
+  test('unknown base action → falls back to DEFAULT_MODEL_CONFIG["specialist"]', () => {
     const result = fallback('unknown-action:sub')
-    assert.equal(result, DEFAULT_MODEL_CONFIG['da-vinci'])
+    assert.equal(result, DEFAULT_MODEL_CONFIG['specialist'])
   })
 
-  test('empty string → falls back to da-vinci default', () => {
+  test('empty string → falls back to specialist default', () => {
     const result = fallback('')
-    assert.equal(result, DEFAULT_MODEL_CONFIG['da-vinci'])
+    assert.equal(result, DEFAULT_MODEL_CONFIG['specialist'])
   })
 })
 

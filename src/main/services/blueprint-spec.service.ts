@@ -326,7 +326,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 11. Get accumulated text and parse completion
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      const completion = parsePhaseCompletionBlock(text, 'specify') ?? undefined
 
       // 12. Save spec artifact to phase
       if (specifyPhase) {
@@ -794,7 +794,7 @@ export class BlueprintSpecService extends EventEmitter {
     // 3. Check for completion
     const completionRaw = parseClarifyCompletion(text)
     const completion = completionRaw
-      ? (parsePhaseCompletionBlock(text) ?? (completionRaw as unknown as BlueprintPhaseCompletion))
+      ? (parsePhaseCompletionBlock(text, 'clarify') ?? (completionRaw as unknown as BlueprintPhaseCompletion))
       : null
 
     // M5 (nudge restructure): Hoist zero-block check ABOVE the emit cascade.

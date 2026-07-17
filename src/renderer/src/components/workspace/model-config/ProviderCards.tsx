@@ -273,7 +273,7 @@ function ClaudeProviderCard({
             </div>
             <p className="text-xs text-text-secondary mt-1">
               {fastMode
-                ? 'Responses ~2.5× faster at 3× lower cost. Only affects generalist chat.'
+                ? 'Responses ~2.5× faster at 3× lower cost. Only affects chat.'
                 : 'Uses included Claude Max usage at standard speed. Enable for faster responses.'}
             </p>
           </div>

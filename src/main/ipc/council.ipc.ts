@@ -27,6 +27,8 @@ import { councilPersistenceController } from '../services/council-persistence.co
 import { councilSessionRepository } from '../db/repositories/council-session.repository'
 import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 import log from 'electron-log'
 
 const councilLog = log.scope('council-ipc')
@@ -275,6 +277,15 @@ function wireCouncilEvents(workspaceId: string, workspacePath: string): void {
     'verdict',
     (data) => {
       councilPersistenceController.handleVerdict(data, getSessionEventRouter())
+
+      notificationService.dispatch({
+        workspaceId,
+        workspaceName: resolveWorkspaceName(workspaceId),
+        service: 'council',
+        status: 'completed',
+        summary: 'Council verdict delivered — review the recommendation',
+        targetPage: 'council'
+      })
     }
   )
 

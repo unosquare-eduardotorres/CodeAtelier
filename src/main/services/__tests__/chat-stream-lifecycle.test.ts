@@ -19,7 +19,7 @@ import type { ConversationPhase } from '../../../shared/types'
 interface StreamContext {
   readonly conversationId: string
   readonly requestId: string
-  readonly streamingRole: 'da-vinci' | 'specialist'
+  readonly streamingRole: 'specialist'
   readonly phase: ConversationPhase
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
@@ -33,7 +33,7 @@ interface ChatStreamServiceInternal {
   streamingLock: boolean
   isStopped: boolean
   activeRequestId: string | null
-  currentStreamingRole: 'da-vinci' | 'specialist'
+  currentStreamingRole: 'specialist'
   keepaliveTimer: ReturnType<typeof setInterval> | null
   mainWindow: {
     webContents: { send: (channel: string, data: unknown) => void }
@@ -49,7 +49,7 @@ interface ChatStreamServiceInternal {
     done: Promise<void>
   }
   resolveStreamIdentity(): {
-    streamingRole: 'da-vinci' | 'specialist'
+    streamingRole: 'specialist'
     phase: ConversationPhase
     specialistMeta: { specialist: string; taskId?: string } | undefined
     adapterAgentId: string
@@ -93,7 +93,7 @@ function createTestService(overrides?: {
     streamingLock: false,
     isStopped: false,
     activeRequestId: null,
-    currentStreamingRole: 'da-vinci',
+    currentStreamingRole: 'specialist',
     keepaliveTimer: null,
     mainWindow,
     callbacks: { onStopPipeline: async () => {} },
@@ -285,17 +285,9 @@ describe('resolveStreamIdentity', () => {
       string,
       { adapter: unknown; session: unknown; forwarderCleanups: unknown[]; workspacePath: string }
     >
-    daVinciAdapter: {
-      currentPersonaSpecialistId: string | null
-      currentPersonaData: { agentId: string; alias?: string; displayName?: string } | null
-      getPersona(): {
-        id: string | null
-        data: { agentId: string; alias?: string; displayName?: string } | null
-      }
-    }
   }
 
-  test('returns da-vinci role when no persona is active', () =>
+  test('returns specialist role when no workspace-specific adapter is active', () =>
     runExclusive(async () => {
       const origWsId = svcInternal._activeWorkspaceId
       svcInternal._activeWorkspaceId = null
@@ -304,41 +296,10 @@ describe('resolveStreamIdentity', () => {
         const svc = createTestService()
         const result = svc.resolveStreamIdentity()
 
-        assert.equal(result.streamingRole, 'da-vinci')
-        assert.equal(result.phase, 'da-vinci-responding')
-        assert.equal(result.adapterAgentId, 'da-vinci')
-        assert.equal(result.specialistMeta, undefined)
-      } finally {
-        svcInternal._activeWorkspaceId = origWsId
-      }
-    }))
-
-  test('returns specialist role when persona overlay is active', () =>
-    runExclusive(async () => {
-      const origWsId = svcInternal._activeWorkspaceId
-      const origPersonaId = svcInternal.daVinciAdapter.currentPersonaSpecialistId
-      const origPersonaData = svcInternal.daVinciAdapter.currentPersonaData
-
-      // Activate persona by setting private fields on the DaVinciAdapter
-      svcInternal._activeWorkspaceId = null // falls back to daVinciAdapter
-      svcInternal.daVinciAdapter.currentPersonaSpecialistId = 'code-reviewer'
-      svcInternal.daVinciAdapter.currentPersonaData = {
-        agentId: 'code-reviewer',
-        alias: 'Code Reviewer'
-      }
-
-      try {
-        const svc = createTestService()
-        const result = svc.resolveStreamIdentity()
-
         assert.equal(result.streamingRole, 'specialist')
         assert.equal(result.phase, 'specialist-executing')
-        assert.ok(result.specialistMeta, 'specialistMeta should be present')
-        assert.equal(result.specialistMeta!.specialist, 'code-reviewer')
       } finally {
         svcInternal._activeWorkspaceId = origWsId
-        svcInternal.daVinciAdapter.currentPersonaSpecialistId = origPersonaId
-        svcInternal.daVinciAdapter.currentPersonaData = origPersonaData
       }
     }))
 
@@ -455,10 +416,10 @@ describe('finalizeStreamMessage', () => {
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
         requestId: conversationLifecycle.requestId!,
-        streamingRole: 'da-vinci',
-        phase: 'da-vinci-responding',
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
         specialistMeta: undefined,
-        adapterAgentId: 'da-vinci',
+        adapterAgentId: 'specialist',
         workspacePath: undefined,
         streamedContent: 'Hello world',
         planInjected: false
@@ -471,7 +432,7 @@ describe('finalizeStreamMessage', () => {
       assert.ok(createSpy_.callCount >= 1, 'messageRepository.create should be called')
       const createArgs = createSpy_.calls[0]
       assert.equal(createArgs[0], 'conv-finalize', 'conversationId')
-      assert.equal(createArgs[1], 'da-vinci', 'role')
+      assert.equal(createArgs[1], 'specialist', 'role')
       assert.equal(createArgs[2], 'Hello world', 'cleaned content')
 
       // Assert: CHAT_MESSAGE_COMPLETE sent (channel is 'chat:messageComplete')
@@ -497,10 +458,10 @@ describe('finalizeStreamMessage', () => {
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
         requestId: conversationLifecycle.requestId!,
-        streamingRole: 'da-vinci',
-        phase: 'da-vinci-responding',
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
         specialistMeta: undefined,
-        adapterAgentId: 'da-vinci',
+        adapterAgentId: 'specialist',
         workspacePath: undefined,
         streamedContent: '',
         planInjected: false
@@ -540,10 +501,10 @@ describe('finalizeStreamMessage', () => {
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
         requestId: conversationLifecycle.requestId!,
-        streamingRole: 'da-vinci',
-        phase: 'da-vinci-responding',
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
         specialistMeta: undefined,
-        adapterAgentId: 'da-vinci',
+        adapterAgentId: 'specialist',
         workspacePath: undefined,
         streamedContent: 'Some content',
         planInjected: false
@@ -601,10 +562,10 @@ describe('finalizeStreamMessage', () => {
       const ctx: StreamContext = {
         conversationId: 'conv-finalize',
         requestId: conversationLifecycle.requestId!,
-        streamingRole: 'da-vinci',
-        phase: 'da-vinci-responding',
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
         specialistMeta: undefined,
-        adapterAgentId: 'da-vinci',
+        adapterAgentId: 'specialist',
         workspacePath: undefined,
         streamedContent: 'Response with tools',
         planInjected: false
@@ -668,10 +629,10 @@ describe('enqueueMemoryExtraction', () => {
     const ctx: StreamContext = {
       conversationId: 'conv-mem',
       requestId: 'req-mem',
-      streamingRole: 'da-vinci',
-      phase: 'da-vinci-responding',
+      streamingRole: 'specialist',
+      phase: 'specialist-responding',
       specialistMeta: undefined,
-      adapterAgentId: 'da-vinci',
+      adapterAgentId: 'specialist',
       workspacePath: undefined,
       streamedContent: 'some content that is definitely longer than 200 characters to pass the length guard in enqueueMemoryExtraction which checks ctx.streamedContent.length > 200 before calling the service so we need to have enough text here to exceed that threshold',
       planInjected: false
@@ -691,10 +652,10 @@ describe('StreamContext mutable state', () => {
     const ctx: StreamContext = {
       conversationId: 'conv-1',
       requestId: 'req-1',
-      streamingRole: 'da-vinci',
-      phase: 'da-vinci-responding',
+      streamingRole: 'specialist',
+      phase: 'specialist-responding',
       specialistMeta: undefined,
-      adapterAgentId: 'da-vinci',
+      adapterAgentId: 'specialist',
       workspacePath: undefined,
       streamedContent: '',
       planInjected: false
@@ -709,10 +670,10 @@ describe('StreamContext mutable state', () => {
     const ctx: StreamContext = {
       conversationId: 'conv-1',
       requestId: 'req-1',
-      streamingRole: 'da-vinci',
-      phase: 'da-vinci-responding',
+      streamingRole: 'specialist',
+      phase: 'specialist-responding',
       specialistMeta: undefined,
-      adapterAgentId: 'da-vinci',
+      adapterAgentId: 'specialist',
       workspacePath: undefined,
       streamedContent: '',
       planInjected: false

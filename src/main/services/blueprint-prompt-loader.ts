@@ -170,7 +170,7 @@ export function formatArtifacts(
     const bullets = entries.map((e) => `- ${e}`).join('\n')
     const omitted = allDiscoveryEntries.length - entries.length
     const suffix = capped
-      ? `\n\n_(${omitted} older discoveries omitted — use memory_search to retrieve)_`
+      ? `\n\n_(${omitted} older discoveries omitted — use mcp__memory__memory_search to retrieve)_`
       : ''
     rendered.push(`### Discoveries (consolidated)\n${bullets}${suffix}`)
   }
@@ -185,7 +185,7 @@ export function formatArtifacts(
     if (total + entry.length > budgetChars && budgeted.length > 0) {
       const remaining = filtered.length - i
       budgeted.push(
-        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or memory_search for full content)_`
+        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or mcp__memory__memory_search for full content)_`
       )
       break
     }

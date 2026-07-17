@@ -10,7 +10,7 @@
  *   └─ PhaseJourney (accordion list of all phases) ───────────────┘
  */
 
-import { useState, type JSX } from 'react'
+import { useState, useMemo, type JSX } from 'react'
 import {
   StopCircle,
   Clock,
@@ -27,6 +27,7 @@ import { BlueprintMarkdown } from '../BlueprintMarkdown'
 import { PhaseJourney } from './PhaseJourney'
 import { OutcomeSummary } from './OutcomeSummary'
 import { getOutcomeStats, formatDuration } from './phase-summaries'
+import { findArtifact } from '../deliverables/artifact-helpers'
 
 // ── Markdown Description Block (collapsible) ──
 
@@ -80,7 +81,23 @@ export function BlueprintDetailView({
   onBack,
   onRetryPhase
 }: BlueprintDetailViewProps): JSX.Element {
-  if (!currentBlueprint || currentBlueprint.id !== selectedId) {
+  // All hooks must be called before any early returns (Rules of Hooks)
+  const bp = currentBlueprint
+  const isComplete = bp?.status === 'complete'
+  const outcomeStats = isComplete && bp ? getOutcomeStats(bp.phases, bp.tasks) : null
+  const isGapsFound = isComplete && outcomeStats?.verifyStatus === 'gaps_found'
+
+  // Extract human verification items from verify artifact
+  const humanVerificationItems = useMemo(() => {
+    if (!bp || !isComplete || outcomeStats?.verifyStatus !== 'human_needed') return []
+    const verifyPhase = bp.phases.find((p) => p.phase === 'verify')
+    if (!verifyPhase) return []
+    const art = findArtifact(verifyPhase.artifactsJson, 'verify', 'verification')
+    const json = art?.contentJson as Record<string, unknown> | undefined
+    return (json?.humanVerificationNeeded as string[]) ?? []
+  }, [isComplete, outcomeStats, bp])
+
+  if (!bp || bp.id !== selectedId) {
     return (
       <div className="space-y-4">
         <button
@@ -96,11 +113,6 @@ export function BlueprintDetailView({
       </div>
     )
   }
-
-  const bp = currentBlueprint
-  const isComplete = bp.status === 'complete'
-  const outcomeStats = isComplete ? getOutcomeStats(bp.phases, bp.tasks) : null
-  const isGapsFound = isComplete && outcomeStats?.verifyStatus === 'gaps_found'
 
   // Compute total duration for header
   const startTimes = bp.phases.map((p) => p.startedAt).filter(Boolean) as string[]
@@ -172,21 +184,33 @@ export function BlueprintDetailView({
 
       {/* ── Human review needed banner with Re-verify button ── */}
       {isComplete && outcomeStats?.verifyStatus === 'human_needed' && (
-        <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-accent/20 bg-accent/5 text-accent">
-          <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-          <div className="flex flex-col gap-0.5 flex-1">
-            <span className="text-sm font-medium">Human Review Needed</span>
-            <span className="text-xs opacity-80">
-              The verifier flagged items requiring manual review. After making changes, re-verify to check them.
-            </span>
+        <div className="rounded-xl border border-accent/20 bg-accent/5 text-accent">
+          <div className="flex items-start gap-3 px-4 py-3">
+            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+            <div className="flex flex-col gap-0.5 flex-1">
+              <span className="text-sm font-medium">Human Review Needed</span>
+              <span className="text-xs opacity-80">
+                The verifier flagged items that require manual verification before shipping.
+              </span>
+            </div>
+            <button
+              onClick={onRetryPhase}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors flex-shrink-0"
+            >
+              <RotateCcw size={12} />
+              Re-verify
+            </button>
           </div>
-          <button
-            onClick={onRetryPhase}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors flex-shrink-0"
-          >
-            <RotateCcw size={12} />
-            Re-verify
-          </button>
+          {humanVerificationItems.length > 0 && (
+            <div className="border-t border-accent/10 px-4 py-3 space-y-1.5">
+              {humanVerificationItems.map((item, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="text-accent/60 mt-0.5 text-xs">▸</span>
+                  <span className="text-xs text-text-secondary">{item}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -194,23 +218,54 @@ export function BlueprintDetailView({
       {bp.status === 'failed' && (() => {
         const failedPhase = bp.phases.find((p) => p.status === 'failed')
         const errorMsg = lastError?.blueprintId === bp.id ? lastError.message : null
+
+        // When lastError is null (ephemeral, or gaps_found path), derive context
+        // from the phase's own artifact data.
+        let failureContext: { title: string; description: string; isGaps: boolean } | null = null
+        if (!errorMsg && failedPhase) {
+          const verifyArt = findArtifact(failedPhase.artifactsJson, 'verify', 'verification')
+          const json = verifyArt?.contentJson as Record<string, unknown> | undefined
+          const overallStatus = json?.overallStatus as string | undefined
+          if (overallStatus === 'gaps_found') {
+            const remTasks = (json?.remediationTasks as unknown[]) ?? []
+            failureContext = {
+              title: 'Gaps Found During Verification',
+              description: remTasks.length > 0
+                ? `The verifier identified ${remTasks.length} issue(s) requiring remediation.`
+                : 'The verifier identified issues but could not generate remediation tasks.',
+              isGaps: true
+            }
+          }
+        }
+
         return failedPhase ? (
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-danger/20 bg-danger-muted text-danger">
-            <XCircle size={16} className="mt-0.5 flex-shrink-0" />
+          <div className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${
+            failureContext?.isGaps
+              ? 'border-warning/20 bg-warning/5 text-warning'
+              : 'border-danger/20 bg-danger-muted text-danger'
+          }`}>
+            {failureContext?.isGaps
+              ? <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              : <XCircle size={16} className="mt-0.5 flex-shrink-0" />}
             <div className="flex flex-col gap-0.5 flex-1">
               <span className="text-sm font-medium">
-                {failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed
+                {failureContext?.title
+                  ?? `${failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed`}
               </span>
               <span className="text-xs opacity-80">
-                {errorMsg ?? 'An error occurred during this phase. Retry to try again.'}
+                {failureContext?.description ?? errorMsg ?? 'An error occurred during this phase. Retry to try again.'}
               </span>
             </div>
             <button
               onClick={onRetryPhase}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-danger hover:bg-danger/80 rounded-lg transition-colors flex-shrink-0"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
+                failureContext?.isGaps
+                  ? 'bg-warning hover:bg-warning/80'
+                  : 'bg-danger hover:bg-danger/80'
+              }`}
             >
               <RotateCcw size={12} />
-              Retry
+              {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
             </button>
           </div>
         ) : null

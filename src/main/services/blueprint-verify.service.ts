@@ -71,6 +71,7 @@ export class BlueprintVerifyService extends EventEmitter {
     let onStatus: ((status: AgentStatus) => void) | null = null
     let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
     let cleanupAskUser: (() => void) | undefined
+    let pendingRemediation: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
 
     try {
       // BP-VERIFY-CANCEL-STATUS-CHECK-01 + BP-VERIFY-NULL-BLUEPRINT-01:
@@ -121,7 +122,7 @@ export class BlueprintVerifyService extends EventEmitter {
         forwardBlueprintChunk(
           (event, payload) => this.safeEmit(event, payload),
           chunk,
-          { blueprintId, workspaceId, phase: 'verify', workspacePath, mode: 'plan' }
+          { blueprintId, workspaceId, phase: 'verify', workspacePath, mode: 'build' }
         )
       }
       onStatus = (status: AgentStatus): void => {
@@ -133,8 +134,9 @@ export class BlueprintVerifyService extends EventEmitter {
       // B4-FIX: Auto-respond to ask_user calls — verify is non-interactive
       cleanupAskUser = wireAskUserAutoResponder(session, 'VERIFY')
 
-      // 6. Start session in READ-ONLY mode + send with timeout + stall watchdog + abort race
-      await session.start(workspacePath, 'plan')
+      // 6. Start session in BUILD mode (Bash execution needed for quality gates).
+      // Write/Edit remain blocked by BlueprintVerifyAdapter.buildMcpConfig().disallowedTools.
+      await session.start(workspacePath, 'build')
 
       const syntheticConvId = `blueprint-verify-${blueprintId}-${Date.now()}`
 
@@ -176,10 +178,50 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      let completion = parsePhaseCompletionBlock(text, 'verify') ?? undefined
+
+      // BP-VERIFY-DETERMINISTIC-EXTRACT: When the agent doesn't emit the structured
+      // completion fence block, extract findings via a cheap one-shot Haiku call.
+      // This makes verify completion deterministic — no more "agent forgot the block" failures.
+      if (!completion && text.length >= 100) {
+        bpLog.info(
+          `[startVerifyPhase] No completion block found — running post-hoc extraction for blueprint ${blueprintId}`
+        )
+        try {
+          const { extractVerifyCompletion } = await import('./blueprint-verify-extractor')
+          const extracted = await extractVerifyCompletion({
+            text,
+            blueprintId,
+            workspaceId
+          })
+          if (extracted) {
+            bpLog.info(
+              `[startVerifyPhase] Post-hoc extraction succeeded — overallStatus: ${(extracted as Record<string, unknown>).overallStatus}`
+            )
+            completion = extracted
+          } else {
+            bpLog.warn(
+              `[startVerifyPhase] Post-hoc extraction returned null — falling through to 'unknown' status`
+            )
+          }
+        } catch (extractErr) {
+          bpLog.warn(`[startVerifyPhase] Post-hoc extraction failed (non-fatal):`, extractErr)
+        }
+      }
 
       // 8. Save phase artifact
       const overallStatus = (completion?.overallStatus as string) ?? 'unknown'
+
+      // BP-VERIFY-UNKNOWN-STATUS-DIAGNOSTIC: Log specific context when parser can't
+      // extract a valid completion. Helps distinguish "agent timed out" from "parser bug".
+      if (overallStatus === 'unknown') {
+        bpLog.warn(
+          `[startVerifyPhase] Blueprint ${blueprintId}: overallStatus='unknown' — ` +
+          `completion was ${completion ? 'parsed but missing overallStatus' : 'null (parser failed)'}. ` +
+          `Output length: ${text.length} chars`
+        )
+      }
+
       // BP-GAPS-FOUND-DEAD-END-FIX: When gaps_found and remediation is NOT
       // triggered, mark verify phase 'failed' (not 'complete') so retryPhase()
       // can find a retryable phase and the Retry banner renders. 'passed' and
@@ -225,6 +267,29 @@ export class BlueprintVerifyService extends EventEmitter {
         }
       }
 
+      // BP-COLLISION-SAFE-RENUMBER: Re-assign sequential R-task IDs to avoid
+      // collisions with tasks from prior remediation rounds. The agent doesn't
+      // know about existing R-tasks, so it often reuses R001/R002 on round 2+.
+      if (remediationTasks.length > 0) {
+        const existingTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+        const maxExistingR = existingTasks
+          .filter((t) => /^R\d+$/.test(t.taskId))
+          .reduce((max, t) => Math.max(max, parseInt(t.taskId.slice(1), 10)), 0)
+        let seq = maxExistingR + 1
+
+        // Build old→new ID map so dependsOn references can be remapped
+        const idMap = new Map<string, string>()
+        for (const t of remediationTasks) {
+          idMap.set(t.taskId, `R${String(seq++).padStart(3, '0')}`)
+        }
+
+        remediationTasks = remediationTasks.map((t) => ({
+          ...t,
+          taskId: idMap.get(t.taskId)!,
+          dependsOn: t.dependsOn?.map((dep) => idMap.get(dep) ?? dep)
+        }))
+      }
+
       const currentBlueprint = blueprintRepository.findById(blueprintId)
       const currentSettings = currentBlueprint?.settingsJson ?? {}
       const remediationRound = (currentSettings.remediationRound as number) ?? 0
@@ -234,17 +299,18 @@ export class BlueprintVerifyService extends EventEmitter {
         remediationRound < 2
 
       if (canRemediate) {
-        // 9a. Append remediation tasks as new wave(s)
+        // 9a. Increment remediationRound FIRST — prevents infinite retry loops
+        // if appendTasks fails (BUG-A: round never advances → same error on retry).
+        blueprintRepository.update(blueprintId, {
+          settingsJson: { ...currentSettings, remediationRound: remediationRound + 1 }
+        })
+
+        // 9b. Append remediation tasks as new wave(s)
         bpLog.info(
           `[startVerifyPhase] gaps_found with ${remediationTasks.length} remediation task(s) — ` +
           `round ${remediationRound + 1}/2, appending tasks and re-triggering build`
         )
         blueprintService.appendTasks(blueprintId, remediationTasks)
-
-        // 9b. Increment remediationRound in settingsJson
-        blueprintRepository.update(blueprintId, {
-          settingsJson: { ...currentSettings, remediationRound: remediationRound + 1 }
-        })
 
         // 9c. Reset verify phase to pending, build to active, blueprint to building
         if (verifyPhase) {
@@ -268,23 +334,24 @@ export class BlueprintVerifyService extends EventEmitter {
           kind: 'system'
         })
 
-        // 9e. Emit remediationNeeded event after 5s delay (mirrors scheduleAutoRetry)
-        // Lets the finally block release the pipeline lock first.
-        setTimeout(() => {
-          this.safeEmit('remediationNeeded', {
-            blueprintId,
-            workspaceId,
-            workspacePath
-          })
-        }, 5000)
+        // 9e. Defer remediation dispatch until after the finally block releases
+        // the pipeline lock (deferred dispatch pattern — same as spec→plan chaining).
+        // The old setTimeout(5000) was always cancelled by the finally block's
+        // clearTimeout before it could fire (RC-1 root cause).
+        pendingRemediation = { blueprintId, workspaceId, workspacePath }
 
         // 10. Emit phaseComplete (remediation-triggered)
+        // BP-STATUS-CONSISTENCY-01: Keep status 'complete' for type safety but add
+        // remediationTriggered flag (top-level, survives null completion) so UI
+        // consumers can distinguish a remediation loop from a genuine completion.
+        // The verify phase is actually 'pending' in the DB — it will re-run after build.
         this.safeEmit('phaseComplete', {
           blueprintId,
           workspaceId,
           phase: 'verify',
           status: 'complete',
-          completion
+          remediationTriggered: true,
+          completion: completion ? { ...completion, _remediationTriggered: true } : undefined
         } satisfies BlueprintPhaseCompletePayload)
       } else {
         // 10. Determine final blueprint status (no remediation)
@@ -383,6 +450,14 @@ export class BlueprintVerifyService extends EventEmitter {
       }
       blueprintService.markPipelineStopped(workspaceId)
     }
+
+    // Dispatch AFTER finally — markPipelineStopped() has released the lock.
+    // setImmediate avoids re-entrancy with the stateChange listener chain.
+    // Cancel-safety: the IPC listener re-checks blueprint status before dispatching.
+    if (pendingRemediation) {
+      const payload = pendingRemediation
+      setImmediate(() => this.safeEmit('remediationNeeded', payload))
+    }
   }
 
   // ── Remediation fallback ──────────────────────────────────────────────
@@ -397,17 +472,13 @@ export class BlueprintVerifyService extends EventEmitter {
   private generateFallbackRemediationTasks(
     completion: Record<string, unknown> | null,
     text: string,
-    blueprintId: string
+    _blueprintId: string
   ): Array<{ taskId: string; description: string; files: string[] }> {
     const tasks: Array<{ taskId: string; description: string; files: string[] }> = []
 
-    // BP-COLLISION-SAFE: Start seq after the highest existing R-task number
-    // to prevent taskId collisions on second remediation round.
-    const existingTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
-    const maxExistingR = existingTasks
-      .filter((t) => /^R\d+$/.test(t.taskId))
-      .reduce((max, t) => Math.max(max, parseInt(t.taskId.slice(1), 10)), 0)
-    let seq = maxExistingR + 1
+    // Placeholder IDs — the caller's centralized renumbering (BP-COLLISION-SAFE-RENUMBER)
+    // reassigns all taskIds before appendTasks, so these are temporary.
+    let seq = 1
 
     // Strategy 1: Parse structured completion fields
     if (completion) {

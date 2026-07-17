@@ -133,7 +133,7 @@ export class SpecialistRepository extends BaseRepository<SpecialistRow, Speciali
    * (build_status = 'ready'). Returns null when no specialist exists for the
    * workspace or it's still pending/building/failed.
    *
-   * Used by the DaVinci adapter to detect mid-session readiness transitions
+   * Used by the specialist adapter to detect mid-session readiness transitions
    * and propose a swap via ask_user.
    */
   findReadyByWorkspace(workspaceId: string): Specialist | null {

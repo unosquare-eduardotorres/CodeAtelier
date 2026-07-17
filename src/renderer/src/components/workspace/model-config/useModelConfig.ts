@@ -484,7 +484,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
       setClaudeModelOverrides(overrides)
 
       // Derive provider from plan action's provider for backend compatibility
-      const planRole = roles['da-vinci:plan']
+      const planRole = roles['specialist:plan']
       const derived: LLMProvider = planRole?.provider ?? 'claude'
       setDefaultProvider(derived)
 
@@ -579,7 +579,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
 
   // Derive provider from routing — reads plan action's provider from modelRoles
   const derivedProvider: LLMProvider = useMemo(() => {
-    const planRole = modelRoles['da-vinci:plan']
+    const planRole = modelRoles['specialist:plan']
     return planRole?.provider ?? defaultProvider
   }, [modelRoles, defaultProvider])
 

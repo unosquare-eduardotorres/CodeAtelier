@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
+    assetsInclude: ['**/*.sql'],
     build: {
       rollupOptions: {
         // Multiple entry points: main process + MCP servers. MCP servers run as
@@ -53,6 +54,46 @@ export default defineConfig({
           cpSync(resolve('src/main/blueprints'), resolve('out/main/blueprints'), {
             recursive: true
           })
+        }
+      },
+      {
+        name: 'mcp-server-electron-shim',
+        renderChunk(code, chunk) {
+          // Only instrument MCP server entry points
+          if (!chunk.fileName.startsWith('mcp-servers/') || !chunk.isEntry) return null
+
+          const shimCode = [
+            '// ── MCP standalone-process shim ──────────────────────────────────',
+            '// MCP servers run as plain `node` child processes where `electron`',
+            '// and `electron-log` are unavailable. Intercept require() and',
+            '// return lightweight mocks. Gated by process.versions.electron so',
+            '// the Electron main process is completely unaffected.',
+            'if (!process.versions.electron) {',
+            '  var _M = require("module"), _origLoad = _M._load, _noop = function() {};',
+            '  var _mkScope = function() { return { info: _noop, warn: _noop, error: _noop, debug: _noop, verbose: _noop, log: _noop, silly: _noop, scope: _mkScope }; };',
+            '  var _mockLog = { info: _noop, warn: _noop, error: _noop, debug: _noop, verbose: _noop, log: _noop, silly: _noop, scope: function() { return _mkScope(); }, transports: { file: { level: false, maxSize: 0, format: "" }, console: { level: false, format: "" } }, errorHandler: { startCatching: _noop } };',
+            '  _mockLog.default = _mockLog;',
+            '  var _mockElectron = { app: { getPath: function(n) { return process.env.DB_PATH || "/tmp/mcp-" + n; }, getName: function() { return "MCP"; }, getVersion: function() { return "0.0.0"; }, isPackaged: false, getAppPath: function() { return __dirname; }, on: _noop, quit: _noop }, ipcMain: { handle: _noop, removeHandler: _noop, on: _noop }, BrowserWindow: { getAllWindows: function() { return []; }, getFocusedWindow: function() { return null; } }, dialog: {}, shell: {}, nativeTheme: { shouldUseDarkColors: true, on: _noop }, safeStorage: { isEncryptionAvailable: function() { return false; }, encryptString: _noop, decryptString: function() { return ""; } } };',
+            '  _M._load = function(r, p, m) {',
+            '    if (r === "electron") return _mockElectron;',
+            '    if (r === "electron-log/main" || r === "electron-log") return _mockLog;',
+            '    return _origLoad.apply(this, arguments);',
+            '  };',
+            '}',
+            '// ── End shim ────────────────────────────────────────────────────────',
+            '',
+          ].join('\n')
+
+          // Insert after shebang + "use strict" but before any require()
+          const lines = code.split('\n')
+          let insertAt = 0
+          if (lines[0]?.startsWith('#!')) insertAt = 1
+          if (lines[insertAt]?.trim() === '"use strict";') insertAt++
+          // Some entries have Object.defineProperty (e.g. code-analysis-server)
+          if (lines[insertAt]?.includes('Object.defineProperty')) insertAt++
+
+          lines.splice(insertAt, 0, shimCode)
+          return { code: lines.join('\n'), map: null }
         }
       }
     ]

@@ -17,7 +17,7 @@ import type { AgentRole } from '../../../shared/types'
 // ── Concrete subclass for testing ───────────────────────────────────────
 
 class TestAdapter extends BaseRoleAdapter {
-  readonly role = 'da-vinci' as AgentRole
+  readonly role = 'specialist' as AgentRole
   readonly agentId = 'test-adapter-1'
   private strategy: McpStrategy = 'full'
 

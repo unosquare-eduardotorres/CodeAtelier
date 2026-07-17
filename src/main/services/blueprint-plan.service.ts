@@ -143,7 +143,7 @@ export class BlueprintPlanService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      const completion = parsePhaseCompletionBlock(text, 'plan') ?? undefined
       const planJson = parseBlueprintPlan(text)
 
       // 8. Save artifacts

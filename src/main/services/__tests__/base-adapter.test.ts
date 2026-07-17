@@ -20,7 +20,7 @@ import type {
 // ── Minimal concrete subclass ────────────────────────────────────────
 
 class TestAdapter extends BaseRoleAdapter {
-  readonly role = 'da-vinci' as const
+  readonly role = 'specialist' as const
   readonly agentId = 'test-agent'
 
   buildPrompts(_ctx: AdapterPromptContext): AdapterPromptResult {
@@ -41,7 +41,7 @@ class TestAdapter extends BaseRoleAdapter {
   public _appendToolGuidance(base: string, turnCount: number, model?: string) {
     return this.appendToolGuidance(base, turnCount, model)
   }
-  public _resolveModel(workspacePath: string, action: 'da-vinci:plan' | 'da-vinci:build') {
+  public _resolveModel(workspacePath: string, action: 'specialist:plan' | 'specialist:build') {
     return this.resolveModel(workspacePath, action)
   }
 

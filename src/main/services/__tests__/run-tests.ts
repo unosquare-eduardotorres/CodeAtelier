@@ -32,7 +32,6 @@ const TEST_FILES: string[] = [
   './intent-router.test',
   // Run 3 — P0 continued
   './agent-circuit-breaker.test',
-  './da-vinci-prompt-assembler.test',
   // Run 4 — P1 targets
   './cost-tracker.test',
   './agent-token-tracker.test',
@@ -45,7 +44,6 @@ const TEST_FILES: string[] = [
   './conversation-lifecycle.test',
   // Run 6b — Project Specialist refactor (Phase 1)
   './agent-session.service.test',
-  './da-vinci-adapter.test',
   // Run 6c — Project Specialist refactor (Phase 2)
   './prompt-assembly-helpers.test',
   './project-specialist-prompt-template.test',
@@ -60,8 +58,6 @@ const TEST_FILES: string[] = [
   '../../ipc/__tests__/validate-args.test',
   // Run 8 — bubble identity / role tagging / consent regression
   './chat-stream-role-tagging.test',
-  './resolve-adapter-consent.test',
-  '../../ipc/__tests__/chat-swap-handler.test',
   // Run 9 — renderer utilities (pure logic, no DOM)
   './sentence-buffer.test',
   // ─── Run 11: Prompt optimization (Opus 4.8) ───
@@ -96,7 +92,6 @@ const TEST_FILES: string[] = [
   './workspace-mcp-config-tiers.test',
   './tag-to-chunk-adapter.test',
   './skill-summary.test',
-  './prompt-assembler-turn-count.test',
   './agent-session-token-split.test',
   // ─── Run 20: Coverage expansion — streaming / tools / hooks (pure logic) ───
   './thinking-parser.test',
@@ -282,6 +277,8 @@ const TEST_FILES: string[] = [
   './memory-doc-watcher.test',
   // ─── Memory Graph (knowledge graph edge derivation) ───
   './memory-graph.test',
+  // ─── Memory Consolidation (cluster merge, idle job) ───
+  './memory-consolidation.test',
   // ─── E2E Testing Infrastructure ───
   './e2e-contracts.test',
   // ─── Blueprint document loader (splitBinaryDocs, buildReferenceDocsBlock) ───
@@ -316,6 +313,17 @@ const TEST_FILES: string[] = [
   './mcp-servers-deep.test',
   // ─── Agentic Claude runner (Deep Scan + CLAUDE.md regen shared helper) ───
   './agentic-claude-runner.test',
+  // ─── Unified Handoff Protocol (types, adapters, rendering, redaction) ───
+  './handoff.service.test',
+  // ─── Blueprint Verify Extractor (post-hoc structured extraction) ───
+  './blueprint-verify-extractor.test',
+  // ─── OS Notification Service (dispatch routing, rate limiting, preferences) ───
+  './notification.service.test',
+  // ─── Phase 20A: Coverage Mega-Push VI — giant services deep ───
+  './agent-session-body-deep.test',
+  './chat-stream-body-deep.test',
+  './code-analysis-handlers.test',
+  './blueprint-spec-deep.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

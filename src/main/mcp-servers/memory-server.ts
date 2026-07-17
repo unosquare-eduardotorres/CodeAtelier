@@ -133,6 +133,11 @@ function registerToolSchemas(): void {
         sourceType: 'tool',
         sourceRef: null
       })
+      if (!fact) {
+        return {
+          content: [{ type: 'text' as const, text: 'Fact deduplicated or capped — no new record created.' }]
+        }
+      }
       const tierLabel = ['Observed', 'Confirmed', 'Established', 'Wisdom'][fact.tier]
       return {
         content: [
@@ -194,6 +199,9 @@ function registerToolSchemas(): void {
           sourceType: 'tool',
           sourceRef: null
         })
+        if (!newFact) {
+          return { content: [{ type: 'text' as const, text: 'Contradiction note deduplicated — no change made.' }] }
+        }
         memoryFactRepository.supersedeFact(existing.id, newFact.id)
         memoryFactRepository.createContradiction({
           oldFactId: existing.id,

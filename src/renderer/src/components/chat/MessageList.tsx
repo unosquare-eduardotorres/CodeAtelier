@@ -62,9 +62,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   // ── Specialist identity resolution (extracted hook) ──
   const thinkingIdentity = useThinkingIdentity()
 
-  const generalistAlias = useSpecialistStore((s) => {
-    const spec = s.specialists.find((sp) => sp.agentId === 'da-vinci')
-    return spec?.alias ?? spec?.displayName ?? 'da Vinci'
+  const agentAlias = useSpecialistStore((s) => {
+    const spec = s.specialists.find((sp) => sp.agentId === 'specialist')
+    return spec?.alias ?? spec?.displayName ?? 'Agent'
   })
 
   // Aggregate all tool activities for the thinking indicator
@@ -141,8 +141,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         </h3>
         <p className="relative z-10 text-sm text-text-muted max-w-md">
           {userName
-            ? `Ask anything, brainstorm ideas, or describe what you want built — ${generalistAlias} and the specialists are standing by.`
-            : `Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or describe what you want built — ${generalistAlias} will handle it or hand off to specialists.`}
+            ? `Ask anything, brainstorm ideas, or describe what you want built — ${agentAlias} is standing by.`
+            : `Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or describe what you want built — ${agentAlias} is ready to help.`}
         </p>
       </div>
     )

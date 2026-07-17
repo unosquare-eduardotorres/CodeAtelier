@@ -62,14 +62,14 @@ describe('EventLoggerService — log methods callable', () => {
   test('logSessionStarted_does_not_throw', () => {
     eventLoggerService.logSessionStarted({
       sessionId: 'test-session',
-      agentId: 'da-vinci',
+      agentId: 'specialist',
       model: 'claude-sonnet-4-6'
     })
   })
 
   test('logSessionFailed_does_not_throw', () => {
     eventLoggerService.logSessionFailed({
-      agentId: 'da-vinci',
+      agentId: 'specialist',
       error: 'Connection timeout'
     })
   })
@@ -186,7 +186,7 @@ describe('EventLoggerService — log methods callable', () => {
 
   test('logAgentToolCall_does_not_throw', () => {
     eventLoggerService.logAgentToolCall({
-      agentId: 'da-vinci',
+      agentId: 'specialist',
       toolName: 'Read',
       toolCallNumber: 3
     })
@@ -194,7 +194,7 @@ describe('EventLoggerService — log methods callable', () => {
 
   test('logAgentTimeout_does_not_throw', () => {
     eventLoggerService.logAgentTimeout({
-      agentId: 'da-vinci',
+      agentId: 'specialist',
       elapsedMs: 300000,
       toolCallCount: 25
     })

@@ -41,6 +41,7 @@ import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
 import { omlxEmbeddingProvider } from './services/omlx-embedding.service'
 import { cleanupStalePromptFiles } from './services/cli-executor'
+import { notificationService } from './services/notification.service'
 
 // Augment PATH to include Homebrew and npm global bin directories
 // CRITICAL: Ensures child_process.spawn() can locate binaries like 'opencode',
@@ -374,6 +375,17 @@ function createWindow(): void {
     turnUsageRepository.pruneOlderThan(90)
   } catch (error) {
     dbLogger.debug('Token usage pruning on startup failed (non-critical):', error)
+  }
+
+  // Initialize notification service with main window + load preference
+  notificationService.setMainWindow(mainWindow)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids circular dep
+    const { appPreferenceRepository } = require('./db/repositories')
+    const prefs = appPreferenceRepository.getAppPreferences()
+    notificationService.setEnabled(prefs.notificationsEnabled)
+  } catch {
+    /* non-fatal — default to enabled */
   }
 
   // Register IPC handlers

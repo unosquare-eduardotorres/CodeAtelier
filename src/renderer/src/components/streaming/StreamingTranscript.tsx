@@ -15,10 +15,12 @@
  * sharing one renderer and one streaming cadence.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import { MessageBubble } from '@renderer/components/chat'
 import type { MessageIdentity } from '@renderer/components/chat'
+import ScrollToBottomButton from '@renderer/components/chat/ScrollToBottomButton'
 import ThinkingIndicator from './ThinkingIndicator'
+import { useStreamScroll } from './useStreamScroll'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { Message, ToolActivity } from '../../../../shared/types'
 
@@ -79,7 +81,7 @@ export default function StreamingTranscript<T>({
   suppressLiveBubble = false,
   header,
   footer,
-  className = 'flex-1 overflow-y-auto px-6 py-6',
+  className = 'overflow-y-auto px-6 py-6',
   innerClassName = 'max-w-3xl mx-auto space-y-4',
   scrollDeps = []
 }: StreamingTranscriptProps<T>): React.JSX.Element {
@@ -101,7 +103,7 @@ export default function StreamingTranscript<T>({
     () => ({
       id: LIVE_MESSAGE_ID,
       conversationId: 'streaming',
-      role: 'da-vinci',
+      role: 'specialist',
       contentMd: liveContent,
       attachmentsJson: '[]',
       createdAt: new Date().toISOString()
@@ -112,12 +114,9 @@ export default function StreamingTranscript<T>({
   // Stable signal for caller-supplied scroll deps (avoids a spread in the array).
   const scrollSignal = useMemo(() => JSON.stringify(scrollDeps), [scrollDeps])
 
-  // Built-in auto-scroll: pin to bottom as content streams in.
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [
+  // Sticky-bottom auto-scroll: pauses when the user scrolls up,
+  // resumes when they scroll back to the bottom or click the button.
+  const { isPinned, scrollToBottom } = useStreamScroll(scrollRef, [
     liveContent,
     segments.length,
     liveToolActivities.length,
@@ -129,52 +128,55 @@ export default function StreamingTranscript<T>({
   const hasLiveContent = liveContent.trim().length > 0
 
   return (
-    <div ref={scrollRef} data-testid="streaming-transcript" className={className}>
-      <div className={innerClassName}>
-        {header}
+    <div className="relative flex-1 min-h-0 overflow-hidden">
+      <div ref={scrollRef} data-testid="streaming-transcript" className={className + ' h-full'}>
+        <div className={innerClassName}>
+          {header}
 
-        {messages.map((message, index) => renderMessage(message, index))}
+          {messages.map((message, index) => renderMessage(message, index))}
 
-        {isStreaming && (
-          <>
-            {hasLiveContent && !suppressLiveBubble ? (
-              /* Live content exists: tools render INSIDE the bubble via BubbleFooterActions,
-               * and a slim typing-dots row beneath signals "still working" without a
-               * second avatar/bubble/label (fixes the duplicate "Analyzing…" bubble). */
-              <>
-                <MessageBubble
-                  message={liveMessage}
-                  identityOverride={identity}
-                  isStreaming
-                  toolActivities={liveToolActivities}
-                />
-                {/* Slim typing dots — no avatar, no bubble chrome */}
-                <div className="flex justify-start pl-14">
-                  <div className="flex items-center gap-1.5 py-1 px-2">
-                    <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-                    <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-                    <span className="typing-dot" style={{ animationDelay: '300ms' }} />
+          {isStreaming && (
+            <>
+              {hasLiveContent && !suppressLiveBubble ? (
+                /* Live content exists: tools render INSIDE the bubble via BubbleFooterActions,
+                 * and a slim typing-dots row beneath signals "still working" without a
+                 * second avatar/bubble/label (fixes the duplicate "Analyzing…" bubble). */
+                <>
+                  <MessageBubble
+                    message={liveMessage}
+                    identityOverride={identity}
+                    isStreaming
+                    toolActivities={liveToolActivities}
+                  />
+                  {/* Slim typing dots — no avatar, no bubble chrome */}
+                  <div className="flex justify-start pl-14">
+                    <div className="flex items-center gap-1.5 py-1 px-2">
+                      <span className="typing-dot" style={{ animationDelay: '0ms' }} />
+                      <span className="typing-dot" style={{ animationDelay: '150ms' }} />
+                      <span className="typing-dot" style={{ animationDelay: '300ms' }} />
+                    </div>
                   </div>
-                </div>
-              </>
-            ) : (
-              /* No live content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
-              <ThinkingIndicator
-                identity={{
-                  name: identity.displayName,
-                  avatarKey: identity.avatarKey,
-                  accentColor: identity.accentColor
-                }}
-                toolActivities={liveToolActivities}
-                label={thinkingLabel}
-                showHookIndicator={showHookIndicator}
-              />
-            )}
-          </>
-        )}
+                </>
+              ) : (
+                /* No live content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
+                <ThinkingIndicator
+                  identity={{
+                    name: identity.displayName,
+                    avatarKey: identity.avatarKey,
+                    accentColor: identity.accentColor
+                  }}
+                  toolActivities={liveToolActivities}
+                  label={thinkingLabel}
+                  showHookIndicator={showHookIndicator}
+                />
+              )}
+            </>
+          )}
 
-        {footer}
+          {footer}
+        </div>
       </div>
+      <ScrollToBottomButton visible={!isPinned} onClick={scrollToBottom} />
     </div>
   )
 }

@@ -60,7 +60,7 @@ test.describe('Agent Team Management', () => {
 
     await expect(section).toBeVisible()
 
-    // At least one agent card should be present (built-in Da Vinci)
+    // At least one agent card should be present (built-in specialist)
     const agentCards = page.locator('[data-testid^="agent-card-"]')
     const cardCount = await agentCards.count()
     expect(cardCount).toBeGreaterThanOrEqual(1)

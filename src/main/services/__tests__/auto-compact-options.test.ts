@@ -42,7 +42,7 @@ function makeHost(opts: { alive: boolean }): MockHost {
     currentConversationId: null, // skips conversation-repo lookups (effort/thinking budget)
     currentMode: 'plan',
     effectiveContextWindow: 0,
-    adapter: { role: 'da-vinci', agentId: 'da-vinci-test' },
+    adapter: { role: 'specialist', agentId: 'da-vinci-test' },
     cliExecutor: { isAlive: () => opts.alive },
     log: { info: () => {}, warn: () => {}, error: () => {} }
   }

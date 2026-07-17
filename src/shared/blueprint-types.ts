@@ -197,6 +197,8 @@ export interface BlueprintPhaseCompletePayload {
   error?: string
   /** When true, an automatic retry has been scheduled for this transient failure. */
   autoRetry?: boolean
+  /** True when verify found gaps and a remediation build round is starting. */
+  remediationTriggered?: boolean
   /** Phase completion metrics (tasksCompleted, filesCreated, recommendation, etc.) */
   completionMetrics?: Record<string, unknown>
 }

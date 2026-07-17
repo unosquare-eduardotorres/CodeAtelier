@@ -1,7 +1,7 @@
 /**
  * Blueprint Verify Adapter — read-only + Bash agent that performs adversarial verification.
  *
- * CLI config: --permission-mode plan, --effort xhigh, goalMode: enforce (/goal via stdin)
+ * CLI config: --permission-mode acceptEdits, --effort xhigh, goalMode: enforce (/goal via stdin)
  *
  * Key difference from other blueprint adapters: overrides buildMcpConfig() to add
  * Bash + ListDir while keeping Write/Edit disabled. The verify prompt calls for

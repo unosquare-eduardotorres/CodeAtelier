@@ -78,7 +78,7 @@ export class ConversationLifecycle {
 
   /**
    * Clean shutdown — runs all disposers in order, then resets state.
-   * Call when the full pipeline (generalist + specialists) completes successfully.
+   * Call when the full streaming pipeline completes successfully.
    */
   complete(): void {
     log.info(

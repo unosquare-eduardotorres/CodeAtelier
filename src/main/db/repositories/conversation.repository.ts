@@ -108,16 +108,6 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     return mapRow(row)
   }
 
-  updatePersona(
-    conversationId: string,
-    personaSpecialistId: string | null
-  ): Conversation | undefined {
-    const row = this.db()
-      .prepare(`UPDATE conversations SET persona_specialist_id = ? WHERE id = ? RETURNING *`)
-      .get(personaSpecialistId, conversationId) as ConversationRow | undefined
-    return row ? mapRow(row) : undefined
-  }
-
   findByWorkspace(workspaceId: string): Conversation[] {
     const rows = this.db()
       .prepare(

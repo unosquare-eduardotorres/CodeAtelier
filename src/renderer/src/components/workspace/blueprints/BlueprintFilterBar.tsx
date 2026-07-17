@@ -35,7 +35,7 @@ export default function BlueprintFilterBar({
             onClick={() => onFilterChange(tab.value)}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
               filter === tab.value
-                ? 'bg-emerald-500/20 text-emerald-400'
+                ? 'bg-accent-muted text-accent'
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-float'
             }`}
           >
@@ -56,12 +56,12 @@ export default function BlueprintFilterBar({
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search blueprints..."
-          className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500/50 transition-colors"
+          className="w-full pl-8 pr-3 py-2 rounded-lg bg-surface-overlay border border-border-subtle text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent/50 transition-colors"
         />
       </div>
       <button
         onClick={onNewBlueprint}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-colors ml-auto"
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-muted hover:bg-accent/20 text-accent rounded-lg transition-colors ml-auto"
       >
         <Plus size={14} />
         New Blueprint

@@ -111,7 +111,7 @@ test.describe('Workspace CRUD', () => {
     // StatusBar should be visible and show workspace name
     await expect(chrome.statusBar).toBeVisible()
 
-    // StatusBar should contain agent status indicator (Da Vinci dot)
+    // StatusBar should contain agent status indicator (specialist dot)
     const statusBarText = await chrome.statusBar.textContent()
     expect(statusBarText?.length).toBeGreaterThan(0)
   })

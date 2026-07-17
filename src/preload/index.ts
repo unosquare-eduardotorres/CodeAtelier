@@ -74,6 +74,19 @@ import type {
   E2EResultDetail,
   E2EProgressEvent
 } from '../shared/types'
+import type {
+  HandoffRecord,
+  HandoffSource,
+  HandoffTarget,
+  HandoffPriority,
+  HandoffRenderFormat,
+  CompletedStep,
+  RemainingStep,
+  HandoffDecision,
+  HandoffRisk,
+  ArtifactRef,
+  CodeAnchor,
+} from '../shared/handoff-types'
 
 const api = {
   // ── Workspace ──
@@ -161,10 +174,7 @@ const api = {
     communicationTone?: CommunicationTone | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
-  updatePersona: (args: {
-    conversationId: string
-    personaSpecialistId: string | null
-  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_PERSONA, args),
+
 
   updateMcpOverrides: (args: {
     conversationId: string
@@ -210,12 +220,7 @@ const api = {
   compactConversation: (args?: { extractNuance?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, args),
 
-  /**
-   * Accept DaVinci's specialist-swap proposal — tears down the DaVinci session
-   * and rebuilds as the workspace's ready Project Specialist.
-   */
-  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST, args),
+
 
   // Chat commands
   completeConversation: (args: {
@@ -1063,7 +1068,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_LIST),
 
   upsertCoreAgentAlias: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     alias: string | null
     avatarKey: string | null
   }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args),
@@ -1073,19 +1078,19 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST),
 
   getCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }): Promise<CoreAgentPrompt | undefined> =>
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_GET, args),
 
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
     promptText: string
   }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
 
   resetCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
 
@@ -1746,6 +1751,10 @@ const api = {
     outcomeCounts: Record<string, number>
   }> => ipcRenderer.invoke(IPC_CHANNELS.STREAM_METRICS_GET),
 
+  // Persist plan card action on a message
+  chatSetPlanAction: (args: { messageId: string; action: string }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SET_PLAN_ACTION, args),
+
   // Chat resume at checkpoint — undo to a specific message point
   chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args),
@@ -1965,7 +1974,7 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
   },
 
-  grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
+  grillCondenseRequirement: (args: { text: string; workspaceId?: string }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
   grillGeneratePlan: (args: {
@@ -2430,6 +2439,18 @@ const api = {
     response: unknown
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RESPONSE, args),
 
+  /** Listen for OS notification click-to-navigate events. */
+  onNotificationNavigate: (
+    cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { workspaceId: string; targetPage: string; entityId?: string }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
+  },
+
   /** Listen for completion/failure notifications from background workspaces. */
   onCompletionNotification: (
     cb: (data: {
@@ -2438,6 +2459,8 @@ const api = {
       service: string
       status: string
       summary: string
+      targetPage?: string
+      entityId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2448,6 +2471,8 @@ const api = {
         service: string
         status: string
         summary: string
+        targetPage?: string
+        entityId?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COMPLETION_NOTIFICATION, handler)
@@ -2641,7 +2666,7 @@ const api = {
       blueprintId: string
       workspaceId: string
       phase: string
-      artifact: { type: string; contentMd?: string; contentJson?: unknown }
+      artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2650,7 +2675,7 @@ const api = {
         blueprintId: string
         workspaceId: string
         phase: string
-        artifact: { type: string; contentMd?: string; contentJson?: unknown }
+        artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, handler)
@@ -2925,6 +2950,114 @@ const api = {
 
   councilDeleteSession: (args: { sessionId: string }): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_DELETE_SESSION, args),
+
+  // ── Unified Handoff Protocol ──
+
+  handoffCreate: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    extensions?: Record<string, unknown>
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    expiresAt?: string
+  }): Promise<HandoffRecord> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_CREATE, args),
+
+  handoffExecute: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    extensions?: Record<string, unknown>
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    expiresAt?: string
+  }): Promise<{ record: HandoffRecord; action: unknown }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_EXECUTE, args),
+
+  handoffAccept: (args: {
+    handoffId: string
+    targetSessionId: string
+  }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_ACCEPT, args),
+
+  handoffReject: (args: {
+    handoffId: string
+    reason: string
+  }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_REJECT, args),
+
+  handoffGetHistory: (args: {
+    workspaceId: string
+    limit?: number
+  }): Promise<HandoffRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_GET_HISTORY, args),
+
+  handoffGetChain: (args: {
+    handoffId: string
+  }): Promise<HandoffRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_GET_CHAIN, args),
+
+  handoffPreview: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    format?: HandoffRenderFormat
+  }): Promise<{ envelope: unknown; markdown: string; action: unknown }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_PREVIEW, args),
 
   // ── E2E Testing ──
 

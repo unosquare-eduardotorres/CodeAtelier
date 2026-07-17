@@ -146,7 +146,7 @@ export class BlueprintReviewService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      const completion = parsePhaseCompletionBlock(text, 'review') ?? undefined
 
       // 8. Save phase artifact
       if (reviewPhase) {

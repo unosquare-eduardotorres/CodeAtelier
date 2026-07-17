@@ -138,7 +138,7 @@ function handleMessageChunk(
   if (data.turnBoundary && data.turnId) {
     actions.finalizeTurnBubble(
       data.turnId,
-      data.role as 'da-vinci' | 'specialist',
+      data.role as 'specialist',
       (data as Record<string, unknown>).specialist as string | undefined
     )
     return
@@ -147,7 +147,7 @@ function handleMessageChunk(
   if (data.chunk) {
     actions.appendStreamChunk(
       data.chunk,
-      data.role as 'da-vinci' | 'specialist',
+      data.role as 'specialist',
       data.taskId,
       data.specialist,
       data.requestId
@@ -155,7 +155,7 @@ function handleMessageChunk(
   }
   if (!data.chunk && data.role) {
     actions.updateStreamingIdentity(
-      data.role as 'da-vinci' | 'specialist',
+      data.role as 'specialist',
       data.taskId,
       data.specialist
     )

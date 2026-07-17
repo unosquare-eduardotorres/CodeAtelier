@@ -97,6 +97,7 @@ export interface MessageCardRendererProps {
   onRefine: () => void
   onSaveAsIdea?: () => void
   onCouncilReview?: () => void
+  planActionTaken?: string
 }
 
 /**
@@ -114,7 +115,8 @@ export default function MessageCardRenderer({
   onBuildNow,
   onRefine,
   onSaveAsIdea,
-  onCouncilReview
+  onCouncilReview,
+  planActionTaken
 }: MessageCardRendererProps): React.JSX.Element | null {
   const {
     planContent,
@@ -184,6 +186,7 @@ export default function MessageCardRenderer({
           onSaveAsIdea={onSaveAsIdea}
           onRefine={onRefine}
           onCouncilReview={onCouncilReview}
+          planActionTaken={planActionTaken}
         />
       </div>
     )

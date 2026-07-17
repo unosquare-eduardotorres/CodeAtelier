@@ -17,7 +17,7 @@ describe('/btw prompt construction', () => {
   test('context text is built from role + content of recent messages', () => {
     const messages = [
       { role: 'user', contentMd: 'How do I add a new route?' },
-      { role: 'da-vinci', contentMd: 'You can add a route in src/routes/...' }
+      { role: 'specialist', contentMd: 'You can add a route in src/routes/...' }
     ]
 
     const contextText = messages
@@ -25,7 +25,7 @@ describe('/btw prompt construction', () => {
       .join('\n\n')
 
     assert.ok(contextText.includes('[user]: How do I add a new route?'))
-    assert.ok(contextText.includes('[da-vinci]: You can add a route'))
+    assert.ok(contextText.includes('[specialist]: You can add a route'))
   })
 
   test('content is truncated to 2000 chars per message', () => {
@@ -42,7 +42,7 @@ describe('/btw prompt construction', () => {
   test('null/undefined contentMd falls back to empty string', () => {
     const messages = [
       { role: 'user', contentMd: null as string | null },
-      { role: 'da-vinci', contentMd: undefined as string | undefined }
+      { role: 'specialist', contentMd: undefined as string | undefined }
     ]
 
     const contextText = messages
@@ -50,7 +50,7 @@ describe('/btw prompt construction', () => {
       .join('\n\n')
 
     assert.ok(contextText.includes('[user]: '))
-    assert.ok(contextText.includes('[da-vinci]: '))
+    assert.ok(contextText.includes('[specialist]: '))
   })
 
   test('CLI args include --code when repoPath is provided', () => {

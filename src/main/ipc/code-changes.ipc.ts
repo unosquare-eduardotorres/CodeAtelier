@@ -5,6 +5,8 @@ import { repoService } from '../services/repo.service'
 import { githubService } from '../services/github.service'
 import { workspaceRepository, conversationRepository, messageRepository } from '../db/repositories'
 import { runOneShotClaude } from '../services/one-shot-claude'
+import { modelConfigService } from '../services/model-config.service'
+import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 
@@ -154,11 +156,17 @@ Respond with ONLY the commit message, no preamble or explanation.`
         /* best-effort attribution */
       }
 
+      // Resolve model from workspace settings (respects user overrides)
+      const resolvedModel = workspaceId
+        ? modelConfigService.getModelById(workspaceId, 'commit-message')
+        : DEFAULT_MODEL_CONFIG['commit-message']
+
       const { text: result } = await runOneShotClaude({
         feature: 'commit_message',
+        model: resolvedModel,
         workspaceId,
         conversationId,
-        args: ['-p', prompt],
+        args: ['-p', prompt, '--model', resolvedModel],
         cli: {
           timeout: 30_000
         }

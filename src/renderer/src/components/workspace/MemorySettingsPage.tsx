@@ -264,8 +264,8 @@ export default function MemorySettingsPage(): React.JSX.Element {
                 setDedupResult(null)
                 const result = await scanForDuplicates(workspaceId)
                 setDedupResult(
-                  result.pairsFound > 0
-                    ? `Found ${result.pairsFound} duplicate pair${result.pairsFound !== 1 ? 's' : ''}`
+                  (result.clustersFound > 0 || result.autoMerged > 0)
+                    ? `Found ${result.clustersFound} cluster${result.clustersFound !== 1 ? 's' : ''}, auto-merged ${result.autoMerged}`
                     : 'No duplicates found'
                 )
                 setDedupScanning(false)

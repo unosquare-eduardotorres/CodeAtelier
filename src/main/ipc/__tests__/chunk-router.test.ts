@@ -29,7 +29,7 @@ function ctx(conversationId: string, window: BrowserWindow): ChunkRouterContext 
   return {
     mainWindow: window,
     conversationId,
-    role: 'da-vinci',
+    role: 'specialist',
     contentAccumulator: { value: '' }
   }
 }

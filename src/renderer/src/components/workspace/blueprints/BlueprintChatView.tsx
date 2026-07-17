@@ -12,6 +12,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { Send, SkipForward, MessageSquare, CheckCircle2 } from 'lucide-react'
 import { useBlueprintStreamStore } from '@renderer/store/blueprint-stream.store'
 import { Avatar } from '@renderer/components/common'
+import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import { MessageBubble } from '@renderer/components/chat'
 import type { MessageIdentity } from '@renderer/components/chat'
 import { QuestionItem } from '@renderer/components/chat/GrillQuestionCard'
@@ -282,7 +283,7 @@ function BlueprintQuestionFooter({
 
 // ── Message-history renderer ────────────────────────────────────────────────
 
-function renderBlueprintMessage(msg: BlueprintChatMessage, i: number): React.ReactNode {
+function renderBlueprintMessage(msg: BlueprintChatMessage, i: number, avatarSize: 'md' | 'lg' | 'xl'): React.ReactNode {
   switch (msg.type) {
     case 'agent':
       return (
@@ -300,7 +301,7 @@ function renderBlueprintMessage(msg: BlueprintChatMessage, i: number): React.Rea
             {msg.content}
           </div>
           <div className="flex-shrink-0 mt-0.5">
-            <Avatar avatarKey="user" size="md" />
+            <Avatar avatarKey="user" size={avatarSize} />
           </div>
         </div>
       )
@@ -344,6 +345,8 @@ export default function BlueprintChatView({
   isStreaming,
   footer
 }: BlueprintChatViewProps): React.JSX.Element {
+  const avatarSize = useChatAvatarSize()
+
   // Read live streaming state for progressive rendering.
   const segments = useBlueprintStreamStore((s) => s.segments)
   const currentContent = useBlueprintStreamStore((s) => s.currentContent)
@@ -353,7 +356,7 @@ export default function BlueprintChatView({
     <div data-testid="blueprint-chat-view" className="flex flex-col h-full min-h-0">
       <StreamingTranscript
         messages={messages}
-        renderMessage={renderBlueprintMessage}
+        renderMessage={(msg, i) => renderBlueprintMessage(msg, i, avatarSize)}
         segments={segments}
         currentContent={currentContent}
         currentToolActivities={currentToolActivities}
@@ -364,7 +367,7 @@ export default function BlueprintChatView({
         transformContent={stripBlueprintBlocks}
         footer={footer}
         scrollDeps={[isStreaming, messages.length]}
-        innerClassName="max-w-5xl w-full mx-auto space-y-4"
+        innerClassName="max-w-7xl w-full mx-auto space-y-4"
       />
     </div>
   )

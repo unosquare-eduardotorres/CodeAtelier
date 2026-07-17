@@ -33,7 +33,7 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
   }
 
   protected getModelAction(): import('../../../../shared/types').ModelAction {
-    return 'da-vinci:build' // Builder uses build-tier model
+    return 'specialist:build' // Builder uses build-tier model
   }
 
   protected buildPhaseSystemPrompt(): string {

@@ -8,7 +8,7 @@
  * Read-only — no input box, audits are fully automated.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import type { AuditTrackId } from '../../../../shared/types'
 import { useAuditStore } from '@renderer/store'
 import { MessageBubble } from '@renderer/components/chat'
@@ -16,6 +16,8 @@ import type { MessageIdentity } from '@renderer/components/chat'
 import { auditSegmentToMessage } from '@renderer/utils/auditMessageAdapter'
 import AuditThinkingIndicator from './AuditThinkingIndicator'
 import AuditResultBubble from './AuditResultBubble'
+import ScrollToBottomButton from '@renderer/components/chat/ScrollToBottomButton'
+import { useStreamScroll } from '@renderer/components/streaming'
 
 interface AuditStreamViewProps {
   trackId: AuditTrackId
@@ -50,46 +52,49 @@ export default function AuditStreamView({
     [trackName]
   )
 
-  // Auto-scroll on new content
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [currentContent, currentToolActivities.length, segments.length])
+  // Sticky-bottom auto-scroll: pauses when user scrolls up.
+  const { isPinned, scrollToBottom } = useStreamScroll(scrollRef, [
+    currentContent,
+    currentToolActivities.length,
+    segments.length
+  ])
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
-      {hasAnyContent ? (
-        <>
-          {/* Finalized segments — rendered as clean chat bubbles (reveal-on-finalize) */}
-          {segments.map((seg, i) => (
-            <MessageBubble
-              key={`seg-${i}`}
-              message={auditSegmentToMessage(seg.content, seg.toolActivities, i)}
-              toolActivities={seg.toolActivities}
-              identityOverride={auditIdentity}
-            />
-          ))}
+    <div className="relative flex-1 min-h-0 overflow-hidden">
+      <div ref={scrollRef} className="overflow-y-auto h-full p-6 space-y-4">
+        {hasAnyContent ? (
+          <>
+            {/* Finalized segments — rendered as clean chat bubbles (reveal-on-finalize) */}
+            {segments.map((seg, i) => (
+              <MessageBubble
+                key={`seg-${i}`}
+                message={auditSegmentToMessage(seg.content, seg.toolActivities, i)}
+                toolActivities={seg.toolActivities}
+                identityOverride={auditIdentity}
+              />
+            ))}
 
-          {/* In-progress analysis — thinking dots + live tools instead of a stuttering bubble */}
-          {isStreaming && (
-            <AuditThinkingIndicator trackName={trackName} toolActivities={currentToolActivities} />
-          )}
+            {/* In-progress analysis — thinking dots + live tools instead of a stuttering bubble */}
+            {isStreaming && (
+              <AuditThinkingIndicator trackName={trackName} toolActivities={currentToolActivities} />
+            )}
 
-          {isCompleted && trackResult && (
-            <AuditResultBubble
-              score={trackResult.score ?? 0}
-              summary={trackResult.summary ?? ''}
-              trackName={trackName}
-              findingsCount={trackResult.findings.length}
-            />
-          )}
-        </>
-      ) : isStreaming ? (
-        <AuditThinkingIndicator trackName={trackName} toolActivities={[]} />
-      ) : (
-        <span className="text-text-muted text-sm italic">Waiting to start…</span>
-      )}
+            {isCompleted && trackResult && (
+              <AuditResultBubble
+                score={trackResult.score ?? 0}
+                summary={trackResult.summary ?? ''}
+                trackName={trackName}
+                findingsCount={trackResult.findings.length}
+              />
+            )}
+          </>
+        ) : isStreaming ? (
+          <AuditThinkingIndicator trackName={trackName} toolActivities={[]} />
+        ) : (
+          <span className="text-text-muted text-sm italic">Waiting to start…</span>
+        )}
+      </div>
+      <ScrollToBottomButton visible={!isPinned} onClick={scrollToBottom} />
     </div>
   )
 }

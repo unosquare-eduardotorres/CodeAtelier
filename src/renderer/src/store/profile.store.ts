@@ -15,13 +15,13 @@ interface ProfileState {
   // Core Agent Prompts
   loadCoreAgentPrompts: () => Promise<void>
   saveCoreAgentPrompt: (
-    agentRole: 'da-vinci',
+    agentRole: 'specialist',
     mode: 'plan' | 'build' | 'danger',
     promptText: string
   ) => Promise<void>
-  resetCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger') => Promise<void>
+  resetCoreAgentPrompt: (agentRole: 'specialist', mode: 'plan' | 'build' | 'danger') => Promise<void>
   getCoreAgentPrompt: (
-    agentRole: 'da-vinci',
+    agentRole: 'specialist',
     mode: 'plan' | 'build' | 'danger'
   ) => CoreAgentPrompt | undefined
 }
@@ -100,7 +100,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   },
 
   saveCoreAgentPrompt: async (
-    agentRole: 'da-vinci',
+    agentRole: 'specialist',
     mode: 'plan' | 'build' | 'danger',
     promptText: string
   ) => {
@@ -118,7 +118,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     }
   },
 
-  resetCoreAgentPrompt: async (agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger') => {
+  resetCoreAgentPrompt: async (agentRole: 'specialist', mode: 'plan' | 'build' | 'danger') => {
     try {
       const updated = await window.api.resetCoreAgentPrompt({ agentRole, mode })
       set((state) => ({
@@ -133,7 +133,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     }
   },
 
-  getCoreAgentPrompt: (agentRole: 'da-vinci', mode: 'plan' | 'build' | 'danger') => {
+  getCoreAgentPrompt: (agentRole: 'specialist', mode: 'plan' | 'build' | 'danger') => {
     return get().coreAgentPrompts.find((p) => p.agentRole === agentRole && p.mode === mode)
   }
 }))

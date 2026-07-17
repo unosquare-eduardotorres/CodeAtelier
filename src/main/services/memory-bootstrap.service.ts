@@ -993,13 +993,13 @@ class MemoryBootstrapService {
 // ── Deep Scan Prompt Builder ────────────────────────────────────────────────
 
 function buildDeepScanPrompt(topFilesContext: string, existingFactsSummary: string): string {
-  return `You are a codebase exploration agent. Your job is to systematically explore this project and record non-obvious architectural facts using the memory_record tool.
+  return `You are a codebase exploration agent. Your job is to systematically explore this project and record non-obvious architectural facts using the mcp__memory__memory_record tool.
 
 ## Instructions
 
 1. Start by reading the project's main entry points, configuration files, and README.
-2. Use the code-graph tools (graph_map, file_outline, find_callers, find_references) to understand the architecture.
-3. For each important discovery, call memory_record with:
+2. Use the code-graph tools (mcp__code-graph__graph_map, mcp__code-graph__file_outline, mcp__code-graph__find_callers, mcp__code-graph__find_references) to understand the architecture.
+3. For each important discovery, call mcp__memory__memory_record with:
    - A clear, concise title (5-15 words)
    - Actionable content (1-3 sentences)
    - Appropriate category: "decision", "convention", "gotcha", "preference", or "reference"
@@ -1021,7 +1021,7 @@ function buildDeepScanPrompt(topFilesContext: string, existingFactsSummary: stri
 - Record max 30 facts — quality over quantity
 - Only non-obvious facts (skip things discoverable from a single file read)
 - Each fact must be self-contained and actionable
-- Use memory_search before recording to avoid duplicates
+- Use mcp__memory__memory_search before recording to avoid duplicates
 - Focus on decisions, constraints, and gotchas — not descriptions
 ${topFilesContext}
 ${existingFactsSummary}

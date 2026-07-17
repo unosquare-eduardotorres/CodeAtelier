@@ -15,6 +15,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { GATE_ICON } from './phase-icons'
+import { stripBlueprintBlocks } from '../../../../../shared/blueprint-clarify-parsers'
 
 // ── Types ──
 
@@ -234,7 +235,7 @@ export default function BlueprintApprovalGate({
                 prose-li:text-sm prose-li:text-text-body
               ">
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                  {reviewMarkdown!}
+                  {stripBlueprintBlocks(reviewMarkdown!)}
                 </ReactMarkdown>
               </div>
             </div>
@@ -254,7 +255,7 @@ export default function BlueprintApprovalGate({
             prose-li:text-sm prose-li:text-text-body
           ">
             <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-              {planSummary}
+              {stripBlueprintBlocks(planSummary)}
             </ReactMarkdown>
           </div>
         </div>

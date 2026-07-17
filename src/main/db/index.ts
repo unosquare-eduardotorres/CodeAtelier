@@ -1,8 +1,16 @@
 import Database from 'better-sqlite3'
-import { app } from 'electron'
+// Lazy Electron import — standalone MCP server processes run as plain Node.js
+// where `electron` is not available. The `app` object is only needed when
+// DB_PATH is not set (i.e., inside the Electron main process).
+function getElectronApp(): typeof import('electron').app {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('electron').app
+}
 import { join } from 'node:path'
-import { readFileSync, existsSync, renameSync } from 'node:fs'
+import { existsSync, renameSync } from 'node:fs'
 import { dbLogger } from '../logger'
+import SCHEMA_SQL from './schema.sql?raw'
+export { SCHEMA_SQL }
 import { DEFAULT_PROMPTS } from '../services/default-prompts'
 import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
 import { runDropSpecialistMcpColumnsMigration } from './migrations/drop-specialist-mcp-columns-migration'
@@ -15,7 +23,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 116
+const CURRENT_SCHEMA_VERSION = 120
 
 export interface Migration {
   version: number
@@ -796,7 +804,7 @@ export const migrations: Migration[] = [
     up: (db) => {
       // Migrate data from the separate description-cache.db into chunk_descriptions
       try {
-        const userDataPath = app.getPath('userData')
+        const userDataPath = getElectronApp().getPath('userData')
         const oldDbPath = join(userDataPath, 'description-cache.db')
         // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic native module import in migration
         const { existsSync } = require('node:fs') as typeof import('node:fs')
@@ -2972,6 +2980,263 @@ export const migrations: Migration[] = [
       `).run(newPlanPrompt, newPlanPrompt)
       dbLogger.info('[migration-116] ✓ Plan prompt updated with diagram styling + icon guidance')
     }
+  },
+
+  // ── Migration 117: Unify da-vinci → specialist ──
+  // Rewrites all persisted 'da-vinci' role/agent references to 'specialist'.
+  // The DaVinci agent concept is removed; ProjectSpecialistRoleAdapter is
+  // the only chat adapter. Historical 'da-vinci' messages are preserved
+  // as 'specialist' for rendering continuity.
+  {
+    version: 117,
+    name: 'unify-da-vinci-to-specialist',
+    up: (db) => {
+      // 0a. Rebuild core_agent_prompts CHECK to include 'specialist'
+      // The current CHECK (from migration 92) only allows ('da-vinci', 'generalist').
+      // We must widen it before UPDATE can set agent_role = 'specialist'.
+      const promptCols = (db.prepare('PRAGMA table_info(core_agent_prompts)').all() as Array<{ name: string }>)
+        .map(c => c.name).join(', ')
+      db.exec(`
+        CREATE TABLE core_agent_prompts_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          agent_role TEXT NOT NULL CHECK (agent_role IN ('specialist', 'da-vinci', 'generalist')),
+          mode TEXT NOT NULL CHECK (mode IN ('plan', 'build', 'danger')),
+          prompt_text TEXT NOT NULL,
+          default_prompt_text TEXT NOT NULL,
+          is_custom INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(agent_role, mode)
+        )
+      `)
+      db.exec(`INSERT INTO core_agent_prompts_new (${promptCols}) SELECT ${promptCols} FROM core_agent_prompts`)
+      db.exec('DROP TABLE core_agent_prompts')
+      db.exec('ALTER TABLE core_agent_prompts_new RENAME TO core_agent_prompts')
+
+      // 0b. Rebuild core_agent_aliases CHECK to include 'specialist'
+      // The current CHECK (from migration 70) only allows ('da-vinci').
+      db.exec(`
+        CREATE TABLE core_agent_aliases_new (
+          agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('specialist', 'da-vinci', 'generalist')),
+          alias TEXT DEFAULT NULL,
+          avatar_key TEXT DEFAULT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec('INSERT INTO core_agent_aliases_new SELECT * FROM core_agent_aliases')
+      db.exec('DROP TABLE core_agent_aliases')
+      db.exec('ALTER TABLE core_agent_aliases_new RENAME TO core_agent_aliases')
+
+      dbLogger.info('[migration-117] ✓ CHECK constraints rebuilt to include specialist')
+
+      // 1. Rewrite message roles
+      const msgResult = db.prepare(`
+        UPDATE messages SET role = 'specialist' WHERE role = 'da-vinci'
+      `).run()
+      dbLogger.info(`[migration-117] Rewrote ${msgResult.changes} message roles da-vinci → specialist`)
+
+      // 2. Rewrite core_agent_prompts agent_role
+      db.prepare(`
+        UPDATE core_agent_prompts SET agent_role = 'specialist' WHERE agent_role = 'da-vinci'
+      `).run()
+
+      // 3. Rewrite core_agent_aliases agent_role
+      db.prepare(`
+        UPDATE core_agent_aliases SET agent_role = 'specialist' WHERE agent_role = 'da-vinci'
+      `).run()
+
+      // 4. Rewrite agent_sessions agent_type
+      db.prepare(`
+        UPDATE agent_sessions SET agent_type = 'specialist' WHERE agent_type = 'da-vinci'
+      `).run()
+
+      // 5. Rewrite model overrides in workspace settings JSON
+      // Replace 'da-vinci' → 'specialist', 'da-vinci:plan' → 'specialist:plan',
+      // 'da-vinci:build' → 'specialist:build', 'project-specialist' → 'specialist',
+      // 'project-specialist:plan' → 'specialist:plan', 'project-specialist:build' → 'specialist:build'
+      const workspaces = db.prepare(`SELECT id, settings_json FROM workspaces WHERE settings_json IS NOT NULL`).all() as Array<{ id: string; settings_json: string }>
+      const updateSettings = db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`)
+      for (const ws of workspaces) {
+        if (!ws.settings_json || !ws.settings_json.includes('da-vinci') && !ws.settings_json.includes('project-specialist')) continue
+        let updated = ws.settings_json
+        // Order matters: replace longer keys first
+        updated = updated.replace(/"project-specialist:plan"/g, '"specialist:plan"')
+        updated = updated.replace(/"project-specialist:build"/g, '"specialist:build"')
+        updated = updated.replace(/"project-specialist"/g, '"specialist"')
+        updated = updated.replace(/"da-vinci:plan"/g, '"specialist:plan"')
+        updated = updated.replace(/"da-vinci:build"/g, '"specialist:build"')
+        updated = updated.replace(/"da-vinci"/g, '"specialist"')
+        // Remove specialistSwapAccepted (no longer needed)
+        try {
+          const parsed = JSON.parse(updated)
+          delete parsed.specialistSwapAccepted
+          updated = JSON.stringify(parsed)
+        } catch { /* leave as-is if parse fails */ }
+        if (updated !== ws.settings_json) {
+          updateSettings.run(updated, ws.id)
+        }
+      }
+
+      // 6. Rewrite events entries
+      db.prepare(`
+        UPDATE events SET agent_id = 'specialist' WHERE agent_id = 'da-vinci'
+      `).run()
+
+      // 7. Rewrite model preset action keys in llm_presets
+      const presets = db.prepare(
+        `SELECT id, action_config_json FROM llm_presets WHERE action_config_json IS NOT NULL`
+      ).all() as Array<{ id: string; action_config_json: string }>
+      const updatePreset = db.prepare(`UPDATE llm_presets SET action_config_json = ? WHERE id = ?`)
+      for (const preset of presets) {
+        if (!preset.action_config_json.includes('da-vinci') && !preset.action_config_json.includes('project-specialist')) continue
+        let updated = preset.action_config_json
+        // Order matters: replace longer keys first
+        updated = updated.replace(/"project-specialist:plan"/g, '"specialist:plan"')
+        updated = updated.replace(/"project-specialist:build"/g, '"specialist:build"')
+        updated = updated.replace(/"project-specialist"/g, '"specialist"')
+        updated = updated.replace(/"da-vinci:plan"/g, '"specialist:plan"')
+        updated = updated.replace(/"da-vinci:build"/g, '"specialist:build"')
+        updated = updated.replace(/"da-vinci"/g, '"specialist"')
+        if (updated !== preset.action_config_json) {
+          updatePreset.run(updated, preset.id)
+        }
+      }
+
+      dbLogger.info('[migration-117] ✓ Unified da-vinci → specialist across all tables')
+    }
+  },
+
+  // ── v118: Unified Handoff Protocol ────────────────────────────────
+  {
+    version: 118,
+    name: 'create-handoff-events-table',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS handoff_events (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          source TEXT NOT NULL CHECK (source IN ('chat','grill','audit','council','blueprint','mpa')),
+          target TEXT NOT NULL CHECK (target IN ('chat','grill','audit','council','blueprint','goals')),
+          envelope_json TEXT NOT NULL CHECK (json_valid(envelope_json)),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected','expired','failed')),
+          source_session_id TEXT,
+          target_session_id TEXT,
+          parent_handoff_id TEXT,
+          intent TEXT NOT NULL,
+          priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low','medium','high','critical')),
+          confidence REAL NOT NULL DEFAULT 0.5,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          accepted_at TEXT,
+          expires_at TEXT,
+          rejection_reason TEXT
+        )
+      `)
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_workspace ON handoff_events(workspace_id, created_at DESC)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_source ON handoff_events(source, source_session_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_status ON handoff_events(status) WHERE status = 'pending'`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_parent ON handoff_events(parent_handoff_id)`)
+
+      dbLogger.info('[migration-118] ✓ Created handoff_events table')
+    }
+  },
+
+  // ── v119: Memory system overhaul — dedup, consolidation, evidence-based promotion ──
+  {
+    version: 119,
+    name: 'memory-system-overhaul',
+    up: (db) => {
+      // ── 1. Purge all pending contradiction rows (review queue reset) ──
+      const purged = db.prepare(
+        `DELETE FROM memory_contradictions WHERE status = 'pending'`
+      ).run()
+      if (purged.changes > 0) {
+        dbLogger.info(`[migration-119] Purged ${purged.changes} pending contradiction rows`)
+      }
+
+      // ── 2. Add order-normalized UNIQUE index on contradiction pairs ──
+      // Prevents duplicate contradiction records for the same pair (A,B) or (B,A).
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_contradictions_pair
+          ON memory_contradictions(MIN(old_fact_id, new_fact_id), MAX(old_fact_id, new_fact_id))
+      `)
+
+      // ── 3. Add merged_into + volatile columns to memory_facts ──
+      // merged_into: points to the canonical fact after cluster merge
+      // volatile: facts matching version/count patterns always UPDATE-in-place
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN merged_into TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN volatile INTEGER NOT NULL DEFAULT 0`)
+
+      // ── 4. Create memory_confirmations table (event log replacing bare counter) ──
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_confirmations (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          fact_id TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+          source_type TEXT NOT NULL CHECK (source_type IN ('auto_dedup','human','tool','extraction','bootstrap')),
+          weight REAL NOT NULL DEFAULT 1.0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_confirmations_fact ON memory_confirmations(fact_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_confirmations_date ON memory_confirmations(created_at)`)
+
+      // ── 5. Backfill confirmation events from existing confirmation_count ──
+      // For each fact with confirmation_count > 0, insert that many auto_dedup events
+      // spread across the fact's lifetime so tier recalibration has data to work with.
+      const factsWithConfirms = db.prepare(
+        `SELECT id, confirmation_count, created_at FROM memory_facts WHERE confirmation_count > 0`
+      ).all() as Array<{ id: string; confirmation_count: number; created_at: string }>
+
+      const insertConfirm = db.prepare(
+        `INSERT INTO memory_confirmations (fact_id, source_type, weight, created_at) VALUES (?, 'auto_dedup', 0.5, ?)`
+      )
+      for (const fact of factsWithConfirms) {
+        for (let i = 0; i < fact.confirmation_count; i++) {
+          // All backfilled events get the fact's created_at (same day = won't satisfy day-spread rules)
+          insertConfirm.run(fact.id, fact.created_at)
+        }
+      }
+      if (factsWithConfirms.length > 0) {
+        dbLogger.info(`[migration-119] Backfilled confirmation events for ${factsWithConfirms.length} facts`)
+      }
+
+      // ── 6. Demote T3/T2 facts that lack human confirmation ──
+      // Any T3 (Wisdom) fact drops to T1; any T2 (Knowledge) drops to T1.
+      // They can re-earn their tier through the new evidence-based rules.
+      const demoted = db.prepare(
+        `UPDATE memory_facts SET tier = 1, updated_at = datetime('now')
+         WHERE tier >= 2 AND status = 'active'`
+      ).run()
+      if (demoted.changes > 0) {
+        dbLogger.info(`[migration-119] Demoted ${demoted.changes} T2/T3 facts to T1 for re-evaluation`)
+      }
+
+      // ── 7. Detect and flag volatile facts (version/count patterns) ──
+      const volatilePatterns = db.prepare(
+        `UPDATE memory_facts SET volatile = 1, updated_at = datetime('now')
+         WHERE status = 'active'
+           AND (
+             content LIKE '%schemaVersion%' OR content LIKE '%schema_version%'
+             OR content LIKE '%electronVersion%' OR content LIKE '%electron_version%'
+             OR content LIKE '%CURRENT_SCHEMA_VERSION%'
+             OR title LIKE '%version%' AND (content LIKE '%=%' OR content LIKE '%:%')
+           )`
+      ).run()
+      if (volatilePatterns.changes > 0) {
+        dbLogger.info(`[migration-119] Flagged ${volatilePatterns.changes} facts as volatile`)
+      }
+
+      dbLogger.info('[migration-119] ✓ Memory system overhaul complete')
+    }
+  },
+
+  // ── v120: Persist plan card action on messages ──
+  {
+    version: 120,
+    name: 'add-plan-action-to-messages',
+    up: (db) => {
+      db.exec(`ALTER TABLE messages ADD COLUMN plan_action TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-120] ✓ Added plan_action column to messages')
+    }
   }
 ]
 
@@ -3023,7 +3288,7 @@ export function getDatabase(): Database.Database {
 
   // Standalone MCP-server processes run as plain `node` (no Electron app global),
   // so `app.getPath()` is undefined and would crash. They pass DB_PATH explicitly.
-  const userDataDir = process.env.DB_PATH ?? app.getPath('userData')
+  const userDataDir = process.env.DB_PATH ?? getElectronApp().getPath('userData')
   const newDbPath = join(userDataDir, 'code-atelier.db')
   const oldDbPath = join(userDataDir, 'agent-studio.db')
 
@@ -3040,15 +3305,8 @@ export function getDatabase(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 
-  // Run schema (creates tables if not exist)
-  const schemaPath = join(__dirname, 'schema.sql')
-  try {
-    const schema = readFileSync(schemaPath, 'utf-8')
-    db.exec(schema)
-  } catch {
-    // If schema.sql isn't bundled, use inline schema
-    db.exec(SCHEMA_SQL)
-  }
+  // Run schema (creates tables if not exist) — inlined at build time via ?raw import
+  db.exec(SCHEMA_SQL)
 
   // Run versioned migrations (only pending ones).
   // Standalone MCP-server processes (spawned with DB_PATH) must NOT run migrations —
@@ -3232,155 +3490,4 @@ function seedDefaultSkills(database: Database.Database): void {
     )
 }
 
-export const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS workspaces (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  name TEXT NOT NULL,
-  repo_path TEXT NOT NULL UNIQUE,
-  git_remote_url TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  last_opened_at TEXT NOT NULL DEFAULT (datetime('now')),
-  settings_json TEXT DEFAULT '{}'
-);
 
-CREATE TABLE IF NOT EXISTS conversations (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  title TEXT NOT NULL DEFAULT 'New Conversation',
-  mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-  summary TEXT,
-  claude_session_id TEXT,
-  mcp_overrides_json TEXT DEFAULT '{}'
-);
-
-CREATE TABLE IF NOT EXISTS messages (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('user', 'coordinator', 'specialist', 'generalist')),
-  agent_id TEXT,
-  content_md TEXT NOT NULL,
-  attachments_json TEXT DEFAULT '[]',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS attachments (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  filename TEXT NOT NULL,
-  mime_type TEXT,
-  file_path TEXT NOT NULL,
-  extracted_text TEXT,
-  token_count INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS agent_sessions (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  task_id TEXT,
-  agent_type TEXT NOT NULL,
-  pid INTEGER,
-  status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'terminated')),
-  started_at TEXT NOT NULL DEFAULT (datetime('now')),
-  ended_at TEXT,
-  token_usage INTEGER DEFAULT 0,
-  stdout_log_path TEXT,
-  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-  workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS specialists (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  agent_id TEXT NOT NULL UNIQUE,
-  display_name TEXT NOT NULL,
-  icon TEXT NOT NULL DEFAULT '🔧',
-  color TEXT NOT NULL DEFAULT '#6366F1',
-  prompt TEXT DEFAULT '',
-  priority INTEGER NOT NULL DEFAULT 100,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  source_yaml TEXT DEFAULT NULL,
-  skill_recommendations_json TEXT DEFAULT NULL,
-  skill_recommendations_hash TEXT DEFAULT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS skills (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  name TEXT NOT NULL,
-  description TEXT DEFAULT '',
-  filename TEXT NOT NULL UNIQUE,
-  file_path TEXT NOT NULL,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  last_updated_date TEXT,
-  tier1_json TEXT,
-  tier2_instructions TEXT,
-  enrichment_json TEXT DEFAULT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS specialist_skills (
-  specialist_id TEXT NOT NULL REFERENCES specialists(id) ON DELETE CASCADE,
-  skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
-  PRIMARY KEY (specialist_id, skill_id)
-);
-
-CREATE TABLE IF NOT EXISTS agent_worktrees (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  agent_id TEXT NOT NULL,
-  task_id TEXT NOT NULL,
-  worktree_path TEXT NOT NULL,
-  branch_name TEXT NOT NULL,
-  base_branch TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active', 'merging', 'merged', 'conflict', 'abandoned', 'pruned')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  merged_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS bug_council_sessions (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
-  task_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  task_description TEXT NOT NULL,
-  failure_history_json TEXT NOT NULL DEFAULT '[]',
-  perspectives_json TEXT NOT NULL DEFAULT '[]',
-  synthesized_solution TEXT,
-  risk_assessment TEXT,
-  final_attempt_succeeded INTEGER,
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'analyzing', 'synthesizing', 'complete', 'failed')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  completed_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_bug_council_conversation ON bug_council_sessions(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_bug_council_task ON bug_council_sessions(task_id);
-
-CREATE TABLE IF NOT EXISTS council_sessions (
-  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
-  input_type TEXT NOT NULL CHECK (input_type IN ('plan', 'requirement', 'question')),
-  input_content TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'running'
-    CHECK (status IN ('running', 'completed', 'cancelled', 'failed')),
-  verdict_json TEXT,
-  transcript_md TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  completed_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_council_sessions_workspace ON council_sessions(workspace_id);
-
-CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
-CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
-CREATE INDEX IF NOT EXISTS idx_worktrees_conversation ON agent_worktrees(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_worktrees_status ON agent_worktrees(status);
-`

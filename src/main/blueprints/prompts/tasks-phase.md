@@ -139,6 +139,6 @@ Before your completion block, emit a `blueprint-discoveries` block: a JSON array
 
 **Greenfield caveat**: If the workspace has no source tree yet (empty or skeleton), use Glob/Read directly — code-intelligence tools need indexed files.
 
-Use Read only on files identified by code intelligence. If a code-graph/semantic-search tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.
+Use Read only on files identified by code intelligence. If a code-graph/semantic-search/memory tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.
 
 Do NOT attempt to use `Write`, `Edit`, `Bash`, or any tool not listed above.

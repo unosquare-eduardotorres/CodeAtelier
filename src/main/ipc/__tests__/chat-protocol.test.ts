@@ -26,12 +26,12 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'hello',
-      role: 'da-vinci'
+      role: 'specialist'
     })
     assert.deepEqual(msg, {
       conversationId: 'c1',
       chunk: 'hello',
-      role: 'da-vinci'
+      role: 'specialist'
     })
     assert.equal('requestId' in msg, false)
     assert.equal('phase' in msg, false)
@@ -43,7 +43,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'hi',
-      role: 'da-vinci',
+      role: 'specialist',
       requestId: 'req-9'
     })
     assert.equal(msg.requestId, 'req-9')
@@ -53,10 +53,10 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'hi',
-      role: 'da-vinci',
-      phase: 'da-vinci-responding'
+      role: 'specialist',
+      phase: 'specialist-responding'
     })
-    assert.equal(msg.phase, 'da-vinci-responding')
+    assert.equal(msg.phase, 'specialist-responding')
   })
 
   test('includes specialist+taskId for specialist messages', () => {
@@ -76,7 +76,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: '',
-      role: 'da-vinci'
+      role: 'specialist'
     })
     assert.equal(msg.chunk, '', 'empty text is preserved — caller decides semantics')
   })
@@ -85,7 +85,7 @@ describe('createTextChunk', () => {
     const msg = createTextChunk({
       conversationId: 'c1',
       text: 'x',
-      role: 'da-vinci',
+      role: 'specialist',
       requestId: ''
     })
     assert.equal('requestId' in msg, false, 'falsy requestId treated as absent')
@@ -96,7 +96,7 @@ describe('createToolActivityChunk', () => {
   test('always sets chunk to empty string', () => {
     const msg = createToolActivityChunk({
       conversationId: 'c1',
-      role: 'da-vinci',
+      role: 'specialist',
       toolActivity: { id: 'tool-1', toolName: 'Read' }
     })
     assert.equal(msg.chunk, '')
@@ -119,7 +119,7 @@ describe('createToolActivityChunk', () => {
   test('omits optionals when not provided', () => {
     const msg = createToolActivityChunk({
       conversationId: 'c1',
-      role: 'da-vinci',
+      role: 'specialist',
       toolActivity: { id: 't', toolName: 'Read' }
     })
     assert.equal('specialist' in msg, false)
@@ -132,7 +132,7 @@ describe('createTurnBoundary', () => {
   test('sets turnBoundary: true and chunk: empty string', () => {
     const msg = createTurnBoundary({
       conversationId: 'c1',
-      role: 'da-vinci',
+      role: 'specialist',
       turnId: 'turn-5'
     })
     assert.equal(msg.turnBoundary, true)
@@ -165,7 +165,7 @@ describe('createCompactNeeded', () => {
   test('wraps compactNeeded payload and leaves chunk empty', () => {
     const msg = createCompactNeeded({
       conversationId: 'c1',
-      role: 'da-vinci',
+      role: 'specialist',
       compactNeeded: { level: 'warning', inputTokens: 120000 }
     })
     assert.equal(msg.chunk, '')
@@ -175,7 +175,7 @@ describe('createCompactNeeded', () => {
   test('includes requestId when provided', () => {
     const msg = createCompactNeeded({
       conversationId: 'c1',
-      role: 'da-vinci',
+      role: 'specialist',
       requestId: 'req-77',
       compactNeeded: { level: 'critical', inputTokens: 180000 }
     })
@@ -233,16 +233,16 @@ describe('ChatProtocol — cross-cutting invariants', () => {
 
   test('conversationId is always present', () => {
     const builders = [
-      createTextChunk({ conversationId: 'c', text: '', role: 'da-vinci' }),
+      createTextChunk({ conversationId: 'c', text: '', role: 'specialist' }),
       createToolActivityChunk({
         conversationId: 'c',
-        role: 'da-vinci',
+        role: 'specialist',
         toolActivity: { id: '1', toolName: 'Read' }
       }),
-      createTurnBoundary({ conversationId: 'c', role: 'da-vinci', turnId: 't1' }),
+      createTurnBoundary({ conversationId: 'c', role: 'specialist', turnId: 't1' }),
       createCompactNeeded({
         conversationId: 'c',
-        role: 'da-vinci',
+        role: 'specialist',
         compactNeeded: { level: 'warning', inputTokens: 1 }
       }),
       createCompleteMessage({ conversationId: 'c', messageId: 'm' })

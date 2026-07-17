@@ -143,7 +143,7 @@ export class BlueprintTasksService extends EventEmitter {
 
       // 7. Parse output
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      const completion = parsePhaseCompletionBlock(text, 'tasks') ?? undefined
       const tasksJson = parseBlueprintTasks(text)
 
       // 8. Save phase artifact

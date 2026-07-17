@@ -50,7 +50,8 @@ export class AppPreferenceRepository extends BaseRepository<
       updateDrivePath: this.get('update_drive_path') ?? '',
       updateGithubOwner: this.get('update_github_owner') ?? '',
       updateGithubRepo: this.get('update_github_repo') ?? '',
-      context7ApiKey: this.get('context7_api_key') ?? ''
+      context7ApiKey: this.get('context7_api_key') ?? '',
+      notificationsEnabled: this.getBool('notifications_enabled', true)
     }
   }
 }

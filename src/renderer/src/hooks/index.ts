@@ -5,3 +5,4 @@ export {
   IMAGE_REGEX,
   IMAGE_ONLY_FALLBACK_PROMPT
 } from './useClipboardImagePaste'
+export { useChatAvatarSize } from './useChatAvatarSize'

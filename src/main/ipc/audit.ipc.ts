@@ -41,6 +41,8 @@ import {
 } from '../services/audit-agent.service'
 import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 import log from 'electron-log'
 
 const auditLog = log.scope('audit-ipc')
@@ -727,6 +729,20 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
           workspaceId,
           updatedRun as unknown as Record<string, unknown>
         )
+      }
+
+      // Skip user-initiated cancellations — no notification needed
+      if (finalStatus !== 'cancelled') {
+        notificationService.dispatch({
+          workspaceId,
+          workspaceName: resolveWorkspaceName(workspaceId),
+          service: 'audit',
+          status: 'completed',
+          summary: finalStatus === 'partial'
+            ? `Audit finished (partial) — overall score: ${data.overallScore ?? 'N/A'}`
+            : `Audit completed — overall score: ${data.overallScore ?? 'N/A'}`,
+          targetPage: 'audit'
+        })
       }
 
       auditLog.info(

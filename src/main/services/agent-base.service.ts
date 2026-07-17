@@ -180,7 +180,7 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /**
    * Links the DB session to a conversation after the conversation ID becomes known.
-   * Use for long-lived agents (e.g. generalist) where conversationId is not available at start().
+   * Use for long-lived agents (e.g. the chat agent) where conversationId is not available at start().
    */
   protected updateDbSessionConversation(conversationId: string): void {
     if (!this.dbSessionId) return
@@ -193,7 +193,7 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /**
    * Flushes current token usage to the DB session without completing it.
-   * Use for long-lived agents (e.g. generalist) so the dashboard shows live data.
+   * Use for long-lived agents (e.g. the chat agent) so the dashboard shows live data.
    */
   protected flushTokenUsage(): void {
     if (!this.dbSessionId) return

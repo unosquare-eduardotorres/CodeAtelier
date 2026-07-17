@@ -15,6 +15,8 @@ import type {
   MemoryFactTier,
   MemorySourceType,
   MemoryContradiction,
+  MemoryConfirmation,
+  ConfirmationSourceType,
   ContradictionStatus,
   MemoryDocState
 } from '../../../shared/types'
@@ -35,6 +37,8 @@ interface MemoryFactRow {
   last_confirmed_at: string | null
   status: MemoryFactStatus
   superseded_by: string | null
+  merged_into: string | null
+  volatile: number // SQLite stores booleans as 0/1
   source_type: MemorySourceType
   source_ref: string | null
   embedding: Buffer | null
@@ -42,6 +46,14 @@ interface MemoryFactRow {
   last_accessed_at: string | null
   created_at: string
   updated_at: string
+}
+
+interface ConfirmationRow {
+  id: string
+  fact_id: string
+  source_type: ConfirmationSourceType
+  weight: number
+  created_at: string
 }
 
 interface ContradictionRow {
@@ -78,12 +90,24 @@ function mapFactRow(row: MemoryFactRow): MemoryFact {
     lastConfirmedAt: row.last_confirmed_at,
     status: row.status,
     supersededBy: row.superseded_by,
+    mergedInto: row.merged_into ?? null,
+    volatile: (row.volatile ?? 0) === 1,
     sourceType: row.source_type,
     sourceRef: row.source_ref,
     embeddingPending: row.embedding_pending === 1,
     lastAccessedAt: row.last_accessed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  }
+}
+
+function mapConfirmationRow(row: ConfirmationRow): MemoryConfirmation {
+  return {
+    id: row.id,
+    factId: row.fact_id,
+    sourceType: row.source_type,
+    weight: row.weight,
+    createdAt: row.created_at
   }
 }
 
@@ -524,6 +548,159 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .prepare('SELECT * FROM memory_doc_state WHERE workspace_id = ?')
       .all(workspaceId) as DocStateRow[]
     return rows.map(mapDocStateRow)
+  }
+
+  // ── Confirmation event log ──────────────────────────────────────────────
+
+  /** Record a confirmation event with source type and weight. */
+  addConfirmation(factId: string, sourceType: ConfirmationSourceType, weight = 1.0): MemoryConfirmation {
+    const row = this.db()
+      .prepare(
+        `INSERT INTO memory_confirmations (fact_id, source_type, weight)
+         VALUES (?, ?, ?)
+         RETURNING *`
+      )
+      .get(factId, sourceType, weight) as ConfirmationRow
+    return mapConfirmationRow(row)
+  }
+
+  /** Get all confirmation events for a fact (for evidence-based promotion). */
+  getConfirmations(factId: string): MemoryConfirmation[] {
+    const rows = this.db()
+      .prepare('SELECT * FROM memory_confirmations WHERE fact_id = ? ORDER BY created_at ASC')
+      .all(factId) as ConfirmationRow[]
+    return rows.map(mapConfirmationRow)
+  }
+
+  /** Count distinct days with confirmations for a fact. */
+  countConfirmationDays(factId: string): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(DISTINCT date(created_at)) as days
+         FROM memory_confirmations WHERE fact_id = ?`
+      )
+      .get(factId) as { days: number }
+    return row.days
+  }
+
+  /** Count distinct source types for a fact's confirmations. */
+  countConfirmationSourceTypes(factId: string): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(DISTINCT source_type) as types
+         FROM memory_confirmations WHERE fact_id = ?`
+      )
+      .get(factId) as { types: number }
+    return row.types
+  }
+
+  /** Check if a fact has any human confirmation. */
+  hasHumanConfirmation(factId: string): boolean {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(*) as cnt FROM memory_confirmations
+         WHERE fact_id = ? AND source_type = 'human'`
+      )
+      .get(factId) as { cnt: number }
+    return row.cnt > 0
+  }
+
+  /** Compute weighted confirmation sum for a fact. */
+  getWeightedConfirmationSum(factId: string): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COALESCE(SUM(weight), 0) as total
+         FROM memory_confirmations WHERE fact_id = ?`
+      )
+      .get(factId) as { total: number }
+    return row.total
+  }
+
+  // ── Volatile / merge helpers ────────────────────────────────────────────
+
+  /** Mark a fact as volatile (version/count patterns). */
+  setVolatile(id: string, volatile: boolean): void {
+    this.db()
+      .prepare(
+        `UPDATE memory_facts SET volatile = ?, updated_at = datetime('now') WHERE id = ?`
+      )
+      .run(volatile ? 1 : 0, id)
+  }
+
+  /** Mark a fact as merged into a canonical fact and archive it. */
+  mergeFact(sourceId: string, canonicalId: string): void {
+    this.db()
+      .prepare(
+        `UPDATE memory_facts SET
+           merged_into = ?,
+           status = 'archived',
+           updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(canonicalId, sourceId)
+  }
+
+  /** Update a fact's content in-place (for UPDATE action on volatile/dedup). */
+  updateFactInPlace(id: string, params: {
+    title: string
+    content: string
+    tags?: string[]
+    scopePaths?: string[]
+  }): MemoryFact {
+    const row = this.db()
+      .prepare(
+        `UPDATE memory_facts SET
+           title = ?,
+           content = ?,
+           tags = ?,
+           scope_paths = ?,
+           updated_at = datetime('now')
+         WHERE id = ?
+         RETURNING *`
+      )
+      .get(
+        params.title,
+        params.content,
+        JSON.stringify(params.tags ?? []),
+        JSON.stringify(params.scopePaths ?? []),
+        id
+      ) as MemoryFactRow
+    return mapFactRow(row)
+  }
+
+  /** Find volatile facts matching a workspace. */
+  findVolatileFacts(workspaceId: string): MemoryFact[] {
+    const rows = this.db()
+      .prepare(
+        `SELECT * FROM memory_facts
+         WHERE (workspace_id = ? OR workspace_id IS NULL)
+           AND status = 'active' AND volatile = 1
+         ORDER BY updated_at DESC`
+      )
+      .all(workspaceId) as MemoryFactRow[]
+    return rows.map(mapFactRow)
+  }
+
+  // ── Cleanup helpers ─────────────────────────────────────────────────────
+
+  /** Delete resolved/expired contradiction records older than N days. */
+  pruneOldContradictions(daysThreshold: number): number {
+    const result = this.db()
+      .prepare(
+        `DELETE FROM memory_contradictions
+         WHERE status != 'pending'
+           AND julianday('now') - julianday(created_at) > ?`
+      )
+      .run(daysThreshold)
+    return result.changes
+  }
+
+  /** Count pending contradictions (review queue size). */
+  countPendingContradictions(): number {
+    const row = this.db()
+      .prepare(`SELECT COUNT(*) as cnt FROM memory_contradictions WHERE status = 'pending'`)
+      .get() as { cnt: number }
+    return row.cnt
   }
 }
 

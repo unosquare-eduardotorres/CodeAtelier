@@ -31,7 +31,7 @@ export function formatDuration(startedAt: string | null, completedAt: string | n
 }
 
 export function formatDurationMs(ms: number): string {
-  const secs = Math.floor(ms / 1000)
+  const secs = Math.floor(Math.max(0, ms) / 1000)
   if (secs < 60) return `${secs}s`
   if (secs < 3600) {
     const m = Math.floor(secs / 60)

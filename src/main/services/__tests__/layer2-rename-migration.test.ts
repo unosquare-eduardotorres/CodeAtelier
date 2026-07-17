@@ -26,23 +26,23 @@ describe('Layer 2 rename (migration 69)', () => {
   })
 
   test('DEFAULT_MODEL_CONFIG uses "da-vinci" keys', () => {
-    assert.ok(DEFAULT_MODEL_CONFIG['da-vinci'])
-    assert.ok(DEFAULT_MODEL_CONFIG['da-vinci:plan'])
-    assert.ok(DEFAULT_MODEL_CONFIG['da-vinci:build'])
+    assert.ok(DEFAULT_MODEL_CONFIG['specialist'])
+    assert.ok(DEFAULT_MODEL_CONFIG['specialist:plan'])
+    assert.ok(DEFAULT_MODEL_CONFIG['specialist:build'])
   })
 
   test('DEFAULT_MODEL_CONFIG does NOT have legacy "generalist" keys', () => {
     assert.equal('generalist' in DEFAULT_MODEL_CONFIG, false, 'legacy generalist key still present')
   })
 
-  test('getModelActionForRole maps da-vinci → da-vinci:*', () => {
-    assert.equal(getModelActionForRole('da-vinci', 'plan'), 'da-vinci:plan')
-    assert.equal(getModelActionForRole('da-vinci', 'build'), 'da-vinci:build')
+  test('getModelActionForRole maps specialist → specialist:*', () => {
+    assert.equal(getModelActionForRole('specialist', 'plan'), 'specialist:plan')
+    assert.equal(getModelActionForRole('specialist', 'build'), 'specialist:build')
   })
 
   test('getModelActionForRole maps project-specialist → project-specialist:*', () => {
-    assert.equal(getModelActionForRole('project-specialist', 'plan'), 'project-specialist:plan')
-    assert.equal(getModelActionForRole('project-specialist', 'build'), 'project-specialist:build')
+    assert.equal(getModelActionForRole('specialist', 'plan'), 'specialist:plan')
+    assert.equal(getModelActionForRole('specialist', 'build'), 'specialist:build')
   })
 
   test('schema.sql messages.role CHECK accepts da-vinci (and legacy generalist for migration chain)', () => {

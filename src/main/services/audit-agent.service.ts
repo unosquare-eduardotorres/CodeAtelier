@@ -728,7 +728,7 @@ export class AuditAgentService extends EventEmitter {
         '```json\n{"score": <0-100>, "summary": "<2-3 sentences>", "findings": [{"severity": "...", "title": "...", "description": "...", "filePath": "...", "recommendation": "..."}]}\n```\n\n' +
         `Score conservatively. Include findings for what you DID inspect. Output ONLY the JSON block.`
 
-      const recoveryModel = modelConfigService.getModel(params.workspacePath, 'da-vinci:plan')
+      const recoveryModel = modelConfigService.getModel(params.workspacePath, 'specialist:plan')
       const { text: nudgeText } = await runOneShotClaude({
         feature: 'audit_recovery',
         model: recoveryModel,

@@ -8,7 +8,7 @@
  * - formatFailedAttachment: failure message with path
  * - extractFileName: forward/backward/no slashes
  * - assembleAttachmentText: joining parts
- * - computeStreamIdentity: Da Vinci, specialist, persona overlay, edge cases
+ * - computeStreamIdentity: specialist, persona overlay, edge cases
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
@@ -125,16 +125,16 @@ describe('assembleAttachmentText', () => {
 // ── computeStreamIdentity ──
 
 describe('computeStreamIdentity', () => {
-  test('Da Vinci (no persona) → da-vinci-responding phase', () => {
+  test('specialist (no persona, default adapter) → specialist-executing', () => {
     const result = computeStreamIdentity({
-      messageRole: 'da-vinci',
-      adapterAgentId: 'da-vinci',
+      messageRole: 'specialist',
+      adapterAgentId: 'specialist',
       persona: null
     })
-    assert.equal(result.streamingRole, 'da-vinci')
-    assert.equal(result.phase, 'da-vinci-responding')
-    assert.equal(result.specialistMeta, undefined)
-    assert.equal(result.adapterAgentId, 'da-vinci')
+    assert.equal(result.streamingRole, 'specialist')
+    assert.equal(result.phase, 'specialist-executing')
+    assert.deepEqual(result.specialistMeta, { specialist: 'specialist' })
+    assert.equal(result.adapterAgentId, 'specialist')
   })
 
   test('specialist (direct, no persona) → specialist-executing with agentId', () => {
@@ -150,7 +150,7 @@ describe('computeStreamIdentity', () => {
 
   test('persona overlay → specialist role with persona agentId', () => {
     const result = computeStreamIdentity({
-      messageRole: 'da-vinci',
+      messageRole: 'specialist',
       adapterAgentId: 'da-vinci',
       persona: { agentId: 'persona-frontend' }
     })
@@ -171,7 +171,7 @@ describe('computeStreamIdentity', () => {
 
   test('adapterAgentId is passed through', () => {
     const result = computeStreamIdentity({
-      messageRole: 'da-vinci',
+      messageRole: 'specialist',
       adapterAgentId: 'custom-agent-id',
       persona: null
     })

@@ -24,7 +24,7 @@ export function registerCheckpointIpc(): void {
 
     const workspacePath = chatAgentService.getWorkspacePath()
     if (!workspacePath) {
-      throw new Error('No workspace path — generalist not started')
+      throw new Error('No workspace path — agent not started')
     }
 
     return checkpointService.restoreGitState(checkpointId, workspacePath)
@@ -38,7 +38,7 @@ export function registerCheckpointIpc(): void {
 
     const workspacePath = chatAgentService.getWorkspacePath()
     if (!workspacePath) {
-      throw new Error('No workspace path — generalist not started')
+      throw new Error('No workspace path — agent not started')
     }
 
     // 1) Restore git state

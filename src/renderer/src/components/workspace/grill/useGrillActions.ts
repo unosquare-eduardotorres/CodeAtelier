@@ -45,7 +45,7 @@ export function useGrillActions(opts: {
   convertDirect: (ideaId: string, workspaceId: string) => Promise<{ conversation: { id: string } }>
   loadConversations: (workspaceId: string) => Promise<void>
   selectConversation: (conversationId: string) => Promise<void>
-  appendLocalMessage: (content: string, opts?: { role?: 'da-vinci' }) => void
+  appendLocalMessage: (content: string, opts?: { role?: 'specialist' }) => void
   setStreamingIndicator: (active: boolean) => void
   onBack: () => void
   onComplete: () => void
@@ -239,7 +239,7 @@ export function useGrillActions(opts: {
       onComplete()
       setStreamingIndicator(true)
       appendLocalMessage('Synthesizing the plan from your grilled decisions…', {
-        role: 'da-vinci'
+        role: 'specialist'
       })
 
       try {
@@ -254,7 +254,7 @@ export function useGrillActions(opts: {
         console.error('Grill plan synthesis failed:', err)
         appendLocalMessage(
           "I couldn't synthesize the plan from your grilled decisions. Send a message to retry, or refine the idea.",
-          { role: 'da-vinci' }
+          { role: 'specialist' }
         )
       } finally {
         setStreamingIndicator(false)

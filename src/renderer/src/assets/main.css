@@ -132,6 +132,25 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   Knowledge-graph neon palette — always-dark canvas island
+   Dark themes inherit as-is; Porcelain overrides --graph-bg for its own dark
+   island so neon pops regardless of surrounding light UI.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --graph-bg: #080b1a;                     /* deep-space navy island          */
+  --graph-node-decision:   #22d3ee;        /* electric cyan                   */
+  --graph-node-convention: #00ffa3;        /* neon emerald                    */
+  --graph-node-gotcha:     #ff3d9a;        /* hot magenta                     */
+  --graph-node-preference: #a366ff;        /* electric violet                 */
+  --graph-node-reference:  #8ea3c7;        /* muted ice steel                 */
+  --graph-link:            rgba(90, 150, 230, 0.28);
+  --graph-glow:            0.55;           /* glow strength multiplier        */
+  --graph-text:            #dbe4f4;        /* light label ink for dark canvas  */
+  --graph-edge-superseded:    #ffb020;     /* neon amber                      */
+  --graph-edge-contradiction: #ff2d55;     /* neon red-pink                   */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Motion Token System — durations + easing curves
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {

@@ -9,7 +9,7 @@
  * Mounted at the AppLayout level so it's always visible.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBackgroundSessionStore, useWorkspaceStore } from '@renderer/store'
 import PermissionToast from './PermissionToast'
 import CompletionToast from './CompletionToast'
@@ -17,7 +17,24 @@ import type { CompletionNotification, PendingPermission } from '../../../../shar
 
 const MAX_VISIBLE_TOASTS = 3
 
-export default function NotificationStack(): React.JSX.Element | null {
+/** Maps a notification targetPage to AppLayout navigation state. */
+const PAGE_NAV_MAP: Record<string, { sidebarView: 'chat' | 'settings'; settingsTab?: string }> = {
+  chat: { sidebarView: 'chat' },
+  grill: { sidebarView: 'settings', settingsTab: 'ideas' },
+  audit: { sidebarView: 'settings', settingsTab: 'health' },
+  mpa: { sidebarView: 'settings', settingsTab: 'goals' },
+  council: { sidebarView: 'settings', settingsTab: 'council' },
+  blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' }
+}
+
+export interface NotificationStackProps {
+  /** Navigate to a specific page/tab after switching workspaces. */
+  onNavigateToPage?: (sidebarView: 'chat' | 'settings', settingsTab?: string) => void
+}
+
+export default function NotificationStack({
+  onNavigateToPage
+}: NotificationStackProps): React.JSX.Element | null {
   const permissions = useBackgroundSessionStore((s) => s.pendingPermissions)
   const removePermission = useBackgroundSessionStore((s) => s.removePermission)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspace?.id)
@@ -25,12 +42,30 @@ export default function NotificationStack(): React.JSX.Element | null {
 
   // Completion notifications (auto-dismiss after 8 seconds)
   const [completions, setCompletions] = useState<(CompletionNotification & { id: string })[]>([])
+  const dismissTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+
+  // Clear all pending auto-dismiss timers on unmount
+  useEffect(() => () => {
+    dismissTimersRef.current.forEach(clearTimeout)
+  }, [])
+
+  // Listen for OS notification click → navigate to workspace + target page
+  useEffect(() => {
+    const unsub = window.api.onNotificationNavigate((data) => {
+      openWorkspace(data.workspaceId)
+      const nav = PAGE_NAV_MAP[data.targetPage]
+      if (nav && onNavigateToPage) {
+        onNavigateToPage(nav.sidebarView, nav.settingsTab)
+      }
+    })
+    return unsub
+  }, [openWorkspace, onNavigateToPage])
 
   // Listen for completion notifications
   useEffect(() => {
     const unsub = window.api.onCompletionNotification((data) => {
       const notification = data as CompletionNotification
-      // Skip silent chat completions (only show audit, mpa, grill completions + all failures)
+      // Skip silent chat completions (show all other services, all failures, all needs_input)
       if (notification.service === 'chat' && notification.status === 'completed') return
       // Skip notifications for the active workspace
       if (notification.workspaceId === activeWorkspaceId) return
@@ -39,9 +74,11 @@ export default function NotificationStack(): React.JSX.Element | null {
       setCompletions((prev) => [...prev, { ...notification, id }])
 
       // Auto-dismiss after 8 seconds
-      setTimeout(() => {
+      const timerId = setTimeout(() => {
         setCompletions((prev) => prev.filter((c) => c.id !== id))
+        dismissTimersRef.current.delete(timerId)
       }, 8000)
+      dismissTimersRef.current.add(timerId)
     })
     return unsub
   }, [activeWorkspaceId])
@@ -85,9 +122,14 @@ export default function NotificationStack(): React.JSX.Element | null {
   const handleCompletionView = useCallback(
     (notification: CompletionNotification & { id: string }) => {
       openWorkspace(notification.workspaceId)
+      const targetPage = notification.targetPage ?? notification.service
+      const nav = PAGE_NAV_MAP[targetPage]
+      if (nav && onNavigateToPage) {
+        onNavigateToPage(nav.sidebarView, nav.settingsTab)
+      }
       setCompletions((prev) => prev.filter((c) => c.id !== notification.id))
     },
-    [openWorkspace]
+    [openWorkspace, onNavigateToPage]
   )
 
   const handleCompletionDismiss = useCallback((id: string) => {

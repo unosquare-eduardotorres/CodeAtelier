@@ -243,7 +243,7 @@ export default function NewChatPage({
     const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
 
     // Derive provider from routing overrides or workspace routing
-    const effectiveProvider = routingOverrides['da-vinci:plan']?.provider ?? derivedProvider
+    const effectiveProvider = routingOverrides['specialist:plan']?.provider ?? derivedProvider
 
     onCreateChat({
       title: trimmedTitle,

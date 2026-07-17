@@ -22,8 +22,8 @@ describe('buildConversationModelSnapshot (via resolveAssignment)', () => {
   test('produces_plan_build_background_with_timestamp', () => {
     // Simulate what buildConversationModelSnapshot does internally
     // (we test the pure resolveAssignment calls since the helper depends on DB)
-    const plan = resolveAssignment({ action: 'da-vinci:plan' })
-    const build = resolveAssignment({ action: 'da-vinci:build' })
+    const plan = resolveAssignment({ action: 'specialist:plan' })
+    const build = resolveAssignment({ action: 'specialist:build' })
     const background = resolveAssignment({ action: 'haiku' })
 
     assert.ok(plan.modelId, 'plan should have a modelId')
@@ -35,13 +35,13 @@ describe('buildConversationModelSnapshot (via resolveAssignment)', () => {
 
   test('snapshot_respects_modelRoles_for_all_three_roles', () => {
     const modelRoles: ModelRoleMap = {
-      'da-vinci:plan': { provider: 'claude', modelId: 'claude-opus-4-8' },
-      'da-vinci:build': { provider: 'local-llm', modelId: 'gemma-3', localBackend: 'omlx' },
+      'specialist:plan': { provider: 'claude', modelId: 'claude-opus-4-8' },
+      'specialist:build': { provider: 'local-llm', modelId: 'gemma-3', localBackend: 'omlx' },
       haiku: { provider: 'claude', modelId: 'claude-haiku-4-5' }
     }
 
-    const plan = resolveAssignment({ action: 'da-vinci:plan', modelRoles })
-    const build = resolveAssignment({ action: 'da-vinci:build', modelRoles })
+    const plan = resolveAssignment({ action: 'specialist:plan', modelRoles })
+    const build = resolveAssignment({ action: 'specialist:build', modelRoles })
     const background = resolveAssignment({ action: 'haiku', modelRoles })
 
     assert.equal(plan.modelId, 'claude-opus-4-8')
@@ -98,7 +98,7 @@ describe('G1 regression: handleAssign override cleanup', () => {
     // Simulate the handleAssign logic from ModelRolesSection
     const modelRoles: ModelRoleMap = {}
     const claudeModelOverrides: ModelOverrides = {
-      'da-vinci:plan': 'claude-opus-4-8'  // pre-existing Claude override
+      'specialist:plan': 'claude-opus-4-8'  // pre-existing Claude override
     }
 
     const assignment: ModelRoleAssignment = {
@@ -107,7 +107,7 @@ describe('G1 regression: handleAssign override cleanup', () => {
       localBackend: 'omlx'
     }
 
-    const action = 'da-vinci:plan' as const
+    const action = 'specialist:plan' as const
 
     // Simulate handleAssign logic
     const updated = { ...modelRoles }
@@ -124,10 +124,10 @@ describe('G1 regression: handleAssign override cleanup', () => {
     }
 
     // After assigning local, the legacy override should be cleared
-    assert.equal(updatedOverrides['da-vinci:plan'], undefined,
+    assert.equal(updatedOverrides['specialist:plan'], undefined,
       'Stale Claude override should be deleted when assigning local')
-    assert.equal(updated['da-vinci:plan']?.provider, 'local-llm')
-    assert.equal(updated['da-vinci:plan']?.modelId, 'gemma-3')
+    assert.equal(updated['specialist:plan']?.provider, 'local-llm')
+    assert.equal(updated['specialist:plan']?.modelId, 'gemma-3')
   })
 
   test('claude_assignment_updates_legacy_override', () => {
@@ -139,7 +139,7 @@ describe('G1 regression: handleAssign override cleanup', () => {
       modelId: 'claude-sonnet-4-6'
     }
 
-    const action = 'da-vinci:build' as const
+    const action = 'specialist:build' as const
 
     const updated = { ...modelRoles }
     const updatedOverrides = { ...claudeModelOverrides }
@@ -153,20 +153,20 @@ describe('G1 regression: handleAssign override cleanup', () => {
       }
     }
 
-    assert.equal(updatedOverrides['da-vinci:build'], 'claude-sonnet-4-6',
+    assert.equal(updatedOverrides['specialist:build'], 'claude-sonnet-4-6',
       'Claude assignment should write to legacy override')
-    assert.equal(updated['da-vinci:build']?.provider, 'claude')
+    assert.equal(updated['specialist:build']?.provider, 'claude')
   })
 
   test('null_assignment_clears_both', () => {
     const modelRoles: ModelRoleMap = {
-      'da-vinci:plan': { provider: 'claude', modelId: 'claude-opus-4-8' }
+      'specialist:plan': { provider: 'claude', modelId: 'claude-opus-4-8' }
     }
     const claudeModelOverrides: ModelOverrides = {
-      'da-vinci:plan': 'claude-opus-4-8'
+      'specialist:plan': 'claude-opus-4-8'
     }
 
-    const action = 'da-vinci:plan' as const
+    const action = 'specialist:plan' as const
 
     const updated = { ...modelRoles }
     const updatedOverrides = { ...claudeModelOverrides }
@@ -175,8 +175,8 @@ describe('G1 regression: handleAssign override cleanup', () => {
     delete updated[action]
     delete updatedOverrides[action]
 
-    assert.equal(updated['da-vinci:plan'], undefined)
-    assert.equal(updatedOverrides['da-vinci:plan'], undefined)
+    assert.equal(updated['specialist:plan'], undefined)
+    assert.equal(updatedOverrides['specialist:plan'], undefined)
   })
 })
 

@@ -131,7 +131,7 @@ interface TaskPlanCardProps {
   summary: string
   mode: 'plan' | 'build' | 'danger'
 
-  // Inline plan content (from ```plan block in generalist output)
+  // Inline plan content (from ```plan block in agent output)
   planContent?: string
 
   // Unified action callbacks
@@ -139,6 +139,9 @@ interface TaskPlanCardProps {
   onSaveAsIdea?: () => void
   onRefine?: () => void
   onCouncilReview?: () => void
+
+  /** Persisted action from DB — initializes button visibility on mount */
+  planActionTaken?: string
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -264,7 +267,8 @@ export default function TaskPlanCard({
   onBuildNow,
   onSaveAsIdea,
   onRefine,
-  onCouncilReview
+  onCouncilReview,
+  planActionTaken
 }: TaskPlanCardProps): React.JSX.Element {
   const isInlinePlan = !!planContent
 
@@ -300,7 +304,7 @@ export default function TaskPlanCard({
     visiblePhases.length <= 2 &&
     visiblePhases.every((p) => p.risk !== 'high' && p.complexity <= 5)
 
-  const [userClicked, setUserClicked] = useState(false)
+  const [userClicked, setUserClicked] = useState(!!planActionTaken)
 
   const sectionMap = buildSectionMap({
     structuredPlan,

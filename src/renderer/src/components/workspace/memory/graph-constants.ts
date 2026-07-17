@@ -4,14 +4,21 @@
 
 import type { MemoryFactCategory } from '../../../../../shared/types'
 
-/** Category → CSS custom property mapping */
+/** Category → neon CSS custom property mapping (graph-scoped palette) */
 export const CATEGORY_COLOR_VAR: Record<MemoryFactCategory, string> = {
-  decision: '--color-info',
-  convention: '--color-success',
-  gotcha: '--color-mode-build-text',
-  preference: '--color-mode-plan-text',
-  reference: '--color-text-muted'
+  decision: '--graph-node-decision',
+  convention: '--graph-node-convention',
+  gotcha: '--graph-node-gotcha',
+  preference: '--graph-node-preference',
+  reference: '--graph-node-reference'
 }
+
+/** Edge kind → neon CSS custom property mapping */
+export const EDGE_COLOR_VAR = {
+  similarity: '--graph-link',
+  superseded: '--graph-edge-superseded',
+  contradiction: '--graph-edge-contradiction'
+} as const
 
 /** Human-readable tier labels */
 export const TIER_LABELS = ['T0 Observed', 'T1 Confirmed', 'T2 Established', 'T3 Wisdom'] as const

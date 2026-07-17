@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, type JSX } from 'react'
+import BlueprintFilterBar, { type BlueprintFilter } from './blueprints/BlueprintFilterBar'
 import { BookOpen, Plus, Send, SkipForward, AlertTriangle, X, PlayCircle } from 'lucide-react'
 import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
 import { rendererLog } from '@renderer/utils/logger'
@@ -16,7 +17,8 @@ import BlueprintExecutionPanel from './blueprints/BlueprintExecutionPanel'
 import { BlueprintRunHeader } from './blueprints/BlueprintRunHeader'
 import { BlueprintDetailView } from './blueprints/detail/BlueprintDetailView'
 import { BlueprintInputView } from './blueprints/BlueprintInputView'
-import type { BlueprintPhaseType } from '../../../../shared/blueprint-types'
+import { BlueprintDeliverablesView } from './blueprints/BlueprintDeliverablesView'
+import type { BlueprintPhaseType, BlueprintStatus } from '../../../../shared/blueprint-types'
 
 // ── View States ──
 
@@ -102,6 +104,9 @@ function BlueprintActiveView({
   onProceedGate: () => void
   onIterateClarify: () => void
 }): JSX.Element {
+  // Tab state: execution (3-col grid) vs deliverables (full-width phase view)
+  const [activeTab, setActiveTab] = useState<'execution' | 'deliverables'>('execution')
+
   // Execution panel toggle + width (persist to localStorage)
   const [panelOpen, setPanelOpen] = useState(() => {
     const saved = localStorage.getItem('blueprint-panel-open')
@@ -137,6 +142,15 @@ function BlueprintActiveView({
     : 0
   const taskTotal = totalTaskCount || (currentBlueprint?.tasks.length ?? 0)
 
+  // Track whether any phases have completed (enables deliverables tab)
+  const hasCompletedPhases = useMemo(
+    () =>
+      currentBlueprint?.phases.some(
+        (p) => p.status === 'complete' || p.status === 'failed'
+      ) ?? false,
+    [currentBlueprint]
+  )
+
   return (
     <>
       {/* ── Run Header (redesigned with stepper + progress) ── */}
@@ -157,96 +171,110 @@ function BlueprintActiveView({
         panelOpen={panelOpen}
         onTogglePanel={() => setPanelOpen(!panelOpen)}
         onCancel={onCancel}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        hasCompletedPhases={hasCompletedPhases}
       />
 
-      <div
-        data-testid="blueprint-phase-timeline"
-        className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden flex-1 min-h-0 flex flex-col"
-      >
+      {activeTab === 'execution' ? (
         <div
-          className={`grid ${panelOpen ? '' : 'grid-cols-[200px_minmax(0,1fr)]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
-          style={panelOpen ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` } : undefined}
+          data-testid="blueprint-phase-timeline"
+          className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden flex-1 min-h-0 flex flex-col"
         >
-          <div className="p-3 overflow-y-auto min-h-0">
-            <BlueprintPhaseTimeline
-              currentPhase={currentPhase}
-              awaitingApproval={!!pendingApproval}
-              phaseDurations={phaseDurations}
-              phaseStartedAt={phaseStartedAt}
-            />
-          </div>
-          <div className="flex flex-col min-h-0 min-w-0">
-            <BlueprintChatView
-              messages={chatMessages}
-              isStreaming={isRunning && !clarifyGateReady && !clarifyQuestions && !clarifyAwaitingInput && !pendingApproval}
-              footer={
-                <>
-                  {/* Approval gate card (review → build transition) */}
-                  {pendingApproval && (
-                    <div
-                      data-testid="blueprint-approval-gate"
-                      className="bg-surface-raised rounded-xl border border-info/30 p-4"
-                    >
-                      <BlueprintApprovalGate
-                        planSummary={pendingApproval.planSummary}
-                        completion={pendingApproval.completion}
-                        reviewMarkdown={pendingApproval.reviewMarkdown}
-                        onApprove={onApprove}
-                        onReject={onReject}
-                        onCancel={onCancel}
+          <div
+            className={`grid ${panelOpen ? '' : 'grid-cols-[200px_minmax(0,1fr)]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
+            style={panelOpen ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` } : undefined}
+          >
+            <div className="p-3 overflow-y-auto min-h-0">
+              <BlueprintPhaseTimeline
+                currentPhase={currentPhase}
+                awaitingApproval={!!pendingApproval}
+                phaseDurations={phaseDurations}
+                phaseStartedAt={phaseStartedAt}
+              />
+            </div>
+            <div className="flex flex-col min-h-0 min-w-0">
+              <BlueprintChatView
+                messages={chatMessages}
+                isStreaming={isRunning && !clarifyGateReady && !clarifyQuestions && !clarifyAwaitingInput && !pendingApproval}
+                footer={
+                  <>
+                    {/* Approval gate card (review → build transition) */}
+                    {pendingApproval && (
+                      <div
+                        data-testid="blueprint-approval-gate"
+                        className="bg-surface-raised rounded-xl border border-info/30 p-4"
+                      >
+                        <BlueprintApprovalGate
+                          planSummary={pendingApproval.planSummary}
+                          completion={pendingApproval.completion}
+                          reviewMarkdown={pendingApproval.reviewMarkdown}
+                          onApprove={onApprove}
+                          onReject={onReject}
+                          onCancel={onCancel}
+                        />
+                      </div>
+                    )}
+
+                    {/* Clarify gate card (completion arrived) */}
+                    {clarifyGateReady && (
+                      <BlueprintClarifyGateCard
+                        findings={clarifyFindings}
+                        onProceed={onProceedGate}
+                        onIterate={onIterateClarify}
                       />
-                    </div>
-                  )}
+                    )}
 
-                  {/* Clarify gate card (completion arrived) */}
-                  {clarifyGateReady && (
-                    <BlueprintClarifyGateCard
-                      findings={clarifyFindings}
-                      onProceed={onProceedGate}
-                      onIterate={onIterateClarify}
-                    />
-                  )}
+                    {/* Clarify question footer (structured Q&A — Grill pattern) */}
+                    {clarifyQuestions && !clarifyGateReady && (
+                      <BlueprintQuestionFooter
+                        questions={clarifyQuestions.questions}
+                        onSubmit={onSendClarifyAnswer}
+                        onSkip={onSkipClarify}
+                      />
+                    )}
 
-                  {/* Clarify question footer (structured Q&A — Grill pattern) */}
-                  {clarifyQuestions && !clarifyGateReady && (
-                    <BlueprintQuestionFooter
-                      questions={clarifyQuestions.questions}
-                      onSubmit={onSendClarifyAnswer}
-                      onSkip={onSkipClarify}
-                    />
-                  )}
+                    {/* Clarify fallback textarea (no structured questions parsed) */}
+                    {clarifyAwaitingInput && !clarifyQuestions && !clarifyGateReady && (
+                      <ClarifyAnswerPanel
+                        onSend={onSendClarifyAnswer}
+                        onSkip={onSkipClarify}
+                      />
+                    )}
+                  </>
+                }
+              />
+            </div>
 
-                  {/* Clarify fallback textarea (no structured questions parsed) */}
-                  {clarifyAwaitingInput && !clarifyQuestions && !clarifyGateReady && (
-                    <ClarifyAnswerPanel
-                      onSend={onSendClarifyAnswer}
-                      onSkip={onSkipClarify}
-                    />
-                  )}
-                </>
-              }
-            />
+            {/* Execution panel (collapsible right column) */}
+            {panelOpen && (
+              <BlueprintExecutionPanel
+                tasks={currentBlueprint?.tasks ?? []}
+                waveTasks={waveTasks}
+                taskGoals={taskGoals}
+                currentWave={currentWave}
+                phaseCompletions={phaseCompletions}
+                planArtifact={planArtifact}
+                currentGoal={currentGoal}
+                currentPhase={currentPhase}
+                onResize={(width) => {
+                  setPanelWidth(width)
+                  localStorage.setItem('blueprint-panel-width', String(width))
+                }}
+              />
+            )}
           </div>
-
-          {/* Execution panel (collapsible right column) */}
-          {panelOpen && (
-            <BlueprintExecutionPanel
-              tasks={currentBlueprint?.tasks ?? []}
-              waveTasks={waveTasks}
-              taskGoals={taskGoals}
-              currentWave={currentWave}
-              phaseCompletions={phaseCompletions}
-              planArtifact={planArtifact}
-              currentGoal={currentGoal}
-              currentPhase={currentPhase}
-              onResize={(width) => {
-                setPanelWidth(width)
-                localStorage.setItem('blueprint-panel-width', String(width))
-              }}
-            />
-          )}
         </div>
-      </div>
+      ) : (
+        <BlueprintDeliverablesView
+          blueprint={currentBlueprint}
+          phaseDurations={phaseDurations}
+          clarifyAwaitingInput={clarifyAwaitingInput}
+          clarifyQuestions={!!clarifyQuestions}
+          pendingApproval={!!pendingApproval}
+          onSwitchToExecution={() => setActiveTab('execution')}
+        />
+      )}
     </>
   )
 }
@@ -361,6 +389,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     iterateClarify,
     retryPhase,
     loadPipelineStatus,
+    resetForWorkspaceSwitch,
     phaseStartedAt,
     orphanedBlueprint
   } = useBlueprintStore()
@@ -374,9 +403,45 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   const [prefillTitle, setPrefillTitle] = useState('')
   const [prefillDescription, setPrefillDescription] = useState('')
 
+  // ── Filter & search state ──
+  const [filter, setFilter] = useState<BlueprintFilter>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const COMPLETED_STATUSES: BlueprintStatus[] = ['complete']
+  const FAILED_STATUSES: BlueprintStatus[] = ['failed', 'cancelled']
+
+  const filterCounts = useMemo(() => {
+    const complete = history.filter((bp) => COMPLETED_STATUSES.includes(bp.status)).length
+    const failed = history.filter((bp) => FAILED_STATUSES.includes(bp.status)).length
+    const active = history.length - complete - failed
+    return { all: history.length, active, complete, failed }
+  }, [history])
+
+  const filteredHistory = useMemo(() => {
+    let result = history
+    if (filter === 'complete') result = result.filter((bp) => COMPLETED_STATUSES.includes(bp.status))
+    else if (filter === 'failed') result = result.filter((bp) => FAILED_STATUSES.includes(bp.status))
+    else if (filter === 'active') result = result.filter((bp) => !COMPLETED_STATUSES.includes(bp.status) && !FAILED_STATUSES.includes(bp.status))
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(
+        (bp) => bp.title.toLowerCase().includes(q) || (bp.description ?? '').toLowerCase().includes(q)
+      )
+    }
+    return result
+  }, [history, filter, searchQuery])
+
+  const EMPTY_FILTER_MESSAGES: Record<BlueprintFilter, string> = {
+    all: 'No blueprints yet. Create one to get started!',
+    active: 'No active blueprints running.',
+    complete: 'No completed blueprints yet.',
+    failed: 'No failed blueprints — nice!'
+  }
+
   // ── Load history + recover pipeline state on workspace change / app reopen ──
   useEffect(() => {
     if (workspaceId) {
+      resetForWorkspaceSwitch() // Clear stale state from previous workspace
       loadHistory(workspaceId)
       // Recovery: if the app was reopened mid-pipeline, restore currentPhase/isRunning
       loadPipelineStatus(workspaceId)
@@ -385,7 +450,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     setSelectedId(null)
     setViewState('landing')
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [workspaceId, loadHistory, loadPipelineStatus])
+  }, [workspaceId, loadHistory, loadPipelineStatus, resetForWorkspaceSwitch])
 
   // ── Auto-start from pendingOnboard (CreateProjectDialog → BlueprintPage handoff) ──
   const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
@@ -449,7 +514,8 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
       setPrefillTitle('')
       setPrefillDescription('')
     } catch {
-      // Error already logged in store
+      // Error already logged in store — go back to landing so the error banner is visible
+      setViewState('landing')
     }
   }, [workspaceId, startBlueprint])
 
@@ -625,16 +691,14 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             {/* History list */}
             {history.length > 0 && (
               <div className="space-y-4">
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setViewState('input')}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-muted hover:bg-accent/20 text-accent rounded-lg transition-colors"
-                  >
-                    <Plus size={14} />
-                    New Blueprint
-                  </button>
-                </div>
+                <BlueprintFilterBar
+                  filter={filter}
+                  searchQuery={searchQuery}
+                  counts={filterCounts}
+                  onFilterChange={setFilter}
+                  onSearchChange={setSearchQuery}
+                  onNewBlueprint={() => setViewState('input')}
+                />
 
                 {/* BP-RESUME-02: Orphaned blueprint resume banner */}
                 {orphanedBlueprint && (
@@ -669,21 +733,31 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                   </div>
                 )}
 
-                <div className="space-y-2">
-                  {history.map((bp) => (
-                    <BlueprintHistoryItem
-                      key={bp.id}
-                      blueprint={bp}
-                      onSelect={() => handleSelectBlueprint(bp.id)}
-                      onDelete={() => setDeleteTarget({
-                        id: bp.id,
-                        title: bp.title,
-                        isActive: isRunning && currentBlueprint?.id === bp.id
-                      })}
-                      isDeleting={deletingIds.has(bp.id)}
-                    />
-                  ))}
-                </div>
+                {filteredHistory.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-xs text-text-muted">
+                      {searchQuery.trim()
+                        ? 'No blueprints match your search.'
+                        : EMPTY_FILTER_MESSAGES[filter]}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredHistory.map((bp) => (
+                      <BlueprintHistoryItem
+                        key={bp.id}
+                        blueprint={bp}
+                        onSelect={() => handleSelectBlueprint(bp.id)}
+                        onDelete={() => setDeleteTarget({
+                          id: bp.id,
+                          title: bp.title,
+                          isActive: isRunning && currentBlueprint?.id === bp.id
+                        })}
+                        isDeleting={deletingIds.has(bp.id)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>

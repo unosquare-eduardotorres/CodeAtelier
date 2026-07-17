@@ -152,7 +152,9 @@ Emit per-item \`goal-verify-item\` blocks: {planItemId, status: "implemented"|"p
 Then one \`goal-verify-report\`: {allComplete, totalItems: ${params.plan.items.length}, implemented, partial, missing, issues, crossCutting: {frontendBackendConnected, backendDatabaseConnected, routesRegistered, testsPass}, testOutput${hasCriteria ? ', criteriaResults' : ''}}
 
 ## Rules
-Read-only. Verify every item. Read files before marking implemented. Run actual tests.`
+Read-only. Verify every item. Read files before marking implemented.
+Use Bash to run tests (\`npm test -- --passWithNoTests 2>&1 | head -100\`), lint (\`npx eslint --no-warn <paths>\`), and type checks (\`npx tsc --noEmit 2>&1 | head -80\`).
+Do NOT use Write or Edit.`
 
   return prompt
 }

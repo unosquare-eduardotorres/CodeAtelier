@@ -238,7 +238,7 @@ export function* normalizeMessage(
     // Only split into a new bubble when the prior turn had visible *text*.
     // Tool-only iterations (Claude's internal "call tool → read result → call
     // next tool" loop) should stay attached to the same bubble — otherwise
-    // every tool call produces a separate (mostly empty) Da Vinci bubble.
+    // every tool call produces a separate (mostly empty) specialist bubble.
     if (streamEvent.type === 'message_start') {
       executorLog.debug(
         `[normalizer:message_start] hasPriorText=${tools.hasPriorText} ` +
