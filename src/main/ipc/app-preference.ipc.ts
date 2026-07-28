@@ -29,4 +29,9 @@ export function registerAppPreferenceIpc(): void {
       notificationService.setEnabled(value === 'true')
     }
   })
+
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_PROBE, async (event) => {
+    validateSender(event)
+    return notificationService.probeNotificationSupport()
+  })
 }

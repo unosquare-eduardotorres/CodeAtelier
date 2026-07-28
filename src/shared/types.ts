@@ -218,7 +218,7 @@ export interface AgentStatus {
 
 // ── Multi-Workspace Permission Types ──
 
-export type PermissionType = 'elicitation' | 'askQuestion' | 'mpaApproval'
+export type PermissionType = 'elicitation' | 'askQuestion' | 'mpaApproval' | 'toolPermission'
 
 export interface PendingPermission {
   id: string
@@ -239,6 +239,8 @@ export interface PermissionResponse {
   workspaceId: string
   type: PermissionType
   response: 'approve' | 'deny' | { answer: string } | { approved: boolean; feedback?: string }
+  /** Original payload — included for toolPermission to carry requestId back to IPC handler. */
+  payload?: unknown
 }
 
 export interface CompletionNotification {
@@ -408,6 +410,8 @@ export interface AppPreferences {
   notificationsEnabled: boolean
   /** Max concurrent build tasks within a Blueprint wave (1 = sequential, clamped 1–6). */
   parallelBuildAgents: number
+  /** Drop semantic-search + code-analysis MCP servers from build tasks (saves 2 processes per task). Default: false (full MCP). */
+  leanBuildMcp: boolean
 }
 
 // ── Workspace Deploy Models ──
@@ -552,6 +556,7 @@ export type ModelAction =
   | 'prompt:optimize'
   // ── Background one-shot actions ──
   | 'commit-message'
+  | 'pr-description'
   | 'condense'
 
 /** Per-action model overrides stored in workspace settings_json */
@@ -928,7 +933,7 @@ export type MemoryFactTier = 0 | 1 | 2 | 3
 export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
 
 /** How the fact was originally captured. */
-export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill'
+export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill' | 'bootstrap'
 
 export interface MemoryFact {
   id: string
@@ -1199,7 +1204,6 @@ export interface SubscriptionCheckResult {
   claudeCli: { installed: boolean; version: string | null; error: string | null }
   claudeAuth: { authenticated: boolean; accountEmail: string | null; error: string | null }
   claudeMax: { active: boolean; plan: string | null; error: string | null }
-  codexCli: { installed: boolean; version: string | null; error: string | null }
   sdkHealth?: {
     sdkVersion: string | null
     modelsAvailable: string[]
@@ -1215,14 +1219,14 @@ export interface AutoConfigureResult {
 
 // ── Embedding Provider ──
 
-/** Which embedding backend is active. oMLX is the only supported backend. */
-export type EmbeddingBackend = 'omlx'
+/** Which embedding backend is active. Routes through localEmbeddingProvider facade. */
+export type EmbeddingBackend = 'omlx' | 'ollama'
 
-/** Status of the oMLX embedding backend */
+/** Status of the embedding backend (oMLX or Ollama) */
 export interface EmbeddingModelStatus {
-  /** oMLX is running and an embedding model is loaded + responding */
+  /** Embedding provider is initialized and ready to embed */
   ready: boolean
-  backend: 'omlx'
+  backend: EmbeddingBackend
   /** oMLX server is reachable */
   omlxRunning: boolean
   /** oMLX is installed on this machine (even if not running) */
@@ -1235,6 +1239,11 @@ export interface EmbeddingModelStatus {
   omlxAllModels?: OmlxModelDetail[]
   /** False when admin API was unreachable (auth/timeout) — models inferred from /v1/models */
   omlxAdminApiAvailable: boolean
+  // ── Ollama fields (populated when backend === 'ollama') ──
+  /** Whether Ollama server is reachable */
+  ollamaRunning?: boolean
+  /** Selected embedding model in Ollama */
+  ollamaEmbeddingModel?: string | null
 }
 
 // ── Ollama ──
@@ -1384,16 +1393,14 @@ export type LocalLLMStrategy = 'default' | 'native'
 
 /**
  * Executor backend — which runtime drives AI interactions.
- * - 'cli' — Interactive Claude CLI (stream-json mode) — subscription billing
+ * Fully derived from the resolved LLM provider — not user-configurable.
+ *
+ * Rule: provider === 'claude' → 'cli'; everything else → 'opencode'.
+ *
+ * - 'cli'     — Claude CLI (stream-json mode) — subscription billing
  * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk)
- *
- * Stored in workspace settings_json.executorBackend. Default: 'cli'.
- *
- * - 'cli' — Claude CLI (claude -p mode)
- * - 'opencode' — OpenCode multi-provider runtime
- * - 'codex' — OpenAI Codex CLI (codex exec mode)
  */
-export type ExecutorBackend = 'cli' | 'opencode' | 'codex'
+export type ExecutorBackend = 'cli' | 'opencode'
 
 /**
  * Typed workspace settings — single source of truth for keys stored in
@@ -1402,6 +1409,7 @@ export type ExecutorBackend = 'cli' | 'opencode' | 'codex'
  */
 export interface WorkspaceSettings {
   // ── Executor / Provider ──
+  /** @deprecated Executor is now derived from llmProvider. Kept for tolerant reading of old settings_json. */
   executorBackend?: ExecutorBackend
   llmProvider?: LLMProvider
   costPreference?: CostPreference
@@ -1435,6 +1443,8 @@ export interface WorkspaceSettings {
 
   // ── Local LLM ──
   descriptionModel?: string
+  /** Ollama model used for embedding (semantic search). e.g. 'bge-m3', 'nomic-embed-text' */
+  ollamaEmbeddingModel?: string
 
   // ── OpenCode ──
   openCodeProvider?: string
@@ -1884,6 +1894,26 @@ export interface PlanFilters {
   status?: PlanStatus | PlanStatus[]
   source?: PlanSource
   search?: string
+}
+
+/** Phase progress event — emitted during plan build execution */
+export interface PhaseProgressEvent {
+  planId: string | null
+  phaseId: number
+  phaseTitle: string
+  status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
+  totalPhases: number
+  message?: string
+}
+
+/** Persisted phase progress entry (stored as JSON in plans.phase_progress_json) */
+export interface PhaseProgress {
+  phaseId: number
+  status: string
+  startedAt: string | null
+  completedAt: string | null
+  /** Files the agent has touched within this phase (populated via tool activity inference) */
+  touchedFiles?: string[]
 }
 
 // ── E2E Testing Types ──────────────────────────────────────────────────────

@@ -17,7 +17,8 @@ const defaultPreferences: AppPreferences = {
   updateGithubRepo: '',
   context7ApiKey: '',
   notificationsEnabled: true,
-  parallelBuildAgents: 3
+  parallelBuildAgents: 3,
+  leanBuildMcp: false
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -32,7 +33,8 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   updateGithubRepo: 'update_github_repo',
   context7ApiKey: 'context7_api_key',
   notificationsEnabled: 'notifications_enabled',
-  parallelBuildAgents: 'parallel_build_agents'
+  parallelBuildAgents: 'parallel_build_agents',
+  leanBuildMcp: 'lean_build_mcp'
 }
 
 interface AppPreferenceState {
@@ -144,6 +146,9 @@ export const useNotificationsEnabled = (): boolean =>
 
 export const useParallelBuildAgents = (): number =>
   useAppPreferenceStore((state) => state.preferences.parallelBuildAgents)
+
+export const useLeanBuildMcp = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.leanBuildMcp)
 
 export const useAppPreferenceActions = (): Pick<
   AppPreferenceState,

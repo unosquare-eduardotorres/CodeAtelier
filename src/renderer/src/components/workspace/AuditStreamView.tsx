@@ -74,7 +74,7 @@ export default function AuditStreamView({
               />
             ))}
 
-            {/* In-progress analysis — thinking dots + live tools instead of a stuttering bubble */}
+            {/* In-progress analysis — pulsing status text + live tools instead of a stuttering bubble */}
             {isStreaming && (
               <AuditThinkingIndicator trackName={trackName} toolActivities={currentToolActivities} />
             )}

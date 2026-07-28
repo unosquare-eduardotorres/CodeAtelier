@@ -254,15 +254,23 @@ classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
 classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
 \`\`\`
 
-Use Lucide icons in node labels via \`@{ icon, label, form }\` syntax for key nodes:
-- Person/role → \`icon: "lucide:user"\`, form: \`"rounded"\`
-- Agent/bot → \`icon: "lucide:bot"\`, form: \`"rounded"\`
-- Decision/branch → diamond shape \`{Decision}\` + decision class
-- Database → \`icon: "lucide:database"\`, form: \`"rounded"\`
-- File/code → \`icon: "lucide:file-code"\`, form: \`"square"\`
-- Settings/config → \`icon: "lucide:settings"\`, form: \`"circle"\`
-- API/network → \`icon: "lucide:globe"\`, form: \`"rounded"\`
-- Warning/error → \`icon: "lucide:alert-triangle"\`, form: \`"rounded"\`
+Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
+Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
+
+Example:
+\`\`\`mermaid
+flowchart TD
+  A@{ icon: "lucide:bot", label: "Ingest", form: "rounded" }
+  B@{ icon: "lucide:database", label: "Store", form: "rounded" }
+  C{Validate}
+  A --> B --> C
+  class A agent
+  class B data
+  class C decision
+\`\`\`
+
+Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:alert-triangle (warning).
+Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
 
 No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
 
@@ -304,6 +312,13 @@ Full access: read, search, run commands, write files. You are the implementer.
 
 ### Plan Requests
 Call **emit_plan** with findings. After "Build Now" confirmation, implement.
+
+### Phase Progress
+When executing a phased plan, call **emit_phase_progress** at each transition:
+- \`status: "started"\` when beginning a phase
+- \`status: "completed"\` when a phase is done (tests pass, files written)
+- \`status: "failed"\` if a phase cannot be completed
+Include \`totalPhases\` and \`phaseId\` from the plan.
 
 ### Tool Errors
 - Stale file / string not found → re-read and retry. Only report actual EACCES/permission-denied.
@@ -355,15 +370,23 @@ classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
 classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
 \`\`\`
 
-Use Lucide icons in node labels via \`@{ icon, label, form }\` syntax for key nodes:
-- Person/role → \`icon: "lucide:user"\`, form: \`"rounded"\`
-- Agent/bot → \`icon: "lucide:bot"\`, form: \`"rounded"\`
-- Decision/branch → diamond shape \`{Decision}\` + decision class
-- Database → \`icon: "lucide:database"\`, form: \`"rounded"\`
-- File/code → \`icon: "lucide:file-code"\`, form: \`"square"\`
-- Settings/config → \`icon: "lucide:settings"\`, form: \`"circle"\`
-- API/network → \`icon: "lucide:globe"\`, form: \`"rounded"\`
-- Warning/error → \`icon: "lucide:alert-triangle"\`, form: \`"rounded"\`
+Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
+Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
+
+Example:
+\`\`\`mermaid
+flowchart TD
+  A@{ icon: "lucide:bot", label: "Ingest", form: "rounded" }
+  B@{ icon: "lucide:database", label: "Store", form: "rounded" }
+  C{Validate}
+  A --> B --> C
+  class A agent
+  class B data
+  class C decision
+\`\`\`
+
+Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:alert-triangle (warning).
+Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
 
 No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
 
@@ -391,6 +414,9 @@ Report failures and STOP — no auto-debug/retry/port-killing. Never test unless
 
 ### Scope
 >5 files → plan + approval. Ambiguous → ask_user.
+
+### Phase Progress
+For phased plans, call **emit_phase_progress** when starting/completing each phase.
 
 ### Tool Errors
 Stale file / string not found → re-read and retry. Only report actual EACCES/permission-denied.

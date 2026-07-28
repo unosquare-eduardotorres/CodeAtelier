@@ -70,12 +70,20 @@ function BlueprintActiveView({
   onApprove,
   onReject,
   onCancel,
+  onRerunPreflight,
   onSendClarifyAnswer,
   onSkipClarify,
   onProceedGate,
   onIterateClarify
 }: {
-  pendingApproval: { blueprintId: string; planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+  pendingApproval: {
+    blueprintId: string; planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string
+    preflight?: {
+      result: { checks: Array<{ id: string; name: string; kind: string; status: string; message: string; remediation?: string; sources: string[] }>; ranAt: string; hasBlockers: boolean; hasWarnings: boolean }
+      overridden: boolean
+    }
+  } | null
+  onRerunPreflight?: () => void
   currentPhase: BlueprintPhaseType | null
   currentWave: { wave: number; taskCount: number } | null
   waveTasks: Record<string, import('../../../../shared/blueprint-types').BlueprintTaskStatus>
@@ -199,6 +207,7 @@ function BlueprintActiveView({
                 isStreaming={isRunning && !clarifyGateReady && !clarifyQuestions && !clarifyAwaitingInput && !pendingApproval}
                 runningTasks={runningTasks}
                 waveTasks={waveTasks}
+                currentPhase={currentPhase}
                 footer={
                   <>
                     {/* Approval gate card (review → build transition) */}
@@ -211,6 +220,8 @@ function BlueprintActiveView({
                           planSummary={pendingApproval.planSummary}
                           completion={pendingApproval.completion}
                           reviewMarkdown={pendingApproval.reviewMarkdown}
+                          preflight={pendingApproval.preflight}
+                          onRerunPreflight={onRerunPreflight}
                           onApprove={onApprove}
                           onReject={onReject}
                           onCancel={onCancel}
@@ -351,6 +362,10 @@ function ClarifyAnswerPanel({
   )
 }
 
+// ── Phase 4: View-restore map (module-scoped) ──
+// Remembers last-viewed blueprint per workspace to avoid bouncing to landing on re-render
+const lastViewedByWorkspace = new Map<string, string>()
+
 // ── BlueprintPage ──
 
 export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
@@ -385,6 +400,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     cancelBlueprint,
     deleteBlueprint,
     respondToApproval,
+    rerunPreflight,
     sendClarifyAnswer,
     skipClarify,
     proceedClarifyGate,
@@ -392,6 +408,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     retryPhase,
     loadPipelineStatus,
     resetForWorkspaceSwitch,
+    hydrateTranscript,
     phaseStartedAt,
     orphanedBlueprint
   } = useBlueprintStore()
@@ -441,18 +458,48 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   }
 
   // ── Load history + recover pipeline state on workspace change / app reopen ──
+  // Phase 4: Priority-based view restore instead of unconditional landing bounce.
+  // Priority: pendingOnboard > running pipeline > lastViewed > landing
   useEffect(() => {
     if (workspaceId) {
-      resetForWorkspaceSwitch() // Clear stale state from previous workspace
+      resetForWorkspaceSwitch(workspaceId) // Clear stale state from previous workspace
       loadHistory(workspaceId)
       // Recovery: if the app was reopened mid-pipeline, restore currentPhase/isRunning
-      loadPipelineStatus(workspaceId)
+      loadPipelineStatus(workspaceId).then(() => {
+        // MINOR-FIX: Stale-workspace guard — if user switched workspace while
+        // loadPipelineStatus was in-flight, skip restore to avoid wrong-workspace state.
+        if (useWorkspaceStore.getState().activeWorkspace?.id !== workspaceId) return
+
+        const state = useBlueprintStore.getState()
+        /* eslint-disable react-hooks/set-state-in-effect -- intentional conditional restore */
+        // Priority 1: pendingOnboard handled by its own effect (skip here)
+        // Priority 2: pipeline running → active view (getEffectiveView handles via isRunning)
+        if (state.isRunning && state.currentBlueprint?.id) {
+          setSelectedId(null)
+          // Don't setViewState — getEffectiveView will force 'active'
+          return
+        }
+        // Priority 3: restore last-viewed blueprint
+        const lastViewed = lastViewedByWorkspace.get(workspaceId)
+        if (lastViewed) {
+          setSelectedId(lastViewed)
+          setViewState('detail')
+          loadBlueprint(lastViewed)
+          hydrateTranscript(lastViewed)
+          return
+        }
+        // Priority 4: landing
+        setSelectedId(null)
+        setViewState('landing')
+        /* eslint-enable react-hooks/set-state-in-effect */
+      })
+    } else {
+      /* eslint-disable react-hooks/set-state-in-effect -- intentional reset */
+      setSelectedId(null)
+      setViewState('landing')
+      /* eslint-enable react-hooks/set-state-in-effect */
     }
-    /* eslint-disable react-hooks/set-state-in-effect -- intentional reset on workspace identity change */
-    setSelectedId(null)
-    setViewState('landing')
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [workspaceId, loadHistory, loadPipelineStatus, resetForWorkspaceSwitch])
+  }, [workspaceId, loadHistory, loadPipelineStatus, resetForWorkspaceSwitch, loadBlueprint, hydrateTranscript])
 
   // ── Auto-start from pendingOnboard (CreateProjectDialog → BlueprintPage handoff) ──
   const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
@@ -538,6 +585,12 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     }
   }, [pendingApproval, respondToApproval])
 
+  const handleRerunPreflight = useCallback(() => {
+    if (pendingApproval && workspaceId) {
+      rerunPreflight(pendingApproval.blueprintId, workspaceId)
+    }
+  }, [pendingApproval, workspaceId, rerunPreflight])
+
   const handleReject = useCallback(
     (feedback: string) => {
       if (pendingApproval) {
@@ -552,14 +605,20 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
       setSelectedId(id)
       setViewState('detail')
       loadBlueprint(id)
+      // Phase 1: Hydrate transcript from journal for historical run viewing
+      hydrateTranscript(id)
+      // Phase 4: Remember last-viewed for view restore
+      if (workspaceId) lastViewedByWorkspace.set(workspaceId, id)
     },
-    [loadBlueprint]
+    [loadBlueprint, hydrateTranscript, workspaceId]
   )
 
   const handleBackFromDetail = useCallback(() => {
     setSelectedId(null)
     setViewState('landing')
-  }, [])
+    // Phase 4: Clear last-viewed on explicit back (user chose to leave)
+    if (workspaceId) lastViewedByWorkspace.delete(workspaceId)
+  }, [workspaceId])
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget || !workspaceId) return
@@ -570,6 +629,11 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
     // Wait for animation, then actually delete
     setTimeout(async () => {
       await deleteBlueprint(id, workspaceId)
+      // MINOR-FIX: Clear lastViewedByWorkspace for deleted blueprint
+      // to prevent restore of a deleted run (empty detail view)
+      if (lastViewedByWorkspace.get(workspaceId) === id) {
+        lastViewedByWorkspace.delete(workspaceId)
+      }
       setDeletingIds((prev) => {
         const next = new Set(prev)
         next.delete(id)
@@ -802,6 +866,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             onApprove={handleApprove}
             onReject={handleReject}
             onCancel={handleCancel}
+            onRerunPreflight={handleRerunPreflight}
             onSendClarifyAnswer={(message, answers) => {
               const bpId = currentBlueprint?.id ?? clarifyBlueprintId
               if (bpId && workspaceId) {

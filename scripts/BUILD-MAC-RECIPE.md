@@ -8,7 +8,7 @@
 - macOS with Xcode command-line tools
 - Apple Developer ID certificate in Keychain
 - Notarization credentials stored: `xcrun notarytool store-credentials code-atelier`
-- Node.js 24+ and npm 11+
+- Node.js 22+ and npm 11+
 - `NODE_ENV` must NOT be `production` (or use `--include=dev` everywhere)
   - Check: `echo $NODE_ENV` — if `production`, the restore trap's `npm install` will silently skip devDependencies
   - Fix: `unset NODE_ENV` before building, or ensure all `npm install` calls use `--include=dev`
@@ -20,7 +20,6 @@
 npm run typecheck:node 2>&1 | grep -c "error TS"    # Must be 0
 npm run typecheck:web 2>&1 | grep -c "error TS"     # Must be 0
 grep '"dependencies"' package.json                    # Must show 1 match
-cp package.json package.json.safe                     # Safety backup
 ```
 
 ## Option A: Use the Script (Recommended)
@@ -44,16 +43,17 @@ npm run build
 # Step 2: Prune
 npm prune --omit=dev
 
-# Step 2b: Rebuild native modules
-npx --yes @electron/rebuild --version 42.4.1 --module-dir . --types prod --force
+# Step 2a: Strip unused platform prebuilts (better-sqlite3 v13 N-API)
+KEEP_PREBUILT="darwin-$(uname -m | sed 's/x86_64/x64/').node"
+find node_modules/better-sqlite3/prebuilds -name '*.node' ! -name "$KEEP_PREBUILT" -delete 2>/dev/null
 
-# Step 2c: Strip dev files
+# Step 2b: Strip dev files
 rm -rf node_modules/electron
 find node_modules -name '*.map' -type f -delete
 find node_modules \( -name '*.d.ts' -o -name '*.d.mts' \) -type f -delete
 find node_modules -type l ! -exec test -e {} \; -delete 2>/dev/null
 
-# Step 2d: Isolate deps
+# Step 2c: Isolate deps
 cp package.json package.json.original
 node -e "
 const pkg = JSON.parse(require('fs').readFileSync('package.json','utf8'));
@@ -69,10 +69,8 @@ NODE_OPTIONS="--max-old-space-size=16384" npx electron-builder --mac
 
 # RESTORE (always, even on failure)
 mv package.json.original package.json 2>/dev/null
-cp package.json.safe package.json
 rm -rf node_modules
 npm install --include=dev
-rm package.json.safe
 
 # VERIFY
 grep '"dependencies"' package.json
@@ -103,12 +101,12 @@ npm install --include=dev                             # --include=dev is critica
 
 | Item | Value |
 |---|---|
-| Electron version | `42.4.1` |
+| Electron version | `43.2.0` |
 | electron-builder | `26.15.3` |
 | Node heap | `16384` MB |
 | Signing identity | `Developer ID Application: UNOSQUARE LLC (PZY6PW4386)` |
 | Keychain profile | `code-atelier` |
-| Native module | `better-sqlite3` (only one) |
+| Native module | `better-sqlite3` v13 (N-API — no Electron rebuild needed) |
 | DMG output | `dist/code-atelier-{version}.dmg` (~170 MB) |
 | DMG window | 660×400 (120px icons) |
 
@@ -117,7 +115,7 @@ npm install --include=dev                             # --include=dev is critica
 | Phase | Duration |
 |---|---|
 | Typecheck + electron-vite build | ~30s |
-| Prune + rebuild + strip | ~20s |
+| Prune + strip | ~15s |
 | Packaging | ~30s |
 | Code signing | ~15s |
 | **Notarization (Apple upload + processing)** | **5–8 min** |
@@ -138,3 +136,16 @@ The EXIT trap in `build-mac.sh` ALWAYS runs `rm -rf node_modules && npm install 
 **Failure mode 3 — LLM panic reinstall:** An LLM sees type errors, runs `rm -rf node_modules && npm install` thinking it'll fix things → same clean install, same exposed latent bugs, infinite loop.
 
 **The golden rule:** If typecheck shows errors after build:mac that weren't there before, the errors are REAL BUGS that were previously hidden. Fix the code, don't reinstall.
+
+---
+
+## Windows Build
+
+| Setting | Value |
+|---------|-------|
+| Script | `scripts/build-win.sh` |
+| Output | `dist/*-setup.exe` (NSIS installer) |
+| Cross-compiled from | macOS |
+| Native prebuilt | `win32-x64.node` |
+| Version bump | Opt-in via `BUMP_VERSION=1` |
+| Code signing | Requires `CSC_LINK` + `CSC_KEY_PASSWORD` env vars (optional) |

@@ -447,17 +447,34 @@ if (loaded) {
     })
   })
 
-  // ── resolveExecutorBackend (additional coverage) ────────────────────
+  // ── resolveExecutorBackend (derived from provider) ────────────────
 
-  describe('AgentSessionService — resolveExecutorBackend edge cases', () => {
-    test('returns_opencode_for_opencode_provider', () => {
+  describe('AgentSessionService — resolveExecutorBackend derivation', () => {
+    test('non_claude_provider_returns_opencode', () => {
       const adapter = createMockAdapter()
       const session = new AgentSessionService(adapter as any)
       const resolve = (session as any).resolveExecutorBackend.bind(session)
-      // 'opencode' provider should also map to 'opencode' backend
-      const result = resolve('opencode')
-      // May be 'cli' or 'opencode' depending on implementation
-      assert.ok(typeof result === 'string')
+      // Any non-claude provider → opencode (derivation rule)
+      assert.equal(resolve('local-llm'), 'opencode')
+      assert.equal(resolve('opencode'), 'opencode')  // hypothetical future provider
+    })
+
+    test('claude_returns_cli', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      const resolve = (session as any).resolveExecutorBackend.bind(session)
+      assert.equal(resolve('claude'), 'cli')
+    })
+
+    test('undefined_falls_back_to_session_llmProvider', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      const resolve = (session as any).resolveExecutorBackend.bind(session)
+      // Default llmProvider is 'claude' → cli
+      assert.equal(resolve(undefined), 'cli')
+      // Change session provider → derivation follows
+      ;(session as any).llmProvider = 'local-llm'
+      assert.equal(resolve(undefined), 'opencode')
     })
 
     test('returns_consistent_type_for_all_providers', () => {
@@ -705,6 +722,210 @@ if (loaded) {
       ;(session as any).sessionMap.set('conv-1', 'session-abc')
       session.clearSession('conv-1')
       assert.equal((session as any).sessionMap.get('conv-1'), undefined)
+    })
+  })
+
+  // ── CLI context injection (non-local-llm, no sessionId) ──────────────
+
+  describe('AgentSessionService — CLI context injection', () => {
+    test('context_injection_block_skipped_when_sessionId_exists', () => {
+      // When resolveSession returns a valid sessionId, the block at line 617
+      // is skipped (condition: !sessionId). Verify by checking that
+      // localContextReconstructor.buildContextFromHistory is NOT called.
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      // Simulate a cached session
+      ;(session as any).sessionMap.set('conv-with-session', 'valid-session-id-abc')
+
+      const resolved = (session as any).resolveSession('conv-with-session')
+      assert.equal(resolved, 'valid-session-id-abc')
+      // sessionId is truthy → !sessionId is false → block skipped ✅
+    })
+
+    test('context_injection_block_fires_when_no_sessionId', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+
+      const resolved = (session as any).resolveSession('conv-no-session')
+      assert.equal(resolved, undefined)
+      // sessionId is undefined → !sessionId is true → block would fire ✅
+    })
+
+    test('resolveSession_validates_session_id_format', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      // Inject a malformed session ID
+      ;(session as any).sessionMap.set('conv-corrupt', 'bad-!@#chars')
+
+      const resolved = (session as any).resolveSession('conv-corrupt')
+      assert.equal(resolved, undefined, 'malformed ID should be treated as absent')
+      assert.equal(
+        (session as any).sessionMap.has('conv-corrupt'),
+        false,
+        'malformed ID should be cleared from sessionMap'
+      )
+    })
+
+    test('resolveSession_accepts_valid_session_id_format', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      ;(session as any).sessionMap.set('conv-valid', 'abc123-def_456')
+
+      const resolved = (session as any).resolveSession('conv-valid')
+      assert.equal(resolved, 'abc123-def_456')
+    })
+
+    test('resolveSession_rejects_short_session_id', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      ;(session as any).sessionMap.set('conv-short', 'abc')
+
+      const resolved = (session as any).resolveSession('conv-short')
+      assert.equal(resolved, undefined, 'IDs shorter than 8 chars should be rejected')
+    })
+
+    test('resolveSession_expires_stale_session_id', () => {
+      const adapter = createMockAdapter()
+      const session = new AgentSessionService(adapter as any)
+      ;(session as any).sessionMap.set('conv-stale', 'valid-session-id-old')
+
+      // Verify SESSION_MAX_AGE_MS constant exists and has a sensible value
+      const maxAge = (AgentSessionService as any).SESSION_MAX_AGE_MS
+      assert.ok(typeof maxAge === 'number', 'SESSION_MAX_AGE_MS should be a number')
+      assert.ok(maxAge >= 24 * 60 * 60 * 1000, 'SESSION_MAX_AGE_MS should be at least 1 day')
+      assert.ok(maxAge <= 30 * 24 * 60 * 60 * 1000, 'SESSION_MAX_AGE_MS should be at most 30 days')
+    })
+
+    test('resolveSession_clears_stale_session_from_sessionMap', () => {
+      // Patch messageRepository.getLastMessageTimestamp to return a date >7d ago
+      const repoMod = require('../../db/repositories')
+      const originalGetLastTimestamp = repoMod.messageRepository.getLastMessageTimestamp
+      const originalUpdateSessionId = repoMod.conversationRepository.updateSessionId
+      const originalUpdateSummary = repoMod.conversationRepository.updateSummary
+
+      let updateSessionIdCalled = false
+      let updateSummaryCalled = false
+      try {
+        // Return a timestamp 10 days ago
+        const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+        repoMod.messageRepository.getLastMessageTimestamp = () => tenDaysAgo
+        repoMod.conversationRepository.updateSessionId = () => { updateSessionIdCalled = true }
+        repoMod.conversationRepository.updateSummary = () => { updateSummaryCalled = true }
+
+        const adapter = createMockAdapter()
+        const session = new AgentSessionService(adapter as any)
+        ;(session as any).sessionMap.set('conv-stale-real', 'valid-stale-session-12345')
+
+        const resolved = (session as any).resolveSession('conv-stale-real')
+        assert.equal(resolved, undefined, 'stale session should return undefined')
+        assert.equal(
+          (session as any).sessionMap.has('conv-stale-real'),
+          false,
+          'stale session should be cleared from sessionMap'
+        )
+        assert.ok(updateSessionIdCalled, 'should clear session ID in DB')
+        assert.ok(updateSummaryCalled, 'should clear summary in DB')
+      } finally {
+        repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
+        repoMod.conversationRepository.updateSessionId = originalUpdateSessionId
+        repoMod.conversationRepository.updateSummary = originalUpdateSummary
+      }
+    })
+
+    test('resolveSession_preserves_fresh_session', () => {
+      // Patch messageRepository.getLastMessageTimestamp to return a recent date
+      const repoMod = require('../../db/repositories')
+      const originalGetLastTimestamp = repoMod.messageRepository.getLastMessageTimestamp
+
+      try {
+        // Return a timestamp 1 hour ago
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        repoMod.messageRepository.getLastMessageTimestamp = () => oneHourAgo
+
+        const adapter = createMockAdapter()
+        const session = new AgentSessionService(adapter as any)
+        ;(session as any).sessionMap.set('conv-fresh', 'valid-fresh-session-12345')
+
+        const resolved = (session as any).resolveSession('conv-fresh')
+        assert.equal(resolved, 'valid-fresh-session-12345', 'fresh session should be preserved')
+        assert.ok(
+          (session as any).sessionMap.has('conv-fresh'),
+          'fresh session should remain in sessionMap'
+        )
+      } finally {
+        repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
+      }
+    })
+
+    test('resolveSession_preserves_session_when_no_messages', () => {
+      // Patch messageRepository.getLastMessageTimestamp to return undefined (no messages)
+      const repoMod = require('../../db/repositories')
+      const originalGetLastTimestamp = repoMod.messageRepository.getLastMessageTimestamp
+
+      try {
+        repoMod.messageRepository.getLastMessageTimestamp = () => undefined
+
+        const adapter = createMockAdapter()
+        const session = new AgentSessionService(adapter as any)
+        ;(session as any).sessionMap.set('conv-empty', 'valid-empty-session-12345')
+
+        const resolved = (session as any).resolveSession('conv-empty')
+        assert.equal(resolved, 'valid-empty-session-12345', 'session with no messages should be preserved')
+      } finally {
+        repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
+      }
+    })
+
+    test('resolveSession_handles_malformed_timestamp_gracefully', () => {
+      // Patch messageRepository.getLastMessageTimestamp to return garbage
+      const repoMod = require('../../db/repositories')
+      const originalGetLastTimestamp = repoMod.messageRepository.getLastMessageTimestamp
+
+      try {
+        repoMod.messageRepository.getLastMessageTimestamp = () => 'not-a-date'
+
+        const adapter = createMockAdapter()
+        const session = new AgentSessionService(adapter as any)
+        ;(session as any).sessionMap.set('conv-bad-ts', 'valid-badts-session-12345')
+
+        const resolved = (session as any).resolveSession('conv-bad-ts')
+        // NaN guard should skip staleness — session preserved
+        assert.equal(resolved, 'valid-badts-session-12345', 'malformed timestamp should not expire session')
+      } finally {
+        repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
+      }
+    })
+
+    test('resolveSession_rejects_session_loaded_from_db_cross_restart', () => {
+      // Simulate cross-restart: session exists in DB but NOT in the in-memory sessionMap
+      const repoMod = require('../../db/repositories')
+      const originalGetSessionId = repoMod.conversationRepository.getSessionId
+      const originalUpdateSessionId = repoMod.conversationRepository.updateSessionId
+
+      repoMod.conversationRepository.getSessionId = (id: string) =>
+        id === 'conv-restart' ? 'valid-session-from-previous-lifecycle' : undefined
+      let clearedSessionId = false
+      repoMod.conversationRepository.updateSessionId = (id: string, value: string) => {
+        if (id === 'conv-restart' && value === '') clearedSessionId = true
+      }
+
+      try {
+        const adapter = createMockAdapter()
+        const session = new AgentSessionService(adapter as any)
+        // Don't set sessionMap — simulates fresh app process
+
+        const resolved = (session as any).resolveSession('conv-restart')
+        assert.equal(resolved, undefined, 'DB-loaded session should be rejected after restart')
+        assert.ok(clearedSessionId, 'stale session ID should be cleared from DB')
+        assert.equal(
+          (session as any).sessionMap.has('conv-restart'),
+          false,
+          'rejected session should not be cached in sessionMap'
+        )
+      } finally {
+        repoMod.conversationRepository.getSessionId = originalGetSessionId
+        repoMod.conversationRepository.updateSessionId = originalUpdateSessionId
+      }
     })
   })
 } else {

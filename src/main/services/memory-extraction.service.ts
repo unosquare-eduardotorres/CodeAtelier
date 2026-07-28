@@ -200,7 +200,7 @@ class MemoryExtractionService {
       let created = 0
       for (const fact of facts) {
         try {
-          await memoryEngineService.writeFact({
+          const written = await memoryEngineService.writeFact({
             workspaceId,
             category: fact.category,
             title: fact.title,
@@ -211,7 +211,7 @@ class MemoryExtractionService {
             sourceRef,
             workspacePath
           })
-          created++
+          if (written) created++
         } catch (err) {
           log.warn('[MemoryExtraction] Failed to write content fact:', err)
         }

@@ -138,25 +138,14 @@ export default function StreamingTranscript<T>({
           {isStreaming && (
             <>
               {hasLiveContent && !suppressLiveBubble ? (
-                /* Live content exists: tools render INSIDE the bubble via BubbleFooterActions,
-                 * and a slim typing-dots row beneath signals "still working" without a
-                 * second avatar/bubble/label (fixes the duplicate "Analyzing…" bubble). */
-                <>
-                  <MessageBubble
-                    message={liveMessage}
-                    identityOverride={identity}
-                    isStreaming
-                    toolActivities={liveToolActivities}
-                  />
-                  {/* Slim typing dots — no avatar, no bubble chrome */}
-                  <div className="flex justify-start pl-14">
-                    <div className="flex items-center gap-1.5 py-1 px-2">
-                      <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-                      <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-                      <span className="typing-dot" style={{ animationDelay: '300ms' }} />
-                    </div>
-                  </div>
-                </>
+                /* Live content exists: tools render INSIDE the bubble via BubbleFooterActions.
+                 * The bubble footer shows a pulsing "writing…" indicator via isStreaming. */
+                <MessageBubble
+                  message={liveMessage}
+                  identityOverride={identity}
+                  isStreaming
+                  toolActivities={liveToolActivities}
+                />
               ) : (
                 /* No live content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
                 <ThinkingIndicator

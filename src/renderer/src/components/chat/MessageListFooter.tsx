@@ -1,11 +1,12 @@
+import { useMemo } from 'react'
 import { useChatStore, useChatActions } from '@renderer/store'
-import { GrillQuestionCard } from '@renderer/components/chat'
+import { GrillQuestionCard, MessageBubble } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { CompactContextModal } from '@renderer/components/common'
 import { ThinkingIndicator } from '@renderer/components/streaming'
 import AutoModeSwitchPill from './AutoModeSwitchPill'
 import DiagnosticsPanel from './DiagnosticsPanel'
-import type { ToolActivity } from '../../../../shared/types'
+import type { ToolActivity, Message } from '../../../../shared/types'
 
 interface MessageListFooterProps {
   promptSuggestion: string | null
@@ -27,6 +28,8 @@ export default function MessageListFooter({
   allStreamingTools
 }: MessageListFooterProps): React.JSX.Element {
   const isStreaming = useChatStore((s) => s.isStreaming)
+  const streamingSegments = useChatStore((s) => s.streamingSegments)
+  const streamingContent = useChatStore((s) => s.streamingContent)
   const compactSuggestion = useChatStore((s) => s.compactSuggestion)
   const contextUsages = useChatStore((s) => s.contextUsages)
   const pendingQuestions = useChatStore((s) => s.pendingQuestions)
@@ -44,6 +47,34 @@ export default function MessageListFooter({
     appendLocalMessage,
     createConversation
   } = useChatActions()
+
+  // Merge sentence-buffered segments + current partial content into the live narration
+  const liveContent = useMemo(() => {
+    return [...streamingSegments.map((s) => s.content), streamingContent].join('')
+  }, [streamingSegments, streamingContent])
+
+  const hasLiveContent = liveContent.trim().length > 0
+
+  // Synthetic message backing the live bubble — identity is supplied via identityOverride
+  const liveMessage = useMemo<Message>(
+    () => ({
+      id: 'streaming-live',
+      conversationId: 'streaming',
+      role: 'specialist',
+      contentMd: liveContent,
+      attachmentsJson: '[]',
+      createdAt: new Date().toISOString()
+    }),
+    [liveContent]
+  )
+
+  // Stable identity ref — avoids busting React.memo on MessageBubble when thinkingIdentity hasn't changed
+  const liveIdentity = useMemo(() => ({
+    displayName: thinkingIdentity.name,
+    subtitle: null as string | null,
+    avatarKey: thinkingIdentity.avatarKey,
+    accentColor: thinkingIdentity.accentColor
+  }), [thinkingIdentity.name, thinkingIdentity.avatarKey, thinkingIdentity.accentColor])
 
   return (
     <div data-testid="message-list-footer">
@@ -146,17 +177,28 @@ export default function MessageListFooter({
         </div>
       )}
 
-      {/* Thinking indicator (shared primitive — chat keeps no live-text bubble) */}
+      {/* Live narration bubble (sentence-buffered) or thinking indicator */}
       {isStreaming && !hasPendingQuestions && (
-        <ThinkingIndicator
-          identity={{
-            name: thinkingIdentity.name,
-            avatarKey: thinkingIdentity.avatarKey,
-            accentColor: thinkingIdentity.accentColor
-          }}
-          toolActivities={allStreamingTools}
-          showHookIndicator
-        />
+        hasLiveContent ? (
+          <div data-testid="live-narration-bubble">
+            <MessageBubble
+              message={liveMessage}
+              identityOverride={liveIdentity}
+              isStreaming
+              toolActivities={allStreamingTools}
+            />
+          </div>
+        ) : (
+          <ThinkingIndicator
+            identity={{
+              name: thinkingIdentity.name,
+              avatarKey: thinkingIdentity.avatarKey,
+              accentColor: thinkingIdentity.accentColor
+            }}
+            toolActivities={allStreamingTools}
+            showHookIndicator
+          />
+        )
       )}
     </div>
   )

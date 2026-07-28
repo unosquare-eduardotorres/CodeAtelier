@@ -8,7 +8,7 @@
 
 import { dbLogger } from '../logger'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
-import { omlxEmbeddingProvider } from './omlx-embedding.service'
+import { localEmbeddingProvider } from './local-embedding.provider'
 import { sanitizePromptInput } from './sanitize-prompt-input'
 import { cosineSimilarity } from './memory-engine.service'
 import type {
@@ -138,8 +138,8 @@ class MemoryRetrievalService {
    */
   private async embedQuery(query: string): Promise<Float32Array | null> {
     try {
-      if (omlxEmbeddingProvider.isReady) {
-        const vectors = await omlxEmbeddingProvider.embed([query])
+      if (localEmbeddingProvider.isReady) {
+        const vectors = await localEmbeddingProvider.embed([query])
         if (vectors.length > 0 && vectors[0].length > 0) {
           return new Float32Array(vectors[0])
         }

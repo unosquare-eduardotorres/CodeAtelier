@@ -15,6 +15,8 @@ import { DEFAULT_PROMPTS } from '../services/default-prompts'
 import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
 import { runDropSpecialistMcpColumnsMigration } from './migrations/drop-specialist-mcp-columns-migration'
 import { runAddDangerModeMigration } from './migrations/add-danger-mode-migration'
+import { resolveAssignment } from '../services/model-config.service'
+import type { LLMProvider, LocalLLMBackend, ModelRoleMap, ModelOverrides } from '../../shared/types'
 
 let db: Database.Database | null = null
 
@@ -23,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 122
+const CURRENT_SCHEMA_VERSION = 125
 
 export interface Migration {
   version: number
@@ -3293,6 +3295,124 @@ export const migrations: Migration[] = [
       } catch { /* column may already exist */ }
 
       dbLogger.info('[migration-122] ✓ Created plan_status_history table + previous_plan_id column')
+    }
+  },
+
+  // ── v123: Backfill model_config_json + harden llm_provider for per-chat isolation ──
+  {
+    version: 123,
+    name: 'backfill-model-config-snapshot-and-provider',
+    up: (db) => {
+      // Phase 1.2: Backfill model_config_json for legacy conversations (pre-migration 111)
+      // that still have NULL snapshots. This freezes their *current effective* model config
+      // so they stop following future workspace setting changes.
+      //
+      // Phase 1.3: Harden llm_provider for conversations missing a provider value.
+
+      interface BackfillRow {
+        conv_id: string
+        workspace_id: string
+        llm_provider: string | null
+        settings_json: string | null
+      }
+
+      const rows = db.prepare(`
+        SELECT c.id as conv_id, c.workspace_id, c.llm_provider,
+               w.settings_json
+        FROM conversations c
+        JOIN workspaces w ON c.workspace_id = w.id
+        WHERE c.model_config_json IS NULL
+      `).all() as BackfillRow[]
+
+      if (rows.length === 0) {
+        dbLogger.info('[migration-123] No conversations need backfill')
+        return
+      }
+
+      const updateSnapshot = db.prepare(
+        'UPDATE conversations SET model_config_json = ?, llm_provider = ? WHERE id = ?'
+      )
+
+      let backfilled = 0
+      for (const row of rows) {
+        try {
+          let settings: Record<string, unknown> = {}
+          try {
+            settings = row.settings_json ? JSON.parse(row.settings_json) : {}
+          } catch { /* corrupted settings — use defaults */ }
+
+          const workspaceProvider = (settings.llmProvider as LLMProvider) ?? 'claude'
+          const workspaceBackend = (settings.localLlmBackend as LocalLLMBackend) ?? undefined
+          const modelRoles = (settings.modelRoles ?? undefined) as ModelRoleMap | undefined
+          const modelOverrides = (settings.modelOverrides ?? undefined) as ModelOverrides | undefined
+
+          const resolveOpts = { modelRoles, modelOverrides, workspaceProvider, workspaceBackend }
+
+          const snapshot = {
+            plan: resolveAssignment({ action: 'specialist:plan', ...resolveOpts }),
+            build: resolveAssignment({ action: 'specialist:build', ...resolveOpts }),
+            background: resolveAssignment({ action: 'haiku', ...resolveOpts }),
+            snapshotAt: new Date().toISOString()
+          }
+
+          // Phase 1.3: Derive provider from snapshot (same logic as conversation creation)
+          const resolvedProvider = snapshot.plan.provider
+          const effectiveProvider = row.llm_provider || resolvedProvider
+
+          updateSnapshot.run(
+            JSON.stringify(snapshot),
+            effectiveProvider,
+            row.conv_id
+          )
+          backfilled++
+        } catch (err) {
+          dbLogger.warn(`[migration-123] Failed to backfill conversation ${row.conv_id}:`, err)
+          // Non-fatal per row — continue with remaining conversations
+        }
+      }
+
+      dbLogger.info(
+        `[migration-123] ✓ Backfilled model_config_json for ${backfilled}/${rows.length} conversations`
+      )
+    }
+  },
+
+  // ── v124: Add completion_json to blueprint_tasks for verify-phase disk checks ──
+  {
+    version: 124,
+    name: 'add-completion-json-to-blueprint-tasks',
+    up: (db) => {
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN completion_json TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-124] ✓ Added completion_json to blueprint_tasks')
+    }
+  },
+
+  // ── v125: Phase progress tracking + todo persistence ──
+  {
+    version: 125,
+    name: 'add-plan-phase-progress-and-todo-persistence',
+    up: (db) => {
+      // Phase progress: JSON column on plans table
+      db.exec(`ALTER TABLE plans ADD COLUMN phase_progress_json TEXT DEFAULT NULL`)
+
+      // Todo persistence: new table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_todos (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          text            TEXT NOT NULL,
+          completed       INTEGER NOT NULL DEFAULT 0,
+          item_index      INTEGER DEFAULT NULL,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_conv_todos_conv
+          ON conversation_todos(conversation_id);
+      `)
+
+      dbLogger.info(
+        '[migration-125] ✓ Added phase_progress_json to plans + conversation_todos table'
+      )
     }
   }
 ]

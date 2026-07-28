@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBackgroundSessionStore, useWorkspaceStore } from '@renderer/store'
-import PermissionToast from './PermissionToast'
+import PermissionApprovalModal from './PermissionApprovalModal'
 import CompletionToast from './CompletionToast'
 import type { CompletionNotification, PendingPermission } from '../../../../shared/types'
 
@@ -83,9 +83,12 @@ export default function NotificationStack({
     return unsub
   }, [activeWorkspaceId])
 
-  // Only show toasts for NON-active workspaces that haven't fallen back to badge
+  // Show toasts for NON-active workspaces, plus toolPermission for the active workspace
+  // (askQuestion/elicitation have inline chat handlers; toolPermission does not)
   const visiblePermissions = permissions.filter(
-    (p) => p.workspaceId !== activeWorkspaceId && !p.badgeFallback
+    (p) =>
+      (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') &&
+      !p.badgeFallback
   )
 
   const handlePermissionRespond = useCallback(
@@ -95,7 +98,10 @@ export default function NotificationStack({
           permissionId: permission.id,
           workspaceId: permission.workspaceId,
           type: permission.type,
-          response
+          response,
+          // For toolPermission, include the original payload so the IPC handler
+          // can extract the requestId to route back to the control-actions server.
+          ...(permission.type === 'toolPermission' ? { payload: permission.payload } : {})
         })
         .catch(console.error)
       removePermission(permission.id)
@@ -141,16 +147,16 @@ export default function NotificationStack({
 
   return (
     <div data-testid="notification-stack" className="fixed top-14 right-4 z-50 flex flex-col gap-3">
-      {/* Permission toasts — show first (higher priority) */}
-      {visiblePermissions.slice(0, MAX_VISIBLE_TOASTS).map((p) => (
-        <PermissionToast
-          key={p.id}
-          permission={p}
-          onRespond={(response) => handlePermissionRespond(p, response)}
-          onView={() => handlePermissionView(p)}
-          onDismiss={() => handlePermissionDismiss(p)}
+      {/* Permission modal — shows one at a time (oldest first, queue model) */}
+      {visiblePermissions.length > 0 && (
+        <PermissionApprovalModal
+          permission={visiblePermissions[0]}
+          queueCount={visiblePermissions.length}
+          onRespond={(response) => handlePermissionRespond(visiblePermissions[0], response)}
+          onView={() => handlePermissionView(visiblePermissions[0])}
+          onDismiss={() => handlePermissionDismiss(visiblePermissions[0])}
         />
-      ))}
+      )}
 
       {/* Completion toasts — fill remaining slots */}
       {completions

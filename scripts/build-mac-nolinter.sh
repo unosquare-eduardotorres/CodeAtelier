@@ -12,12 +12,12 @@ echo "▸ Step 2: Prune to production dependencies"
 npm prune --omit=dev
 
 echo ""
-echo "▸ Step 2b: Rebuild native modules"
-npx --yes @electron/rebuild \
-  --version 42.4.1 \
-  --module-dir "$ROOT" \
-  --types prod \
-  --force
+echo "▸ Step 2a: Strip unused platform prebuilts"
+# better-sqlite3 v13 ships N-API prebuilts for ALL platforms (~16MB).
+# Keep only the target platform binary to save ~14MB in the DMG.
+KEEP_PREBUILT="darwin-$(uname -m | sed 's/x86_64/x64/').node"
+find node_modules/better-sqlite3/prebuilds -name '*.node' ! -name "$KEEP_PREBUILT" -delete 2>/dev/null
+echo "  Kept only $KEEP_PREBUILT prebuilt"
 
 echo ""
 echo "▸ Step 2c: Strip runtime-unnecessary files"

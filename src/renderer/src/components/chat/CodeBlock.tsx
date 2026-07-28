@@ -12,6 +12,16 @@ import { useAppTheme } from '@renderer/store'
 function detectLanguage(code: string): string {
   const trimmed = code.trimStart()
 
+  // Mermaid — first line is a diagram type keyword
+  // Note: `graph` requires a direction (TD/TB/BT/RL/LR) to avoid false positives
+  if (
+    /^(flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|gitgraph|journey|mindmap|timeline|quadrantChart|sankey-beta|xychart-beta|block-beta|requirementDiagram|C4Context|C4Container|C4Component|C4Deployment|zenuml)\b/.test(trimmed) ||
+    /^graph\s+(TD|TB|BT|RL|LR)\b/.test(trimmed) ||
+    /^---\s*\n[\s\S]*?\n---\s*\n\s*(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|gitgraph|journey|mindmap|timeline)/.test(trimmed)
+  ) {
+    return 'mermaid'
+  }
+
   // JSON — starts with { or [
   if (trimmed[0] === '{' || trimmed[0] === '[') {
     try {

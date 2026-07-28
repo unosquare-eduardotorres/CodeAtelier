@@ -36,6 +36,8 @@ export const IPC_CHANNELS = {
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
+  CHAT_GET_TODOS: 'chat:getTodos',
+  PLAN_GET_PHASE_PROGRESS: 'plan:getPhaseProgress',
   CHAT_SWITCH_BRANCH: 'chat:switchBranch',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
@@ -66,6 +68,10 @@ export const IPC_CHANNELS = {
   COMPLETION_NOTIFICATION: 'workspace:completion',
   /** Main → Renderer: navigate to workspace + page after OS notification click */
   NOTIFICATION_NAVIGATE: 'notification:navigate',
+  /** Renderer → Main: probe macOS notification support (unsigned build detection) */
+  NOTIFICATION_PROBE: 'notification:probe',
+  /** Main → Renderer: navigate to workspace/page after tray menu click */
+  TRAY_NAVIGATE: 'tray:navigate',
 
   // Dialog
   DIALOG_SELECT_DIRECTORY: 'dialog:selectDirectory',
@@ -323,6 +329,7 @@ export const IPC_CHANNELS = {
   // AI Subscriptions
   SUBSCRIPTION_VALIDATE_ALL: 'subscription:validateAll',
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
+  SUBSCRIPTION_CHECK_OPENCODE_CLI: 'subscription:checkOpenCodeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
   // Embedding provider (oMLX — user must have oMLX running with an embedding model)
@@ -423,6 +430,7 @@ export const IPC_CHANNELS = {
   BUG_UPDATE_NOTE: 'bug:updateNote',
   BUG_COUNT: 'bug:count',
   BUG_NEW: 'bug:new',
+  BUG_EXPORT_MARKDOWN: 'bug:exportMarkdown',
 
   // oMLX
   OMLX_CHECK_STATUS: 'omlx:checkStatus',
@@ -490,6 +498,7 @@ export const IPC_CHANNELS = {
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
   CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
   CHAT_UPDATE_TONE: 'chat:updateTone',
+  CHAT_UPDATE_ROUTING: 'chat:updateRouting',
 
   CHAT_SET_PLAN_ACTION: 'chat:setPlanAction',
 
@@ -600,6 +609,7 @@ export const IPC_CHANNELS = {
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
   BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution',
   BLUEPRINT_RETRY_PHASE: 'blueprint:retryPhase',
+  BLUEPRINT_ACKNOWLEDGE_REVIEW: 'blueprint:acknowledgeReview',
 
   // Blueprint snapshot sync (M2 — whole-state snapshot)
   BLUEPRINT_STATE_SYNC: 'blueprint:stateSync',
@@ -609,6 +619,10 @@ export const IPC_CHANNELS = {
 
   // Blueprint snapshot (M7 — pull-based seed on mount/workspace switch)
   BLUEPRINT_GET_SNAPSHOT: 'blueprint:getSnapshot',
+
+  // Blueprint preflight (environment validation before BUILD)
+  BLUEPRINT_PREFLIGHT_RUN: 'blueprint:preflightRun',
+  BLUEPRINT_PREFLIGHT_RESULT: 'blueprint:preflightResult',
 
   // E2E Testing
   TESTING_LIST_SCENARIOS: 'testing:listScenarios',
@@ -632,6 +646,9 @@ export const IPC_CHANNELS = {
   HANDOFF_PREVIEW: 'handoff:preview'
 
 } as const
+
+/** Attribution trailer appended to commits made through the app UI. */
+export const COMMIT_ATTRIBUTION = '✨ Generated with Code Atelier'
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
 export const ACTIVATION_MODEL_ID = 'claude-haiku-4-5-20251001' as const
@@ -697,8 +714,8 @@ export const AVAILABLE_MODELS = [
     description: 'Balanced performance'
   },
   {
-    id: 'claude-opus-4-8',
-    label: 'Opus 4.8',
+    id: 'claude-opus-5',
+    label: 'Opus 5',
     tier: 'opus' as const,
     description: 'Most capable'
   },
@@ -712,36 +729,37 @@ export const AVAILABLE_MODELS = [
 
 /** Default model for each configurable action */
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
-  specialist: 'claude-opus-4-8',
-  'specialist:plan': 'claude-opus-4-8',
+  specialist: 'claude-opus-5',
+  'specialist:plan': 'claude-opus-5',
   'specialist:build': 'claude-sonnet-5',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-5',
-  'specialist:complex': 'claude-opus-4-8',
+  'specialist:complex': 'claude-opus-5',
   memoryFeed: 'claude-haiku-4-5-20251001',
   activation: 'claude-haiku-4-5-20251001',
   haiku: 'claude-haiku-4-5-20251001',
-  audit: 'claude-opus-4-8',
-  grill: 'claude-opus-4-8',
-  'council-member': 'claude-opus-4-8',
-  'council-chairman': 'claude-opus-4-8',
-  'grill:plan': 'claude-opus-4-8',
-  'mpa:decompose': 'claude-opus-4-8',
+  audit: 'claude-opus-5',
+  grill: 'claude-opus-5',
+  'council-member': 'claude-opus-5',
+  'council-chairman': 'claude-opus-5',
+  'grill:plan': 'claude-opus-5',
+  'mpa:decompose': 'claude-opus-5',
 
   // Blueprint phase actions
-  'blueprint:specify': 'claude-opus-4-8',
+  'blueprint:specify': 'claude-opus-5',
   'blueprint:clarify': 'claude-sonnet-5',
-  'blueprint:plan': 'claude-opus-4-8',
-  'blueprint:tasks': 'claude-opus-4-8',
-  'blueprint:review': 'claude-opus-4-8',
+  'blueprint:plan': 'claude-opus-5',
+  'blueprint:tasks': 'claude-opus-5',
+  'blueprint:review': 'claude-opus-5',
   'blueprint:build': 'claude-sonnet-5',
-  'blueprint:verify': 'claude-opus-4-8',
+  'blueprint:verify': 'claude-opus-5',
 
   // Prompt optimization
   'prompt:optimize': 'claude-haiku-4-5-20251001',
 
   // Background one-shot actions
   'commit-message': 'claude-haiku-4-5-20251001',
+  'pr-description': 'claude-haiku-4-5-20251001',
   'condense': 'claude-haiku-4-5-20251001'
 } as const
 
@@ -800,7 +818,7 @@ export const ACTION_GROUPS: ActionGroup[] = [
     label: 'Background Tasks',
     icon: '⚙️',
     description: 'Memory extraction, prompt optimization, and lightweight tasks',
-    actions: ['memoryFeed', 'activation', 'haiku', 'prompt:optimize', 'commit-message', 'condense']
+    actions: ['memoryFeed', 'activation', 'haiku', 'prompt:optimize', 'commit-message', 'pr-description', 'condense']
   },
   {
     id: 'specialist',
@@ -885,10 +903,12 @@ export function resolveModelAction(
 export function resolvePromptVerbosity(model: string): import('./types').PromptVerbosity {
   // Fable 5 — frontier model, lean prompts
   if (model.startsWith('claude-fable-')) return 'lean'
-  // Opus 4.8+ can follow compressed instructions reliably
+  // Opus 5+ — lean prompts
+  if (model === 'claude-opus-5') return 'lean'
+  // Opus 4.8 (legacy) also gets lean
   if (model === 'claude-opus-4-8') return 'lean'
-  // Future-proof: any Opus newer than 4.8 also gets lean
-  if (model.startsWith('claude-opus-') && model > 'claude-opus-4-8') return 'lean'
+  // Future-proof: any Opus newer than 5 also gets lean
+  if (model.startsWith('claude-opus-') && model > 'claude-opus-5') return 'lean'
   // Sonnet 4.6+ follows lean instructions effectively — saves ~800-1200 tokens/turn
   if (model.startsWith('claude-sonnet-') && model >= 'claude-sonnet-4-6') return 'lean'
   return 'full'
@@ -901,6 +921,7 @@ export function resolvePromptVerbosity(model: string): import('./types').PromptV
  * Opus 4.8+ includes 1M at standard pricing. Sonnet models via context-1m beta.
  */
 export const CONTEXT_1M_SUPPORTED_MODELS = [
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-fable-5',
   'claude-sonnet-5',
@@ -924,6 +945,7 @@ export function supportsContext1M(model: string): boolean {
   return (
     (CONTEXT_1M_SUPPORTED_MODELS as readonly string[]).includes(model) ||
     model.startsWith('claude-sonnet') ||
+    model === 'claude-opus-5' ||
     model === 'claude-opus-4-8'
   )
 }
@@ -1082,6 +1104,12 @@ export const MODEL_ACTIONS_META: Record<
     icon: '📦',
     section: 'background'
   },
+  'pr-description': {
+    label: 'PR Description',
+    description: 'Generate pull request descriptions from conversation context',
+    icon: '📝',
+    section: 'background'
+  },
   condense: {
     label: 'Conversation Condense',
     description: 'Compress conversation context before compaction',
@@ -1099,7 +1127,7 @@ export const MODEL_ACTIONS_META: Record<
 export const THINKING_BUDGETS = {
   haiku: '5000',
   sonnet: '', // empty = adaptive-only (Sonnet 5 removed budget_tokens — 400 error if passed)
-  opus: '' // empty = adaptive-only (Opus 4.7+ removed budget_tokens — 400 error if passed)
+  opus: '' // empty = adaptive-only (Opus 5 uses adaptive thinking; budget_tokens not supported)
 } as const
 
 /**
@@ -1109,7 +1137,7 @@ export const THINKING_BUDGETS = {
 export const COMPLEXITY_TO_EFFORT = {
   simple: 'low',
   moderate: 'medium',
-  complex: 'high' // Opus 4.8 at 'high' ≥ 4.7 at 'xhigh'; CLI 2.1+ supports all 5 levels natively
+  complex: 'high' // Opus 5 at 'high' — same default as API; CLI 2.1+ supports all 5 levels natively
 } as const satisfies Record<string, 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
 
 /**
@@ -1835,7 +1863,13 @@ export const MCP_TOOLS = {
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
-    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user')
+    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
+    PERMISSION_PROMPT: mcpTool('control-actions', 'permission_prompt', 'Control · permission_prompt'),
+    EMIT_PHASE_PROGRESS: mcpTool(
+      'control-actions',
+      'emit_phase_progress',
+      'Control · emit_phase_progress'
+    )
   }),
   MEMORY: mcpServer('memory', {
     MEMORY_SEARCH: mcpTool('memory', 'memory_search', 'Memory · memory_search'),

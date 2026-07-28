@@ -8,7 +8,7 @@ import { MCP_TOOLS } from '../../../../shared/constants'
 /**
  * MPA Verifier Adapter — read-only auditor that checks implementation completeness.
  *
- * CLI config: --permission-mode plan, --effort xhigh, --goal "condition"
+ * CLI config: --permission-mode plan, --effort high, --goal "condition"
  */
 export class MpaVerifierAdapter extends MpaBaseAdapter {
   readonly role: AgentRole = 'mpa-verifier'

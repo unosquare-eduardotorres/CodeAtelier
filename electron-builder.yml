@@ -20,7 +20,7 @@ afterPack: build/afterPack.js
 # electron-builder's dependency resolver), so they have no ASAR header entries.
 # Security: macOS code signing + hardened runtime + notarization still protect integrity.
 asar: false
-# Native rebuild handled manually in build-mac.sh (Step 2b) because
+# N-API prebuilts don't need rebuilding — npmRebuild: false because
 # electron-builder's dep resolver is bypassed (no deps in package.json during build).
 npmRebuild: false
 win:
@@ -32,7 +32,8 @@ nsis:
   createDesktopShortcut: always
 mac:
   # NOTE: hardened runtime + notarization disabled due to incompatibility with
-  # better-sqlite3 .node binaries (errSecInternalComponent on dist codesign).
+  # native .node binaries (errSecInternalComponent on dist codesign).
+  # better-sqlite3 v13 uses N-API prebuilts (no Electron-specific rebuild needed).
   # App is still signed; hardened runtime is optional for DMG distribution.
   # See: https://github.com/electron/electron/issues/32910
   hardenedRuntime: false
@@ -63,7 +64,7 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
-electronVersion: 42.4.1
+electronVersion: 43.2.0
 publish:
   provider: github
   owner: anthropics

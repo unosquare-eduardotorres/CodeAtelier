@@ -15,7 +15,7 @@ class SubscriptionService {
    * Run all subscription checks in parallel.
    */
   async validateAll(): Promise<SubscriptionCheckResult> {
-    const [claudeCli, codexCli] = await Promise.all([this.checkClaudeCli(), this.checkCodexCli()])
+    const claudeCli = await this.checkClaudeCli()
 
     // Auth & subscription checks depend on CLI being installed
     let claudeAuth: SubscriptionCheckResult['claudeAuth'] = {
@@ -43,7 +43,7 @@ class SubscriptionService {
       ])
     }
 
-    return { claudeCli, claudeAuth, claudeMax, codexCli, sdkHealth }
+    return { claudeCli, claudeAuth, claudeMax, sdkHealth }
   }
 
   /** Check if `claude` binary is available and get its version */
@@ -131,29 +131,7 @@ class SubscriptionService {
     }
   }
 
-  /** Check if `codex` CLI is available */
-  async checkCodexCli(): Promise<{
-    installed: boolean
-    version: string | null
-    error: string | null
-  }> {
-    try {
-      const env = buildEnvWithPath()
-      const { stdout } = await execFileAsync('codex', ['--version'], {
-        env,
-        timeout: this.timeout
-      })
-      const version = stdout.trim() || null
-      logger.info(`Codex CLI detected: ${version}`)
-      return { installed: true, version, error: null }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      logger.warn(`Codex CLI not found: ${message}`)
-      return { installed: false, version: null, error: message }
-    }
-  }
-
-  /** Verify SDK can execute and Opus 4.8 is available */
+  /** Verify SDK can execute and Opus 5 is available */
   async checkSdkHealth(): Promise<NonNullable<SubscriptionCheckResult['sdkHealth']>> {
     try {
       const env = buildEnvWithPath()
@@ -163,17 +141,17 @@ class SubscriptionService {
       })
       const sdkVersion = versionOut.trim()
 
-      // Check if opus 4.8 is reachable (via a minimal one-shot query)
+      // Check if opus 5 is reachable (via a minimal one-shot query)
       const { stdout: modelsOut } = await execFileAsync(
         'claude',
-        ['-p', 'reply with OK', '--model', 'claude-opus-4-8', '--output-format', 'text'],
+        ['-p', 'reply with OK', '--model', 'claude-opus-5', '--output-format', 'text'],
         { env, timeout: 30_000 }
       )
       const opus48Available = modelsOut.toLowerCase().includes('ok')
 
       return {
         sdkVersion,
-        modelsAvailable: ['claude-fable-5', 'claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+        modelsAvailable: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
         opus48Available,
         error: null
       }

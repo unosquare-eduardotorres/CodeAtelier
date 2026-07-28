@@ -88,6 +88,7 @@ export interface BlueprintTask {
   executorRunId: string | null
   startedAt: string | null
   completedAt: string | null
+  completionJson: { filesCreated: string[]; filesModified: string[] } | null
 }
 
 // ── Composite / Joined Types ──
@@ -145,6 +146,16 @@ export interface PhaseContext {
   grillDecisions?: GrillDecisionForBlueprint[]
   /** Pre-loaded workspace docs (CLAUDE.md, README.md, package.json, PLAN.md) for prompt injection */
   workspaceDocs?: string
+  /** Structured retry context — populated only when retrying a failed phase */
+  retryContext?: {
+    attempt: number
+    previousError: string
+    previousPhase: string
+    filesModified: string[]
+    filesCreated: string[]
+    tasksCompleted: number
+    totalTasks: number
+  }
 }
 
 export interface GrillDecisionForBlueprint {

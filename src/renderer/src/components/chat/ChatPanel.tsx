@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, X, Bot, ClipboardList, Hammer, Skull } from 'lucide-react'
+import { Search, X, Bot, ClipboardList, Hammer, Skull, AlertTriangle } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -15,6 +15,7 @@ import {
 } from '@renderer/components/chat'
 import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import SessionRecoveryBanner from './SessionRecoveryBanner'
+import BlockedByBanner from './BlockedByBanner'
 import BudgetCapBanner from './BudgetCapBanner'
 import TurnLimitBanner from './TurnLimitBanner'
 import NewChatPage from './NewChatPage'
@@ -23,6 +24,7 @@ import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
 import TodoTaskBar from './TodoTaskBar'
+import PlanProgressBar from './PlanProgressBar'
 import {
   StackDriftBanner,
   BuildProgressInline,
@@ -109,9 +111,17 @@ function ChatPanelBanners({
   budgetCapBanner,
   continuePastBudgetCap,
   dismissBudgetCap,
+  blockedByBanner,
+  switchToBlockingChat,
+  stopBlockingChat,
+  dismissBlockedBy,
   turnLimitReached,
   continuePastTurnLimit,
-  dismissTurnLimit
+  dismissTurnLimit,
+  streamStalledConversationId,
+  activeConversationId,
+  isStreaming,
+  dismissStallBanner
 }: {
   activeTab: ChatTab
   workspaceId?: string
@@ -121,9 +131,17 @@ function ChatPanelBanners({
   budgetCapBanner: { message: string; canContinue: boolean } | null
   continuePastBudgetCap: () => void
   dismissBudgetCap: () => void
+  blockedByBanner: { blockedConvTitle: string | undefined } | null
+  switchToBlockingChat: () => void
+  stopBlockingChat: () => void
+  dismissBlockedBy: () => void
   turnLimitReached: { continuable: boolean; continuationsUsed: number; continuationsMax: number } | null
   continuePastTurnLimit: () => void
   dismissTurnLimit: () => void
+  streamStalledConversationId: string | null
+  activeConversationId: string | undefined
+  isStreaming: boolean
+  dismissStallBanner: () => void
 }): React.JSX.Element {
   return (
     <>
@@ -161,6 +179,14 @@ function ChatPanelBanners({
           onDismiss={dismissBudgetCap}
         />
       )}
+      {activeTab === 'chat' && blockedByBanner && (
+        <BlockedByBanner
+          blockedConvTitle={blockedByBanner.blockedConvTitle}
+          onSwitchTo={switchToBlockingChat}
+          onStopAndRetry={stopBlockingChat}
+          onDismiss={dismissBlockedBy}
+        />
+      )}
       {activeTab === 'chat' && turnLimitReached && (
         <TurnLimitBanner
           continuable={turnLimitReached.continuable}
@@ -169,6 +195,29 @@ function ChatPanelBanners({
           onContinue={continuePastTurnLimit}
           onDismiss={dismissTurnLimit}
         />
+      )}
+      {/* STALL-DETECT-01: Warning banner when no real content received for 3 minutes */}
+      {/* STALL-DETECT-06: Per-conversation guard — only show if THIS conversation is stalled */}
+      {activeTab === 'chat' && streamStalledConversationId === activeConversationId && isStreaming && (
+        <div
+          data-testid="stream-stall-banner"
+          className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-amber-300 animate-in fade-in slide-in-from-top-2 duration-300"
+        >
+          <AlertTriangle size={16} className="flex-shrink-0" />
+          <div className="flex flex-1 flex-col gap-0.5">
+            <span className="text-sm font-medium">Stream may be stuck</span>
+            <span className="text-xs opacity-70">
+              No activity for 3 minutes — the agent may be stalled. Try clicking Stop.
+            </span>
+          </div>
+          <button
+            onClick={dismissStallBanner}
+            className="flex-shrink-0 rounded p-1 text-amber-400/60 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
+            aria-label="Dismiss stall warning"
+          >
+            <X size={14} />
+          </button>
+        </div>
       )}
     </>
   )
@@ -344,10 +393,20 @@ export default function ChatPanel({
   const continuePastBudgetCap = useChatStore((s) => s.continuePastBudgetCap)
   const dismissBudgetCap = useChatStore((s) => s.dismissBudgetCap)
 
+  // Blocked-by banner state (MULTI-CHAT-04)
+  const blockedByBanner = useChatStore((s) => s.blockedByBanner)
+  const switchToBlockingChat = useChatStore((s) => s.switchToBlockingChat)
+  const stopBlockingChat = useChatStore((s) => s.stopBlockingChat)
+  const dismissBlockedBy = useChatStore((s) => s.dismissBlockedBy)
+
   // Turn limit banner state
   const turnLimitReached = useChatStore((s) => s.turnLimitReached)
   const continuePastTurnLimit = useChatStore((s) => s.continuePastTurnLimit)
   const dismissTurnLimit = useChatStore((s) => s.dismissTurnLimit)
+
+  // STALL-DETECT-01: Stall detection banner (per-conversation)
+  const streamStalledConversationId = useChatStore((s) => s.streamStalledConversationId)
+  const dismissStallBanner = useChatStore((s) => s.dismissStallBanner)
 
   // Code changes count for tab badge
   const pendingChangesCount = useCodeChangesStore((s) => s.files.length)
@@ -455,6 +514,17 @@ export default function ChatPanel({
               <ModelConfigPopover
                 snapshot={activeConversation?.modelConfigSnapshot ?? null}
                 providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
+                conversationId={activeConversation?.id}
+                workspaceId={activeWorkspace?.id}
+                onRoutingUpdated={(updated) => {
+                  useChatStore.setState((state) => ({
+                    activeConversation:
+                      state.activeConversation?.id === updated.id ? updated : state.activeConversation,
+                    conversations: state.conversations.map((c) =>
+                      c.id === updated.id ? updated : c
+                    )
+                  }))
+                }}
               />
               <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
             </div>
@@ -471,9 +541,17 @@ export default function ChatPanel({
           budgetCapBanner={budgetCapBanner}
           continuePastBudgetCap={continuePastBudgetCap}
           dismissBudgetCap={dismissBudgetCap}
+          blockedByBanner={blockedByBanner}
+          switchToBlockingChat={switchToBlockingChat}
+          stopBlockingChat={stopBlockingChat}
+          dismissBlockedBy={dismissBlockedBy}
           turnLimitReached={turnLimitReached}
           continuePastTurnLimit={continuePastTurnLimit}
           dismissTurnLimit={dismissTurnLimit}
+          streamStalledConversationId={streamStalledConversationId}
+          activeConversationId={activeConversation?.id}
+          isStreaming={isStreaming}
+          dismissStallBanner={dismissStallBanner}
         />
 
         {/* Tab content */}
@@ -552,7 +630,8 @@ export default function ChatPanel({
               />
             )}
 
-            {activeConversation && <TodoTaskBar conversationId={activeConversation.id} />}
+            {activeConversation && <PlanProgressBar key={activeConversation.id} conversationId={activeConversation.id} />}
+            {activeConversation && <TodoTaskBar key={activeConversation.id} conversationId={activeConversation.id} />}
 
             <div className="flex-shrink-0 px-6 pb-4 pt-2">
               <AttachmentDropzone

@@ -620,9 +620,22 @@ describe('BlueprintPhaseCompletePayload error field', () => {
 // ── Replicated generateFallbackRemediationTasks logic ──
 
 /**
- * Replicated from BlueprintVerifyService.generateFallbackRemediationTasks.
- * Pure function: generates remediation tasks from verify findings when the
- * agent fails to include structured remediationTasks in the completion block.
+ * INTENTIONAL SIMPLIFICATION (GAP-G)
+ *
+ * This is a reduced replica of BlueprintVerifyService.generateFallbackRemediationTasks
+ * covering Strategies 1–3 only. It intentionally omits two behaviors present in the
+ * real implementation:
+ *   1. `deterministic-disk-check` / `deterministic-disk-check-drift` source-skip
+ *      (findings with those sources are skipped in the real generator)
+ *   2. TSC file-path extraction for `deterministic-quality-gate` findings
+ *      (real generator parses "file.ts(line,col): error TS..." from descriptions)
+ *
+ * These omissions are acceptable because the tests below exercise only the three
+ * core strategies (structured findings, regex file extraction, generic fallback)
+ * and do not pass inputs that would exercise those code paths.
+ *
+ * If the real generator's Strategy-1 logic changes significantly, consider syncing
+ * this replica or extracting the real generator to a testable pure function.
  *
  * @param maxExistingR - Highest existing R-task sequence number (simulates
  *                       the DB query in the real implementation).
@@ -640,6 +653,7 @@ function generateFallbackRemediationTasks(
     const findings = completion.findings as Array<Record<string, unknown>> | undefined
     if (Array.isArray(findings)) {
       for (const finding of findings) {
+        if (!finding || typeof finding !== 'object') continue
         const desc = String(finding.description ?? finding.issue ?? '')
         const files = Array.isArray(finding.files) ? finding.files.map(String) : []
         if (desc) {
@@ -774,6 +788,33 @@ describe('generateFallbackRemediationTasks', () => {
     // Text under 100 chars doesn't trigger strategy 3
     const tasks = generateFallbackRemediationTasks(null, 'short', 0)
     assert.equal(tasks.length, 0)
+  })
+
+  test('null_element_in_findings_skipped', () => {
+    // B2: null element in findings array → continue, don't crash
+    const completion = {
+      findings: [
+        null,
+        { description: 'Valid gap', files: ['src/a.ts'] },
+        undefined,
+        42,
+        { description: 'Another gap' }
+      ]
+    }
+    const tasks = generateFallbackRemediationTasks(completion, '', 0)
+    assert.equal(tasks.length, 2)
+    assert.match(tasks[0].description, /Valid gap/)
+    assert.match(tasks[1].description, /Another gap/)
+  })
+
+  test('non_object_elements_in_findings_skipped', () => {
+    // B2: string/number/boolean in findings array → skip gracefully
+    const completion = {
+      findings: ['bare string', true, { description: 'Real finding' }]
+    }
+    const tasks = generateFallbackRemediationTasks(completion, '', 0)
+    assert.equal(tasks.length, 1)
+    assert.match(tasks[0].description, /Real finding/)
   })
 })
 

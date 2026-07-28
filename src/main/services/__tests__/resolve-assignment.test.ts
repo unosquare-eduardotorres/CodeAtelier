@@ -71,7 +71,7 @@ describe('resolveAssignment', () => {
     const result = resolveAssignment({
       action: 'specialist:plan',
     })
-    assert.equal(result.modelId, 'claude-opus-4-8') // specialist:plan default
+    assert.equal(result.modelId, 'claude-opus-5') // specialist:plan default
     assert.equal(result.source, 'default')
   })
 
@@ -79,7 +79,7 @@ describe('resolveAssignment', () => {
     const result = resolveAssignment({
       action: 'specialist:plan',
     })
-    assert.equal(result.modelId, 'claude-opus-4-8') // specialist:plan default
+    assert.equal(result.modelId, 'claude-opus-5') // specialist:plan default
     assert.equal(result.source, 'default')
   })
 
@@ -94,7 +94,7 @@ describe('resolveAssignment', () => {
 
   test('default_config_for_blueprint_action', () => {
     const result = resolveAssignment({ action: 'blueprint:specify' })
-    assert.equal(result.modelId, 'claude-opus-4-8')
+    assert.equal(result.modelId, 'claude-opus-5')
     assert.equal(result.source, 'default')
   })
 
@@ -122,7 +122,7 @@ describe('resolveAssignment', () => {
 
   test('modelRoles_takes_priority_over_modelOverrides', () => {
     const modelRoles: ModelRoleMap = {
-      'specialist:plan': { provider: 'claude', modelId: 'claude-opus-4-8' }
+      'specialist:plan': { provider: 'claude', modelId: 'claude-opus-5' }
     }
     const modelOverrides: ModelOverrides = { 'specialist:plan': 'claude-haiku-4-5-20251001' }
     const result = resolveAssignment({
@@ -130,7 +130,7 @@ describe('resolveAssignment', () => {
       modelRoles,
       modelOverrides
     })
-    assert.equal(result.modelId, 'claude-opus-4-8')
+    assert.equal(result.modelId, 'claude-opus-5')
     assert.equal(result.source, 'roles')
   })
 
@@ -243,13 +243,13 @@ describe('resolveAssignment — new ModelAction defaults', () => {
 
   test('default_config_for_audit', () => {
     const result = resolveAssignment({ action: 'audit' })
-    assert.equal(result.modelId, 'claude-opus-4-8')
+    assert.equal(result.modelId, 'claude-opus-5')
     assert.equal(result.source, 'default')
   })
 
   test('default_config_for_grill', () => {
     const result = resolveAssignment({ action: 'grill' })
-    assert.equal(result.modelId, 'claude-opus-4-8')
+    assert.equal(result.modelId, 'claude-opus-5')
     assert.equal(result.source, 'default')
   })
 })

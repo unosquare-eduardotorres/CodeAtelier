@@ -14,7 +14,10 @@ import type {
 
 // ── Duration formatter ──
 
-export function formatDuration(startedAt: string | null, completedAt: string | null): string | null {
+export function formatDuration(
+  startedAt: string | null,
+  completedAt: string | null
+): string | null {
   if (!startedAt || !completedAt) return null
   const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime()
   if (ms < 0) return null
@@ -89,11 +92,16 @@ export function getClarifySummary(phase: BlueprintPhase): PhaseSummary {
     const questions = (json.questions as unknown[])?.length ?? 0
     const rounds = (json.rounds as number) ?? (json.round as number) ?? 1
     if (questions > 0) {
-      return { summary: `${questions} question${questions > 1 ? 's' : ''} · ${rounds} round${rounds > 1 ? 's' : ''}`, duration }
+      return {
+        summary: `${questions} question${questions > 1 ? 's' : ''} · ${rounds} round${rounds > 1 ? 's' : ''}`,
+        duration
+      }
     }
   }
   // Try counting questions from all clarify-type artifacts
-  const allQAs = phase.artifactsJson?.filter((a) => a.type === 'clarify-qa' || a.type === 'clarify-questions') ?? []
+  const allQAs =
+    phase.artifactsJson?.filter((a) => a.type === 'clarify-qa' || a.type === 'clarify-questions') ??
+    []
   if (allQAs.length > 0) {
     let totalQ = 0
     for (const a of allQAs) {
@@ -101,7 +109,10 @@ export function getClarifySummary(phase: BlueprintPhase): PhaseSummary {
       totalQ += (json?.questions as unknown[])?.length ?? 0
     }
     if (totalQ > 0) {
-      return { summary: `${totalQ} questions · ${allQAs.length} round${allQAs.length > 1 ? 's' : ''}`, duration }
+      return {
+        summary: `${totalQ} questions · ${allQAs.length} round${allQAs.length > 1 ? 's' : ''}`,
+        duration
+      }
     }
   }
   if (phase.status === 'skipped') return { summary: 'Skipped', duration: null }
@@ -135,16 +146,23 @@ export function getTasksSummary(phase: BlueprintPhase, tasks: BlueprintTask[]): 
   if (tasksArt?.contentJson) {
     const json = tasksArt.contentJson as Record<string, unknown>
     const waves = (json.waves as unknown[]) ?? []
-    const flatTasks = waves.length > 0
-      ? waves.flatMap((w) => ((w as Record<string, unknown>).tasks as unknown[]) ?? [])
-      : ((json.tasks ?? json.items ?? []) as unknown[])
+    const flatTasks =
+      waves.length > 0
+        ? waves.flatMap((w) => ((w as Record<string, unknown>).tasks as unknown[]) ?? [])
+        : ((json.tasks ?? json.items ?? []) as unknown[])
     const waveCount = waves.length || 1
-    return { summary: `${flatTasks.length} tasks in ${waveCount} wave${waveCount > 1 ? 's' : ''}`, duration }
+    return {
+      summary: `${flatTasks.length} tasks in ${waveCount} wave${waveCount > 1 ? 's' : ''}`,
+      duration
+    }
   }
   // Fallback: use actual tasks from DB
   if (tasks.length > 0) {
     const waveSet = new Set(tasks.map((t) => t.wave))
-    return { summary: `${tasks.length} tasks in ${waveSet.size} wave${waveSet.size > 1 ? 's' : ''}`, duration }
+    return {
+      summary: `${tasks.length} tasks in ${waveSet.size} wave${waveSet.size > 1 ? 's' : ''}`,
+      duration
+    }
   }
   return fallbackSummary(phase)
 }
@@ -158,7 +176,10 @@ export function getReviewSummary(phase: BlueprintPhase): PhaseSummary {
     const json = review.contentJson as Record<string, unknown>
     const recommendation = json.recommendation as string | undefined
     if (recommendation) {
-      const label = recommendation === 'approve' ? 'Approved' : recommendation.charAt(0).toUpperCase() + recommendation.slice(1)
+      const label =
+        recommendation === 'approve'
+          ? 'Approved'
+          : recommendation.charAt(0).toUpperCase() + recommendation.slice(1)
       return { summary: label, duration }
     }
   }
@@ -175,7 +196,10 @@ export interface BuildStats {
   filesModified: string[]
 }
 
-export function getBuildSummary(phase: BlueprintPhase, tasks: BlueprintTask[]): PhaseSummary & { stats?: BuildStats } {
+export function getBuildSummary(
+  phase: BlueprintPhase,
+  tasks: BlueprintTask[]
+): PhaseSummary & { stats?: BuildStats } {
   const duration = formatDuration(phase.startedAt, phase.completedAt)
   const build = findArtifact(phase, 'build') ?? findArtifact(phase, 'build-metrics')
   if (build?.contentJson) {
@@ -188,7 +212,12 @@ export function getBuildSummary(phase: BlueprintPhase, tasks: BlueprintTask[]): 
     if (total > 0) parts.push(`${completed}/${total}`)
     if (created.length > 0) parts.push(`${created.length} created`)
     if (modified.length > 0) parts.push(`${modified.length} mod`)
-    const stats: BuildStats = { tasksCompleted: completed, totalTasks: total, filesCreated: created, filesModified: modified }
+    const stats: BuildStats = {
+      tasksCompleted: completed,
+      totalTasks: total,
+      filesCreated: created,
+      filesModified: modified
+    }
     return { summary: parts.join(' · ') || fallbackSummary(phase).summary, duration, stats }
   }
   // Fallback: derive from task list
@@ -213,14 +242,19 @@ export function getVerifySummary(phase: BlueprintPhase): PhaseSummary & { stats?
   if (verify?.contentJson) {
     const json = verify.contentJson as Record<string, unknown>
     const overallStatus = (json.overallStatus as string) ?? 'unknown'
-    const tasks = (json.tasks as Array<Record<string, unknown>>) ?? []
-    const remediations = tasks.filter((t) => String(t.taskId ?? '').startsWith('R'))
+    // Prefer new `remediationTasks` field, fall back to legacy `tasks` R-filtered
+    const remediations =
+      (json.remediationTasks as Array<Record<string, unknown>>) ??
+      ((json.tasks as Array<Record<string, unknown>>) ?? []).filter((t) =>
+        String(t.taskId ?? '').startsWith('R')
+      )
     const parts: string[] = []
     if (overallStatus === 'passed') parts.push('Passed')
     else if (overallStatus === 'gaps_found') parts.push('Gaps found')
     else if (overallStatus === 'human_needed') parts.push('Human review needed')
     else parts.push(overallStatus)
-    if (remediations.length > 0) parts.push(`${remediations.length} remediation${remediations.length > 1 ? 's' : ''}`)
+    if (remediations.length > 0)
+      parts.push(`${remediations.length} remediation${remediations.length > 1 ? 's' : ''}`)
     const stats: VerifyStats = {
       overallStatus,
       remediationCount: remediations.length,
@@ -239,14 +273,22 @@ export function getVerifySummary(phase: BlueprintPhase): PhaseSummary & { stats?
 
 export function getPhaseSummary(phase: BlueprintPhase, tasks: BlueprintTask[]): PhaseSummary {
   switch (phase.phase) {
-    case 'specify': return getSpecifySummary(phase)
-    case 'clarify': return getClarifySummary(phase)
-    case 'plan': return getPlanSummary(phase)
-    case 'tasks': return getTasksSummary(phase, tasks)
-    case 'review': return getReviewSummary(phase)
-    case 'build': return getBuildSummary(phase, tasks)
-    case 'verify': return getVerifySummary(phase)
-    default: return fallbackSummary(phase)
+    case 'specify':
+      return getSpecifySummary(phase)
+    case 'clarify':
+      return getClarifySummary(phase)
+    case 'plan':
+      return getPlanSummary(phase)
+    case 'tasks':
+      return getTasksSummary(phase, tasks)
+    case 'review':
+      return getReviewSummary(phase)
+    case 'build':
+      return getBuildSummary(phase, tasks)
+    case 'verify':
+      return getVerifySummary(phase)
+    default:
+      return fallbackSummary(phase)
   }
 }
 
@@ -260,6 +302,8 @@ export interface BlueprintOutcomeStats {
   filesModified: number
   remediationCount: number
   verifyStatus: string | null
+  humanReviewAcknowledged: boolean
+  acknowledgedAt: string | null
   totalDuration: string | null
 }
 
@@ -281,6 +325,19 @@ export function getOutcomeStats(
   const verifyPhase = phases.find((p) => p.phase === 'verify')
   const verifyResult = verifyPhase ? getVerifySummary(verifyPhase) : null
 
+  // Human review acknowledgement — read directly from verify artifact contentJson
+  let humanReviewAcknowledged = false
+  let acknowledgedAt: string | null = null
+  if (verifyPhase) {
+    const verifyArt =
+      findArtifact(verifyPhase, 'verify') ?? findArtifact(verifyPhase, 'verification')
+    const json = verifyArt?.contentJson as Record<string, unknown> | undefined
+    if (json?.humanReviewAcknowledged === true) {
+      humanReviewAcknowledged = true
+      acknowledgedAt = (json.acknowledgedAt as string) ?? null
+    }
+  }
+
   // Total duration from first phase start to last phase complete
   const startTimes = phases.map((p) => p.startedAt).filter(Boolean) as string[]
   const endTimes = phases.map((p) => p.completedAt).filter(Boolean) as string[]
@@ -299,6 +356,8 @@ export function getOutcomeStats(
     filesModified,
     remediationCount: verifyResult?.stats?.remediationCount ?? 0,
     verifyStatus: verifyResult?.stats?.overallStatus ?? null,
+    humanReviewAcknowledged,
+    acknowledgedAt,
     totalDuration
   }
 }

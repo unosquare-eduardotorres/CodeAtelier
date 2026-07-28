@@ -10,7 +10,11 @@ import { buildConditionalPrefix } from '../prompt-assembly-helpers'
 import { promptBuilder } from '../prompt-builder'
 
 describe('Prompt Verbosity', () => {
-  test('opus-4-8 resolves to lean', () => {
+  test('opus 5 resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-opus-5'), 'lean')
+  })
+
+  test('opus-4-8 resolves to lean (legacy)', () => {
     assert.equal(resolvePromptVerbosity('claude-opus-4-8'), 'lean')
   })
 
@@ -42,12 +46,12 @@ describe('Prompt Verbosity', () => {
     assert.equal(resolvePromptVerbosity(''), 'full')
   })
 
-  test('future opus model (4-9) resolves to lean', () => {
-    assert.equal(resolvePromptVerbosity('claude-opus-4-9'), 'lean')
+  test('future opus model (5-1) resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-opus-5-1'), 'lean')
   })
 
-  test('future opus model (5-0) resolves to lean', () => {
-    assert.equal(resolvePromptVerbosity('claude-opus-5-0'), 'lean')
+  test('future opus model (6-0) resolves to lean', () => {
+    assert.equal(resolvePromptVerbosity('claude-opus-6-0'), 'lean')
   })
 })
 

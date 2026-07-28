@@ -1,7 +1,7 @@
 /**
  * Blueprint Plan Adapter — read-only planner that produces implementation plans.
  *
- * CLI config: --permission-mode plan, --effort xhigh, goalMode: enforce (/goal via stdin)
+ * CLI config: --permission-mode plan, --effort high, goalMode: enforce (/goal via stdin)
  *
  * One-shot phase: agent reads spec artifacts, investigates codebase,
  * produces a structured plan with items, risks, and dependency graph.

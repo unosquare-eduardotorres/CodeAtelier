@@ -1199,7 +1199,7 @@ const WAVE2_SCENARIOS: E2EScenario[] = [
     id: 'code-intel.embedding-generation',
     category: 'code-intel',
     title: 'Embedding Generation',
-    description: 'omlxEmbeddingProvider.initialize() + embed(["hello world"]) — assert vector dim > 0.',
+    description: 'localEmbeddingProvider.initialize() + embed(["hello world"]) — assert vector dim > 0.',
     status: 'implemented',
     mode: 'plan',
     runner: 'code-intel-embedding-generation',

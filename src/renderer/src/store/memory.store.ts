@@ -35,6 +35,7 @@ interface MemoryState {
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
+  bootstrapWorkspaceId: string | null
 
   // CLAUDE.md state
   claudeMdContent: string | null
@@ -119,6 +120,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
+  bootstrapWorkspaceId: null,
   claudeMdContent: null,
   claudeMdPath: null,
   claudeMdLoading: false,
@@ -444,7 +446,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     const cleanup = window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
       useMemoryStore.getState().onBootstrapProgress(progress)
     })
-    set({ bootstrapCleanup: cleanup })
+    set({ bootstrapCleanup: cleanup, bootstrapWorkspaceId: workspaceId })
 
     try {
       await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode })
@@ -459,9 +461,15 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   onBootstrapProgress: (progress) => {
     set({ bootstrap: progress })
     if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
-      const { bootstrapCleanup } = useMemoryStore.getState()
+      const { bootstrapCleanup, bootstrapWorkspaceId } = useMemoryStore.getState()
       bootstrapCleanup?.()
       set({ bootstrapCleanup: null })
+
+      // Reload facts so the tab count updates immediately
+      if (progress.jobStatus === 'done' && bootstrapWorkspaceId) {
+        useMemoryStore.getState().loadFacts(bootstrapWorkspaceId)
+        useMemoryStore.getState().loadContradictions()
+      }
     }
   },
 

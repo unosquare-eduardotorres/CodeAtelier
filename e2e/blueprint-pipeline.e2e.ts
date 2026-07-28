@@ -21,8 +21,12 @@ import { test, expect } from './helpers/electron-fixture'
 import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
+import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Pipeline', () => {
+  // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
+  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+
   async function navigateToBlueprints(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
     const settings = new WorkspaceSettings(page)

@@ -61,7 +61,8 @@ export class AppPreferenceRepository extends BaseRepository<
       updateGithubRepo: this.get('update_github_repo') ?? '',
       context7ApiKey: this.get('context7_api_key') ?? '',
       notificationsEnabled: this.getBool('notifications_enabled', true),
-      parallelBuildAgents: this.getInt('parallel_build_agents', 3, 1, 6)
+      parallelBuildAgents: this.getInt('parallel_build_agents', 3, 1, 6),
+      leanBuildMcp: this.getBool('lean_build_mcp', false)
     }
   }
 }

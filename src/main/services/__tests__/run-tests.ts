@@ -285,6 +285,10 @@ const TEST_FILES: string[] = [
   './e2e-contracts.test',
   // ─── Blueprint document loader (splitBinaryDocs, buildReferenceDocsBlock) ───
   './blueprint-document-loader.test',
+  // ─── Blueprint durability (journal mapper, viewState precedence) ───
+  './blueprint-durability.test',
+  // ─── Blueprint agent accumulator (flush boundaries, caps, cancel, taskId) ───
+  './blueprint-agent-accumulator.test',
   // ─── Phase 18: Coverage Mega-Push IV — giant services deep + MCP tool bodies ───
   './giant-services-deep.test',
   '../../mcp-servers/__tests__/mcp-tool-bodies.test',
@@ -326,6 +330,38 @@ const TEST_FILES: string[] = [
   './chat-stream-body-deep.test',
   './code-analysis-handlers.test',
   './blueprint-spec-deep.test',
+  // ─── Parallel Wave-Task Scheduler ───
+  './blueprint-parallel-scheduler.test',
+  // ─── Phase 21: Coverage Mega-Push ───
+  './memory-engine-extraction-deep.test',
+  './blueprint-services-deep-phase21.test',
+  './council-mpa-grill-services-deep.test',
+  './quick-win-coverage-boost.test',
+  './ipc-conversation-handlers.test',
+  './ipc-workspace-agent-handlers.test',
+  './ipc-grill-audit-council-handlers.test',
+  './ipc-remaining-handlers.test',
+  // ─── MCP tool error handling + native module smoke ───
+  '../../mcp-servers/__tests__/mcp-tool-error-handling.test',
+  '../../mcp-servers/__tests__/native-module-smoke.test',
+  // ─── Blueprint Environment Preflight (dependency validation before BUILD) ───
+  './blueprint-preflight.test',
+  // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
+  './blueprint-task-verification.test',
+  // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───
+  './blueprint-send-outcome.test',
+  // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
+  './phase-summaries-verify.test',
+  // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
+  './permission-prompt-flow.test',
+  // ─── Background CLI Session (persistent warm process for prompt optimizer) ───
+  './background-cli-session.test',
+  // ─── PR Description Generation (CHAT_GENERATE_PR_DESCRIPTION handler logic) ───
+  './pr-description-generation.test',
+  // ─── Executor derivation (Phase A: provider → backend mapping) ───
+  './executor-derivation.test',
+  // ─── Local embedding provider facade (oMLX/Ollama routing) ───
+  './local-embedding-provider.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

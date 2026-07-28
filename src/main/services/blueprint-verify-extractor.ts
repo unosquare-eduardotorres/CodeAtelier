@@ -33,6 +33,24 @@ Rules:
 - Only include findings the agent explicitly identified — never invent issues.
 - If the agent's text is too short or unclear to determine status, use "gaps_found" as the conservative default.
 
+Output schema (all fields required unless noted):
+{
+  "overallStatus": "passed" | "gaps_found" | "human_needed",
+  "recommendation": "<one-line summary>",
+  "findings": [
+    { "description": "<string>", "severity": "critical" | "major" | "minor", "files": ["<path>", ...] }
+  ],
+  "artifacts": { "missing": <number>, "stub": <number>, "orphaned": <number> },
+  "remediationTasks": [
+    { "taskId": "R001", "description": "<string>", "files": ["<path>", ...], "dependsOn": [] }
+  ]
+}
+
+Notes:
+- "findings" may be empty ([]) when overallStatus is "passed".
+- "remediationTasks" is required when overallStatus is "gaps_found" — generate at least one task per finding.
+- "artifacts" counts default to 0 when not determinable.
+
 You MUST output ONLY valid JSON matching this exact schema — no markdown, no commentary, no fence blocks.`
 
 // ── Max input size for extraction (keep Haiku fast + cheap) ──
@@ -87,28 +105,33 @@ export async function extractVerifyCompletion(params: {
 
   const model = modelConfigService.getModelById(workspaceId, 'haiku')
 
-  try {
-    const { text: responseText } = await runOneShotClaude({
-      feature: 'verify_extract',
-      model,
-      workspaceId,
-      args: [
-        '-p', userMessage,
-        '--model', model,
-        '--system-prompt', EXTRACTION_SYSTEM_PROMPT,
-        '--permission-mode', 'plan',
-        '--max-turns', '1'
-      ],
-      cli: { timeout: 30_000 } // 30s generous timeout for large inputs
-    })
+  // 2-attempt loop — transient CLI failures shouldn't dead-end the pipeline
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const { text: responseText } = await runOneShotClaude({
+        feature: 'verify_extract',
+        model,
+        workspaceId,
+        args: [
+          '-p', userMessage,
+          '--model', model,
+          '--system-prompt', EXTRACTION_SYSTEM_PROMPT,
+          '--permission-mode', 'plan',
+          '--max-turns', '1'
+        ],
+        cli: { timeout: 120_000 } // 2 min — CLI cold-start + API latency; 30s caused deterministic kills
+      })
 
-    return parseExtractionResponse(responseText, blueprintId)
-  } catch (err) {
-    extractorLog.warn(
-      `[extractVerifyCompletion] Extraction call failed for blueprint ${blueprintId}:`, err
-    )
-    return null
+      return parseExtractionResponse(responseText, blueprintId)
+    } catch (err) {
+      extractorLog.warn(
+        `[extractVerifyCompletion] Attempt ${attempt}/2 failed for blueprint ${blueprintId}:`, err
+      )
+      if (attempt === 2) return null
+    }
   }
+
+  return null // unreachable — satisfies TS2366
 }
 
 /**
@@ -129,6 +152,21 @@ export function parseExtractionResponse(
   try {
     const parsed = JSON.parse(jsonText)
 
+    // BP-VERIFY-FIELD-NORMALIZE: Salvage common LLM key-name drift before
+    // rejecting — the Haiku extractor sometimes uses snake_case or a shorter alias.
+    if (!parsed.overallStatus) {
+      if (parsed.overall_status) {
+        parsed.overallStatus = parsed.overall_status
+        delete parsed.overall_status
+      } else if (
+        typeof parsed.status === 'string' &&
+        ['passed', 'gaps_found', 'human_needed'].includes(parsed.status)
+      ) {
+        parsed.overallStatus = parsed.status
+        delete parsed.status
+      }
+    }
+
     // Validate required fields
     if (!parsed.overallStatus) {
       extractorLog.warn(
@@ -147,10 +185,13 @@ export function parseExtractionResponse(
     }
 
     // Build BlueprintPhaseCompletion
+    // BP-STATUS-OVERRIDE-GUARD: Place status:'complete' AFTER the spread so that
+    // a stray parsed.status (e.g. Haiku emitting status:'gaps_found') cannot
+    // override the wrapper's canonical status. phase is also pinned after spread.
     return {
+      ...parsed,
       phase: 'verify',
-      status: 'complete',
-      ...parsed
+      status: 'complete'
     } as BlueprintPhaseCompletion
   } catch (err) {
     extractorLog.warn(

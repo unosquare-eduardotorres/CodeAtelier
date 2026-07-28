@@ -36,10 +36,11 @@ import { grillPersistenceController } from './services/grill-persistence.control
 import { auditAgentService } from './services/audit-agent.service'
 import { mpaOrchestrationService } from './services/mpa-orchestration.service'
 import { councilService } from './services/council.service'
+import { setupTrayMenu, teardownTrayMenu } from './tray-menu'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
-import { omlxEmbeddingProvider } from './services/omlx-embedding.service'
+import { localEmbeddingProvider } from './services/local-embedding.provider'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 import { notificationService } from './services/notification.service'
 
@@ -358,6 +359,10 @@ function createWindow(): void {
     if (staleGrills > 0) {
       log.info(`[Startup] Recovered ${staleGrills} stale grill session(s) from previous run`)
     }
+    // Session IDs are preserved across restarts — the CLI will attempt
+    // --resume on the next message. If the server-side session expired,
+    // handleSessionRecovery detects the error, clears the stale ID,
+    // and retries with DB-backed context injection.
   } catch (error) {
     log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
   }
@@ -490,8 +495,8 @@ app.whenReady().then(() => {
 
   // ── Embedding: auto-load model at startup (delayed, non-fatal) ──
   setTimeout(() => {
-    import('./services/omlx-embedding.service').then(({ omlxEmbeddingProvider }) =>
-      omlxEmbeddingProvider.ensureEmbeddingReady().catch((e) =>
+    import('./services/local-embedding.provider').then(({ localEmbeddingProvider }) =>
+      localEmbeddingProvider.ensureEmbeddingReady().catch((e) =>
         log.debug('Startup embedding auto-load (non-fatal):', e)
       )
     )
@@ -512,6 +517,8 @@ app.whenReady().then(() => {
     trayIcon.setTemplateImage(true)
     const tray = new Tray(trayIcon)
     tray.setToolTip('Code Atelier')
+    // Wire up context menu with live app state
+    setupTrayMenu(tray, () => mainWindow)
     // Keep reference to prevent GC
     ;(app as unknown as Record<string, unknown>)._tray = tray
   }
@@ -635,6 +642,7 @@ app.on('before-quit', async (event) => {
   if (isQuitting) return
   event.preventDefault()
   isQuitting = true
+  teardownTrayMenu()
 
   // E2E-GUARD: If an E2E test run is in progress, cancel it before shutdown.
   // No blocking wait needed — recoverOrphanedRuns() + the runner's finally block
@@ -727,7 +735,7 @@ app.on('before-quit', async (event) => {
 
     // Reset the oMLX embedding provider state on quit
     try {
-      omlxEmbeddingProvider.dispose()
+      localEmbeddingProvider.dispose()
     } catch (e) {
       log.debug('oMLX embedding dispose error (expected during quit):', e)
     }

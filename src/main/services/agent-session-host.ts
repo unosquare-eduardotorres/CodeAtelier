@@ -29,6 +29,7 @@ import type { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import type { IpcBridge } from './ipc-bridge'
 import type { ExecutorResult } from './executor-types'
 import type { StreamChunk } from './agent-base.service'
+import type { SendOutcome } from './agent-session.service'
 
 /** Stashed options for executeStream replay on auto-continue */
 export interface ExecuteStreamOptions {
@@ -114,6 +115,7 @@ export interface AgentSessionHost {
   // Control + continuation state
   controlToolState: ControlToolState
   maxTurnsContinuations: number
+  lastSendOutcome: SendOutcome
   lastStreamOpts: ExecuteStreamOptions | null
   pendingResumeAt: Map<string, string>
   sdkAbortController: AbortController | null
@@ -134,7 +136,7 @@ export interface AgentSessionHost {
 
 // ── Static constants (replicated from AgentSessionService) ──
 export const SESSION_CONSTANTS = {
-  MAX_TURN_CONTINUATIONS: 3,
+  MAX_TURN_CONTINUATIONS: 5,
   MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000,
   EXTERNAL_MCP_INTERACTION_TIMEOUT_MS: 30 * 60_000
 } as const

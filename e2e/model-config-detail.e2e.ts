@@ -6,7 +6,7 @@
  *   - Context window slider adjusts the token limit
  *   - System prompt override textarea accepts custom text
  *   - Connection test button validates endpoint and shows result
- *   - Claude card shows execution backend selector
+ *   - Claude card shows CLI status (no backend selector)
  *   - Model routing section shows role pickers
  *   - Workspace defaults shows communication tone selector
  *
@@ -147,7 +147,7 @@ test.describe('Model Config Detail', () => {
     }
   })
 
-  test('claude card shows execution backend selector', async ({
+  test('claude card shows CLI status (no backend selector)', async ({
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)
@@ -159,10 +159,10 @@ test.describe('Model Config Detail', () => {
 
     await expect(section).toBeVisible()
 
-    // Should have Execution Backend selector
+    // Should show Claude provider status, NOT an Execution Backend selector
     const sectionText = await section.textContent()
-    const hasExecutionBackend = /Execution Backend/i.test(sectionText ?? '')
-    expect(hasExecutionBackend).toBeTruthy()
+    expect(/Execution Backend/i.test(sectionText ?? '')).toBeFalsy()
+    expect(/Claude/i.test(sectionText ?? '')).toBeTruthy()
   })
 
   test('model routing section shows role pickers (Plan/Build/Background)', async ({

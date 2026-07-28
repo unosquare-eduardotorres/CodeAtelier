@@ -1,20 +1,23 @@
 /**
- * ProviderCards — Two always-visible provider connection cards (Claude + oMLX).
+ * ProviderCards — Provider connection / status cards.
  *
- * These are the providers available for routing. Configure connections here.
- * No default/active concept — provider is derived from Model Routing config.
+ * Three sections:
+ *   - Claude: CLI install status + warning when missing
+ *   - OpenCode: Universal runtime availability/version
+ *   - Local Models (oMLX): Server connection config + model selector
  *
- * Each card has: status dot + name + connection status text,
- *   provider-specific body, and a footer with save affordance.
+ * No default/active concept — executor is derived from the model routing's provider.
+ * Rule: provider === 'claude' → CLI; everything else → OpenCode.
  */
 
 import { useState } from 'react'
-import { Loader2, Cloud, Cpu, CheckCircle2, ChevronDown, ChevronRight, Save, Code2 } from 'lucide-react'
+import { Loader2, Cloud, Cpu, CheckCircle2, ChevronDown, ChevronRight, Save, AlertTriangle } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import { useToastStore } from '@renderer/store'
 import { OMLX_DEFAULT_PORT } from '../../../../../shared/constants'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 import type {
-  ExecutorBackend,
+  LocalLLMBackend,
   OmlxExtendedStatus,
   PlatformInfo
 } from '../../../../../shared/types'
@@ -194,44 +197,13 @@ function ProviderCardHeader({
 
 interface ClaudeProviderCardProps {
   claudeCliStatus: ClaudeCliStatus | null
-  executorBackend: ExecutorBackend
-  onExecutorBackendChange: (backend: ExecutorBackend) => void
 }
 
 function ClaudeProviderCard({
-  claudeCliStatus,
-  executorBackend,
-  onExecutorBackendChange
+  claudeCliStatus
 }: ClaudeProviderCardProps): React.JSX.Element {
-  const addToast = useToastStore((s) => s.addToast)
-
-  const handleBackendChange = (backend: ExecutorBackend): void => {
-    if (backend === 'codex') {
-      // Phase A: Codex executor not yet implemented — show status toast only
-      window.api
-        .validateSubscriptions()
-        .then((result) => {
-          const cliStatus = result.codexCli?.installed
-            ? `CLI installed (${result.codexCli.version ?? 'unknown version'})`
-            : 'CLI not found — install with: npm install -g @openai/codex'
-          addToast({
-            message: `Codex backend coming soon. ${cliStatus}`,
-            type: 'info'
-          })
-        })
-        .catch(() => {
-          addToast({
-            message: 'Codex backend coming soon',
-            type: 'info'
-          })
-        })
-      return
-    }
-    onExecutorBackendChange(backend)
-  }
-
   const statusDot: StatusDotColor = claudeCliStatus
-    ? claudeCliStatus.installed ? 'green' : 'gray'
+    ? claudeCliStatus.installed ? 'green' : 'red'
     : 'gray'
 
   const statusText = claudeCliStatus
@@ -245,51 +217,80 @@ function ClaudeProviderCard({
       <ProviderCardHeader
         icon={<Cloud size={16} className="text-text-secondary" />}
         name="Claude"
-        sublabel="Cloud API"
+        sublabel="Cloud API — uses Claude CLI"
         statusDot={statusDot}
         statusText={statusText}
       />
 
-      {/* ── Execution Backend ── */}
-      <div className="mb-4">
-        <h4 className="text-xs font-medium text-text-secondary mb-2">Execution Backend</h4>
-        <div className="flex gap-2">
-          {([
-            { value: 'cli' as ExecutorBackend, label: 'Claude CLI', desc: 'Max subscription billing', icon: <Cloud size={14} /> },
-            { value: 'opencode' as ExecutorBackend, label: 'OpenCode', desc: 'Multi-provider runtime', icon: <Cpu size={14} /> },
-            { value: 'codex' as ExecutorBackend, label: 'Codex', desc: 'OpenAI coding agent', icon: <Code2 size={14} /> }
-          ]).map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => handleBackendChange(opt.value)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors flex-1 ${
-                executorBackend === opt.value
-                  ? 'border-primary bg-primary-muted text-primary-text'
-                  : 'border-border-subtle hover:bg-surface-overlay text-text-secondary'
-              }`}
-            >
-              {opt.icon}
-              <div className="text-left">
-                <div>{opt.label}</div>
-                <div className="text-xs font-normal text-text-muted">{opt.desc}</div>
-              </div>
-            </button>
-          ))}
+      {/* CLI status detail */}
+      {claudeCliStatus && !claudeCliStatus.installed && (
+        <div className="mt-3 flex items-start gap-2 rounded-md bg-warning-muted/10 border border-warning/20 p-2.5">
+          <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
+          <div className="text-xs text-text-secondary">
+            <span className="font-medium text-warning">Claude CLI required</span>
+            <p className="mt-0.5">Claude models need the Claude CLI installed. Run <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">npm install -g @anthropic-ai/claude-code</code> to install it.</p>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Footer */}
-      <div className="mt-3 flex items-center gap-1 text-xs text-text-muted">
-        <CheckCircle2 size={10} className="text-success" />
-        Saves automatically
-      </div>
+      {claudeCliStatus?.installed && (
+        <p className="mt-2 text-xs text-text-muted">
+          Executor is automatically selected based on your model routing.
+          Claude models use the Claude CLI.
+        </p>
+      )}
     </div>
   )
 }
 
-// ─── oMLX Provider Card ──────────────────────────────────
+// ─── OpenCode Runtime Card ───────────────────────────
+
+interface OpenCodeCardProps {
+  status: { available: boolean; version?: string } | null
+}
+
+function OpenCodeCard({ status }: OpenCodeCardProps): React.JSX.Element {
+  const statusDot: StatusDotColor = status
+    ? status.available ? 'green' : 'red'
+    : 'gray'
+
+  const statusText = status
+    ? status.available
+      ? `v${status.version ?? 'installed'}`
+      : 'Not found'
+    : 'Checking…'
+
+  return (
+    <div data-testid="opencode-config-section" className="rounded-lg border border-border-subtle bg-surface-float p-4">
+      <ProviderCardHeader
+        icon={<Cpu size={16} className="text-text-secondary" />}
+        name="OpenCode"
+        sublabel="Universal runtime"
+        statusDot={statusDot}
+        statusText={statusText}
+      />
+      <p className="mt-2 text-xs text-text-muted">
+        Drives all non-Claude providers (local LLMs, OpenAI, custom endpoints).
+        Executor is automatically selected based on your model routing.
+      </p>
+      {status && !status.available && (
+        <div className="mt-3 flex items-start gap-2 rounded-md bg-warning-muted/10 border border-warning/20 p-2.5">
+          <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
+          <div className="text-xs text-text-secondary">
+            <span className="font-medium text-warning">OpenCode CLI not found</span>
+            <p className="mt-0.5">Install with <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">npm install -g @opencode-ai/cli</code></p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Local Models Card ───────────────────────────────────
 
 interface OmlxProviderCardProps {
+  localLlmBackend: LocalLLMBackend
+  onBackendChange: (backend: LocalLLMBackend) => void
   connectionDraft: ConnectionDraft
   isConnectionDirty: boolean
   localStatus: OmlxExtendedStatus | null
@@ -310,9 +311,16 @@ interface OmlxProviderCardProps {
   onLocalModelSelect: (modelId: string) => void
   onLoadOmlxModel: (modelId: string) => void
   onUnloadOmlxModel: (modelId: string) => void
+  ollamaEmbeddingModel: string
+  onOllamaEmbeddingModelChange: (model: string) => void
 }
 
+/** Heuristic: filter Ollama models likely to be embedding models */
+const EMBEDDING_MODEL_PATTERN = /embed|bge|minilm|nomic|e5-|gte-|mxbai-embed/i
+
 function OmlxProviderCard({
+  localLlmBackend,
+  onBackendChange,
   connectionDraft,
   isConnectionDirty,
   localStatus,
@@ -332,7 +340,9 @@ function OmlxProviderCard({
   onAutoTest,
   onLocalModelSelect,
   onLoadOmlxModel,
-  onUnloadOmlxModel
+  onUnloadOmlxModel,
+  ollamaEmbeddingModel,
+  onOllamaEmbeddingModelChange
 }: OmlxProviderCardProps): React.JSX.Element {
   const addToast = useToastStore((s) => s.addToast)
   const [modelsExpanded, setModelsExpanded] = useState(true)
@@ -368,11 +378,28 @@ function OmlxProviderCard({
     <div data-testid="local-llm-config" className="rounded-lg border border-border-subtle bg-surface-float p-4">
       <ProviderCardHeader
         icon={<Cpu size={16} className="text-text-secondary" />}
-        name="oMLX"
-        sublabel="Apple Silicon or remote server"
+        name="Local Models"
+        sublabel={localLlmBackend === 'omlx' ? 'Apple Silicon or remote server' : 'Ollama'}
         statusDot={statusDot}
         statusText={statusText}
       />
+
+      {/* ── Backend Tabs ── */}
+      <div className="flex gap-1 mb-4 p-1 rounded-lg bg-surface-base border border-border-subtle">
+        {(['omlx', 'ollama'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => onBackendChange(tab)}
+            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              localLlmBackend === tab
+                ? 'bg-primary/15 text-primary border border-primary/30'
+                : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover'
+            }`}
+          >
+            {tab === 'omlx' ? 'oMLX' : 'Ollama'}
+          </button>
+        ))}
+      </div>
 
       {/* ── Server Connection ── */}
       <SettingsCard>
@@ -390,10 +417,10 @@ function OmlxProviderCard({
               <span className="text-text-muted text-sm">:</span>
               <input
                 value={connectionDraft.localPort}
-                onChange={(e) => onPortChange(parseInt(e.target.value) || OMLX_DEFAULT_PORT)}
+                onChange={(e) => onPortChange(parseInt(e.target.value) || (localLlmBackend === 'ollama' ? 11434 : OMLX_DEFAULT_PORT))}
                 onBlur={() => onAutoTest()}
                 type="number"
-                placeholder="8000"
+                placeholder={localLlmBackend === 'ollama' ? '11434' : '8000'}
                 className="w-24 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
               <button
@@ -415,71 +442,161 @@ function OmlxProviderCard({
             </div>
           </div>
 
-          {/* API Key */}
-          <div className="md:col-span-2">
-            <label className="text-xs font-medium text-text-secondary">
-              API Key <span className="font-normal text-text-muted">(optional)</span>
-            </label>
-            <div className="flex items-center gap-2 mt-1">
-              <input
-                value={connectionDraft.localApiKey}
-                onChange={(e) => onApiKeyChange(e.target.value)}
-                onBlur={() => onAutoTest()}
-                type="password"
-                placeholder="Enter oMLX API key if authentication is enabled"
-                className="flex-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
+          {/* API Key — oMLX only */}
+          {localLlmBackend === 'omlx' && (
+            <div className="md:col-span-2">
+              <label className="text-xs font-medium text-text-secondary">
+                API Key <span className="font-normal text-text-muted">(optional)</span>
+              </label>
+              <div className="flex items-center gap-2 mt-1">
+                <input
+                  value={connectionDraft.localApiKey}
+                  onChange={(e) => onApiKeyChange(e.target.value)}
+                  onBlur={() => onAutoTest()}
+                  type="password"
+                  placeholder="Enter oMLX API key if authentication is enabled"
+                  className="flex-1 bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+              </div>
+              <p className="text-xs text-text-muted mt-1">
+                Required if oMLX has an API key configured. Set in oMLX admin → Settings.
+              </p>
             </div>
-            <p className="text-xs text-text-muted mt-1">
-              Required if oMLX has an API key configured. Set in oMLX admin → Settings.
-            </p>
-          </div>
+          )}
         </div>
       </SettingsCard>
 
-      {/* ── Server Models (collapsible) ── */}
-      <div className="mt-4">
-        <button
-          onClick={() => setModelsExpanded(!modelsExpanded)}
-          className="flex items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors mb-2"
-        >
-          {modelsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          Server models{modelCount > 0 ? ` (${modelCount} loaded)` : ''}
-        </button>
-        {modelsExpanded && (
-          <SettingsCard>
-            <LocalModelSelector
-              selectedModel={localModel}
-              installedModels={localStatus?.models ?? []}
-              downloadedModels={
-                localStatus && 'allModels' in localStatus ? localStatus.allModels : undefined
-              }
-              backend="omlx"
-              onSelect={onLocalModelSelect}
-              onLoadModel={onLoadOmlxModel}
-              onUnloadModel={onUnloadOmlxModel}
-              onPull={(modelId) => {
-                navigator.clipboard.writeText(modelId)
-                const downloaderUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}/admin/dashboard?tab=models&modelsTab=downloader`
-                window.open(downloaderUrl, '_blank')
-                addToast({
-                  message: 'Model name copied — paste it in the oMLX downloader',
-                  type: 'info'
-                })
-              }}
-              onCopyAndOpenDownloader={(modelName) => {
-                navigator.clipboard.writeText(modelName)
-                const downloaderUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}/admin/dashboard?tab=models&modelsTab=downloader`
-                window.open(downloaderUrl, '_blank')
-                addToast({
-                  message: 'Model name copied — paste it in the oMLX downloader',
-                  type: 'info'
-                })
-              }}
-            />
-          </SettingsCard>
-        )}
-      </div>
+      {/* ── Server Models (collapsible) — oMLX ── */}
+      {localLlmBackend === 'omlx' && (
+        <div className="mt-4">
+          <button
+            onClick={() => setModelsExpanded(!modelsExpanded)}
+            className="flex items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors mb-2"
+          >
+            {modelsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            Server models{modelCount > 0 ? ` (${modelCount} loaded)` : ''}
+          </button>
+          {modelsExpanded && (
+            <SettingsCard>
+              <LocalModelSelector
+                selectedModel={localModel}
+                installedModels={localStatus?.models ?? []}
+                downloadedModels={
+                  localStatus && 'allModels' in localStatus ? localStatus.allModels : undefined
+                }
+                backend="omlx"
+                onSelect={onLocalModelSelect}
+                onLoadModel={onLoadOmlxModel}
+                onUnloadModel={onUnloadOmlxModel}
+                onPull={(modelId) => {
+                  void copyTextToClipboard(modelId)
+                  const downloaderUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}/admin/dashboard?tab=models&modelsTab=downloader`
+                  window.open(downloaderUrl, '_blank')
+                  addToast({
+                    message: 'Model name copied — paste it in the oMLX downloader',
+                    type: 'info'
+                  })
+                }}
+                onCopyAndOpenDownloader={(modelName) => {
+                  void copyTextToClipboard(modelName)
+                  const downloaderUrl = `http://${connectionDraft.localHost}:${connectionDraft.localPort}/admin/dashboard?tab=models&modelsTab=downloader`
+                  window.open(downloaderUrl, '_blank')
+                  addToast({
+                    message: 'Model name copied — paste it in the oMLX downloader',
+                    type: 'info'
+                  })
+                }}
+              />
+            </SettingsCard>
+          )}
+        </div>
+      )}
+
+      {/* ── Ollama models ── */}
+      {localLlmBackend === 'ollama' && (
+        <div className="mt-4">
+          <button
+            onClick={() => setModelsExpanded(!modelsExpanded)}
+            className="flex items-center gap-1.5 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors mb-2"
+          >
+            {modelsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            Ollama models{modelCount > 0 ? ` (${modelCount} available)` : ''}
+          </button>
+          {modelsExpanded && (
+            <SettingsCard>
+              <LocalModelSelector
+                selectedModel={localModel}
+                installedModels={localStatus?.models ?? []}
+                backend="ollama"
+                onSelect={onLocalModelSelect}
+                onLoadModel={() => {}}
+                onUnloadModel={() => {}}
+                onPull={(modelId) => {
+                  void copyTextToClipboard(`ollama pull ${modelId}`)
+                  addToast({
+                    message: `Copied: ollama pull ${modelId}`,
+                    type: 'info'
+                  })
+                }}
+                onCopyAndOpenDownloader={(modelName) => {
+                  void copyTextToClipboard(`ollama pull ${modelName}`)
+                  addToast({
+                    message: `Copied: ollama pull ${modelName}`,
+                    type: 'info'
+                  })
+                }}
+              />
+            </SettingsCard>
+          )}
+
+          {/* ── Embedding Model Dropdown ── */}
+          <div className="mt-3">
+            <SettingsCard>
+              <h4 className="text-sm font-medium text-text-primary mb-1">Embedding Model</h4>
+              <p className="text-xs text-text-muted mb-2">
+                Used for Semantic Search. Select an embedding model from your Ollama instance.
+              </p>
+              {(() => {
+                const allModels = localStatus?.models ?? []
+                const embeddingCandidates = allModels.filter((m) => EMBEDDING_MODEL_PATTERN.test(m))
+                const otherModels = allModels.filter((m) => !EMBEDDING_MODEL_PATTERN.test(m))
+                return (
+                  <select
+                    value={ollamaEmbeddingModel}
+                    onChange={(e) => onOllamaEmbeddingModelChange(e.target.value)}
+                    className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  >
+                    <option value="">Select embedding model…</option>
+                    {embeddingCandidates.length > 0 && (
+                      <optgroup label="Embedding Models">
+                        {embeddingCandidates.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {otherModels.length > 0 && (
+                      <optgroup label="Other Models">
+                        {otherModels.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {allModels.length === 0 && (
+                      <option disabled>No models found — check Ollama connection</option>
+                    )}
+                  </select>
+                )
+              })()}
+              {ollamaEmbeddingModel && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-success">
+                  <CheckCircle2 size={10} />
+                  <span>{ollamaEmbeddingModel} — Used for Semantic Search</span>
+                </p>
+              )}
+            </SettingsCard>
+          </div>
+        </div>
+      )}
 
       {/* ── Context Window Override ── */}
       <div className="mt-4">
@@ -544,7 +661,9 @@ function OmlxProviderCard({
 
 export interface ProviderCardsProps {
   claudeCliStatus: ClaudeCliStatus | null
-  executorBackend: ExecutorBackend
+  openCodeCliStatus: { available: boolean; version?: string } | null
+  localLlmBackend: LocalLLMBackend
+  onBackendChange: (backend: LocalLLMBackend) => void
   connectionDraft: ConnectionDraft
   isConnectionDirty: boolean
   localStatus: OmlxExtendedStatus | null
@@ -554,7 +673,6 @@ export interface ProviderCardsProps {
   localBaseUrl: string
   isRemoteServer: boolean
   platformInfo: PlatformInfo | null
-  onExecutorBackendChange: (backend: ExecutorBackend) => void
   onHostChange: (host: string) => void
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
@@ -566,17 +684,26 @@ export interface ProviderCardsProps {
   onLocalModelSelect: (modelId: string) => void
   onLoadOmlxModel: (modelId: string) => void
   onUnloadOmlxModel: (modelId: string) => void
+  ollamaEmbeddingModel: string
+  onOllamaEmbeddingModelChange: (model: string) => void
 }
 
 export default function ProviderCards(props: ProviderCardsProps): React.JSX.Element {
   return (
-    <div data-testid="provider-toggle" className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-      <ClaudeProviderCard
-        claudeCliStatus={props.claudeCliStatus}
-        executorBackend={props.executorBackend}
-        onExecutorBackendChange={props.onExecutorBackendChange}
-      />
+    <div data-testid="provider-toggle" className="space-y-4 mb-6">
+      {/* Runtime status row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ClaudeProviderCard
+          claudeCliStatus={props.claudeCliStatus}
+        />
+        <OpenCodeCard
+          status={props.openCodeCliStatus}
+        />
+      </div>
+      {/* Local models (full width) */}
       <OmlxProviderCard
+        localLlmBackend={props.localLlmBackend}
+        onBackendChange={props.onBackendChange}
         connectionDraft={props.connectionDraft}
         isConnectionDirty={props.isConnectionDirty}
         localStatus={props.localStatus}
@@ -597,6 +724,8 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
         onLocalModelSelect={props.onLocalModelSelect}
         onLoadOmlxModel={props.onLoadOmlxModel}
         onUnloadOmlxModel={props.onUnloadOmlxModel}
+        ollamaEmbeddingModel={props.ollamaEmbeddingModel}
+        onOllamaEmbeddingModelChange={props.onOllamaEmbeddingModelChange}
       />
     </div>
   )

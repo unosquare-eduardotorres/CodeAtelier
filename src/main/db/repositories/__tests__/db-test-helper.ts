@@ -19,7 +19,7 @@ export function trySetupTestDb(): { db: import('better-sqlite3').Database; wsId:
     return { db, wsId }
   } catch (err) {
     console.log(
-      `\n\u26a0 better-sqlite3 native module not compatible with current Node.js \u2014 DB tests will be skipped.`
+      `\n⚠ DB test setup failed — tests will be skipped.`
     )
     console.log(`  (${(err as Error).message.split('\n')[0]})`)
     return null

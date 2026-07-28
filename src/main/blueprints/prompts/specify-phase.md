@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+{{RETRY_CONTEXT}}
+
 ## Grill Decisions (if available)
 
 <grill_decisions>

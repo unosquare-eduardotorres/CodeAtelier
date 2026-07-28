@@ -18,9 +18,15 @@ import {
   RotateCcw,
   PlayCircle,
   ChevronDown,
-  AlertTriangle
+  AlertTriangle,
+  MessageSquareText,
+  UserCheck,
+  CheckCircle2
 } from 'lucide-react'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
+import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
+import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
+import { renderBlueprintMessage } from '../BlueprintChatView'
 import { StatusBadge } from '../StatusBadge'
 import { formatTimeAgo } from '../utils'
 import { BlueprintMarkdown } from '../BlueprintMarkdown'
@@ -57,7 +63,13 @@ function DescriptionBlock({ description }: { description: string }): JSX.Element
 // ── Mid-pipeline statuses (orphaned — pipeline not running) ──
 
 const MID_PIPELINE_STATUSES = new Set([
-  'specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying'
+  'specifying',
+  'clarifying',
+  'planning',
+  'tasking',
+  'reviewing',
+  'building',
+  'verifying'
 ])
 
 // ── Props ──
@@ -119,7 +131,9 @@ export function BlueprintDetailView({
   const endTimes = bp.phases.map((p) => p.completedAt).filter(Boolean) as string[]
   let totalDuration: string | null = null
   if (startTimes.length > 0 && endTimes.length > 0) {
-    const earliest = new Date(Math.min(...startTimes.map((s) => new Date(s).getTime()))).toISOString()
+    const earliest = new Date(
+      Math.min(...startTimes.map((s) => new Date(s).getTime()))
+    ).toISOString()
     const latest = new Date(Math.max(...endTimes.map((s) => new Date(s).getTime()))).toISOString()
     totalDuration = formatDuration(earliest, latest)
   }
@@ -137,9 +151,7 @@ export function BlueprintDetailView({
       {/* ── Header Card ── */}
       <div className="bg-surface-raised rounded-xl border border-border-subtle p-4 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <h4 className="text-sm font-semibold text-text-primary">
-            {bp.title}
-          </h4>
+          <h4 className="text-sm font-semibold text-text-primary">{bp.title}</h4>
           <StatusBadge status={bp.status} />
           {totalDuration && (
             <span className="text-[10px] text-text-muted flex items-center gap-1">
@@ -148,9 +160,7 @@ export function BlueprintDetailView({
             </span>
           )}
         </div>
-        {bp.description && (
-          <DescriptionBlock description={bp.description} />
-        )}
+        {bp.description && <DescriptionBlock description={bp.description} />}
         <div className="flex items-center gap-2 text-[10px] text-text-muted">
           <Clock size={10} />
           <span>Created {formatTimeAgo(new Date(bp.createdAt))}</span>
@@ -158,9 +168,7 @@ export function BlueprintDetailView({
       </div>
 
       {/* ── Outcome Summary (complete runs only) ── */}
-      {outcomeStats && (
-        <OutcomeSummary stats={outcomeStats} />
-      )}
+      {outcomeStats && <OutcomeSummary stats={outcomeStats} />}
 
       {/* ── Gaps found banner with Fix Gaps button ── */}
       {isGapsFound && (
@@ -169,7 +177,8 @@ export function BlueprintDetailView({
           <div className="flex flex-col gap-0.5 flex-1">
             <span className="text-sm font-medium">Gaps Found During Verification</span>
             <span className="text-xs opacity-80">
-              The verifier identified issues that need fixing. Retry to generate fix tasks and rebuild.
+              The verifier identified issues that need fixing. Retry to generate fix tasks and
+              rebuild.
             </span>
           </div>
           <button
@@ -182,153 +191,232 @@ export function BlueprintDetailView({
         </div>
       )}
 
-      {/* ── Human review needed banner with Re-verify button ── */}
-      {isComplete && outcomeStats?.verifyStatus === 'human_needed' && (
-        <div className="rounded-xl border border-accent/20 bg-accent/5 text-accent">
-          <div className="flex items-start gap-3 px-4 py-3">
-            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-            <div className="flex flex-col gap-0.5 flex-1">
-              <span className="text-sm font-medium">Human Review Needed</span>
-              <span className="text-xs opacity-80">
-                The verifier flagged items that require manual verification before shipping.
-              </span>
+      {/* ── Human review needed banner (unacknowledged) with Mark as Verified + Re-verify ── */}
+      {isComplete &&
+        outcomeStats?.verifyStatus === 'human_needed' &&
+        !outcomeStats.humanReviewAcknowledged && (
+          <div className="rounded-xl border border-accent/20 bg-accent/5 text-accent">
+            <div className="flex items-start gap-3 px-4 py-3">
+              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">Human Review Needed</span>
+                <span className="text-xs opacity-80">
+                  The verifier flagged items that require manual verification before shipping.
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => useBlueprintStore.getState().acknowledgeReview(bp.id)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-success hover:bg-success/80 rounded-lg transition-colors"
+                >
+                  <UserCheck size={12} />
+                  Mark as Verified
+                </button>
+                <button
+                  onClick={onRetryPhase}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors"
+                >
+                  <RotateCcw size={12} />
+                  Re-verify
+                </button>
+              </div>
             </div>
-            <button
-              onClick={onRetryPhase}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 rounded-lg transition-colors flex-shrink-0"
-            >
-              <RotateCcw size={12} />
-              Re-verify
-            </button>
+            {humanVerificationItems.length > 0 && (
+              <div className="border-t border-accent/10 px-4 py-3 space-y-1.5">
+                {humanVerificationItems.map((item, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="text-accent/60 mt-0.5 text-xs">▸</span>
+                    <span className="text-xs text-text-secondary">{item}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          {humanVerificationItems.length > 0 && (
-            <div className="border-t border-accent/10 px-4 py-3 space-y-1.5">
-              {humanVerificationItems.map((item, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="text-accent/60 mt-0.5 text-xs">▸</span>
-                  <span className="text-xs text-text-secondary">{item}</span>
-                </div>
-              ))}
+        )}
+
+      {/* ── Human review acknowledged success note ── */}
+      {isComplete &&
+        outcomeStats?.verifyStatus === 'human_needed' &&
+        outcomeStats.humanReviewAcknowledged && (
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-success/20 bg-success/5 text-success">
+            <CheckCircle2 size={14} className="flex-shrink-0" />
+            <span className="text-xs font-medium">
+              Human review completed ✓
+              {outcomeStats.acknowledgedAt
+                ? ` — acknowledged ${formatTimeAgo(new Date(outcomeStats.acknowledgedAt))}`
+                : ''}
+            </span>
+          </div>
+        )}
+
+      {/* ── Failed phase error banner with retry ── */}
+      {bp.status === 'failed' &&
+        (() => {
+          const failedPhase = bp.phases.find((p) => p.status === 'failed')
+          const errorMsg = lastError?.blueprintId === bp.id ? lastError.message : null
+
+          // When lastError is null (ephemeral, or gaps_found path), derive context
+          // from the phase's own artifact data.
+          let failureContext: { title: string; description: string; isGaps: boolean } | null = null
+          if (!errorMsg && failedPhase) {
+            const verifyArt = findArtifact(failedPhase.artifactsJson, 'verify', 'verification')
+            const json = verifyArt?.contentJson as Record<string, unknown> | undefined
+            const overallStatus = json?.overallStatus as string | undefined
+            if (overallStatus === 'gaps_found') {
+              // Prefer new `remediationTasks` field, fall back to legacy `tasks` R-filtered
+              const remTasks =
+                (json?.remediationTasks as unknown[]) ??
+                ((json?.tasks as Array<Record<string, unknown>>) ?? []).filter((t) =>
+                  String(t.taskId ?? '').startsWith('R')
+                )
+              failureContext = {
+                title: 'Gaps Found During Verification',
+                description:
+                  remTasks.length > 0
+                    ? `The verifier identified ${remTasks.length} issue(s) requiring remediation.`
+                    : 'The verifier identified issues but could not generate remediation tasks.',
+                isGaps: true
+              }
+            }
+          }
+
+          return failedPhase ? (
+            <div
+              className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${
+                failureContext?.isGaps
+                  ? 'border-warning/20 bg-warning/5 text-warning'
+                  : 'border-danger/20 bg-danger-muted text-danger'
+              }`}
+            >
+              {failureContext?.isGaps ? (
+                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              ) : (
+                <XCircle size={16} className="mt-0.5 flex-shrink-0" />
+              )}
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">
+                  {failureContext?.title ??
+                    `${failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed`}
+                </span>
+                <span className="text-xs opacity-80">
+                  {failureContext?.description ??
+                    errorMsg ??
+                    'An error occurred during this phase. Retry to try again.'}
+                </span>
+              </div>
+              <button
+                onClick={onRetryPhase}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
+                  failureContext?.isGaps
+                    ? 'bg-warning hover:bg-warning/80'
+                    : 'bg-danger hover:bg-danger/80'
+                }`}
+              >
+                <RotateCcw size={12} />
+                {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
+              </button>
             </div>
+          ) : null
+        })()}
+
+      {/* ── Stopped banner with Resume ── */}
+      {bp.status === 'cancelled' &&
+        (() => {
+          const interruptedPhase = bp.currentPhase
+          const phaseLabel = interruptedPhase
+            ? interruptedPhase.charAt(0).toUpperCase() + interruptedPhase.slice(1)
+            : 'next'
+          return (
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-info/20 bg-info-muted text-info">
+              <StopCircle size={16} className="mt-0.5 flex-shrink-0" />
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">Stopped</span>
+                <span className="text-xs opacity-80">
+                  Resume to continue from the {phaseLabel} phase.
+                </span>
+              </div>
+              <button
+                onClick={onRetryPhase}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-info hover:bg-info/80 rounded-lg transition-colors flex-shrink-0"
+              >
+                <PlayCircle size={12} />
+                Resume
+              </button>
+            </div>
+          )
+        })()}
+
+      {/* ── Interrupted banner (orphaned mid-pipeline, not running) ── */}
+      {MID_PIPELINE_STATUSES.has(bp.status) &&
+        !isRunning &&
+        (() => {
+          const interruptedPhase = bp.currentPhase
+          const phaseLabel = interruptedPhase
+            ? interruptedPhase.charAt(0).toUpperCase() + interruptedPhase.slice(1)
+            : 'current'
+          return (
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-info/20 bg-info-muted text-info">
+              <RotateCcw size={16} className="mt-0.5 flex-shrink-0" />
+              <div className="flex flex-col gap-0.5 flex-1">
+                <span className="text-sm font-medium">Interrupted</span>
+                <span className="text-xs opacity-80">
+                  This blueprint was interrupted during the {phaseLabel} phase. Resume to continue.
+                </span>
+              </div>
+              <button
+                onClick={onRetryPhase}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-info hover:bg-info/80 rounded-lg transition-colors flex-shrink-0"
+              >
+                <PlayCircle size={12} />
+                Resume
+              </button>
+            </div>
+          )
+        })()}
+
+      {/* ── Phase Journey (replaces flat Phases + Tasks lists) ── */}
+      <PhaseJourney phases={bp.phases} tasks={bp.tasks} autoExpandActive={true} />
+
+      {/* ── Transcript (read-only hydrated chat history) ── */}
+      <TranscriptSection blueprintId={bp.id} />
+    </div>
+  )
+}
+
+// ── Read-only Transcript Section (hydrated journal messages) ──
+
+function TranscriptSection({ blueprintId }: { blueprintId: string }): JSX.Element | null {
+  const chatMessages = useBlueprintStore((s) => s.chatMessages)
+  const currentBpId = useBlueprintStore((s) => s.currentBlueprint?.id)
+  const avatarSize = useChatAvatarSize()
+  const [expanded, setExpanded] = useState(false)
+
+  // Only render if we have hydrated messages for THIS blueprint
+  const messages = currentBpId === blueprintId ? chatMessages : []
+  if (messages.length === 0) return null
+
+  return (
+    <div className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-surface-overlay/30 transition-colors"
+      >
+        <MessageSquareText size={14} className="text-accent" />
+        <span className="text-xs font-semibold text-text-primary flex-1 text-left">Transcript</span>
+        <span className="text-[10px] text-text-muted">{messages.length} messages</span>
+        <ChevronDown
+          size={12}
+          className={`text-text-muted transition-transform ${expanded ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {expanded && (
+        <div className="border-t border-border/30 px-4 py-4 space-y-4 max-h-[600px] overflow-y-auto">
+          {messages.map((msg: BlueprintChatMessage, i: number) =>
+            renderBlueprintMessage(msg, i, avatarSize)
           )}
         </div>
       )}
-
-      {/* ── Failed phase error banner with retry ── */}
-      {bp.status === 'failed' && (() => {
-        const failedPhase = bp.phases.find((p) => p.status === 'failed')
-        const errorMsg = lastError?.blueprintId === bp.id ? lastError.message : null
-
-        // When lastError is null (ephemeral, or gaps_found path), derive context
-        // from the phase's own artifact data.
-        let failureContext: { title: string; description: string; isGaps: boolean } | null = null
-        if (!errorMsg && failedPhase) {
-          const verifyArt = findArtifact(failedPhase.artifactsJson, 'verify', 'verification')
-          const json = verifyArt?.contentJson as Record<string, unknown> | undefined
-          const overallStatus = json?.overallStatus as string | undefined
-          if (overallStatus === 'gaps_found') {
-            const remTasks = (json?.remediationTasks as unknown[]) ?? []
-            failureContext = {
-              title: 'Gaps Found During Verification',
-              description: remTasks.length > 0
-                ? `The verifier identified ${remTasks.length} issue(s) requiring remediation.`
-                : 'The verifier identified issues but could not generate remediation tasks.',
-              isGaps: true
-            }
-          }
-        }
-
-        return failedPhase ? (
-          <div className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${
-            failureContext?.isGaps
-              ? 'border-warning/20 bg-warning/5 text-warning'
-              : 'border-danger/20 bg-danger-muted text-danger'
-          }`}>
-            {failureContext?.isGaps
-              ? <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-              : <XCircle size={16} className="mt-0.5 flex-shrink-0" />}
-            <div className="flex flex-col gap-0.5 flex-1">
-              <span className="text-sm font-medium">
-                {failureContext?.title
-                  ?? `${failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed`}
-              </span>
-              <span className="text-xs opacity-80">
-                {failureContext?.description ?? errorMsg ?? 'An error occurred during this phase. Retry to try again.'}
-              </span>
-            </div>
-            <button
-              onClick={onRetryPhase}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
-                failureContext?.isGaps
-                  ? 'bg-warning hover:bg-warning/80'
-                  : 'bg-danger hover:bg-danger/80'
-              }`}
-            >
-              <RotateCcw size={12} />
-              {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
-            </button>
-          </div>
-        ) : null
-      })()}
-
-      {/* ── Stopped banner with Resume ── */}
-      {bp.status === 'cancelled' && (() => {
-        const interruptedPhase = bp.currentPhase
-        const phaseLabel = interruptedPhase
-          ? interruptedPhase.charAt(0).toUpperCase() + interruptedPhase.slice(1)
-          : 'next'
-        return (
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-info/20 bg-info-muted text-info">
-            <StopCircle size={16} className="mt-0.5 flex-shrink-0" />
-            <div className="flex flex-col gap-0.5 flex-1">
-              <span className="text-sm font-medium">Stopped</span>
-              <span className="text-xs opacity-80">
-                Resume to continue from the {phaseLabel} phase.
-              </span>
-            </div>
-            <button
-              onClick={onRetryPhase}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-info hover:bg-info/80 rounded-lg transition-colors flex-shrink-0"
-            >
-              <PlayCircle size={12} />
-              Resume
-            </button>
-          </div>
-        )
-      })()}
-
-      {/* ── Interrupted banner (orphaned mid-pipeline, not running) ── */}
-      {MID_PIPELINE_STATUSES.has(bp.status) && !isRunning && (() => {
-        const interruptedPhase = bp.currentPhase
-        const phaseLabel = interruptedPhase
-          ? interruptedPhase.charAt(0).toUpperCase() + interruptedPhase.slice(1)
-          : 'current'
-        return (
-          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-info/20 bg-info-muted text-info">
-            <RotateCcw size={16} className="mt-0.5 flex-shrink-0" />
-            <div className="flex flex-col gap-0.5 flex-1">
-              <span className="text-sm font-medium">Interrupted</span>
-              <span className="text-xs opacity-80">
-                This blueprint was interrupted during the {phaseLabel} phase. Resume to continue.
-              </span>
-            </div>
-            <button
-              onClick={onRetryPhase}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-info hover:bg-info/80 rounded-lg transition-colors flex-shrink-0"
-            >
-              <PlayCircle size={12} />
-              Resume
-            </button>
-          </div>
-        )
-      })()}
-
-      {/* ── Phase Journey (replaces flat Phases + Tasks lists) ── */}
-      <PhaseJourney
-        phases={bp.phases}
-        tasks={bp.tasks}
-        autoExpandActive={true}
-      />
     </div>
   )
 }

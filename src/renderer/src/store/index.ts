@@ -25,7 +25,8 @@ export {
   useChatBubbleSize,
   useAppTheme,
   useNotificationsEnabled,
-  useParallelBuildAgents
+  useParallelBuildAgents,
+  useLeanBuildMcp
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'
@@ -44,5 +45,7 @@ export { useDiagnosticsStore } from './diagnostics.store'
 export type { LspDiagnostic } from './diagnostics.store'
 export { useHookLifecycleStore } from './hook-lifecycle.store'
 export type { HookLifecycleEvent } from './hook-lifecycle.store'
+export { usePlanExecutionStore } from './plan-execution.store'
+export type { PhaseStatus, PlanExecution } from './plan-execution.store'
 export { useChatAvatarSize } from '../hooks/useChatAvatarSize'
 

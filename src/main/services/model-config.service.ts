@@ -17,6 +17,7 @@ import type {
   ModelRoleMap,
   ResolvedAssignment
 } from '../../shared/types'
+import log from 'electron-log'
 import { workspaceRepository } from '../db/repositories'
 import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 
@@ -170,17 +171,25 @@ class ModelConfigService {
   }
 
   /**
-   * Get the executor backend for a workspace.
-   * Default: 'cli'. Overridden by workspace settings or provider type.
+   * Derive the executor backend from the workspace's resolved LLM provider.
+   * Rule: provider === 'claude' → 'cli'; everything else → 'opencode'.
+   * No longer reads settings.executorBackend (was user-configurable, now derived).
    */
   getExecutorBackend(workspacePath: string | undefined): ExecutorBackend {
     if (!workspacePath) return 'cli'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
-    if (settings?.llmProvider === 'local-llm') return 'opencode'
-    // SVC-08: Validate against the union type instead of blind cast
-    const raw = settings?.executorBackend as string | undefined
-    if (raw === 'cli' || raw === 'opencode' || raw === 'codex') return raw
-    return 'cli'
+    const provider = settings?.llmProvider ?? 'claude'
+
+    // Log when a stored executorBackend value is being ignored (behavior-change traceability)
+    const storedBackend = settings?.executorBackend as string | undefined
+    if (storedBackend && storedBackend !== (provider === 'claude' ? 'cli' : 'opencode')) {
+      log.info(
+        `[getExecutorBackend] Ignoring stored executorBackend='${storedBackend}' — ` +
+        `now derived from provider='${provider}' → '${provider === 'claude' ? 'cli' : 'opencode'}'`
+      )
+    }
+
+    return provider === 'claude' ? 'cli' : 'opencode'
   }
 
   /**

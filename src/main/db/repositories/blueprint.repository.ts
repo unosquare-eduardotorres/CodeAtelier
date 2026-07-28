@@ -64,6 +64,7 @@ interface BlueprintTaskRow {
   executor_run_id: string | null
   started_at: string | null
   completed_at: string | null
+  completion_json: string | null
 }
 
 // ── Row Mappers ──
@@ -114,7 +115,10 @@ function mapTaskRow(row: BlueprintTaskRow): BlueprintTask {
     status: row.status as BlueprintTaskStatus,
     executorRunId: row.executor_run_id,
     startedAt: row.started_at,
-    completedAt: row.completed_at
+    completedAt: row.completed_at,
+    completionJson: safeParseJSON<{ filesCreated: string[]; filesModified: string[] } | null>(
+      row.completion_json, null
+    )
   }
 }
 
@@ -270,14 +274,17 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
 
   // ── Stale detection ──
 
-  markStaleAsFailed(): number {
+  markStaleAsFailed(excludeIds: string[] = []): number {
     const db = this.db()
-    const changes = db
-      .prepare(
-        `UPDATE blueprints SET status = 'failed', updated_at = datetime('now')
+    let query = `UPDATE blueprints SET status = 'failed', updated_at = datetime('now')
          WHERE status IN ('specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying')`
-      )
-      .run().changes
+    const params: string[] = []
+    if (excludeIds.length > 0) {
+      const placeholders = excludeIds.map(() => '?').join(', ')
+      query += ` AND id NOT IN (${placeholders})`
+      params.push(...excludeIds)
+    }
+    const changes = db.prepare(query).run(...params).changes
 
     // BP-STALE-RECONCILE-01: Cascade cleanup to phases and tasks stuck in
     // active/running states. Without this, the UI shows permanently stuck
@@ -430,7 +437,20 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
     return this.saveArtifacts(id, artifacts)
   }
 
-  saveContextSnapshot(id: string, snapshot: string): BlueprintPhase | undefined {
+  /**
+   * R2-2 fix: Atomically replace all artifacts of a given type with a single
+   * new artifact. Does a fresh read inside the repo so callers never operate
+   * on stale artifact lists. Returns the updated phase, or undefined if the
+   * phase doesn't exist.
+   */
+  replaceArtifactOfType(id: string, type: string, artifact: BlueprintArtifact): BlueprintPhase | undefined {
+    const existing = this.findById(id)          // fresh read inside the repo
+    if (!existing) return undefined
+    const filtered = existing.artifactsJson.filter((a) => a.type !== type)
+    return this.saveArtifacts(id, [...filtered, artifact])
+  }
+
+  saveContextSnapshot(id: string, snapshot: string | null): BlueprintPhase | undefined {
     const row = this.db()
       .prepare(`UPDATE blueprint_phases SET context_snapshot = ? WHERE id = ? RETURNING *`)
       .get(snapshot, id) as BlueprintPhaseRow | undefined
@@ -574,6 +594,17 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
     return this.db()
       .prepare(`DELETE FROM blueprint_tasks WHERE blueprint_id = ? AND task_id LIKE 'R%'`)
       .run(blueprintId).changes
+  }
+
+  /** Persist per-task completion data (filesCreated/filesModified) for verify-phase disk checks. */
+  setCompletion(
+    id: string,
+    completion: { filesCreated: string[]; filesModified: string[] }
+  ): BlueprintTask | undefined {
+    const row = this.db()
+      .prepare(`UPDATE blueprint_tasks SET completion_json = ? WHERE id = ? RETURNING *`)
+      .get(JSON.stringify(completion), id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
   }
 }
 

@@ -79,7 +79,8 @@ import type {
   E2ERunSummary,
   E2EResultSummary,
   E2EResultDetail,
-  E2EProgressEvent
+  E2EProgressEvent,
+  PhaseProgressEvent
 } from '../shared/types'
 
 interface Api {
@@ -153,8 +154,23 @@ interface Api {
     conversationId: string
     communicationTone: CommunicationTone | null
   }) => Promise<Conversation>
+  updateConversationRouting: (args: {
+    conversationId: string
+    workspaceId: string
+    llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
+  }) => Promise<Conversation>
   checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
+  getTodos: (args: { conversationId: string }) => Promise<Array<{
+    id: number
+    conversationId: string
+    text: string
+    completed: boolean
+    itemIndex: number | null
+    createdAt: string
+    updatedAt: string
+  }>>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
   updateConversationMode: (args: {
     conversationId: string
@@ -165,12 +181,14 @@ interface Api {
     effort: 'low' | 'medium' | 'high'
   }) => Promise<{ effort: string }>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
-  stopGeneration: () => Promise<void>
+  stopGeneration: (conversationId?: string) => Promise<void>
   getStreamingState: () => Promise<{
     isStreaming: boolean
     conversationId: string | null
     state: string
     requestId: string | null
+    /** MULTI-CHAT-06: Per-conversation active streams from LifecycleRegistry */
+    streams: Array<{ conversationId: string; requestId: string }>
   }>
   compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
 
@@ -435,6 +453,7 @@ interface Api {
         text: string
         index?: number
       }
+      phaseProgress?: PhaseProgressEvent
       turnLimit?: {
         continuable: boolean
         continuationsUsed: number
@@ -754,6 +773,11 @@ interface Api {
     version: string | null
     error: string | null
   }>
+  checkOpenCodeCli: () => Promise<{
+    available: boolean
+    version?: string
+    error?: string
+  }>
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
   // Embedding Provider
@@ -939,6 +963,7 @@ interface Api {
   deleteBug: (args: { id: string }) => Promise<void>
   updateBugNote: (args: { id: string; note: string }) => Promise<void>
   getBugCount: () => Promise<number>
+  bugExportMarkdown: (args: { markdown: string; defaultFilename?: string }) => Promise<void>
   onNewBug: (callback: (bug: BugRecord) => void) => () => void
 
   // Audit (Workspace Health)
@@ -997,6 +1022,12 @@ interface Api {
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
   planGetStatusHistory: (args: { planId: string }) => Promise<PlanStatusHistoryEntry[]>
+  getPhaseProgress: (args: { conversationId: string }) => Promise<{
+    planId: string
+    planTitle: string
+    phases: Array<{ id: number; title: string }>
+    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[] }>
+  } | null>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
@@ -1292,6 +1323,9 @@ interface Api {
     blueprintId: string
     workspaceId: string
   }) => Promise<{ retrying: boolean; phase: string }>
+  blueprintAcknowledgeReview: (args: {
+    blueprintId: string
+  }) => Promise<{ acknowledged: boolean }>
   blueprintGetTranscript: (args: {
     blueprintId: string
     afterSeq?: number
@@ -1345,6 +1379,43 @@ interface Api {
   onBlueprintClarifyFindings: (cb: (data: unknown) => void) => () => void
   onBlueprintClarifyQuestions: (cb: (data: unknown) => void) => () => void
   onBlueprintClarifyGate: (cb: (data: unknown) => void) => () => void
+  blueprintPreflightRun: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{
+    checks: Array<{
+      id: string
+      name: string
+      kind: string
+      status: string
+      message: string
+      remediation?: string
+      sources: string[]
+    }>
+    ranAt: string
+    hasBlockers: boolean
+    hasWarnings: boolean
+  } | null>
+  onBlueprintPreflightResult: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      result: {
+        checks: Array<{
+          id: string
+          name: string
+          kind: string
+          status: string
+          message: string
+          remediation?: string
+          sources: string[]
+        }>
+        ranAt: string
+        hasBlockers: boolean
+        hasWarnings: boolean
+      }
+    }) => void
+  ) => () => void
   onBlueprintApprovalNeeded: (
     cb: (data: {
       blueprintId: string
@@ -1353,6 +1424,23 @@ interface Api {
       planSummary: string
       completion?: Record<string, unknown>
       reviewMarkdown?: string
+      preflight?: {
+        result: {
+          checks: Array<{
+            id: string
+            name: string
+            kind: string
+            status: string
+            message: string
+            remediation?: string
+            sources: string[]
+          }>
+          ranAt: string
+          hasBlockers: boolean
+          hasWarnings: boolean
+        }
+        overridden: boolean
+      }
     }) => void
   ) => () => void
   onBlueprintWaveStart: (
@@ -1397,7 +1485,7 @@ interface Api {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
       runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
@@ -1415,7 +1503,7 @@ interface Api {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
     runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
@@ -1498,6 +1586,10 @@ interface Api {
   ) => () => void
   onNotificationNavigate: (
     cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
+  ) => () => void
+  probeNotificationSupport: () => Promise<'granted' | 'denied' | 'unsupported'>
+  onTrayNavigate: (
+    cb: (data: { view: string; workspaceId?: string }) => void
   ) => () => void
 
   // E2E Testing

@@ -205,6 +205,30 @@ describe('parsePhaseCompletionBlock — robustness', () => {
     assert.equal(parsePhaseCompletionBlock(text, 'specify'), null)
   })
 
+  test('stray LLM status cannot override pinned status in Fallback 2', () => {
+    // LLM emits stray "status" key alongside overallStatus (but no "phase" key,
+    // so Fallback 1 is skipped and Fallback 2 handles it)
+    const text =
+      '```json\n{"overallStatus":"gaps_found","status":"in_progress","findings":[]}\n```'
+    const result = parsePhaseCompletionBlock(text, 'verify')
+    assert.ok(result)
+    assert.equal(result.status, 'complete', 'status must be pinned to complete')
+    assert.equal(result.phase, 'verify', 'phase must be pinned to expectedPhase')
+    assert.equal((result as Record<string, unknown>).overallStatus, 'gaps_found')
+  })
+
+  test('stray LLM phase cannot override pinned phase in Fallback 2', () => {
+    // LLM emits stray "phase" key alongside overallStatus (but no "status" key,
+    // so Fallback 1 is skipped and Fallback 2 handles it)
+    const text =
+      '```json\n{"overallStatus":"passed","phase":"build","findings":[]}\n```'
+    const result = parsePhaseCompletionBlock(text, 'verify')
+    assert.ok(result)
+    assert.equal(result.phase, 'verify', 'phase must be pinned to expectedPhase')
+    assert.equal(result.status, 'complete', 'status must be pinned to complete')
+    assert.equal((result as Record<string, unknown>).overallStatus, 'passed')
+  })
+
   test('Fallback 1 handles escaped quotes in strings', () => {
     const text = '{"phase":"specify","status":"complete","summary":"a \\"quoted\\" value"}'
     const result = parsePhaseCompletionBlock(text)

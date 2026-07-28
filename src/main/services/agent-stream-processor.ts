@@ -53,6 +53,16 @@ export class AgentStreamProcessor {
     streamState.messageStopReceived = true
 
     if (meta.sessionId && conversationId) {
+      // Detect silent resume failure: if we passed --resume with a
+      // specific session ID and the CLI returned a DIFFERENT one,
+      // the server created a new session instead of resuming.
+      const expectedSessionId = this.s.sessionMap.get(conversationId)
+      if (expectedSessionId && meta.sessionId !== expectedSessionId) {
+        this.s.log.warn(
+          `[PIPELINE:resume-mismatch] Expected session ${expectedSessionId}, got ${meta.sessionId} — resume failed silently`
+        )
+      }
+
       this.s.sessionMap.set(conversationId, meta.sessionId)
       this.s.log.info('Session captured for conversation:', conversationId)
       try {

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
 import { memoryCheckpoint } from './indexing-diagnostics'
-import { omlxEmbeddingProvider } from './omlx-embedding.service'
+import { localEmbeddingProvider } from './local-embedding.provider'
 import { descriptionCache } from './description-cache.service'
 import { generateHeuristicDescription } from './heuristic-description.service'
 import {
@@ -28,7 +28,7 @@ import type { IndexingState, SemanticSearchResult } from '../../shared/types'
  * that need provenance MUST ensure the provider is ready first.
  */
 function getEmbeddingModelName(): string | null {
-  return omlxEmbeddingProvider.activeModelName || null
+  return localEmbeddingProvider.activeModelName || null
 }
 
 /**
@@ -758,8 +758,8 @@ class VectorSearchService extends EventEmitter {
     if (processedChunks.length === 0) return
 
     // Ensure embedding model is loaded before first use
-    if (!omlxEmbeddingProvider.isReady) {
-      await omlxEmbeddingProvider.initialize()
+    if (!localEmbeddingProvider.isReady) {
+      await localEmbeddingProvider.initialize()
     }
 
     // Embed and upsert in batches
@@ -768,7 +768,7 @@ class VectorSearchService extends EventEmitter {
       const texts = batch.map((c) => c.embedText)
 
       try {
-        const embeddings = await omlxEmbeddingProvider.embed(texts)
+        const embeddings = await localEmbeddingProvider.embed(texts)
         const ids = batch.map((c) => c.id)
         collection.upsert(ids, embeddings, batch)
       } catch (error) {
@@ -812,10 +812,10 @@ class VectorSearchService extends EventEmitter {
 
     try {
       // Ensure embedding model is loaded before first use
-      if (!omlxEmbeddingProvider.isReady) {
-        await omlxEmbeddingProvider.initialize()
+      if (!localEmbeddingProvider.isReady) {
+        await localEmbeddingProvider.initialize()
       }
-      const [queryEmbedding] = await omlxEmbeddingProvider.embed([query])
+      const [queryEmbedding] = await localEmbeddingProvider.embed([query])
       return collection.query(queryEmbedding, options?.nResults ?? 5, options?.where)
     } catch (error) {
       log.error(`[VectorSearch] Search failed for workspace ${workspaceId}:`, error)
@@ -840,10 +840,10 @@ class VectorSearchService extends EventEmitter {
 
     try {
       // Ensure embedding model is loaded before first use
-      if (!omlxEmbeddingProvider.isReady) {
-        await omlxEmbeddingProvider.initialize()
+      if (!localEmbeddingProvider.isReady) {
+        await localEmbeddingProvider.initialize()
       }
-      const [codeEmbedding] = await omlxEmbeddingProvider.embed([code])
+      const [codeEmbedding] = await localEmbeddingProvider.embed([code])
       const where = opts?.language ? { language: opts.language } : undefined
       return collection.query(codeEmbedding, opts?.nResults ?? 10, where)
     } catch (error) {
@@ -1100,16 +1100,16 @@ class VectorSearchService extends EventEmitter {
    * is not running or no embedding model is loaded.
    */
   private async initializeEmbeddingModel(): Promise<(texts: string[]) => Promise<number[][]>> {
-    if (!omlxEmbeddingProvider.isReady) {
+    if (!localEmbeddingProvider.isReady) {
       memoryCheckpoint('EMBEDDING_OMLX_INIT_START')
       log.info('[VectorSearch] Initializing oMLX embedding provider...')
-      await omlxEmbeddingProvider.initialize()
+      await localEmbeddingProvider.initialize()
       memoryCheckpoint('EMBEDDING_OMLX_INIT_DONE')
     } else {
       memoryCheckpoint('EMBEDDING_OMLX_ALREADY_READY')
     }
 
-    return (texts: string[]) => omlxEmbeddingProvider.embed(texts)
+    return (texts: string[]) => localEmbeddingProvider.embed(texts)
   }
 
   /**

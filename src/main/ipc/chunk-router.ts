@@ -11,6 +11,7 @@ import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './
 import { processToolChunk } from './tool-chunk-processor'
 import { TextDeltaBatcher } from './text-delta-batcher'
 import { chatIpcLogger } from '../logger'
+import { todoRepository } from '../db/repositories/todo.repository'
 
 // ── Tool Activity Persistence Accumulator ──────────────────────────────
 // Collects completed ToolActivity objects during streaming, keyed by
@@ -585,6 +586,33 @@ function handleTodoUpdate(ctx: ChunkRouterContext, chunk: StreamChunk): void {
     chunk: '',
     todoUpdate: chunk.todoUpdate
   })
+
+  // Persist to DB so todos survive app restart
+  const { action, text, index } = chunk.todoUpdate
+  try {
+    switch (action) {
+      case 'add':
+        todoRepository.saveTodo(ctx.conversationId, text, index)
+        break
+      case 'complete':
+        todoRepository.completeTodo(ctx.conversationId, text, index)
+        break
+      case 'remove':
+        todoRepository.removeTodo(ctx.conversationId, text, index)
+        break
+    }
+  } catch (err) {
+    chatIpcLogger.warn(`[chunk-router] Failed to persist todo: ${(err as Error).message}`)
+  }
+}
+
+function handlePhaseProgress(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  if (!chunk.phaseProgress) return
+  safeSend(ctx, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+    ...basePayload(ctx),
+    chunk: '',
+    phaseProgress: chunk.phaseProgress
+  })
 }
 
 // F4: LSP diagnostics handler — forwards compiler/linter errors from OpenCode to renderer
@@ -785,6 +813,7 @@ const CHUNK_HANDLERS: Record<string, ChunkHandler> = {
   session_recovery: handleSessionRecovery,
   context_usage_update: handleContextUsageUpdate,
   todo_update: handleTodoUpdate,
+  phase_progress: handlePhaseProgress,
   subagent_start: handleSubagentStart,
   subagent_progress: handleSubagentProgress,
   subagent_complete: handleSubagentComplete,

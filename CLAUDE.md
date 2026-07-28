@@ -128,7 +128,6 @@ npm run format        # Prettier
 1. `npm run typecheck:node` → must be 0 errors
 2. `npm run typecheck:web` → must be 0 errors  
 3. `grep '"dependencies"' package.json` → must return 1 match
-4. `cp package.json package.json.safe` → safety backup
 
 **After `build:mac` (success or failure):**
 1. `grep '"dependencies"' package.json` → must return 1 match. If 0 → `git checkout package.json`

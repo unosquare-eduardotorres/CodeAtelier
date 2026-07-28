@@ -140,9 +140,9 @@ export async function runMemoryDedupNear(ctx: E2EServiceContext): Promise<E2ETra
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { omlxEmbeddingProvider } = await import('../../omlx-embedding.service')
+    const { localEmbeddingProvider } = await import('../../local-embedding.provider')
 
-    if (!omlxEmbeddingProvider.isReady) {
+    if (!localEmbeddingProvider.isReady) {
       transcript.push(statusEntry('skip_embedding_offline'))
       return transcript
     }
@@ -200,9 +200,9 @@ export async function runMemoryAmbiguous(ctx: E2EServiceContext): Promise<E2ETra
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { omlxEmbeddingProvider } = await import('../../omlx-embedding.service')
+    const { localEmbeddingProvider } = await import('../../local-embedding.provider')
 
-    if (!omlxEmbeddingProvider.isReady) {
+    if (!localEmbeddingProvider.isReady) {
       transcript.push(statusEntry('skip_embedding_offline'))
       return transcript
     }

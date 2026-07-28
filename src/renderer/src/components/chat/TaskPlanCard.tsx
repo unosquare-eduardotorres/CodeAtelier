@@ -142,6 +142,8 @@ interface TaskPlanCardProps {
 
   /** Persisted action from DB — initializes button visibility on mount */
   planActionTaken?: string
+  /** Conversation ID for live phase status badges during build execution */
+  conversationId?: string
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -268,7 +270,8 @@ export default function TaskPlanCard({
   onSaveAsIdea,
   onRefine,
   onCouncilReview,
-  planActionTaken
+  planActionTaken,
+  conversationId
 }: TaskPlanCardProps): React.JSX.Element {
   const isInlinePlan = !!planContent
 
@@ -318,7 +321,8 @@ export default function TaskPlanCard({
     visibleVerification,
     visiblePhases,
     visibleDecisions,
-    isSimplePlan
+    isSimplePlan,
+    conversationId
   })
 
   return (

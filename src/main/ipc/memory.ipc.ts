@@ -21,7 +21,7 @@ import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { memoryRetrievalService } from '../services/memory-retrieval.service'
 import { memoryEngineService } from '../services/memory-engine.service'
 import { memoryExtractionService } from '../services/memory-extraction.service'
-import { omlxEmbeddingProvider } from '../services/omlx-embedding.service'
+import { localEmbeddingProvider } from '../services/local-embedding.provider'
 import { workspaceRepository } from '../db/repositories'
 import { memoryDocWatcherService } from '../services/memory-doc-watcher.service'
 import { buildMemoryGraph } from '../services/memory-graph'
@@ -252,10 +252,10 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ? memoryFactRepository.countByWorkspace(args.workspaceId)
         : { active: 0, superseded: 0, archived: 0, pendingEmbedding: 0 }
       return {
-        isReady: omlxEmbeddingProvider.isReady,
+        isReady: localEmbeddingProvider.isReady,
         pendingCount: counts.pendingEmbedding,
         totalCount: counts.active + counts.superseded + counts.archived,
-        modelName: omlxEmbeddingProvider.isReady ? omlxEmbeddingProvider.activeModelName : null
+        modelName: localEmbeddingProvider.isReady ? localEmbeddingProvider.activeModelName : null
       }
     }
   )
@@ -266,8 +266,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       validateSender(event)
 
       // Attempt full provider ready (auto-start oMLX, auto-load model) if offline
-      if (!omlxEmbeddingProvider.isReady) {
-        const ready = await omlxEmbeddingProvider.ensureEmbeddingReady()
+      if (!localEmbeddingProvider.isReady) {
+        const ready = await localEmbeddingProvider.ensureEmbeddingReady()
         if (!ready) {
           const errorMsg = 'Embedding model could not be initialized. ' +
             'Please ensure oMLX is running with an embedding model downloaded and loaded.'

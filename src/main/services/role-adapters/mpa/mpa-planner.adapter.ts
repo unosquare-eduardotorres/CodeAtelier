@@ -6,7 +6,7 @@ import type { GrillDecision, MpaPlanArtifact } from '../../../../shared/mpa-type
 /**
  * MPA Planner Adapter — read-only architect that produces implementation plans.
  *
- * CLI config: --permission-mode plan, --effort xhigh, --goal "condition"
+ * CLI config: --permission-mode plan, --effort high, --goal "condition"
  */
 export class MpaPlannerAdapter extends MpaBaseAdapter {
   readonly role: AgentRole = 'mpa-planner'

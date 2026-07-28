@@ -19,16 +19,21 @@ import { BlueprintReviewAdapter } from './role-adapters/blueprint/blueprint-revi
 import { buildReviewGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
+import { modelConfigService } from './model-config.service'
 import {
   blueprintRepository,
-  blueprintPhaseRepository
+  blueprintPhaseRepository,
+  blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
+import { conversationRepository } from '../db/repositories'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload,
   BlueprintApprovalNeededPayload
 } from '../../shared/blueprint-types'
+import { runPreflightChecks } from './blueprint-preflight.service'
+import type { ApprovalPreflightData } from '../../shared/preflight-types'
 
 const bpLog = log.scope('blueprint-review')
 
@@ -117,7 +122,29 @@ export class BlueprintReviewService extends EventEmitter {
       // 6. Start session + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
-      const syntheticConvId = `blueprint-review-${blueprintId}-${Date.now()}`
+      // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
+      const reviewPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
+      const priorConvId = reviewPhaseRec?.conversationId
+      let syntheticConvId: string
+      if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
+        const priorConv = conversationRepository.findById(priorConvId)
+        const currentProvider = modelConfigService.getProvider(workspacePath)
+        if (priorConv?.llmProvider === currentProvider) {
+          syntheticConvId = priorConvId
+          bpLog.info(`[startReviewPhase] Resuming conversation ${priorConvId} from failed attempt`)
+        } else {
+          syntheticConvId = `blueprint-review-${blueprintId}-${Date.now()}`
+          bpLog.info(`[startReviewPhase] Provider changed — falling back to fresh conversation`)
+        }
+      } else {
+        syntheticConvId = `blueprint-review-${blueprintId}-${Date.now()}`
+      }
+
+      // Persist conversation ID early so retries can find it
+      if (reviewPhaseRec) {
+        try { blueprintPhaseRepository.setConversation(reviewPhaseRec.id, syntheticConvId) }
+        catch { /* conversation may not exist yet in DB */ }
+      }
 
       let timeoutId: NodeJS.Timeout | undefined
       const timeoutPromise = new Promise<void>((_, reject) => {
@@ -167,6 +194,10 @@ export class BlueprintReviewService extends EventEmitter {
         }
 
         blueprintPhaseRepository.updateStatus(reviewPhase.id, 'complete')
+        // BP-RETRY-CONTEXT-CLEAR: Clear retry context on successful completion
+        if (reviewPhase.contextSnapshot) {
+          blueprintPhaseRepository.saveContextSnapshot(reviewPhase.id, null)
+        }
       }
 
       bpLog.info(
@@ -191,7 +222,33 @@ export class BlueprintReviewService extends EventEmitter {
         } satisfies BlueprintPhaseArtifactPayload)
       }
 
-      // 10. Emit approval gate — human must approve before BUILD
+      // 10. Run environment preflight checks (cheap, <5s — G5: no new machine states)
+      let preflightData: ApprovalPreflightData | undefined
+      try {
+        const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+        const taskDescriptions = tasks.map((t) => t.description)
+        const preflightResult = await runPreflightChecks(workspacePath, taskDescriptions)
+
+        // A6+R2-2 fix: atomic replace — avoids stale-read hazard from step 1
+        if (reviewPhase) {
+          blueprintPhaseRepository.replaceArtifactOfType(reviewPhase.id, 'preflight', {
+            type: 'preflight',
+            contentJson: preflightResult as unknown as Record<string, unknown>
+          })
+        }
+
+        preflightData = { result: preflightResult, overridden: false }
+        this.safeEmit('preflightResult', { blueprintId, workspaceId, result: preflightResult })
+        bpLog.info(
+          `[startReviewPhase] Preflight: ${preflightResult.checks.length} checks — ` +
+          `${preflightResult.hasBlockers ? 'HAS BLOCKERS' : 'no blockers'}`
+        )
+      } catch (preflightErr) {
+        // Preflight failure should never block the approval gate (premortem #4)
+        bpLog.warn(`[startReviewPhase] Preflight failed (non-fatal):`, preflightErr)
+      }
+
+      // 11. Emit approval gate — human must approve before BUILD
       // Drive state machine: phase-running → awaiting-approval
       const machine = blueprintService.getMachine(workspaceId)
       machine.transition('approvalNeeded')
@@ -201,7 +258,8 @@ export class BlueprintReviewService extends EventEmitter {
       blueprintService.setPendingApproval(workspaceId, {
         planSummary,
         completion: completion ? (completion as Record<string, unknown>) : undefined,
-        reviewMarkdown: text || undefined
+        reviewMarkdown: text || undefined,
+        ...(preflightData ? { preflight: { result: preflightData.result as unknown as Record<string, unknown>, overridden: preflightData.overridden } } : {})
       })
       this.safeEmit('approvalNeeded', {
         blueprintId,
@@ -209,8 +267,9 @@ export class BlueprintReviewService extends EventEmitter {
         phase: 'review',
         planSummary,
         completion: completion ?? undefined,
-        reviewMarkdown: text || undefined
-      } satisfies BlueprintApprovalNeededPayload)
+        reviewMarkdown: text || undefined,
+        ...(preflightData ? { preflight: preflightData } : {})
+      } as BlueprintApprovalNeededPayload & { preflight?: ApprovalPreflightData })
 
       // NOTE: Does NOT advance to BUILD. That happens in BLUEPRINT_APPROVAL_RESPOND handler.
     } catch (err) {
@@ -236,6 +295,10 @@ export class BlueprintReviewService extends EventEmitter {
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
       blueprintService.failPipeline(workspaceId, errorMsg)
+
+      // BP-RETRY-CONTEXT: Save structured retry context for next attempt
+      try { blueprintService.saveRetryContext(blueprintId, 'review', { error: errorMsg }) }
+      catch { /* best effort */ }
 
       const autoRetrying = blueprintService.scheduleAutoRetry({
         blueprintId, workspaceId, workspacePath, phase: 'review', error: errorMsg
@@ -271,7 +334,7 @@ export class BlueprintReviewService extends EventEmitter {
     const findings = completion.findings as
       | { critical?: number; high?: number; medium?: number; low?: number }
       | undefined
-    const recommendation = (completion.recommendation as string) ?? 'unknown'
+    const recommendation = typeof completion.recommendation === 'string' ? completion.recommendation : 'unknown'
     const coverage = completion.coveragePercent as number | undefined
 
     const lines: string[] = []

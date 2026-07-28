@@ -119,7 +119,7 @@ describe('Token savings estimation for small tier', () => {
     assert.ok(analysisCount >= 2, `Expected at least 2 code-analysis tools, got ${analysisCount}`)
   })
 
-  test('estimated schema overhead: small tier ≤ 10 allowed tools (6 code-graph + 3 control)', () => {
+  test('estimated schema overhead: small tier ≤ 10 allowed tools (6 code-graph + 4 control)', () => {
     const controlToolCount = MCP_TOOLS.CONTROL_ACTIONS._ALL_NAMES.length
     const totalSmallTier = ESSENTIAL_CODE_GRAPH_TOOLS.length + controlToolCount
     assert.ok(totalSmallTier <= 10, `Expected ≤10 tools, got ${totalSmallTier}`)

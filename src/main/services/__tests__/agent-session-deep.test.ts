@@ -123,7 +123,11 @@ function enrichLocalLLMContext(params: {
 }
 
 /**
- * Replicated session resolution logic (agent-session.service.ts:878-892).
+ * Replicated session resolution logic (agent-session.service.ts).
+ *
+ * NOTE: The real resolveSession now rejects DB-loaded sessions (cross-restart
+ * guard) — sessions loaded from DB return undefined instead of being cached.
+ * This simplified double preserves the pre-guard behavior for its own tests.
  */
 class SessionResolver {
   private readonly sessionMap = new Map<string, string>()

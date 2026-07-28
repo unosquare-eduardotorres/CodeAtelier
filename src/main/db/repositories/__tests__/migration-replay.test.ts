@@ -643,7 +643,7 @@ if (!env) {
     })
 
     test('migration_count_matches_schema_version', () => {
-      assert.equal(migrations.length, 122)
+      assert.equal(migrations.length, 123)
     })
   })
 }

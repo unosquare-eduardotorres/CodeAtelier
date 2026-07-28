@@ -176,6 +176,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-parsers-conditions.test',
   '../services/__tests__/blueprint-review.service.test',
   '../services/__tests__/blueprint-build.service.test',
+  '../services/__tests__/blueprint-send-outcome.test',
   '../services/__tests__/blueprint-verify-conditions.test',
   // ─── Run 31: Plan Hub — unified plan registry ───
   '../services/__tests__/audit-plan-mapper.test',
@@ -294,6 +295,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/e2e-contracts.test',
   // ─── Blueprint document loader ───
   '../services/__tests__/blueprint-document-loader.test',
+  // ─── Blueprint durability (journal mapper, viewState precedence) ───
+  '../services/__tests__/blueprint-durability.test',
+  // ─── Blueprint agent accumulator (flush boundaries, caps, cancel, taskId) ───
+  '../services/__tests__/blueprint-agent-accumulator.test',
   // ─── Phase 18: Coverage Mega-Push IV — giant services deep + MCP tool bodies ───
   '../services/__tests__/giant-services-deep.test',
   '../services/__tests__/adapter-completion-round2.test',
@@ -326,6 +331,31 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/chat-stream-body-deep.test',
   '../services/__tests__/code-analysis-handlers.test',
   '../services/__tests__/blueprint-spec-deep.test',
+  '../services/__tests__/blueprint-parallel-scheduler.test',
+  '../services/__tests__/blueprint-verify-extractor.test',
+  // ─── Phase 21: Coverage Mega-Push ───
+  '../services/__tests__/memory-engine-extraction-deep.test',
+  '../services/__tests__/blueprint-services-deep-phase21.test',
+  '../services/__tests__/council-mpa-grill-services-deep.test',
+  '../services/__tests__/quick-win-coverage-boost.test',
+  '../services/__tests__/ipc-conversation-handlers.test',
+  '../services/__tests__/ipc-workspace-agent-handlers.test',
+  '../services/__tests__/ipc-grill-audit-council-handlers.test',
+  '../services/__tests__/ipc-remaining-handlers.test',
+  // ─── Blueprint Environment Preflight ───
+  '../services/__tests__/blueprint-preflight.test',
+  // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
+  '../services/__tests__/phase-summaries-verify.test',
+  // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
+  '../services/__tests__/permission-prompt-flow.test',
+  // ─── Background CLI Session (persistent warm process for prompt optimizer) ───
+  '../services/__tests__/background-cli-session.test',
+  // ─── PR Description Generation (CHAT_GENERATE_PR_DESCRIPTION handler logic) ───
+  '../services/__tests__/pr-description-generation.test',
+  // ─── Executor derivation (Phase A: provider → backend mapping) ───
+  '../services/__tests__/executor-derivation.test',
+  // ─── Local embedding provider facade (oMLX/Ollama routing) ───
+  '../services/__tests__/local-embedding-provider.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

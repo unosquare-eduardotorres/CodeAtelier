@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { StructuredPlan, GrillQuestion } from '../../shared/types'
+import type { StructuredPlan, GrillQuestion, PhaseProgressEvent } from '../../shared/types'
 
 /**
  * Event callback signatures for control tool actions.
@@ -22,6 +22,8 @@ export interface ControlActionCallbacks {
    * to the waiting ask_user promise. Undefined when no round-trip is wired.
    */
   onAskUser: (questions: GrillQuestion[], action?: string, requestId?: string) => void
+  /** Called when the agent reports plan phase progress via emit_phase_progress */
+  onPhaseProgress?: (progress: PhaseProgressEvent) => void
   // onMemory removed — memory tools now live on the dedicated memory MCP server
 }
 

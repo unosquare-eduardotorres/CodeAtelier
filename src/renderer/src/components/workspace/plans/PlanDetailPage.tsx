@@ -19,7 +19,6 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
-  PlanRecord,
   StructuredPlan
 } from '../../../../../shared/types'
 import { usePlanStore } from '@renderer/store/plan.store'
@@ -57,10 +56,7 @@ function buildDetailSectionProps(plan: StructuredPlan) {
       (f): f is string => typeof f === 'string' && f.trim() !== ''
     ),
     // Show ALL risks, not just high/critical (unlike chat card)
-    visibleRisks: filterPlanArray(plan.risks, (r) => {
-      if (typeof r === 'string') return r.trim() !== ''
-      return !!r?.risk?.trim()
-    }),
+    visibleRisks: filterPlanArray(plan.risks, (r) => !!r?.risk?.trim()),
     visibleDeferredItems: filterPlanArray(
       plan.deferredItems,
       (s): s is string => typeof s === 'string' && s.trim() !== ''

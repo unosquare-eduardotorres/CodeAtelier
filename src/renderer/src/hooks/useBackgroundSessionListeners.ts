@@ -56,6 +56,9 @@ export function useBackgroundSessionListeners(): void {
     const timers = timersRef.current
 
     for (const p of pendingPermissions) {
+      // toolPermission requests need explicit approve/deny — keep toast visible
+      // until the user acts or the server's 120s timeout fires.
+      if (p.type === 'toolPermission') continue
       if (!p.badgeFallback && !timers[p.id]) {
         timers[p.id] = setTimeout(() => {
           markBadgeFallback(p.id)

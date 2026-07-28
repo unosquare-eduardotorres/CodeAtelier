@@ -9,6 +9,7 @@ import { test, describe, summaryAsync } from './test-harness'
 import { BlueprintVerifyAdapter } from '../role-adapters/blueprint/blueprint-verify.adapter'
 import type { AdapterMcpContext, AdapterPromptContext } from '../agent-session.types'
 import type { PhaseContext } from '../../../shared/blueprint-types'
+import { MCP_TOOLS } from '../../../shared/constants'
 
 const basePhaseContext: PhaseContext = {
   blueprint: {
@@ -191,6 +192,34 @@ describe('BlueprintVerifyAdapter', () => {
     const { allowedTools } = result
     assert.ok(allowedTools, 'allowedTools should be defined')
     assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-graph__')))
+  })
+
+  // ── Memory tools ──
+
+  test('buildMcpConfig_includes_memory_tools_when_workspaceId_present', () => {
+    const adapter = new BlueprintVerifyAdapter({
+      workspaceId: 'ws-1',
+      blueprintId: 'bp-1',
+      phaseContext: basePhaseContext
+    })
+    const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: 'ws-1' }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    for (const name of MCP_TOOLS.MEMORY._ALL_NAMES) {
+      assert.ok(allowedTools.includes(name), `should include ${name}`)
+    }
+  })
+
+  test('buildMcpConfig_excludes_memory_tools_without_workspaceId', () => {
+    const adapter = new BlueprintVerifyAdapter({
+      workspaceId: 'ws-1',
+      blueprintId: 'bp-1',
+      phaseContext: basePhaseContext
+    })
+    const result = adapter.buildMcpConfig(makeMcpCtx({ workspaceId: null }))
+    const { allowedTools } = result
+    assert.ok(allowedTools, 'allowedTools should be defined')
+    assert.ok(!allowedTools.some((t) => t.startsWith('mcp__memory__')))
   })
 
   // ── buildPrompts guard ──

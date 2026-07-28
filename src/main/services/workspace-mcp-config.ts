@@ -336,6 +336,7 @@ function buildLocalProviderMcpConfig(opts: {
     // Control actions — always on
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
+    MCP_TOOLS.CONTROL_ACTIONS.EMIT_PHASE_PROGRESS.name,
     // Memory tools — always on (all tiers, ~1-2K tokens of schemas)
     ...MCP_TOOLS.MEMORY._ALL_NAMES
   ]
@@ -476,9 +477,10 @@ function buildClaudeProviderMcpConfig(opts: {
     ...(isLocalMcpEnabled('code-analysis', localActive)
       ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
       : []),
-    // Control actions — always on (plan + ask)
+    // Control actions — always on (plan + ask + phase progress)
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
+    MCP_TOOLS.CONTROL_ACTIONS.EMIT_PHASE_PROGRESS.name,
     // Memory tools — always on (all tiers)
     ...MCP_TOOLS.MEMORY._ALL_NAMES
   ]

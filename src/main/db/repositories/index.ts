@@ -55,6 +55,8 @@ export { GrillSessionRepository, grillSessionRepository } from './grill-session.
 export type { GrillSession, GrillSessionStatus } from './grill-session.repository'
 export { PlanRepository, planRepository } from './plan.repository'
 export type { SavePlanParams } from './plan.repository'
+export { TodoRepository, todoRepository } from './todo.repository'
+export type { TodoItem } from './todo.repository'
 export { LibraryDocRepository, libraryDocRepository } from './library-doc.repository'
 export type { LibraryDoc, PackageSummary } from './library-doc.repository'
 

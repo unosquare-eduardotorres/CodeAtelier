@@ -6,6 +6,7 @@
  */
 import { useEffect, useCallback } from 'react'
 import { X, Copy, Check, MessageSquareDashed, Loader2 } from 'lucide-react'
+import { copyTextToClipboard } from '../../utils/clipboard'
 import ReactMarkdown from 'react-markdown'
 import { useState } from 'react'
 
@@ -24,12 +25,12 @@ export default function BtwOverlay({
 }: BtwOverlayProps): React.JSX.Element {
   const [copied, setCopied] = useState(false)
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     if (!answer) return
-    void navigator.clipboard.writeText(answer).then(() => {
+    if (await copyTextToClipboard(answer)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    })
+    }
   }, [answer])
 
   useEffect(() => {

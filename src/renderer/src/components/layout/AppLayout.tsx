@@ -282,6 +282,19 @@ export default function AppLayout(): React.JSX.Element {
     [openWorkspace]
   )
 
+  // ── Tray menu navigation (main → renderer push) ──
+  useEffect(() => {
+    const unsub = window.api.onTrayNavigate((payload) => {
+      if (payload.view === 'bugs') {
+        guardedSetView('bugs')
+      } else if (payload.view === 'workspace' && payload.workspaceId) {
+        openWorkspace(payload.workspaceId)
+        guardedSetView('chat')
+      }
+    })
+    return unsub
+  }, [guardedSetView, openWorkspace])
+
   // Bug tracker + audit status for UI
   const unresolvedBugCount = useBugStore((s) => s.unresolvedCount)
   const auditRunning = useAuditStore((s) => s.isRunning)

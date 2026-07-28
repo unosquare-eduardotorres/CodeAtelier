@@ -15,12 +15,12 @@ export default function ScrollToBottomButton({
     <button
       onClick={onClick}
       className={`absolute bottom-4 right-6 z-20 flex items-center justify-center
-        w-9 h-9 rounded-full bg-surface-overlay border border-border-subtle
-        shadow-lg hover:bg-surface-raised
-        text-text-secondary hover:text-text-primary
+        w-9 h-9 rounded-full bg-primary-base border border-primary-muted
+        shadow-lg shadow-primary-base/20 hover:bg-primary-hover
+        text-white
         transition-all duration-200
         ${visible
-          ? 'opacity-100 translate-y-0 pointer-events-auto'
+          ? 'opacity-100 translate-y-0 pointer-events-auto animate-pulse'
           : 'opacity-0 translate-y-2 pointer-events-none'
         }`}
       aria-label={ariaLabel}

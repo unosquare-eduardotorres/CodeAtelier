@@ -34,8 +34,10 @@ export interface IpcBridgeEvent {
     | 'memory'
     | 'askUserResponse'
     | 'permission'
+    | 'permissionResponse'
     | 'fileEdited'
     | 'memoryResponse'
+    | 'phaseProgress'
   payload: unknown
   /** For request-response patterns: correlates response to request. */
   requestId?: string
@@ -200,6 +202,22 @@ export class IpcBridge extends EventEmitter {
   }
 
   /**
+   * Send a response to a permission_prompt request.
+   * Routes the user's approve/deny decision back to the control-actions MCP server.
+   */
+  sendPermissionResponse(requestId: string, approved: boolean, input?: unknown): void {
+    this.sendToClients({
+      type: 'permissionResponse',
+      requestId,
+      payload: { approved, input },
+      timestamp: Date.now()
+    })
+    bridgeLog.info(
+      `[ipc-bridge] Sent permissionResponse for requestId=${requestId} approved=${approved}`
+    )
+  }
+
+  /**
    * Stop the socket server and clean up.
    */
   async stop(): Promise<void> {
@@ -255,12 +273,19 @@ export class IpcBridge extends EventEmitter {
         // Response from Electron → MCP server (handled via sendToClients, not events)
         break
       case 'permission':
-        // Permission request from plugin — surface in Electron UI for plan mode
-        this.emit('permission', event.payload)
+        // Permission request from plugin — surface in Electron UI for approval
+        this.emit('permission', event.payload, event.requestId)
+        break
+      case 'permissionResponse':
+        // Response from Electron → MCP server (handled via sendToClients, not events)
         break
       case 'fileEdited':
         // File edited notification from plugin — trigger re-indexing
         this.emit('fileEdited', event.payload)
+        break
+      case 'phaseProgress':
+        // Plan phase progress from control-actions server
+        this.emit('phaseProgress', event.payload)
         break
       default:
         bridgeLog.warn(`[ipc-bridge] Unknown event type: ${event.type}`)

@@ -9,12 +9,13 @@ import {
   workspaceRepository,
   specialistRepository
 } from '../db/repositories'
+import { todoRepository } from '../db/repositories/todo.repository'
 import { chatAgentService } from '../services'
 import { lifecycleRegistry } from '../services/conversation-lifecycle'
 import { chatStreamService } from '../services/chat-stream.service'
 import { repoService } from '../services/repo.service'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
-import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../shared/types'
+import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap, ConversationModelSnapshot } from '../../shared/types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -235,6 +236,14 @@ export function registerConversationCrudIpc(): void {
     return messageRepository.findByConversation(conversationId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.CHAT_GET_TODOS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.CHAT_GET_TODOS
+    const args = requireObject(rawArgs, ch)
+    const conversationId = requireString(args, 'conversationId', ch)
+    return todoRepository.findByConversation(conversationId)
+  })
+
   ipcMain.handle(IPC_CHANNELS.CHAT_SET_PLAN_ACTION, (event, rawArgs: unknown) => {
     validateSender(event)
     const ch = IPC_CHANNELS.CHAT_SET_PLAN_ACTION
@@ -362,6 +371,68 @@ export function registerConversationCrudIpc(): void {
     const overrides = requirePlainObject(args, 'overrides', ch) as Record<string, boolean>
     const updated = conversationRepository.updateMcpOverrides(conversationId, overrides)
     if (!updated) throw new Error('Conversation not found')
+    return updated
+  })
+
+  // ── Update per-conversation model routing (per-chat model switching) ──
+  ipcMain.handle(IPC_CHANNELS.CHAT_UPDATE_ROUTING, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
+    const args = requireObject(rawArgs, ch)
+    const conversationId = requireString(args, 'conversationId', ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+
+    // Optional: explicit provider override; otherwise uses workspace default.
+    // NOTE (audit finding #2): Passing llmProvider alone (without routingOverrides)
+    // is a no-op when the conversation already has a snapshot — the seeded role
+    // entries below have highest resolution priority and mask the provider switch.
+    // To change the provider, callers must also send explicit routingOverrides.
+    const llmProvider = optionalString(args, 'llmProvider', ch) as LLMProvider | undefined
+    const routingOverrides = args.routingOverrides as Partial<ModelRoleMap> | undefined
+
+    // Seed overrides from the existing snapshot so untouched roles are preserved
+    // (prevents silent re-resolution if workspace defaults changed since creation)
+    const existing = conversationRepository.findById(conversationId)?.modelConfigSnapshot
+    const seeded: Partial<ModelRoleMap> = existing
+      ? {
+          'specialist:plan': {
+            provider: existing.plan.provider,
+            modelId: existing.plan.modelId,
+            localBackend: existing.plan.localBackend
+          },
+          'specialist:build': {
+            provider: existing.build.provider,
+            modelId: existing.build.modelId,
+            localBackend: existing.build.localBackend
+          },
+          haiku: {
+            provider: existing.background.provider,
+            modelId: existing.background.modelId,
+            localBackend: existing.background.localBackend
+          }
+        }
+      : {}
+
+    // Build a new snapshot seeded from existing + user overrides (does NOT affect other chats)
+    const snapshot: ConversationModelSnapshot = buildConversationModelSnapshot(
+      workspaceId,
+      llmProvider,
+      { ...seeded, ...routingOverrides }
+    )
+
+    // Persist snapshot + derived provider to this conversation only
+    const resolvedProvider: LLMProvider = snapshot.plan.provider
+    const updated = conversationRepository.updateModelSnapshot(
+      conversationId,
+      snapshot,
+      resolvedProvider
+    )
+    if (!updated) throw new Error('Conversation not found')
+
+    log.info(
+      `[CHAT_UPDATE_ROUTING] conversationId=${conversationId} ` +
+        `provider=${resolvedProvider} plan=${snapshot.plan.modelId} build=${snapshot.build.modelId}`
+    )
     return updated
   })
 

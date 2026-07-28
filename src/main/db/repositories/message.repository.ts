@@ -83,6 +83,18 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
     return rows.reverse().map(mapRow)
   }
 
+  /**
+   * Get the timestamp of the most recent message in a conversation.
+   * Returns undefined if the conversation has no messages.
+   * Used for session staleness detection — avoids loading full message objects.
+   */
+  getLastMessageTimestamp(conversationId: string): string | undefined {
+    const row = this.db()
+      .prepare('SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1')
+      .get(conversationId) as { created_at: string } | undefined
+    return row?.created_at
+  }
+
   findById(id: string): Message | undefined {
     const db = this.db()
     const stmt = db.prepare('SELECT * FROM messages WHERE id = ?')

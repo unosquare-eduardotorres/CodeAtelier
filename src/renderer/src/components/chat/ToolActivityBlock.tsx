@@ -135,13 +135,13 @@ function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Ele
         )}
       </span>
       {!activity.filePath && activity.input && (
-        <span className="block text-[12px] text-text-secondary min-w-0 truncate mt-0.5">
+        <span className="block text-[12px] text-text-secondary min-w-0 break-words mt-0.5">
           {shortenInput(activity.input)}
         </span>
       )}
       {activity.status !== 'running' && activity.result && (
         <span
-          className={`block text-[11px] mt-0.5 truncate ${
+          className={`block text-[11px] mt-0.5 break-words ${
             isError ? 'text-danger/80' : 'text-text-muted italic'
           }`}
         >
@@ -300,7 +300,7 @@ export default function ToolActivityBlock({
   if (errorCount > 0) summaryParts.push(`${errorCount} failed`)
 
   return (
-    <div data-testid="tool-activity-block" className="my-2">
+    <div data-testid="tool-activity-block" className="my-2 overflow-hidden">
       {/* Header toggle */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}

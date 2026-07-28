@@ -188,11 +188,21 @@ const api = {
     communicationTone: CommunicationTone | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_TONE, args),
 
+  updateConversationRouting: (args: {
+    conversationId: string
+    workspaceId: string
+    llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
+  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_ROUTING, args),
+
   checkExternalMcp: (args: { command: string }): Promise<{ available: boolean; path?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
+
+  getTodos: (args: { conversationId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_TODOS, args),
 
   deleteConversation: (args: { conversationId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_DELETE_CONVERSATION, args),
@@ -210,7 +220,13 @@ const api = {
   renameConversation: (args: { conversationId: string; title: string }): Promise<Conversation> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RENAME, args),
 
-  stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP),
+  // MULTI-CHAT-03: Accept optional conversationId so only the target chat is stopped.
+  // The CHAT_STOP handler already supports this; the preload was the missing link.
+  stopGeneration: (conversationId?: string): Promise<void> =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.CHAT_STOP,
+      conversationId ? { conversationId } : undefined
+    ),
 
   getStreamingState: (): Promise<{
     isStreaming: boolean
@@ -733,6 +749,7 @@ const api = {
         text: string
         index?: number
       }
+      phaseProgress?: import('../shared/types').PhaseProgressEvent
       turnLimit?: {
         continuable: boolean
         continuationsUsed: number
@@ -780,6 +797,7 @@ const api = {
           text: string
           index?: number
         }
+        phaseProgress?: import('../shared/types').PhaseProgressEvent
         turnLimit?: {
           continuable: boolean
           continuationsUsed: number
@@ -1363,6 +1381,11 @@ const api = {
     version: string | null
     error: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
+  checkOpenCodeCli: (): Promise<{
+    available: boolean
+    version?: string
+    error?: string
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_OPENCODE_CLI),
   autoConfigureClaude: (): Promise<AutoConfigureResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
@@ -1813,6 +1836,9 @@ const api = {
 
   getBugCount: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNT),
 
+  bugExportMarkdown: (args: { markdown: string; defaultFilename?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_EXPORT_MARKDOWN, args),
+
   onNewBug: (callback: (bug: unknown) => void): (() => void) => {
     const handler = (_event: unknown, bug: unknown): void => callback(bug)
     ipcRenderer.on(IPC_CHANNELS.BUG_NEW, handler)
@@ -1908,7 +1934,13 @@ const api = {
   }): Promise<PlanStatusHistoryEntry[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_STATUS_HISTORY, args),
 
-
+  getPhaseProgress: (args: { conversationId: string }): Promise<{
+    planId: string
+    planTitle: string
+    phases: Array<{ id: number; title: string }>
+    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[] }>
+  } | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_PHASE_PROGRESS, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -2463,6 +2495,10 @@ const api = {
     response: unknown
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RESPONSE, args),
 
+  /** Probe macOS notification support (detects unsigned build issues). */
+  probeNotificationSupport: (): Promise<'granted' | 'denied' | 'unsupported'> =>
+    ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_PROBE),
+
   /** Listen for OS notification click-to-navigate events. */
   onNotificationNavigate: (
     cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
@@ -2473,6 +2509,18 @@ const api = {
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
+  },
+
+  /** Listen for tray context-menu navigate events. */
+  onTrayNavigate: (
+    cb: (data: { view: string; workspaceId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { view: string; workspaceId?: string }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.TRAY_NAVIGATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TRAY_NAVIGATE, handler)
   },
 
   /** Listen for completion/failure notifications from background workspaces. */
@@ -2612,6 +2660,11 @@ const api = {
   }): Promise<{ retrying: boolean; phase: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RETRY_PHASE, args),
 
+  blueprintAcknowledgeReview: (args: {
+    blueprintId: string
+  }): Promise<{ acknowledged: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_ACKNOWLEDGE_REVIEW, args),
+
   // M3: Transcript retrieval
   blueprintGetTranscript: (args: {
     blueprintId: string
@@ -2715,6 +2768,69 @@ const api = {
   }): Promise<{ responded: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND, args),
 
+  blueprintPreflightRun: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{
+    checks: Array<{
+      id: string
+      name: string
+      kind: string
+      status: string
+      message: string
+      remediation?: string
+      sources: string[]
+    }>
+    ranAt: string
+    hasBlockers: boolean
+    hasWarnings: boolean
+  } | null> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RUN, args),
+
+  onBlueprintPreflightResult: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      result: {
+        checks: Array<{
+          id: string
+          name: string
+          kind: string
+          status: string
+          message: string
+          remediation?: string
+          sources: string[]
+        }>
+        ranAt: string
+        hasBlockers: boolean
+        hasWarnings: boolean
+      }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        result: {
+          checks: Array<{
+            id: string
+            name: string
+            kind: string
+            status: string
+            message: string
+            remediation?: string
+            sources: string[]
+          }>
+          ranAt: string
+          hasBlockers: boolean
+          hasWarnings: boolean
+        }
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RESULT, handler)
+  },
+
   onBlueprintClarifyAwaitingInput: (
     cb: (data: { blueprintId: string; workspaceId: string }) => void
   ): (() => void) => {
@@ -2761,6 +2877,23 @@ const api = {
         planSummary: string
         completion?: Record<string, unknown>
         reviewMarkdown?: string
+        preflight?: {
+          result: {
+            checks: Array<{
+              id: string
+              name: string
+              kind: string
+              status: string
+              message: string
+              remediation?: string
+              sources: string[]
+            }>
+            ranAt: string
+            hasBlockers: boolean
+            hasWarnings: boolean
+          }
+          overridden: boolean
+        }
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, handler)
@@ -2863,7 +2996,7 @@ const api = {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
       runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
@@ -2886,7 +3019,7 @@ const api = {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
     runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null

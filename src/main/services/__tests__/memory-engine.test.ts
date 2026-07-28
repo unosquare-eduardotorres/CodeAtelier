@@ -317,10 +317,10 @@ test('volatile: does NOT match non-version content', () => {
 
 // ── Capture Caps ──
 
-test('capture caps: constants are tightened for quality over quantity', () => {
+test('capture caps: per-source caps for auto-capture quality', () => {
   assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_SESSION, 2, 'Session cap should be 2')
   assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_COMMIT, 1, 'Commit cap should be 1')
-  assert.equal(CAPTURE_CAPS.MAX_FACTS_PER_DAY, 8, 'Daily cap should be 8')
+  assert.ok(!('MAX_FACTS_PER_DAY' in CAPTURE_CAPS), 'Daily cap should be removed')
 })
 
 // ── backfillAllPendingEmbeddings — progress callback contract ──

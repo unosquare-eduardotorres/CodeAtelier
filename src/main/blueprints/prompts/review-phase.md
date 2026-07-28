@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+{{RETRY_CONTEXT}}
+
 ## Your Task
 
 Perform a comprehensive cross-artifact analysis of the blueprint's spec, plan,

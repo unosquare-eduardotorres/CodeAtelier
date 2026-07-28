@@ -45,13 +45,19 @@ export default function BlueprintWaveProgress({
   const failedCount = taskEntries.filter(([, s]) => s === 'failed').length
   const runningCount = taskEntries.filter(([, s]) => s === 'running').length
 
+  // Detect remediation wave — all tasks have R-prefixed IDs
+  const isRemediation = taskEntries.length > 0 && taskEntries.every(([id]) => id.startsWith('R'))
+
   return (
     <div className="space-y-3">
       {/* Wave header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Layers size={14} className="text-accent" />
-          <span className="text-xs font-semibold text-text-primary">Wave {wave}</span>
+          <span className={`text-xs font-semibold ${isRemediation ? 'text-warning' : 'text-text-primary'}`}>
+            Wave {wave}
+            {isRemediation && <span className="text-[10px] font-normal ml-1 text-warning/70">(Remediation)</span>}
+          </span>
           <span className="text-[10px] text-text-muted">
             {taskCount} task{taskCount !== 1 ? 's' : ''}
           </span>

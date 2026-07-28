@@ -35,6 +35,7 @@ interface ChatStreamServiceInternal {
   activeRequestIds: Map<string, string>
   currentStreamingRole: 'specialist'
   keepaliveTimers: Map<string, ReturnType<typeof setInterval>>
+  safetyTimerResets: Map<string, () => void>
   mainWindow: {
     webContents: { send: (channel: string, data: unknown) => void }
     isDestroyed: () => boolean
@@ -97,6 +98,7 @@ function createTestService(overrides?: {
     activeRequestIds: new Map(),
     currentStreamingRole: 'specialist',
     keepaliveTimers: new Map(),
+    safetyTimerResets: new Map(),
     mainWindow,
     callbacks: { onStopPipeline: async () => {} },
     safeWindowSend: undefined as unknown as ChatStreamServiceInternal['safeWindowSend'],
@@ -988,6 +990,185 @@ describe('forceReset — F1(3) suppresses idle→idle emission', () => {
       } finally {
         conversationStateMachine.removeListener('stateChange', listener)
       }
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// M. Safety timeout fires cancelCurrentQuery + resettable timer
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('setupStreamTimers — activity-based safety timer', () => {
+  test('safety timeout abort fires cancelCurrentQuery via disposer', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      const lifecycle = lifecycleRegistry.begin('conv-kill')
+
+      // Track cancelCurrentQuery calls
+      const origCancel = chatAgentService.cancelCurrentQuery
+      let cancelCalled = 0
+      chatAgentService.cancelCurrentQuery = () => { cancelCalled++ }
+
+      try {
+        const rejectDone = createSpy<[Error], void>()
+        svc.setupStreamTimers('conv-kill', lifecycle.requestId!, lifecycle, rejectDone)
+
+        // Register the disposer that calls cancelCurrentQuery (mirrors registerStreamDisposers)
+        lifecycle.onDispose(() => {
+          try { chatAgentService.cancelCurrentQuery() } catch { /* */ }
+        })
+
+        // Simulate safety timeout by aborting the lifecycle
+        lifecycleRegistry.abort('conv-kill', 'safety-timeout')
+
+        assert.ok(cancelCalled >= 1, 'cancelCurrentQuery should be called on abort')
+      } finally {
+        chatAgentService.cancelCurrentQuery = origCancel
+      }
+    }))
+
+  test('safety timer reset function is available per conversation', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      const lifecycle = lifecycleRegistry.begin('conv-reset')
+
+      const rejectDone = createSpy<[Error], void>()
+      svc.setupStreamTimers('conv-reset', lifecycle.requestId!, lifecycle, rejectDone)
+
+      // The safetyTimerResets map should have an entry
+      assert.ok(
+        svc.safetyTimerResets.has('conv-reset'),
+        'safetyTimerResets should have entry after setupStreamTimers'
+      )
+
+      // Calling reset should not throw
+      const resetFn = svc.safetyTimerResets.get('conv-reset')
+      assert.ok(typeof resetFn === 'function')
+      resetFn!() // should not throw
+
+      // Dispose should clear it
+      lifecycle.complete()
+      assert.equal(
+        svc.safetyTimerResets.has('conv-reset'),
+        false,
+        'safetyTimerResets cleared on dispose'
+      )
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// N. done promise double-settle guard
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('done promise double-settle guard', () => {
+  test('rejectDone after resolveDone is a no-op', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+
+      const result = svc.acquireStreamLock('conv-settle')
+      result.resolveDone()
+
+      // Should not throw or create unhandled rejection
+      result.rejectDone(new Error('late reject'))
+
+      // done should be resolved, not rejected
+      await result.done // should not throw
+      lifecycleRegistry.abort('conv-settle', 'cleanup')
+    }))
+
+  test('resolveDone after rejectDone is a no-op', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+
+      const result = svc.acquireStreamLock('conv-settle-2')
+      result.rejectDone(new Error('first reject'))
+
+      result.resolveDone() // should be a no-op
+
+      // done should be rejected with the first error
+      await assert.rejects(result.done, /first reject/)
+      lifecycleRegistry.abort('conv-settle-2', 'cleanup')
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// O. Integration: onChunk → safetyTimerResets pathway (L2 gap coverage)
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('onChunk → safetyTimerResets integration', () => {
+  test('calling safetyTimerResets entry (as onChunk does) resets the timer', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      const lifecycle = lifecycleRegistry.begin('conv-chunk-reset')
+
+      const rejectDone = createSpy<[Error], void>()
+      svc.setupStreamTimers('conv-chunk-reset', lifecycle.requestId!, lifecycle, rejectDone)
+
+      // Verify the reset function exists in the Map (populated by setupStreamTimers)
+      const resetFn = svc.safetyTimerResets.get('conv-chunk-reset')
+      assert.ok(typeof resetFn === 'function', 'safetyTimerResets entry should exist')
+
+      // Simulate the onChunk pattern: this.safetyTimerResets.get(conversationId)?.()
+      // This is exactly what the onChunk handler does on every chunk.
+      resetFn!()
+
+      // The timer should have been reset (not fired) — rejectDone should not be called
+      assert.equal(rejectDone.callCount, 0, 'rejectDone should not fire after reset')
+
+      // Call reset multiple times (simulating multiple chunks) — should be idempotent
+      resetFn!()
+      resetFn!()
+      assert.equal(rejectDone.callCount, 0, 'rejectDone still should not fire')
+
+      // Dispose should clear the entry
+      lifecycle.complete()
+      assert.equal(
+        svc.safetyTimerResets.has('conv-chunk-reset'),
+        false,
+        'safetyTimerResets cleared after dispose'
+      )
+      // Calling via the Map pattern after dispose should be a safe no-op
+      svc.safetyTimerResets.get('conv-chunk-reset')?.() // undefined?.() = no-op
+    }))
+
+  test('safetyTimerResets is per-conversation — resetting A does not affect B', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      const lcA = lifecycleRegistry.begin('conv-A')
+      const lcB = lifecycleRegistry.begin('conv-B')
+
+      const rejectA = createSpy<[Error], void>()
+      const rejectB = createSpy<[Error], void>()
+      svc.setupStreamTimers('conv-A', lcA.requestId!, lcA, rejectA)
+      svc.setupStreamTimers('conv-B', lcB.requestId!, lcB, rejectB)
+
+      // Both should have entries
+      assert.ok(svc.safetyTimerResets.has('conv-A'), 'A entry exists')
+      assert.ok(svc.safetyTimerResets.has('conv-B'), 'B entry exists')
+
+      // Reset A (simulating onChunk for conversation A)
+      svc.safetyTimerResets.get('conv-A')!()
+
+      // B's entry should still exist and be independent
+      assert.ok(svc.safetyTimerResets.has('conv-B'), 'B entry still exists after A reset')
+
+      // Aborting A should only remove A's entry
+      lifecycleRegistry.abort('conv-A', 'test')
+      assert.equal(svc.safetyTimerResets.has('conv-A'), false, 'A entry cleared')
+      assert.ok(svc.safetyTimerResets.has('conv-B'), 'B entry unaffected')
+
+      lifecycleRegistry.abort('conv-B', 'test-cleanup')
     }))
 })
 

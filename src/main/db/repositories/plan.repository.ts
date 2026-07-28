@@ -15,7 +15,8 @@ import type {
   PlanStatus,
   PlanType,
   PlanFilters,
-  PlanStatusHistoryEntry
+  PlanStatusHistoryEntry,
+  PhaseProgress
 } from '../../../shared/types'
 
 // ── Row shape (snake_case from DB) ──
@@ -244,6 +245,18 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     return rows.map(mapRow)
   }
 
+  /** Find the most recent in-progress plan linked to a conversation. */
+  findActiveByConversationId(conversationId: string): PlanRecord | null {
+    const row = this.db()
+      .prepare(
+        `SELECT * FROM plans
+         WHERE linked_conversation_id = ? AND status IN ('in_progress', 'saved')
+         ORDER BY updated_at DESC LIMIT 1`
+      )
+      .get(conversationId) as PlanRow | undefined
+    return row ? mapRow(row) : null
+  }
+
   /** Check if a plan from this source already exists (prevents duplicates). */
   findBySource(source: PlanSource, sourceId: string): PlanRecord | null {
     const row = this.db()
@@ -352,6 +365,60 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
       )
       .all(planId) as StatusHistoryRow[]
     return rows.map(mapStatusHistoryRow)
+  }
+
+  // ── Phase Progress ──
+
+  /** Update a single phase's progress status. Merges into the existing JSON array. */
+  updatePhaseProgress(
+    planId: string,
+    phaseId: number,
+    status: string,
+    completedAt?: string,
+    touchedFiles?: string[]
+  ): void {
+    const row = this.db()
+      .prepare('SELECT phase_progress_json FROM plans WHERE id = ?')
+      .get(planId) as { phase_progress_json: string | null } | undefined
+
+    const progress: PhaseProgress[] = safeParseJSON(row?.phase_progress_json, [])
+    const existing = progress.find((p) => p.phaseId === phaseId)
+
+    if (existing) {
+      existing.status = status
+      if (status === 'completed' || status === 'failed') {
+        existing.completedAt = completedAt ?? new Date().toISOString()
+      }
+      // Merge touchedFiles (deduped)
+      if (touchedFiles && touchedFiles.length > 0) {
+        const current = existing.touchedFiles ?? []
+        const merged = [...new Set([...current, ...touchedFiles])]
+        existing.touchedFiles = merged
+      }
+    } else {
+      progress.push({
+        phaseId,
+        status,
+        startedAt: new Date().toISOString(),
+        completedAt:
+          status === 'completed' || status === 'failed'
+            ? (completedAt ?? new Date().toISOString())
+            : null,
+        touchedFiles: touchedFiles ?? []
+      })
+    }
+
+    this.db()
+      .prepare('UPDATE plans SET phase_progress_json = ?, updated_at = datetime("now") WHERE id = ?')
+      .run(JSON.stringify(progress), planId)
+  }
+
+  /** Get phase progress for a plan. */
+  getPhaseProgress(planId: string): PhaseProgress[] {
+    const row = this.db()
+      .prepare('SELECT phase_progress_json FROM plans WHERE id = ?')
+      .get(planId) as { phase_progress_json: string | null } | undefined
+    return safeParseJSON(row?.phase_progress_json, [])
   }
 
   // ── Revision Linking ──

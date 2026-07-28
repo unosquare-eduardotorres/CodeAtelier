@@ -641,8 +641,8 @@ describe('blueprintAdapter.toEnvelope', () => {
         { id: 'p2', blueprintId: 'bp-1', phase: 'build', status: 'active', conversationId: null, artifactsJson: [], contextSnapshot: null, startedAt: '2024-01-02', completedAt: null },
       ],
       tasks: [
-        { id: 't1', blueprintId: 'bp-1', taskId: 'T-1', wave: 1, userStory: 'As user', description: 'Build component', filePathsJson: ['src/comp.tsx'], isParallel: false, dependsOnJson: [], status: 'complete', executorRunId: null, startedAt: '2024-01-01', completedAt: '2024-01-01' },
-        { id: 't2', blueprintId: 'bp-1', taskId: 'T-2', wave: 2, userStory: 'As user', description: 'Add tests', filePathsJson: ['src/comp.test.ts'], isParallel: false, dependsOnJson: ['T-1'], status: 'pending', executorRunId: null, startedAt: null, completedAt: null },
+        { id: 't1', blueprintId: 'bp-1', taskId: 'T-1', wave: 1, userStory: 'As user', description: 'Build component', filePathsJson: ['src/comp.tsx'], isParallel: false, dependsOnJson: [], status: 'complete', executorRunId: null, startedAt: '2024-01-01', completedAt: '2024-01-01', completionJson: null },
+        { id: 't2', blueprintId: 'bp-1', taskId: 'T-2', wave: 2, userStory: 'As user', description: 'Add tests', filePathsJson: ['src/comp.test.ts'], isParallel: false, dependsOnJson: ['T-1'], status: 'pending', executorRunId: null, startedAt: null, completedAt: null, completionJson: null },
       ],
     },
   }

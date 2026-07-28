@@ -79,7 +79,7 @@ describe('buildWorkspaceMcpConfig — dispatch', () => {
 // ── buildLocalProviderMcpConfig (via buildWorkspaceMcpConfig) ─────────
 
 describe('buildLocalProviderMcpConfig — small tier', () => {
-  test('small tier → only 6 essential CG tools + 3 control tools in allowedTools', () => {
+  test('small tier → only 6 essential CG tools + 4 control tools in allowedTools', () => {
     const result = buildWorkspaceMcpConfig(
       makeOpts({ isLocalProvider: true, contextTier: 'small', mode: 'plan' })
     )

@@ -1,5 +1,5 @@
 /**
- * AuditThinkingIndicator — thinking dots + tool activity display for audit
+ * AuditThinkingIndicator — pulsing status text + tool activity display for audit
  * streaming. Matches the regular chat / grill thinking-indicator pattern but
  * with the auditor identity. Shown while a track is actively streaming so the
  * in-progress analysis reveals on finalize instead of stuttering token-by-token.
@@ -32,12 +32,7 @@ export default function AuditThinkingIndicator({
           </span>
         </div>
         <div className="flex flex-col gap-2 px-5 py-4 rounded-xl bg-surface-overlay border border-border-subtle shadow-sm">
-          <div className="flex items-center gap-1.5 py-0.5 px-1">
-            <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-            <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-            <span className="typing-dot" style={{ animationDelay: '300ms' }} />
-          </div>
-          <p className="text-sm text-text-muted italic">Inspecting your codebase…</p>
+          <p className="text-sm text-text-muted italic animate-thinking-pulse">Inspecting your codebase…</p>
           {toolActivities.length > 0 && (
             <div className="mt-2">
               <ToolActivityBlock activities={toolActivities} defaultExpanded />

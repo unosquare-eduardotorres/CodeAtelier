@@ -12,6 +12,11 @@ import type { BlueprintPhaseCompletion, BlueprintPhaseType } from '../../shared/
 // Re-export shared parsers so existing main-process imports keep working
 export { parseBlueprintPlan, parseBlueprintTasks } from '../../shared/blueprint-artifact-parsers'
 
+/** Coerce an unknown LLM value to a string array, discarding non-string elements. */
+export function asStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string') : []
+}
+
 const bpLog = log.scope('blueprint-parsers')
 
 /**
@@ -124,9 +129,9 @@ export function parsePhaseCompletionBlock(
                 `[parsePhaseCompletionBlock] Used verify-style fallback — overallStatus: ${parsed.overallStatus}`
               )
               return {
+                ...parsed,
                 phase: expectedPhase ?? 'verify',
-                status: 'complete',
-                ...parsed
+                status: 'complete'
               } as BlueprintPhaseCompletion
             }
           } catch {

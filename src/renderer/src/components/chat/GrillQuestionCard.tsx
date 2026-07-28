@@ -363,6 +363,10 @@ export default function GrillQuestionCard({
     const state = questionStates[q.id]
     if (!state) return false
     if (state.skipped) return true
+    // If "Other" is selected, require actual text (unless they also picked a predefined option)
+    if (state.otherSelected && !state.otherText.trim()) {
+      return state.selectedOptions.length > 0
+    }
     return (
       state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
     )
@@ -371,8 +375,12 @@ export default function GrillQuestionCard({
   const answeredCount = questions.filter((q) => {
     const state = questionStates[q.id]
     if (!state) return false
+    if (state.skipped) return true
+    // "Other" selected without text doesn't count as answered
+    if (state.otherSelected && !state.otherText.trim()) {
+      return state.selectedOptions.length > 0
+    }
     return (
-      state.skipped ||
       state.selectedOptions.length > 0 ||
       state.otherSelected ||
       state.otherText.trim().length > 0

@@ -597,7 +597,7 @@ nativeTheme.on('updated', () => {
 
 1. **White screen on startup**: wrong `loadFile`/`loadURL` path. Log the resolved path and verify it exists. Common when using bundlers that change output directories.
 2. **IPC not working**: preload path must point to compiled JS, not TS source. Always use `path.join(__dirname, ...)`, never relative paths.
-3. **Native modules crash**: run `npx electron-rebuild` after installing native deps. Forge does this automatically. Also check that the native module supports your Electron version's Node.js ABI.
+3. **Native modules crash**: for N-API modules (like better-sqlite3 v13+), reinstall with `npm install`. For older ABI-linked modules, run `npx electron-rebuild`. Also check that the native module supports your Electron version's Node.js ABI.
 4. **App rejected by macOS notarization**: ensure `hardenedRuntime: true`, proper entitlements, and no unsigned binaries in the `.app` bundle. Run `codesign --verify --deep --strict YourApp.app` to check.
 5. **Huge installer size**: check for accidentally bundled `node_modules`. Use `files` config in electron-builder to exclude dev deps. Consider `asar: true` (default). Audit with `npx electron-builder --dir` to inspect output.
 6. **Memory leaks**: common causes are: not removing IPC listeners, not closing child windows, not cleaning up `setInterval` timers. Use `win.on('closed', ...)` to clean up. Profile with `--inspect` heap snapshots.

@@ -1,7 +1,7 @@
 /**
  * Blueprint Verify Adapter — read-only + Bash agent that performs adversarial verification.
  *
- * CLI config: --permission-mode acceptEdits, --effort xhigh, goalMode: enforce (/goal via stdin)
+ * CLI config: --permission-mode acceptEdits, --effort high, goalMode: enforce (/goal via stdin)
  *
  * Key difference from other blueprint adapters: overrides buildMcpConfig() to add
  * Bash + ListDir while keeping Write/Edit disabled. The verify prompt calls for
@@ -48,8 +48,11 @@ export class BlueprintVerifyAdapter extends BlueprintBaseAdapter {
       'Scan for anti-patterns, verify all key links from the plan,',
       'trace each spec requirement to code, and run tests if available.',
       '',
-      'Emit a `blueprint-phase-complete` block with phase: "verify",',
-      'overallStatus, artifact counts, and recommendation.'
+      'MANDATORY: End your response with a ```blueprint-phase-complete fence block.',
+      'The block must be valid JSON containing at minimum:',
+      '  "phase": "verify", "status": "complete",',
+      '  "overallStatus": "passed" | "gaps_found" | "human_needed"',
+      'This block is required — without it, automated remediation cannot trigger.'
     ].join('\n')
   }
 
@@ -76,7 +79,9 @@ export class BlueprintVerifyAdapter extends BlueprintBaseAdapter {
         // Git context
         ...MCP_TOOLS.GIT_CONTEXT._ALL_NAMES,
         // Code analysis
-        ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+        ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
+        // Memory tools — phase prompts instruct memory_search/memory_record usage
+        ...(ctx.workspaceId ? MCP_TOOLS.MEMORY._ALL_NAMES : [])
       ],
       disallowedTools: [
         'Write',

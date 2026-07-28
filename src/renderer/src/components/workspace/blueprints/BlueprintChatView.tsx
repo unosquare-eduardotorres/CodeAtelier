@@ -10,7 +10,10 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Send, SkipForward, MessageSquare, CheckCircle2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
-import { useBlueprintStreamStore, useBlueprintLaneStore } from '@renderer/store/blueprint-stream.store'
+import { useShallow } from 'zustand/react/shallow'
+import { useBlueprintStreamStore, useBlueprintLaneStore, getFlatContent, getFlatToolActivities } from '@renderer/store/blueprint-stream.store'
+import type { StreamingStoreState } from '@renderer/store/createStreamingStore'
+import type { StoreApi, UseBoundStore } from 'zustand'
 import { Avatar } from '@renderer/components/common'
 import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import { MessageBubble } from '@renderer/components/chat'
@@ -52,6 +55,8 @@ interface BlueprintChatViewProps {
   runningTasks?: Record<string, { taskId: string; description: string }>
   /** Completed/failed task statuses for collapsing lanes. */
   waveTasks?: Record<string, string>
+  /** Current pipeline phase — lanes are only rendered during 'build'. */
+  currentPhase?: string | null
 }
 
 // ── Q&A Read-Only Record ────────────────────────────────────────────────────
@@ -342,6 +347,70 @@ function renderBlueprintMessage(msg: BlueprintChatMessage, i: number, avatarSize
   }
 }
 
+// ── Lane Stream Content (inner component — hooks always called unconditionally) ─
+// C2 FIX: Extracting store hook calls into a dedicated component prevents a
+// rules-of-hooks violation when the lane store transitions undefined → defined.
+
+function LaneStreamContent({
+  store,
+  isRunning,
+  innerClassName
+}: {
+  store: UseBoundStore<StoreApi<StreamingStoreState>>
+  isRunning: boolean
+  innerClassName?: string
+}): React.JSX.Element {
+  const segments = store((s) => s.segments)
+  const currentContent = store((s) => s.currentContent)
+  const currentToolActivities = store((s) => s.currentToolActivities)
+
+  // When the lane has finished, render its accumulated content as a committed
+  // agent bubble so the transcript isn't blank once isStreaming flips false.
+  // Content lives only in renderer memory — after app reload completed cards
+  // will be empty (pre-existing limitation; snapshot sync doesn't carry stream text).
+  const completedMessages = useMemo(() => {
+    if (isRunning) return []
+    const slice = { segments, currentContent, currentToolActivities }
+    const content = stripBlueprintBlocks(getFlatContent(slice))
+    const toolActivities = getFlatToolActivities(slice)
+    if (!content.trim() && toolActivities.length === 0) return []
+    return [{ type: 'agent' as const, content, toolActivities, timestamp: Date.now() }]
+  }, [isRunning, segments, currentContent, currentToolActivities])
+
+  return (
+    <StreamingTranscript
+      messages={completedMessages}
+      renderMessage={(msg, i) => (
+        <MessageBubble
+          key={`lane-done-${i}`}
+          message={blueprintAgentToMessage(msg.content, msg.toolActivities, i)}
+          toolActivities={msg.toolActivities}
+          identityOverride={BLUEPRINT_IDENTITY}
+        />
+      )}
+      segments={segments}
+      currentContent={currentContent}
+      currentToolActivities={currentToolActivities}
+      isStreaming={isRunning}
+      identity={BLUEPRINT_IDENTITY}
+      thinkingLabel="Building…"
+      transformContent={stripBlueprintBlocks}
+      scrollDeps={[isRunning, segments.length]}
+      innerClassName={innerClassName ?? 'space-y-2'}
+    />
+  )
+}
+
+// ── Single Lane Build Stream (full-width, no card chrome) ────────────────────
+// C1 FIX: When exactly 1 lane exists, render its content directly without
+// the collapsible card wrapper so the user sees build output immediately.
+
+function SingleLaneBuildStream({ laneId, isRunning }: { laneId: string; isRunning: boolean }): React.JSX.Element | null {
+  const laneStore = useBlueprintLaneStore((s) => s.lanes[laneId])
+  if (!laneStore) return null
+  return <LaneStreamContent store={laneStore} isRunning={isRunning} />
+}
+
 // ── Build Lane Card (collapsible per-task stream) ───────────────────────────
 
 function BuildLaneCard({
@@ -355,9 +424,6 @@ function BuildLaneCard({
 }): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(status !== 'running')
   const laneStore = useBlueprintLaneStore((s) => s.lanes[taskId])
-  const segments = laneStore?.((s) => s.segments) ?? []
-  const currentContent = laneStore?.((s) => s.currentContent) ?? ''
-  const currentToolActivities = laneStore?.((s) => s.currentToolActivities) ?? []
   const isRunning = status === 'running'
 
   // Auto-expand when task starts running, auto-collapse when it completes
@@ -382,22 +448,9 @@ function BuildLaneCard({
         <span className="font-mono font-semibold text-text-secondary">{taskId}</span>
         <span className="text-text-muted truncate flex-1 text-left">{description}</span>
       </button>
-      {!collapsed && (
+      {!collapsed && laneStore && (
         <div className="px-3 pb-3 pt-1 border-t border-border/20 max-h-96 overflow-y-auto">
-          <StreamingTranscript
-            messages={[]}
-            renderMessage={() => null}
-            segments={segments}
-            currentContent={currentContent}
-            currentToolActivities={currentToolActivities}
-            isStreaming={isRunning}
-            suppressLiveBubble
-            identity={BLUEPRINT_IDENTITY}
-            thinkingLabel="Building…"
-            transformContent={stripBlueprintBlocks}
-            scrollDeps={[isRunning, segments.length]}
-            innerClassName="space-y-2"
-          />
+          <LaneStreamContent store={laneStore} isRunning={isRunning} />
         </div>
       )}
     </div>
@@ -411,18 +464,27 @@ export default function BlueprintChatView({
   isStreaming,
   footer,
   runningTasks,
-  waveTasks
+  waveTasks,
+  currentPhase
 }: BlueprintChatViewProps): React.JSX.Element {
   const avatarSize = useChatAvatarSize()
 
-  // Read live streaming state for progressive rendering.
+  // Read live streaming state for progressive rendering (un-keyed store for non-build phases).
   const segments = useBlueprintStreamStore((s) => s.segments)
   const currentContent = useBlueprintStreamStore((s) => s.currentContent)
   const currentToolActivities = useBlueprintStreamStore((s) => s.currentToolActivities)
 
-  // Determine active lane task IDs (running or recently completed in current wave)
-  const laneIds = useBlueprintLaneStore((s) => Object.keys(s.lanes))
-  const hasMultipleLanes = laneIds.length > 1 || (runningTasks && Object.keys(runningTasks).length > 1)
+  // H1 FIX: useShallow prevents new-array-every-snapshot render churn.
+  const laneIds = useBlueprintLaneStore(useShallow((s) => Object.keys(s.lanes)))
+
+  // C5 FIX: Gate lane rendering on build phase. After build completes, stale lanes
+  // in the store must not suppress verify-phase output from the un-keyed store.
+  const isBuildPhase = currentPhase === 'build'
+  const activeLaneCount = isBuildPhase ? laneIds.length : 0
+  const hasMultipleLanes = activeLaneCount > 1
+  const hasSingleLane = activeLaneCount === 1
+  // When any lanes are active during build, suppress the un-keyed store output.
+  const hasAnyLanes = activeLaneCount > 0
 
   // Build ordered lane list: running first, then completed
   const orderedLanes = useMemo(() => {
@@ -445,17 +507,21 @@ export default function BlueprintChatView({
       <StreamingTranscript
         messages={messages}
         renderMessage={(msg, i) => renderBlueprintMessage(msg, i, avatarSize)}
-        segments={hasMultipleLanes ? [] : segments}
-        currentContent={hasMultipleLanes ? '' : currentContent}
-        currentToolActivities={hasMultipleLanes ? [] : currentToolActivities}
+        segments={hasAnyLanes ? [] : segments}
+        currentContent={hasAnyLanes ? '' : currentContent}
+        currentToolActivities={hasAnyLanes ? [] : currentToolActivities}
         isStreaming={isStreaming}
-        suppressLiveBubble={hasMultipleLanes}
+        suppressLiveBubble={hasAnyLanes}
         identity={BLUEPRINT_IDENTITY}
         thinkingLabel="Analyzing…"
         transformContent={stripBlueprintBlocks}
         footer={
           <>
-            {/* Lane cards for parallel build tasks */}
+            {/* C1 FIX: Single-lane build — render full-width without card chrome */}
+            {hasSingleLane && (
+              <SingleLaneBuildStream key={laneIds[0]} laneId={laneIds[0]} isRunning={isStreaming} />
+            )}
+            {/* Multi-lane build — collapsible lane cards */}
             {hasMultipleLanes && (
               <div className="space-y-2 px-1">
                 {orderedLanes.map((taskId) => {
@@ -475,13 +541,13 @@ export default function BlueprintChatView({
             {footer}
           </>
         }
-        scrollDeps={[isStreaming, messages.length, laneIds.length]}
+        scrollDeps={[isStreaming, messages.length, activeLaneCount]}
         innerClassName="max-w-7xl w-full mx-auto space-y-4"
       />
     </div>
   )
 }
 
-// ── Re-exports for BlueprintPage ──
-export { BlueprintQuestionFooter }
+// ── Re-exports for BlueprintPage + BlueprintDetailView ──
+export { BlueprintQuestionFooter, renderBlueprintMessage, BLUEPRINT_IDENTITY }
 export type { BlueprintChatViewProps }

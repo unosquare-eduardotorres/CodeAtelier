@@ -2,7 +2,7 @@
  * Phase 19, Track C — Session/stream/recovery deep coverage.
  *
  * Tests pure functions and isolated method bodies in:
- *   - agent-session.service.ts (splitContentBlocks, parsePlanPayload, resolveExecutorBackend,
+ *   - agent-session.service.ts (splitContentBlocks, parsePlanPayload, resolveExecutorBackend (derived),
  *     buildStreamTimeout, wrapControlCallbacks, processMetaChunk, processContentChunk,
  *     applyCompactionThresholds, buildSdkPrompt, switchMode guard paths)
  *   - agent-recovery-manager.ts (classifyStreamError, handleAbortOrTimeout,
@@ -747,11 +747,11 @@ if (loaded) {
         return host
       }
 
-      test('skips_for_claude_provider', () => {
+      test('saves_for_claude_provider_when_text_long_enough', () => {
         const host = createMockHostForError({ llmProvider: 'claude' })
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).saveErrorProgress()
-        // Should return early without error
+        // Should not throw — now runs for all providers
       })
 
       test('skips_when_text_too_short', () => {
@@ -994,11 +994,13 @@ if (loaded) {
         assert.ok(host._emitted.some((e: any) => e.event === 'complete'))
       })
 
-      test('skips_plan_state_save_for_claude_provider', () => {
+      test('saves_plan_state_for_all_providers', () => {
         const host = createMockHostForCapture()
         const rm = new AgentRecoveryManager(host)
-        // Should not throw even with claude provider
+        // Should not throw — plan state save now runs for all providers
+        // (returns early if mode !== plan or no workspaceId)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.ok(host._emitted.some((e: any) => e.event === 'complete'))
       })
     })
 

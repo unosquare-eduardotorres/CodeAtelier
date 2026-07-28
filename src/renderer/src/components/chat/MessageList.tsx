@@ -45,7 +45,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     async (_plan: StructuredPlan, _planContent: string): Promise<void> => {
       if (!activeConversationId) return
       await updateMode('build')
-      await sendMessage('Build the plan.')
+      await sendMessage(
+        'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.'
+      )
     },
     [activeConversationId, updateMode, sendMessage]
   )

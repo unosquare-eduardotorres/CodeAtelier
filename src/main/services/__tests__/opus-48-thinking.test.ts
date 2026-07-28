@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summary } from './test-harness'
 import { THINKING_BUDGETS, COMPLEXITY_TO_EFFORT } from '../../../shared/constants'
 
-describe('Opus 4.8 Thinking Config', () => {
+describe('Opus 5 / Opus 4.8 Thinking Config', () => {
   test('THINKING_BUDGETS.opus is empty (adaptive-only)', () => {
     assert.equal(THINKING_BUDGETS.opus, '')
   })
@@ -40,7 +40,12 @@ describe('Opus 4.8 Thinking Config', () => {
     assert.equal(COMPLEXITY_TO_EFFORT.complex, 'high')
   })
 
-  test('effort for opus 4.8 model uses high', () => {
+  test('effort for opus 5 uses high', () => {
+    const effort = 'high' // Opus 5 defaults to high on API and Claude Code
+    assert.equal(effort, 'high')
+  })
+
+  test('effort for opus 4.8 model uses high (legacy)', () => {
     const effort = 'high' // Opus 4.8 at high ≥ 4.7 at xhigh
     assert.equal(effort, 'high')
   })

@@ -19,12 +19,13 @@ import type {
   StructuredPlan
 } from '../../../../shared/types'
 import ToolActivityBlock from './ToolActivityBlock'
+import HookActivityIndicator from './HookActivityIndicator'
 import MessageCardRenderer from './MessageCardRenderer'
 import AttachmentList from './AttachmentList'
 import { useMessageContent } from './useMessageContent'
 import { useMessageIdentity } from './useMessageIdentity'
 import type { MessageIdentity } from './useMessageIdentity'
-import { useChatBubbleSize, useChatAvatarSize, useWorkspaceStore } from '@renderer/store'
+import { useChatBubbleSize, useChatAvatarSize, useChatStore, useWorkspaceStore, usePlanExecutionStore } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
 import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar } from '@renderer/components/common'
@@ -263,6 +264,7 @@ function BubbleContentBody({
         onSaveAsIdea={onSaveAsIdea}
         onCouncilReview={planContent ? onCouncilReview : undefined}
         planActionTaken={planActionTaken}
+        conversationId={message.conversationId}
       />
     )
   }
@@ -377,26 +379,16 @@ function BubbleFooterActions({
         <ToolActivityBlock activities={toolActivities} defaultExpanded={!!isStreaming} />
       )}
 
+      {/* Hook execution indicator — only during streaming, renders null when no hooks active */}
+      {isStreaming && !isUser && <HookActivityIndicator />}
+
       <div className="flex items-center gap-2 mt-1 px-1 group">
         <span className="text-xs text-text-secondary inline-flex items-center gap-1">
           {formatTime(message.createdAt)}
           {isStreaming && (
             <>
               <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1 ml-0.5">
-                <span
-                  className="typing-dot !w-[4px] !h-[4px]"
-                  style={{ animationDelay: '0ms' }}
-                />
-                <span
-                  className="typing-dot !w-[4px] !h-[4px]"
-                  style={{ animationDelay: '150ms' }}
-                />
-                <span
-                  className="typing-dot !w-[4px] !h-[4px]"
-                  style={{ animationDelay: '300ms' }}
-                />
-              </span>
+              <span className="text-text-muted italic animate-thinking-pulse ml-0.5">writing…</span>
             </>
           )}
         </span>
@@ -462,18 +454,40 @@ function MessageBubbleInner({
 
   const persistPlanAction = (action: string): void => {
     if (message.planAction) return // already persisted
+    // Update in-memory store so virtualizer remounts get the correct value
+    useChatStore.setState((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === message.id ? { ...m, planAction: action } : m
+      )
+    }))
     window.api.chatSetPlanAction({ messageId: message.id, action }).catch(console.error)
   }
 
   const handleBuildNow = (): void => {
     persistPlanAction('build')
+
+    // Initialize plan execution tracking
+    if (structuredPlan?.phases?.length && message.conversationId) {
+      const { startExecution } = usePlanExecutionStore.getState()
+      startExecution(message.conversationId, {
+        planId: null,
+        title: structuredPlan.title,
+        phases: structuredPlan.phases.map((p) => ({ id: p.id, title: p.title })),
+        phaseFiles: Object.fromEntries(
+          structuredPlan.phases.map((p) => [p.id, (p.files ?? []).map((f) => f.file)])
+        )
+      })
+    }
+
     if (structuredPlan && planContent && buildFromPlan) {
       buildFromPlan(structuredPlan, planContent)
       return
     }
     updateMode('build')
     sendMessage(
-      'Implement the plan we just discussed. If the plan has multiple phases (3+ sections or 8+ steps), start with only the first phase and let me know you will continue with the remaining phases afterward. If the plan is small enough, implement it all at once.'
+      'Implement the plan we just discussed. If the plan has multiple phases, ' +
+        'call emit_phase_progress as you begin and complete each phase. ' +
+        'If the plan is small enough, implement it all at once.'
     )
   }
 

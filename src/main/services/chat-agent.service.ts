@@ -33,6 +33,7 @@ const FORWARDED_EVENTS = [
   'intent',
   'plan',
   'askQuestion',
+  'permissionRequest',
   'promptSuggestion',
   'compactNeeded',
   'elicitation',
@@ -459,6 +460,13 @@ export class ChatAgentService extends EventEmitter {
    */
   respondToAskUserForWorkspace(workspaceId: string, requestId: string, response: string): void {
     this.sessions.get(workspaceId)?.session.respondToAskUser(requestId, response)
+  }
+
+  /**
+   * Route respondToPermission to a specific workspace (for cross-workspace permission flow).
+   */
+  respondToPermissionForWorkspace(workspaceId: string, requestId: string, approved: boolean): void {
+    this.sessions.get(workspaceId)?.session.respondToPermission(requestId, approved)
   }
 
   getWorkspacePath(): string | null {

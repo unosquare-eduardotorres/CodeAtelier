@@ -8,6 +8,7 @@ import type { StreamEvent } from '@renderer/store/blueprint.store'
 import { stripBlueprintBlocks } from '../../../../../shared/blueprint-clarify-parsers'
 import ScrollToBottomButton from '@renderer/components/chat/ScrollToBottomButton'
 import { useStreamScroll } from '@renderer/components/streaming'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 // ── Stale detection threshold ──
 
@@ -81,12 +82,12 @@ export default function BlueprintPhaseStream({
   }, [isRunning, awaitingUser])
 
   // Copy stream text to clipboard
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     if (!streamText) return
-    navigator.clipboard.writeText(streamText).then(() => {
+    if (await copyTextToClipboard(streamText)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    })
+    }
   }, [streamText])
 
   const iconConfig = PHASE_ICONS[phaseType as PhaseIconKey]

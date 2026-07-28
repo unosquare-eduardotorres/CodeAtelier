@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
-import { processToolChunk, isExpectedPlanModeBlock, isExpectedToolUnavailable } from '../tool-chunk-processor'
+import { processToolChunk, isExpectedPlanModeBlock, isExpectedToolUnavailable, isAgentToolMistake } from '../tool-chunk-processor'
 import type { StreamChunk } from '../../services/agent-base.service'
 
 const BASE_OPTIONS = { agentType: 'test' } as const
@@ -420,6 +420,40 @@ describe('processToolChunk — options', () => {
     assert.ok(result)
     // The summarizer should strip the workspace path prefix
     assert.ok(result.toolActivity.input)
+  })
+})
+
+// ── Agent tool mistake filter ──
+
+describe('isAgentToolMistake', () => {
+  test('Edit with multiple matches is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>Found 2 matches of the string to replace, but replace_all is false.</tool_use_error>'
+    ))
+  })
+
+  test('Write before Read is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>'
+    ))
+  })
+
+  test('Edit identical strings is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>No changes to make: old_string and new_string are exactly the same.</tool_use_error>'
+    ))
+  })
+
+  test('Grep non-existent path is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>Path does not exist: /some/file.ts.</tool_use_error>'
+    ))
+  })
+
+  test('real errors are NOT agent mistakes', () => {
+    assert.ok(!isAgentToolMistake('<tool_use_error>EACCES: permission denied</tool_use_error>'))
+    assert.ok(!isAgentToolMistake(undefined))
+    assert.ok(!isAgentToolMistake(''))
   })
 })
 

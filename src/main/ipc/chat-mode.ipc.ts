@@ -18,6 +18,7 @@ import { validateSender } from './validate-sender'
 import { requireObject, requireString } from './validate-args'
 import { resolveContextLevel } from './context-usage-level'
 import { lifecycleRegistry } from '../services/conversation-lifecycle'
+import { planRepository } from '../db/repositories/plan.repository'
 
 const log = chatIpcLogger
 
@@ -44,6 +45,25 @@ export function registerChatModeIpc(): void {
 
     const updated = conversationRepository.updateMode(conversationId, mode as ConversationMode)
     if (!updated) throw new Error('Conversation not found')
+
+    // When switching to build mode, mark any linked plan as in_progress
+    if (mode === 'build') {
+      try {
+        const plans = planRepository.getForWorkspace(
+          updated.workspaceId,
+          { status: 'saved' }
+        )
+        const linkedPlan = plans.find(
+          (p) => p.linkedConversationId === conversationId
+        )
+        if (linkedPlan) {
+          planRepository.markInProgress(linkedPlan.id)
+          log.info(`Plan ${linkedPlan.id} marked in_progress (build mode activated)`)
+        }
+      } catch (err) {
+        log.warn('[mode-switch] Failed to update plan status (non-critical):', err)
+      }
+    }
 
     log.info(`Mode updated to "${mode}" in DB (CLI restart deferred until next send)`)
 

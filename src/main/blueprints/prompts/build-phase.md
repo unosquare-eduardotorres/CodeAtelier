@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+{{RETRY_CONTEXT}}
+
 ## Workspace Context & Conventions
 
 <workspace_docs>
@@ -42,6 +44,24 @@ Each task should be implemented completely before moving to the next.
 2. **No scope creep** — don't add features not in the task
 3. **Constitution compliance** — follow all constitution rules
 4. **Test alongside** — if the task includes tests, write them
+
+## Task Narration
+
+Narrate your work so observers can follow your progress. For each logical step:
+
+1. **State intent** (1 line before tool calls): what you're about to do and why
+   - Example: "Reading the existing router to understand the current route structure"
+   - Example: "Checking if the seed directory exists before creating migration files"
+
+2. **State findings** (1 line after significant reads/checks): what you observed
+   - Example: "Found 12 routes in api-router.ts — the new endpoint goes after /users"
+   - Example: "Seed directory missing — will create it with the required data files"
+
+3. **State decisions** (1 line when branching): what you chose and why
+   - Example: "Tests fail due to missing mock — adding test fixture before re-running"
+   - Example: "Schema already has the column — skipping migration, updating only the service"
+
+Keep narration concise — one sentence per step, never more than two. Do not narrate trivial operations (import additions, whitespace fixes). Focus on operations that change your approach or reveal something about the codebase.
 
 ## Task Context
 

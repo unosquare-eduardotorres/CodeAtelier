@@ -284,6 +284,7 @@ describe('PromptOptimizerService', () => {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, false)
           assert.equal(result.skippedReason, 'error')
+          assert.equal(result.errorDetail, 'CLI timeout')
           assert.equal(result.optimizedText, LONG_PROMPT)
         } finally {
           runner.restore()
@@ -635,86 +636,30 @@ describe('PromptOptimizerService', () => {
         }
       })
     })
-  })
 
-  describe('optimize — proportional max_tokens', () => {
-    test('short prompt gets 512 token floor', async () => {
-      // 100-char prompt → ceil(100/2)=50, but floor is 512
-      const shortText = 'Review the auth middleware in our Express app and check JWT validation for security issues'
-      let capturedArgs: string[] = []
+    test('words that stem to empty strings do not cause false keyword matches', async () => {
+      // "able", "ness", "ment", "less", "ible" all stem to "" before the >=3 filter.
+      // Without the filter, both sets would contain "" and count as matching.
+      const original = 'The configurable adjustable reasonable deployable scalable extensible system needs a complete refactor'
+      const optimized = 'A completely unrelated prompt about database migration schemas and indexes'
       return withSettings(DEFAULT_SETTINGS, async () => {
-        const svc = promptOptimizerService as unknown as AnyService
-        const origRunner = svc._runner
-        svc._runner = async (args: string[]) => {
-          capturedArgs = args
-          return fakeCliResponse('NO_CHANGES')
-        }
+        const runner = withRunner(`\`\`\`optimized-prompt\n${optimized}\n\`\`\``)
         try {
-          await promptOptimizerService.optimize({
+          const result = await promptOptimizerService.optimize({
             ...DEFAULT_PARAMS,
-            text: shortText
+            text: original,
           })
-          const maxTokensIdx = capturedArgs.indexOf('--max-tokens')
-          assert.ok(maxTokensIdx >= 0, '--max-tokens should be in args')
-          assert.equal(capturedArgs[maxTokensIdx + 1], '512')
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'keyword-drift')
+          assert.equal(result.optimizedText, original)
         } finally {
-          svc._runner = origRunner
-        }
-      })
-    })
-
-    test('medium prompt gets proportional tokens', async () => {
-      // 2000-char prompt → ceil(2000/2)=1000
-      const mediumText = 'Review '.repeat(286) // ~2002 chars
-      let capturedArgs: string[] = []
-      return withSettings(DEFAULT_SETTINGS, async () => {
-        const svc = promptOptimizerService as unknown as AnyService
-        const origRunner = svc._runner
-        svc._runner = async (args: string[]) => {
-          capturedArgs = args
-          return fakeCliResponse('NO_CHANGES')
-        }
-        try {
-          await promptOptimizerService.optimize({
-            ...DEFAULT_PARAMS,
-            text: mediumText
-          })
-          const maxTokensIdx = capturedArgs.indexOf('--max-tokens')
-          assert.ok(maxTokensIdx >= 0, '--max-tokens should be in args')
-          const budget = Number(capturedArgs[maxTokensIdx + 1])
-          assert.ok(budget >= 512 && budget <= 4096, `Budget ${budget} should be between 512-4096`)
-          assert.equal(budget, Math.ceil(mediumText.length / 2))
-        } finally {
-          svc._runner = origRunner
-        }
-      })
-    })
-
-    test('long prompt gets capped at 4096 tokens', async () => {
-      // 10000-char prompt → ceil(10000/2)=5000, but cap is 4096
-      const longText = 'A'.repeat(80) + ' ' + 'review the code '.repeat(620) // >10000 chars
-      let capturedArgs: string[] = []
-      return withSettings(DEFAULT_SETTINGS, async () => {
-        const svc = promptOptimizerService as unknown as AnyService
-        const origRunner = svc._runner
-        svc._runner = async (args: string[]) => {
-          capturedArgs = args
-          return fakeCliResponse('NO_CHANGES')
-        }
-        try {
-          await promptOptimizerService.optimize({
-            ...DEFAULT_PARAMS,
-            text: longText
-          })
-          const maxTokensIdx = capturedArgs.indexOf('--max-tokens')
-          assert.ok(maxTokensIdx >= 0, '--max-tokens should be in args')
-          assert.equal(capturedArgs[maxTokensIdx + 1], '4096')
-        } finally {
-          svc._runner = origRunner
+          runner.restore()
         }
       })
     })
   })
+
+
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

@@ -189,6 +189,8 @@ export interface TaskPlanSectionsProps {
   visiblePhases: PlanPhase[]
   visibleDecisions: Array<{ what: string; why: string }>
   isSimplePlan: boolean
+  /** Conversation ID for live phase status badges during build execution */
+  conversationId?: string
 }
 
 /**
@@ -210,7 +212,8 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
     visibleVerification,
     visiblePhases,
     visibleDecisions,
-    isSimplePlan
+    isSimplePlan,
+    conversationId
   } = props
 
   const titleSection = structuredPlan?.summary ? (
@@ -284,7 +287,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   )
 
   const phasesSection = visiblePhases.length > 0 && (
-    <PhasesList phases={visiblePhases} simple={isSimplePlan} />
+    <PhasesList phases={visiblePhases} simple={isSimplePlan} conversationId={conversationId} />
   )
 
   const filesChangedSection = visibleFilesChanged.length > 0 && (

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { KeyRound, ExternalLink, X, Check } from 'lucide-react'
+import { useChatStore } from '@renderer/store'
 
 interface ElicitationRequest {
   requestId: string
@@ -14,9 +15,17 @@ export default function ElicitationModal(): React.JSX.Element | null {
   const [request, setRequest] = useState<ElicitationRequest | null>(null)
 
   useEffect(() => {
-    const cleanup = window.api.onSdkElicitationRequest((data) =>
-      setRequest(data as ElicitationRequest)
-    )
+    const cleanup = window.api.onSdkElicitationRequest((data) => {
+      // MULTI-CHAT-06: Guard against cross-conversation contamination.
+      // The backend includes conversationId in the payload — drop events
+      // that belong to a background conversation.
+      const typed = data as ElicitationRequest & { conversationId?: string }
+      const activeConvId = useChatStore.getState().activeConversation?.id
+      // MULTI-CHAT-06: Also reject when no active conversation exists (post-deletion edge case).
+      // Before this fix, activeConvId=undefined made the three-way AND false, leaking events.
+      if (typed.conversationId && typed.conversationId !== activeConvId) return
+      setRequest(typed)
+    })
     return cleanup
   }, [])
 

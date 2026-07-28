@@ -8,6 +8,7 @@
 
 import { useState, useCallback } from 'react'
 import { Copy, Check, Sparkles, FileText } from 'lucide-react'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -42,9 +43,10 @@ export default function RequirementDocumentPanel({
   const showCondenseButton = !!onCondense && text.length > CONDENSE_THRESHOLD
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(displayDocument)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await copyTextToClipboard(displayDocument)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }, [displayDocument])
 
   return (

@@ -11,12 +11,13 @@
  *   - Ambiguous writes are queued instead of silently inserted when classifier is busy
  *   - Volatile facts (version numbers, counts) always UPDATE-in-place
  *   - Evidence-based promotion with day-spread + source diversity requirements
- *   - Capture caps: max facts per session/commit, daily workspace cap
+ *   - Capture caps: max facts per session/commit (background auto-capture only)
+ *   - Title-based fallback dedup when embedding model isn't available
  */
 
 import { dbLogger } from '../logger'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
-import { omlxEmbeddingProvider } from './omlx-embedding.service'
+import { localEmbeddingProvider } from './local-embedding.provider'
 import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
 import { runOneShotLocal, buildMemoryFeedFallbackArgs } from './one-shot-local'
 import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
@@ -46,8 +47,6 @@ const DECAY_THROTTLE_MS = 24 * 60 * 60 * 1000 // 24h
 // ── Capture caps ────────────────────────────────────────────────────────────
 const MAX_FACTS_PER_SESSION = 2 // lowered from 3 — quality over quantity
 const MAX_FACTS_PER_COMMIT = 1 // lowered from 2 — one key insight per commit
-const MAX_FACTS_PER_DAY = 8   // lowered from 20 — prevents memory bloat (~240/month vs 600)
-const CAPTURE_CAP_WINDOW_MS = 24 * 60 * 60 * 1000
 
 // ── Volatility detection patterns ───────────────────────────────────────────
 const VOLATILE_PATTERNS = [
@@ -79,8 +78,6 @@ export interface WriteFactParams {
 interface CaptureCounts {
   session: Map<string, number> // sourceRef → count
   commit: Map<string, number>
-  daily: Map<string, number> // workspaceId → count today
-  dayStart: number
 }
 
 class MemoryEngineService {
@@ -98,9 +95,7 @@ class MemoryEngineService {
 
   private captureCounts: CaptureCounts = {
     session: new Map(),
-    commit: new Map(),
-    daily: new Map(),
-    dayStart: Date.now()
+    commit: new Map()
   }
 
   // ── Write pipeline ──────────────────────────────────────────────────────
@@ -120,8 +115,8 @@ class MemoryEngineService {
     let embedding: Buffer | null = null
     let embeddingPending = true
     try {
-      if (omlxEmbeddingProvider.isReady) {
-        const vectors = await omlxEmbeddingProvider.embed([factText])
+      if (localEmbeddingProvider.isReady) {
+        const vectors = await localEmbeddingProvider.embed([factText])
         if (vectors.length > 0 && vectors[0].length > 0) {
           embedding = Buffer.from(new Float32Array(vectors[0]).buffer)
           embeddingPending = false
@@ -148,6 +143,17 @@ class MemoryEngineService {
         // Cap accounting is inside the mutating handlers (handleUpdate, handleContradiction)
         // so that dedup confirms (handleDuplicate) don't consume cap slots.
         return result
+      }
+    }
+
+    // 3b. Fallback dedup when embedding pipeline was skipped:
+    //     Normalized title match against existing active facts.
+    //     Prevents duplicate avalanche when embedding provider isn't ready.
+    if (!embedding && workspaceId) {
+      const existingMatch = this.titleFallbackDedup(workspaceId, params.title, params.category)
+      if (existingMatch) {
+        log.info(`[MemoryEngine] Title-fallback dedup: "${params.title}" matches existing ${existingMatch.id}`)
+        return this.handleDuplicate(existingMatch, params.sourceType)
       }
     }
 
@@ -563,14 +569,12 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
   /** Check if a write is within capture caps. Returns true if allowed. */
   private checkCaptureCap(params: WriteFactParams): boolean {
-    // Manual (user-initiated) writes always bypass caps
-    if (params.sourceType === 'manual') return true
+    // User-initiated and agent-driven writes always bypass per-source caps
+    if (['manual', 'tool', 'bootstrap', 'blueprint', 'grill'].includes(params.sourceType)) return true
 
-    this.resetCapsIfNewDay()
+    const { sourceType, sourceRef } = params
 
-    const { sourceType, sourceRef, workspaceId } = params
-
-    // Per-source caps
+    // Per-source caps (background auto-capture quality gates)
     if (sourceType === 'session' && sourceRef) {
       const count = this.captureCounts.session.get(sourceRef) ?? 0
       if (count >= MAX_FACTS_PER_SESSION) return false
@@ -580,44 +584,66 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
       if (count >= MAX_FACTS_PER_COMMIT) return false
     }
 
-    // Daily workspace cap
-    if (workspaceId) {
-      const dailyCount = this.captureCounts.daily.get(workspaceId) ?? 0
-      if (dailyCount >= MAX_FACTS_PER_DAY) return false
-    }
-
     return true
   }
 
   /** Increment capture counters after a successful write. */
   private incrementCaptureCap(params: WriteFactParams): void {
-    const { sourceType, sourceRef, workspaceId } = params
+    const { sourceType, sourceRef } = params
 
     if (sourceType === 'session' && sourceRef) {
-      const count = this.captureCounts.session.get(sourceRef) ?? 0
-      this.captureCounts.session.set(sourceRef, count + 1)
+      this.captureCounts.session.set(sourceRef, (this.captureCounts.session.get(sourceRef) ?? 0) + 1)
     }
     if (sourceType === 'commit' && sourceRef) {
-      const count = this.captureCounts.commit.get(sourceRef) ?? 0
-      this.captureCounts.commit.set(sourceRef, count + 1)
-    }
-    if (workspaceId) {
-      const dailyCount = this.captureCounts.daily.get(workspaceId) ?? 0
-      this.captureCounts.daily.set(workspaceId, dailyCount + 1)
+      this.captureCounts.commit.set(sourceRef, (this.captureCounts.commit.get(sourceRef) ?? 0) + 1)
     }
   }
 
-  /** Reset daily caps at day boundary. */
-  private resetCapsIfNewDay(): void {
-    const now = Date.now()
-    if (now - this.captureCounts.dayStart >= CAPTURE_CAP_WINDOW_MS) {
-      this.captureCounts = {
-        session: new Map(),
-        commit: new Map(),
-        daily: new Map(),
-        dayStart: now
-      }
+  // ── Title-based fallback dedup ───────────────────────────────────────
+
+  /**
+   * Lightweight title-based dedup fallback for when embeddings aren't available.
+   * Normalizes titles (lowercase, trim, collapse whitespace) and checks for:
+   *   1. Exact normalized title match (same category)
+   *   2. Token overlap ≥ 80% (same category) — catches minor rephrasing
+   * Returns the matching fact or null.
+   */
+  private titleFallbackDedup(
+    workspaceId: string,
+    newTitle: string,
+    newCategory: string
+  ): MemoryFact | null {
+    const normalize = (t: string): string =>
+      t.toLowerCase().trim().replace(/\s+/g, ' ').replace(/[^\w\s]/g, '')
+
+    const newNorm = normalize(newTitle)
+    if (newNorm.length < 5) return null // too short to match reliably
+
+    const newTokens = new Set(newNorm.split(' ').filter(t => t.length > 2))
+    if (newTokens.size === 0) return null
+
+    const existing = memoryFactRepository.findByWorkspace(workspaceId, 'active')
+
+    for (const fact of existing) {
+      if (fact.category !== newCategory) continue
+
+      const existingNorm = normalize(fact.title)
+
+      // 1. Exact match
+      if (existingNorm === newNorm) return fact
+
+      // 2. Token overlap ≥ 80%
+      const existingTokens = new Set(existingNorm.split(' ').filter(t => t.length > 2))
+      if (existingTokens.size === 0) continue
+
+      const intersection = [...newTokens].filter(t => existingTokens.has(t)).length
+      const union = new Set([...newTokens, ...existingTokens]).size
+      const jaccard = union > 0 ? intersection / union : 0
+
+      if (jaccard >= 0.80) return fact
     }
+
+    return null
   }
 
   // ── Volatility detection ──────────────────────────────────────────────
@@ -640,6 +666,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
       case 'claude-md':
       case 'blueprint':
       case 'grill':
+      case 'bootstrap':
         return 'extraction'
       default:
         return 'auto_dedup'
@@ -670,7 +697,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
   /** Embed a single batch of up to 50 pending facts (opportunistic background path). */
   async backfillPendingEmbeddings(): Promise<number> {
-    if (!omlxEmbeddingProvider.isReady) return 0
+    if (!localEmbeddingProvider.isReady) return 0
 
     const pending = memoryFactRepository.findPendingEmbeddings(50)
     if (pending.length === 0) return 0
@@ -679,7 +706,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     for (const fact of pending) {
       try {
         const text = `${fact.title}\n${fact.content}`
-        const vectors = await omlxEmbeddingProvider.embed([text])
+        const vectors = await localEmbeddingProvider.embed([text])
         if (vectors.length > 0 && vectors[0].length > 0) {
           const buf = Buffer.from(new Float32Array(vectors[0]).buffer)
           memoryFactRepository.setEmbedding(fact.id, buf)
@@ -701,7 +728,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
   async backfillAllPendingEmbeddings(
     onProgress?: (processed: number, total: number) => void
   ): Promise<number> {
-    if (!omlxEmbeddingProvider.isReady) return 0
+    if (!localEmbeddingProvider.isReady) return 0
 
     // Count total pending up front for progress reporting
     const allPending = memoryFactRepository.findPendingEmbeddings(10_000)
@@ -716,7 +743,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
       for (const fact of batch) {
         try {
           const text = `${fact.title}\n${fact.content}`
-          const vectors = await omlxEmbeddingProvider.embed([text])
+          const vectors = await localEmbeddingProvider.embed([text])
           if (vectors.length > 0 && vectors[0].length > 0) {
             const buf = Buffer.from(new Float32Array(vectors[0]).buffer)
             memoryFactRepository.setEmbedding(fact.id, buf)
@@ -969,7 +996,6 @@ function computePromotionTierPure(
 export const CAPTURE_CAPS = {
   MAX_FACTS_PER_SESSION,
   MAX_FACTS_PER_COMMIT,
-  MAX_FACTS_PER_DAY
 } as const
 
 /** Volatile detection patterns — exported for testing. */
@@ -979,7 +1005,7 @@ export { cosineSimilarity, computePromotionTierPure }
 export const memoryEngineService = new MemoryEngineService()
 
 // Backfill pending embeddings when the oMLX model becomes ready
-omlxEmbeddingProvider.on('modelReady', () => {
+localEmbeddingProvider.on('modelReady', () => {
   memoryEngineService.backfillPendingEmbeddings().catch((e) =>
     log.warn('[MemoryEngine] modelReady backfill error:', e)
   )

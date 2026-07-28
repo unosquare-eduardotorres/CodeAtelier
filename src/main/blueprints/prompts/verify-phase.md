@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+{{RETRY_CONTEXT}}
+
 ## Your Task
 
 Verify that the BUILD phase output actually achieves the goals defined in the

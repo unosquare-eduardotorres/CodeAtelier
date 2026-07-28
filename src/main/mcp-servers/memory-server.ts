@@ -21,6 +21,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
+import { withErrorBoundary } from './tool-error-handler'
 
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 
@@ -45,6 +46,12 @@ const MAX_RETRIES = 3
 function ensureReady(): Promise<Services> {
   if (!readyPromise) {
     readyPromise = (async (): Promise<Services> => {
+      // Pre-flight: verify native module compatibility before importing DB-backed services
+      const { checkNativeModuleCompat } = await import('./native-module-check')
+      const compat = checkNativeModuleCompat()
+      if (!compat.ok) {
+        throw new Error(compat.error ?? 'Native module check failed')
+      }
       const { memoryRetrievalService } = await import('../services/memory-retrieval.service')
       const { memoryEngineService } = await import('../services/memory-engine.service')
       const { memoryFactRepository } = await import('../db/repositories/memory-fact.repository')
@@ -88,7 +95,7 @@ function registerToolSchemas(): void {
         .default(5)
         .describe('Number of results to return')
     },
-    async (args) => {
+    withErrorBoundary('memory_search', async (args) => {
       const { memoryRetrievalService } = await ensureReady()
       const results = await memoryRetrievalService.retrieve(
         WORKSPACE_ID,
@@ -105,7 +112,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── memory_record ─────────────────────────────────────────────────────
@@ -135,7 +142,7 @@ function registerToolSchemas(): void {
         .default(false)
         .describe('If true, fact is cross-workspace (for user preferences/corrections)')
     },
-    async (args) => {
+    withErrorBoundary('memory_record', async (args) => {
       const { memoryEngineService } = await ensureReady()
       const fact = await memoryEngineService.writeFact({
         workspaceId: args.global ? null : WORKSPACE_ID || null,
@@ -160,7 +167,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── memory_flag ───────────────────────────────────────────────────────
@@ -177,7 +184,7 @@ function registerToolSchemas(): void {
         .optional()
         .describe('Explanation of why you are confirming or contradicting this fact')
     },
-    async (args) => {
+    withErrorBoundary('memory_flag', async (args) => {
       const { memoryEngineService, memoryFactRepository } = await ensureReady()
       const existing = memoryFactRepository.findById(args.factId) as
         | import('../../shared/types').MemoryFact
@@ -248,7 +255,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 }
 

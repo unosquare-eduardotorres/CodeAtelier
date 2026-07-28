@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { BlueprintBuildService } from '../blueprint-build.service'
+import { BlueprintBuildService, type TaskTiming } from '../blueprint-build.service'
 
 describe('BlueprintBuildService', () => {
   describe('buildTaskContext', () => {
@@ -106,6 +106,65 @@ describe('BlueprintBuildService', () => {
       const result = buildSummary(0, 0, [], [])
       assert.ok(!result.includes('Files Created'))
       assert.ok(!result.includes('Files Modified'))
+    })
+  })
+
+  // ── Phase 0: TaskTiming type export ──
+
+  describe('TaskTiming (Phase 0)', () => {
+    test('TaskTiming_interface_has_expected_shape', () => {
+      // Verify the type export works and the shape is correct at runtime
+      const timing: TaskTiming = {
+        taskId: 'T001',
+        wave: 1,
+        tDispatch: 1000,
+        tSessionReady: 1500,
+        tFirstChunk: 2000,
+        tComplete: 10000,
+        tSlotFreed: 10050,
+        durationMs: 9050
+      }
+      assert.equal(timing.taskId, 'T001')
+      assert.equal(timing.wave, 1)
+      assert.equal(timing.durationMs, timing.tSlotFreed - timing.tDispatch)
+    })
+
+    test('TaskTiming_durationMs_equals_slot_freed_minus_dispatch', () => {
+      const timing: TaskTiming = {
+        taskId: 'T002',
+        wave: 2,
+        tDispatch: 5000,
+        tSessionReady: 5200,
+        tFirstChunk: 5800,
+        tComplete: 25000,
+        tSlotFreed: 25010,
+        durationMs: 20010
+      }
+      assert.equal(timing.durationMs, timing.tSlotFreed - timing.tDispatch)
+      // Spawn time
+      assert.equal(timing.tSessionReady - timing.tDispatch, 200)
+      // Prefill latency
+      assert.equal(timing.tFirstChunk - timing.tSessionReady, 600)
+      // LLM work time
+      assert.equal(timing.tComplete - timing.tFirstChunk, 19200)
+    })
+  })
+
+  // ── Phase 1.1: Teardown off critical path ──
+
+  describe('Teardown off critical path (Phase 1.1)', () => {
+    test('activeSessions_map_exists_for_cancel_discovery', () => {
+      // Verify the service has an activeSessions Map that cancelBlueprint can access
+      const service = new BlueprintBuildService()
+      // activeSessions is private, access via prototype/cast
+      const sessions = (service as any).activeSessions
+      assert.ok(sessions instanceof Map, 'activeSessions should be a Map')
+    })
+
+    test('cancelBlueprint_does_not_throw_with_no_active_sessions', async () => {
+      const service = new BlueprintBuildService()
+      // Should not throw when there's nothing to cancel
+      await service.cancelBlueprint('nonexistent-bp')
     })
   })
 })

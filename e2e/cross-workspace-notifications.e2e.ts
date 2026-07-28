@@ -2,15 +2,15 @@
  * Cross-Workspace Notifications E2E Tests
  *
  * Verifies the notification system for background workspace sessions:
- *   - PermissionToast appears for background workspace permission requests
- *   - Clicking PermissionToast switches to the requesting workspace
+ *   - PermissionApprovalModal appears for background workspace permission requests
+ *   - Interacting with PermissionApprovalModal switches to the requesting workspace
  *   - CompletionToast appears when background session completes
  *   - NotificationStack stacks multiple simultaneous toasts
  *   - ElicitationModal renders with question + response options
  *   - CheckpointApprovalModal shows diff preview + approve/reject
  *
  * These are critical because when a background workspace agent needs user
- * input (elicitation, file approval, MPA), a PermissionToast pops up.
+ * input (elicitation, file approval, MPA), a PermissionApprovalModal pops up.
  * If this breaks, background sessions silently stall.
  *
  * Uses CDP fixture (Electron 41+ compatible).
@@ -45,19 +45,19 @@ test.describe('Cross-Workspace Notifications', () => {
     }
   }
 
-  // ── PermissionToast ──
+  // ── PermissionApprovalModal ──
 
-  test('PermissionToast renders with approve/deny buttons for simple permissions', async ({
+  test('PermissionApprovalModal renders with approve/deny buttons for simple permissions', async ({
     electronPage: page
   }) => {
     await ensureWorkspaceOpen(page)
 
     // Check if any permission toasts are currently visible
     // These appear when a background workspace session needs user input
-    const permissionToast = page.locator('[data-testid="permission-toast"]')
-    const hasToast = await permissionToast.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const permissionModal = page.locator('[data-testid="permission-approval-modal"]')
+    const hasModal = await permissionModal.first().isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasToast) {
+    if (!hasModal) {
       // No background sessions are requesting permissions right now
       // Verify the notification stack mounting point exists
       const notificationStack = page.locator('[data-testid="notification-stack"]')
@@ -68,10 +68,10 @@ test.describe('Cross-Workspace Notifications', () => {
       return
     }
 
-    // Permission toast should have Approve and Deny buttons (simple permission)
-    const approveBtn = permissionToast.first().locator('[data-testid="permission-approve"]')
-    const denyBtn = permissionToast.first().locator('[data-testid="permission-deny"]')
-    const viewBtn = permissionToast.first().locator('[data-testid="permission-view"]')
+    // Permission modal should have Approve and Deny buttons (simple permission)
+    const approveBtn = permissionModal.first().locator('[data-testid="permission-approve"]')
+    const denyBtn = permissionModal.first().locator('[data-testid="permission-deny"]')
+    const viewBtn = permissionModal.first().locator('[data-testid="permission-view"]')
 
     const hasApprove = await approveBtn.isVisible({ timeout: 2_000 }).catch(() => false)
     const hasDeny = await denyBtn.isVisible({ timeout: 2_000 }).catch(() => false)
@@ -85,28 +85,29 @@ test.describe('Cross-Workspace Notifications', () => {
     }
   })
 
-  test('PermissionToast dismiss button removes the toast', async ({ electronPage: page }) => {
+  test('PermissionApprovalModal dismiss removes the modal', async ({ electronPage: page }) => {
     await ensureWorkspaceOpen(page)
 
-    const permissionToast = page.locator('[data-testid="permission-toast"]')
-    const hasToast = await permissionToast.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const permissionModal = page.locator('[data-testid="permission-approval-modal"]')
+    const hasModal = await permissionModal.first().isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasToast) {
+    if (!hasModal) {
       test.skip()
       return
     }
 
-    const dismissBtn = permissionToast.first().locator('[data-testid="permission-dismiss"]')
-    await expect(dismissBtn).toBeVisible({ timeout: 2_000 })
-
-    const countBefore = await permissionToast.count()
-
-    await dismissBtn.click()
+    // Click the backdrop to dismiss
+    const backdrop = permissionModal.first()
+    const box = await backdrop.boundingBox()
+    if (box) {
+      // Click near the edge (backdrop area, not the card)
+      await page.mouse.click(box.x + 5, box.y + 5)
+    }
     await page.waitForTimeout(500)
 
-    // Toast count should decrease
-    const countAfter = await permissionToast.count()
-    expect(countAfter).toBeLessThan(countBefore)
+    // Modal should be dismissed
+    const countAfter = await permissionModal.count()
+    expect(countAfter).toBe(0)
   })
 
   // ── CompletionToast ──
@@ -155,7 +156,7 @@ test.describe('Cross-Workspace Notifications', () => {
     }
 
     // Stack should contain at least one toast
-    const permissionToasts = notificationStack.locator('[data-testid="permission-toast"]')
+    const permissionToasts = notificationStack.locator('[data-testid="permission-approval-modal"]')
     const completionToasts = notificationStack.locator('[data-testid="completion-toast"]')
 
     const permCount = await permissionToasts.count()

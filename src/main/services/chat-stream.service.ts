@@ -38,6 +38,7 @@ import { lifecycleRegistry, type ConversationLifecycle } from './conversation-li
 import { hookEngine } from './hook-engine.service'
 import { planRegistryService } from './plan-registry.service'
 import { promptOptimizerService } from './prompt-optimizer.service'
+import { backgroundCliSession } from './background-cli-session'
 
 const log = chatIpcLogger
 
@@ -121,6 +122,9 @@ export class ChatStreamService {
    * disconnects the UI while the backend is still working.
    */
   private keepaliveTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+  /** Per-conversation safety-timer reset functions — called on chunk activity. */
+  private safetyTimerResets = new Map<string, () => void>()
 
   /** Cleanup functions for all persistent event listeners registered in registerEventForwarders(). */
   private eventCleanups: Array<() => void> = []
@@ -371,6 +375,33 @@ export class ChatStreamService {
     }
     chatAgentService.on('askQuestion:ws', onAskQuestionWs)
     this.eventCleanups.push(() => chatAgentService.off('askQuestion:ws', onAskQuestionWs))
+
+    // Tool permission requests — route to toast UI for all workspaces.
+    // Unlike askQuestion (inline for active workspace), tool permissions always
+    // use the toast flow because they need explicit approve/deny, not free-text.
+    const onPermissionRequestWs = (
+      workspaceId: string,
+      data: { toolName?: string; inputSummary?: string; requestId?: string }
+    ): void => {
+      try {
+        const router = getSessionEventRouter()
+        const toolName = data.toolName ?? 'Unknown tool'
+        router.sendPermissionRequest({
+          id: `perm-${data.requestId ?? Date.now()}`,
+          workspaceId,
+          workspaceName: this.resolveWorkspaceName(workspaceId),
+          type: 'toolPermission',
+          summary: `Agent wants to use ${toolName}${data.inputSummary ? `: ${data.inputSummary}` : ''}`,
+          isSimple: true,
+          payload: data,
+          receivedAt: Date.now()
+        })
+      } catch {
+        // SessionEventRouter not yet initialized
+      }
+    }
+    chatAgentService.on('permissionRequest:ws', onPermissionRequestWs)
+    this.eventCleanups.push(() => chatAgentService.off('permissionRequest:ws', onPermissionRequestWs))
   }
 
   // ── Extracted Lifecycle Methods ──
@@ -449,11 +480,20 @@ export class ChatStreamService {
       this.activeRequestIds.delete(conversationId)
     })
 
+    let settled = false
     let resolveDone!: () => void
     let rejectDone!: (err: Error) => void
     const done = new Promise<void>((resolve, reject) => {
-      resolveDone = resolve
-      rejectDone = reject
+      resolveDone = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      rejectDone = (err: Error) => {
+        if (settled) return
+        settled = true
+        reject(err)
+      }
     })
 
     return { requestId, signal: lifecycle.signal!, lifecycle, resolveDone, rejectDone, done }
@@ -524,27 +564,46 @@ export class ChatStreamService {
     }, 30_000)
     this.keepaliveTimers.set(conversationId, keepaliveTimer)
 
-    // Main-process safety timeout (5 min) — last-resort recovery per-stream (fixes P8)
-    // CHAT-TIMER-01: Added safetyCleared flag for idempotent safety. If an earlier
-    // disposer throws and the clearTimeout disposer doesn't run, the flag prevents
-    // the timer from firing on an already-completed stream.
+    // Main-process safety timeout — last-resort recovery when no chunk/tool
+    // activity arrives for 5 minutes. Unlike the old wall-clock timer, this
+    // resets on every onChunk call (mirroring the renderer's resetSafetyTimer).
+    // The CLI executor's own MESSAGE_TIMEOUT_MS (5 min) and TOOL_RESULT_TIMEOUT_MS
+    // (10 min) are the primary stall detectors; this is defense-in-depth.
     const MAIN_PROCESS_SAFETY_TIMEOUT_MS = 5 * 60 * 1000
     let safetyCleared = false
-    const safetyTimer = setTimeout(() => {
-      if (!safetyCleared && this.streamingLocks.has(conversationId)) {
-        log.error(
-          '[STREAM:main-safety-timeout] Streaming lock stuck for 5 minutes — force-resetting. ' +
-            `conversationId=${conversationId} requestId=${requestId}`
-        )
-        completeStreamMetrics(conversationId, 'timeout')
-        lifecycleRegistry.abort(conversationId, 'safety-timeout')
-        rejectDone(new Error('Streaming timed out — safety recovery triggered'))
-      }
-    }, MAIN_PROCESS_SAFETY_TIMEOUT_MS)
+    let safetyTimer: ReturnType<typeof setTimeout>
+
+    const startSafetyTimer = (): void => {
+      safetyTimer = setTimeout(() => {
+        if (!safetyCleared && this.streamingLocks.has(conversationId)) {
+          // SAFETY-LOG-LEVEL: Downgraded from error to warn. If the stream already
+          // completed (resolveDone fired) the double-settle guard makes rejectDone
+          // a no-op — this log would be a scary-looking no-op error. Using warn
+          // preserves visibility without false alarm noise in production logs.
+          log.warn(
+            '[STREAM:main-safety-timeout] No chunk activity for 5 minutes — force-resetting. ' +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          completeStreamMetrics(conversationId, 'timeout')
+          lifecycleRegistry.abort(conversationId, 'safety-timeout')
+          rejectDone(new Error('Streaming timed out — safety recovery triggered'))
+        }
+      }, MAIN_PROCESS_SAFETY_TIMEOUT_MS)
+    }
+
+    const resetSafety = (): void => {
+      if (safetyCleared) return
+      clearTimeout(safetyTimer)
+      startSafetyTimer()
+    }
+
+    startSafetyTimer()
+    this.safetyTimerResets.set(conversationId, resetSafety)
 
     lifecycle.onDispose(() => {
       safetyCleared = true
       clearTimeout(safetyTimer)
+      this.safetyTimerResets.delete(conversationId)
       const kt = this.keepaliveTimers.get(conversationId)
       if (kt) {
         clearInterval(kt)
@@ -640,12 +699,13 @@ export class ChatStreamService {
     }
 
     if (optimizeResult.skippedReason === 'error') {
-      emitCard({ status: 'error', result: 'Optimization skipped — original prompt sent' })
+      const detail = optimizeResult.errorDetail || 'unknown error'
+      emitCard({ status: 'error', result: `Optimization skipped — ${detail}` })
       notifyChunkTaps(requestId, {
         type: 'tool_result',
         toolName: 'Prompt Optimizer',
         toolId: optimizerToolId,
-        content: 'Error — original prompt sent'
+        content: `Error: ${detail} — original prompt sent`
       })
       log.warn('[PIPELINE:prompt-optimizer] Error — using original prompt')
     } else if (optimizeResult.skippedReason) {
@@ -733,6 +793,25 @@ export class ChatStreamService {
       this.callbacks.onStopPipeline().catch((e) => {
         log.warn('[STREAM] Lifecycle dispose: onStopPipeline failed:', e)
       })
+    })
+
+    // ORPHAN-EXECUTOR-FIX: Kill the CLI process on lifecycle abort.
+    // Without this, safety-timeout and workspace-switch abort paths only
+    // release locks and remove listeners — the executor keeps running.
+    // cancelCurrentQuery() is idempotent; the duplicate call from stop()'s
+    // finally block is harmless.
+    //
+    // PHASE-2-NOTE: cancelCurrentQuery() is GLOBAL — it kills whichever query
+    // is active, not specifically this conversation's query. With
+    // MAX_CONCURRENT_STREAMS = 1 this is correct. When Phase 2 raises the
+    // limit, this disposer for conversation A could kill conversation B's
+    // executor. Fix: pass conversationId to a per-conversation cancel method.
+    lifecycle.onDispose(() => {
+      try {
+        chatAgentService.cancelCurrentQuery()
+      } catch (e) {
+        log.warn('[STREAM] Lifecycle dispose: cancelCurrentQuery failed:', e)
+      }
     })
   }
 
@@ -1139,6 +1218,11 @@ export class ChatStreamService {
       if (!lifecycle.isActive || lifecycle.requestId !== ctx.requestId) {
         return
       }
+      // SAFETY-TIMER-RESET: Reset the main-process safety timer on every
+      // chunk (text, tool_use, tool_result). Prevents the timer from killing
+      // active-but-long-running build sessions with heavy tool use.
+      this.safetyTimerResets.get(ctx.conversationId)?.()
+
       try {
         log.info(
           `[STREAM:chunk] type=${chunk.type} len=${chunk.content?.length ?? 0} convId=${ctx.conversationId.slice(0, 8)}`
@@ -1631,11 +1715,15 @@ export class ChatStreamService {
   dispose(): void {
     this.isDisposed = true
 
+    // Dispose the warm prompt-optimizer CLI session
+    backgroundCliSession.dispose()
+
     // Abort all active streams before disposal
     lifecycleRegistry.abortAll('service-disposed')
     this.streamingLocks.clear()
     this.activeRequestIds.clear()
     this.stoppedConversations.clear()
+    this.safetyTimerResets.clear()
 
     // Clear all keepalive timers
     for (const timer of this.keepaliveTimers.values()) {

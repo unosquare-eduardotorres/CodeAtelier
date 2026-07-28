@@ -1,7 +1,7 @@
 /**
  * AgentExecutorFactory — builds executor options for CLI and OpenCode
- * backends. Resolves MCP feature flags, hook paths, budget caps, and local
- * LLM context windows.
+ * backends (derived from LLM provider). Resolves MCP feature flags, hook
+ * paths, budget caps, and local LLM context windows.
  *
  * Extracted from AgentSessionService to reduce god-class complexity.
  * Holds a back-reference to the session for state access.
@@ -20,6 +20,7 @@ import {
   CLAUDE_1M_CONTEXT_WINDOW,
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   EXTERNAL_MCP_INTEGRATIONS,
+  MCP_TOOLS,
   RECOMMENDED_LOCAL_MODELS,
   resolveModelAction,
   supportsContext1M
@@ -38,6 +39,8 @@ export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
   /** Cached MCP config path — reused on continueSession turns to avoid rebuild. */
   private cachedMcpConfigPath: string | undefined
+  /** Whether control-actions server was mounted in the last MCP config (for permission prompt gating). */
+  private cachedControlActionsMounted = false
   /** Cached async-resolved context window + confidence flag. */
   private cachedContextWindow: number | null = null
   private cachedContextWindowConfident = false
@@ -331,6 +334,12 @@ export class AgentExecutorFactory {
         // F1: thinkingBudget must persist across continueSession turns to
         // enforce user cost control on every turn, not just the first.
         thinkingBudget: this.resolveThinkingBudget(),
+        // Permission prompt tool — only present when control-actions server is mounted.
+        // When the adapter's allowedTools exclude all control-actions tools, the server
+        // is skipped and referencing the tool would crash every tool call.
+        permissionPromptTool: this.cachedControlActionsMounted
+          ? MCP_TOOLS.CONTROL_ACTIONS.PERMISSION_PROMPT.name
+          : undefined,
         // F2: goal must persist so MPA autonomous completion conditions
         // are evaluated on every turn, not just the initial spawn.
         goal: params.goal,
@@ -349,8 +358,14 @@ export class AgentExecutorFactory {
       /* non-fatal */
     }
 
+    // Derive skip-servers BEFORE building the MCP config — we need to know
+    // whether control-actions is mounted to gate the permissionPromptTool flag.
+    const skipServers = deriveSkipServers(params.mcpResult.allowedTools)
+    const controlActionsMounted = !skipServers?.includes('control-actions')
+    this.cachedControlActionsMounted = controlActionsMounted
+
     // Build and cache MCP config for reuse on subsequent continueSession turns
-    const mcpConfigPath = this.buildCLIMcpConfigPath(params)
+    const mcpConfigPath = this.buildCLIMcpConfigPath(params, skipServers)
     this.cachedMcpConfigPath = mcpConfigPath
 
     // Instrumentation: one-line snapshot of the resolved compaction config on spawn.
@@ -369,7 +384,7 @@ export class AgentExecutorFactory {
       permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
       allowedTools,
       disallowedTools,
-      maxTurns: isBuildMode ? 50 : 30,
+      maxTurns: isBuildMode ? 200 : 50,
       resume: sessionId,
       resumeSessionAt: resumeAt,
       abortController,
@@ -401,6 +416,13 @@ export class AgentExecutorFactory {
       },
       continueSession: false,
       mcpConfigPath,
+      // Permission prompt tool — only set when control-actions server is mounted.
+      // Blueprint sessions with restricted allowedTools skip control-actions; passing
+      // the tool reference when the server isn't present crashes every tool call with
+      // "MCP tool mcp__control-actions__permission_prompt not found".
+      permissionPromptTool: controlActionsMounted
+        ? MCP_TOOLS.CONTROL_ACTIONS.PERMISSION_PROMPT.name
+        : undefined,
       goal: params.goal,
       goalMode: params.goalMode,
       thinkingBudget: this.resolveThinkingBudget()
@@ -409,10 +431,13 @@ export class AgentExecutorFactory {
 
   // ── buildCLIMcpConfigPath ─────────────────────────────────────────────
 
-  buildCLIMcpConfigPath(_params: {
-    isBuildMode: boolean
-    mcpResult: AdapterMcpResult
-  }): string | undefined {
+  buildCLIMcpConfigPath(
+    _params: {
+      isBuildMode: boolean
+      mcpResult: AdapterMcpResult
+    },
+    precomputedSkipServers?: string[]
+  ): string | undefined {
     try {
       const featureFlags = this.resolveWorkspaceMcpFlags()
 
@@ -427,11 +452,10 @@ export class AgentExecutorFactory {
         socketPath = this.s.ipcBridge.getSocketPath() ?? undefined
       }
 
-      // Derive servers to skip: if the adapter defines an explicit allowedTools
-      // list, any server whose tools are entirely absent can be skipped.
-      // Blueprint sessions use this to avoid spawning 7 servers when only 4-5
-      // are needed — reducing the MCP cold-start connection race.
-      const skipServers = deriveSkipServers(_params.mcpResult.allowedTools)
+      // Use pre-computed skip servers when available (caller already derived them
+      // to gate the permissionPromptTool flag). Fall back to computing here for
+      // callers that don't pre-compute.
+      const skipServers = precomputedSkipServers ?? deriveSkipServers(_params.mcpResult.allowedTools)
 
       const configPath = this.s.mcpConfigWriter.writeConfig({
         workspacePath: this.s.workspacePath!,
@@ -476,4 +500,5 @@ export class AgentExecutorFactory {
         return 'plan'
     }
   }
+
 }

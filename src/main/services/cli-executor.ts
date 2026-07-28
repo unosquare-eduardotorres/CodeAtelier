@@ -80,6 +80,9 @@ export interface CLIExecuteOptions {
   allowedTools?: string[]
   /** Tools to disallow (passed via --disallowedTools) */
   disallowedTools?: string[]
+  /** MCP tool name to use for permission prompts (--permission-prompt-tool flag).
+   *  When set, the CLI invokes this tool instead of auto-denying permission-gated operations. */
+  permissionPromptTool?: string
   /** Session ID for resuming an existing conversation */
   resume?: string
   /** AbortController for cancelling the CLI process */
@@ -860,6 +863,12 @@ export class CLIExecutor {
       args.push('--disallowedTools', options.disallowedTools.join(','))
     }
 
+    // Permission prompt tool — routes CLI permission requests to our MCP tool
+    // instead of auto-denying. The control-actions server surfaces these in the UI.
+    if (options.permissionPromptTool) {
+      args.push('--permission-prompt-tool', options.permissionPromptTool)
+    }
+
     // Additional directories
     if (options.additionalDirectories?.length) {
       for (const dir of options.additionalDirectories) {
@@ -945,7 +954,8 @@ export class CLIExecutor {
     return {
       ...buildEnvWithPath(),
       ...(options.envOverrides ?? {}),
-      CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${app.getVersion()}`
+      CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${app.getVersion()}`,
+      CLAUDE_CODE_SUPPRESS_SESSION_ATTRIBUTION: '1'
     }
   }
 }

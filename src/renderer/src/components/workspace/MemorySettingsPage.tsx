@@ -13,6 +13,7 @@ import {
   ChevronLeft
 } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
+import { ErrorBoundary } from '@renderer/components/common/ErrorBoundary'
 import {
   MemoryExplainer,
   FactCard,
@@ -206,7 +207,13 @@ export default function MemorySettingsPage(): React.JSX.Element {
 
       {/* ── Brain Tab (Graph) ── */}
       {activeTab === 'graph' && (
-        <GraphView workspaceId={workspaceId} />
+        <ErrorBoundary fallback={
+          <div className="flex items-center justify-center h-64 text-text-muted text-sm">
+            Graph visualization encountered an error. Switch tabs and back to retry.
+          </div>
+        }>
+          <GraphView workspaceId={workspaceId} />
+        </ErrorBoundary>
       )}
 
       {/* ── Ingestion Tab (was Capture/Settings) ── */}

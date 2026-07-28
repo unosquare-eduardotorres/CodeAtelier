@@ -7,8 +7,7 @@
  *  - Wraps the original in <original_prompt> tags to prevent injection
  *  - Parses a ```optimized-prompt fenced block or NO_CHANGES sentinel
  *  - Rejects oversize output (>max(4× original, 2000) chars)
- *  - Rejects keyword drift (<60% of original keywords preserved)
- *  - Caps max_tokens proportionally (~text.length/2, floor 512, cap 4096)
+ *  - Rejects keyword drift (<40% of original keywords preserved, with stemming)
  *  - Falls back to the original prompt on any error
  *
  * Follows the GoalDecomposerService singleton pattern.
@@ -19,6 +18,8 @@ import { runOneShotClaude, type OneShotClaudeOptions } from './one-shot-claude'
 import { runOneShotLocal } from './one-shot-local'
 import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
 import { workspaceRepository } from '../db/repositories'
+import { backgroundCliSession } from './background-cli-session'
+import { usageTrackerService } from './usage-tracker.service'
 
 const optimizerLog = log.scope('prompt-optimizer')
 
@@ -47,6 +48,17 @@ Output format (when changes are made):
 Or, if the prompt is already good:
 NO_CHANGES`
 
+const STOP_WORDS = new Set([
+  'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will',
+  'would', 'could', 'should', 'their', 'there', 'about', 'which',
+  'when', 'what', 'your', 'also', 'more', 'some', 'make', 'like',
+  'them', 'then', 'than', 'each', 'into', 'only', 'very', 'just',
+  'does', 'here', 'much', 'well', 'back', 'even', 'most', 'made',
+  'after', 'those', 'these', 'other', 'being', 'over', 'such',
+  'before', 'between', 'under', 'using', 'based', 'please',
+  'ensure', 'include', 'following', 'currently',
+])
+
 // ── Result types ─────────────────────────────────────────────────────────
 
 export interface PromptOptimizeResult {
@@ -56,6 +68,8 @@ export interface PromptOptimizeResult {
   changed: boolean
   /** If skipped or fell back, the reason */
   skippedReason?: string
+  /** Human-readable error detail when skippedReason is 'error' */
+  errorDetail?: string
 }
 
 // ── Service ──────────────────────────────────────────────────────────────
@@ -139,32 +153,54 @@ class PromptOptimizerService {
       return this.optimizeLocal({ text, workspaceId, wrappedPrompt })
     }
 
-    // ── Claude one-shot path (original) ──
+    // ── Claude path ──
     const model = modelConfigService.getModelById(workspaceId, 'prompt:optimize')
-    // Proportional token budget: ~2 chars/token, floor 512, cap 4096
-    const tokenBudget = Math.min(Math.max(Math.ceil(text.length / 2), 512), 4096)
     try {
-      const { text: responseText } = await runOneShotClaude({
-        feature: 'prompt_optimize',
-        model,
-        workspaceId,
-        conversationId: params.conversationId,
-        args: [
-          '-p', wrappedPrompt,
-          '--model', model,
-          '--system-prompt', META_PROMPT,
-          '--permission-mode', 'plan',
-          '--max-turns', '1',
-          '--max-tokens', String(tokenBudget)
-        ],
-        cli: { timeout: 15_000 },
-        _runner: this._runner
-      })
+      let responseText: string
+
+      if (this._runner) {
+        // Test seam — bypass warm session, use one-shot path
+        const { text: t } = await runOneShotClaude({
+          feature: 'prompt_optimize',
+          model,
+          workspaceId,
+          conversationId: params.conversationId,
+          args: [
+            '-p', wrappedPrompt,
+            '--model', model,
+            '--system-prompt', META_PROMPT,
+            '--permission-mode', 'plan',
+            '--max-turns', '1'
+          ],
+          cli: { timeout: 15_000 },
+          _runner: this._runner
+        })
+        responseText = t
+      } else {
+        // Warm session path — persistent interactive CLI process
+        backgroundCliSession.setSystemPrompt(META_PROMPT)
+        backgroundCliSession.setModel(model)
+        const { text: t, usage } = await backgroundCliSession.run({
+          userMessage: wrappedPrompt,
+          timeoutMs: 15_000
+        })
+        responseText = t
+
+        // Record usage (previously handled inside runOneShotClaude)
+        usageTrackerService.recordUsage({
+          feature: 'prompt_optimize',
+          model,
+          workspaceId,
+          conversationId: params.conversationId,
+          tokens: usage
+        })
+      }
 
       return this.parseResponse(responseText, text)
     } catch (err) {
-      optimizerLog.warn('[optimize] Claude CLI call failed, using original:', err)
-      return { optimizedText: text, changed: false, skippedReason: 'error' }
+      const msg = err instanceof Error ? err.message : String(err)
+      optimizerLog.warn('[optimize] Claude CLI call failed, using original:', msg)
+      return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: msg }
     }
   }
 
@@ -189,7 +225,7 @@ class PromptOptimizerService {
         const workspacePath = ws?.repoPath
         if (!workspacePath) {
           optimizerLog.warn('[optimize] No workspace path found, using original')
-          return { optimizedText: text, changed: false, skippedReason: 'error' }
+          return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: 'No workspace path found' }
         }
 
         const localCfg = modelConfigService.getLocalLLMConfig(workspacePath)
@@ -214,7 +250,7 @@ class PromptOptimizerService {
 
       if (!responseText) {
         optimizerLog.warn('[optimize] Empty local LLM response, using original')
-        return { optimizedText: text, changed: false, skippedReason: 'error' }
+        return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: 'Empty response from local LLM' }
       }
 
       // R6-B1: Strip <think>…</think> blocks from local model reasoning leakage
@@ -222,8 +258,9 @@ class PromptOptimizerService {
 
       return this.parseResponse(responseText, text)
     } catch (err) {
-      optimizerLog.warn('[optimize] Local LLM call failed, using original:', err)
-      return { optimizedText: text, changed: false, skippedReason: 'error' }
+      const msg = err instanceof Error ? err.message : String(err)
+      optimizerLog.warn('[optimize] Local LLM call failed, using original:', msg)
+      return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: msg }
     }
   }
 
@@ -235,26 +272,31 @@ class PromptOptimizerService {
   }
 
   /**
-   * Extract significant words (≥4 chars, lowercased, deduplicated) from text.
-   * Filters out common English stop words.
+   * Basic suffix stripping — covers 80% of false positives from morphological
+   * variations ("processing" → "process" matches "processed").
    */
-  private extractKeywords(text: string): Set<string> {
-    const STOP_WORDS = new Set([
-      'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will',
-      'would', 'could', 'should', 'their', 'there', 'about', 'which',
-      'when', 'what', 'your', 'also', 'more', 'some', 'make', 'like',
-      'them', 'then', 'than', 'each', 'into', 'only', 'very', 'just',
-      'does', 'here', 'much', 'well', 'back', 'even', 'most', 'made',
-      'after', 'those', 'these', 'other', 'being', 'over', 'such',
-      'before', 'between', 'under', 'using', 'based', 'please',
-      'ensure', 'include', 'following', 'currently',
-    ])
-    const words = text.toLowerCase().match(/[a-z]{4,}/g) ?? []
-    return new Set(words.filter(w => !STOP_WORDS.has(w)))
+  private stemWord(word: string): string {
+    return word
+      .replace(/(ation|tion|sion|ment|ness|ence|ance|ity|ous|ive|ing|ied|ies|ers|est|ful|less|able|ible)$/, '')
+      .replace(/(ed|ly|er|al)$/, '')
   }
 
   /**
-   * Check that the optimized prompt preserves ≥60% of the original's keywords.
+   * Extract significant words (≥4 chars, lowercased, stemmed, deduplicated) from text.
+   * Filters out common English stop words, then applies basic stemming.
+   */
+  private extractKeywords(text: string): Set<string> {
+    const words = text.toLowerCase().match(/[a-z]{4,}/g) ?? []
+    return new Set(
+      words
+        .filter(w => !STOP_WORDS.has(w))
+        .map(w => this.stemWord(w))
+        .filter(w => w.length >= 3)
+    )
+  }
+
+  /**
+   * Check that the optimized prompt preserves ≥40% of the original's keywords.
    * Returns the preservation ratio (0–1).
    */
   private keywordPreservation(original: string, optimized: string): number {
@@ -310,9 +352,9 @@ class PromptOptimizerService {
       return { optimizedText: original, changed: false, skippedReason: 'oversize' }
     }
 
-    // Guard: keyword drift — reject if <60% of original keywords survive
+    // Guard: keyword drift — reject if <40% of original keywords survive (with stemming)
     const preservation = this.keywordPreservation(original, optimized)
-    if (preservation < 0.6) {
+    if (preservation < 0.4) {
       optimizerLog.warn(
         `[optimize] Keyword drift (${(preservation * 100).toFixed(0)}% preserved), using original`
       )

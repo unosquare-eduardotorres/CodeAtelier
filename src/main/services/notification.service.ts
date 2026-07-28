@@ -78,6 +78,47 @@ export class NotificationService {
   }
 
   /**
+   * Fire a test notification to check macOS actually delivers it.
+   * Returns 'granted' | 'denied' | 'unsupported'.
+   *
+   * On macOS Ventura+, unsigned/non-notarized apps silently fail to show
+   * native notifications — Notification.isSupported() returns true but
+   * .show() is a no-op. This probe detects that scenario.
+   */
+  async probeNotificationSupport(): Promise<'granted' | 'denied' | 'unsupported'> {
+    if (!Notification.isSupported()) return 'unsupported'
+    if (process.platform !== 'darwin') return 'granted' // Windows/Linux don't have this issue
+
+    return new Promise((resolve) => {
+      const test = new Notification({ title: '', silent: true })
+      let resolved = false
+
+      test.on('show', () => {
+        if (!resolved) {
+          resolved = true
+          test.close()
+          resolve('granted')
+        }
+      })
+      test.on('failed', () => {
+        if (!resolved) {
+          resolved = true
+          resolve('denied')
+        }
+      })
+      // Timeout fallback — if neither fires in 2s, assume denied
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true
+          resolve('denied')
+        }
+      }, 2000)
+
+      test.show()
+    })
+  }
+
+  /**
    * Single dispatch point — determines delivery channel based on window state.
    * All IPC files should call this instead of safeWindowSend(COMPLETION_NOTIFICATION).
    */

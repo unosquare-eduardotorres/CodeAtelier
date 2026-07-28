@@ -290,7 +290,10 @@ export function* normalizeMessage(
             toolName,
             toolId: toolUseId,
             toolInput: storedInput,
-            content: resultContent
+            content: resultContent,
+            // Propagate the is_error flag from the CLI's tool_result block
+            // so downstream consumers (tool-chunk-processor) can detect denials.
+            ...(block.is_error ? { isError: true } : {})
           }
         }
       }

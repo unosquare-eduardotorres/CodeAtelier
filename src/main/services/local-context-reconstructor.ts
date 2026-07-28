@@ -64,6 +64,20 @@ export class LocalContextReconstructor {
         if (summary && charCount + summary.length <= maxChars) {
           parts.push(`## Previous Summary\n${summary}`)
           charCount += summary.length
+
+          // Warn when injecting a potentially stale summary — helps diagnose
+          // cases where the model receives outdated context.
+          try {
+            const lastMsgTime = messageRepository.getLastMessageTimestamp(conversationId)
+            if (lastMsgTime) {
+              const ageDays = (Date.now() - new Date(lastMsgTime).getTime()) / 86400000
+              if (ageDays > 3) {
+                log.warn(
+                  `[S12:stale-summary] conversationId=${conversationId} — injecting summary from ${Math.round(ageDays)}d-old conversation`
+                )
+              }
+            }
+          } catch { /* non-fatal */ }
         }
       } catch {
         /* non-fatal */

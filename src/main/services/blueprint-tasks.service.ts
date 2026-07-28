@@ -16,11 +16,13 @@ import { BlueprintTasksAdapter } from './role-adapters/blueprint/blueprint-tasks
 import { buildTasksGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, parseBlueprintTasks, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
+import { modelConfigService } from './model-config.service'
 import { blueprintReviewService } from './blueprint-review.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository
 } from '../db/repositories/blueprint.repository'
+import { conversationRepository } from '../db/repositories'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -114,7 +116,29 @@ export class BlueprintTasksService extends EventEmitter {
       // 6. Start session + send with timeout + stall watchdog + abort race
       await session.start(workspacePath, 'plan')
 
-      const syntheticConvId = `blueprint-tasks-${blueprintId}-${Date.now()}`
+      // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
+      const tasksPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
+      const priorConvId = tasksPhaseRec?.conversationId
+      let syntheticConvId: string
+      if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
+        const priorConv = conversationRepository.findById(priorConvId)
+        const currentProvider = modelConfigService.getProvider(workspacePath)
+        if (priorConv?.llmProvider === currentProvider) {
+          syntheticConvId = priorConvId
+          bpLog.info(`[startTasksPhase] Resuming conversation ${priorConvId} from failed attempt`)
+        } else {
+          syntheticConvId = `blueprint-tasks-${blueprintId}-${Date.now()}`
+          bpLog.info(`[startTasksPhase] Provider changed — falling back to fresh conversation`)
+        }
+      } else {
+        syntheticConvId = `blueprint-tasks-${blueprintId}-${Date.now()}`
+      }
+
+      // Persist conversation ID early so retries can find it
+      if (tasksPhaseRec) {
+        try { blueprintPhaseRepository.setConversation(tasksPhaseRec.id, syntheticConvId) }
+        catch { /* conversation may not exist yet in DB */ }
+      }
 
       let timeoutId: NodeJS.Timeout | undefined
       const timeoutPromise = new Promise<void>((_, reject) => {
@@ -165,6 +189,10 @@ export class BlueprintTasksService extends EventEmitter {
         }
 
         blueprintPhaseRepository.updateStatus(tasksPhase.id, 'complete')
+        // BP-RETRY-CONTEXT-CLEAR: Clear retry context on successful completion
+        if (tasksPhase.contextSnapshot) {
+          blueprintPhaseRepository.saveContextSnapshot(tasksPhase.id, null)
+        }
       }
 
       // 9. Persist tasks to DB (via the parsed blueprint-tasks JSON)
@@ -226,6 +254,10 @@ export class BlueprintTasksService extends EventEmitter {
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
       blueprintService.failPipeline(workspaceId, errorMsg)
+
+      // BP-RETRY-CONTEXT: Save structured retry context for next attempt
+      try { blueprintService.saveRetryContext(blueprintId, 'tasks', { error: errorMsg }) }
+      catch { /* best effort */ }
 
       const autoRetrying = blueprintService.scheduleAutoRetry({
         blueprintId, workspaceId, workspacePath, phase: 'tasks', error: errorMsg

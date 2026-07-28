@@ -22,7 +22,7 @@ import { memoryExtractionService } from './memory-extraction.service'
 import { memoryEngineService } from './memory-engine.service'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { codeGraphService } from './code-graph.service'
-import { omlxEmbeddingProvider } from './omlx-embedding.service'
+import { localEmbeddingProvider } from './local-embedding.provider'
 import { workspaceRepository } from '../db/repositories'
 import { readDocument } from './document-reader'
 import { chunkDocument, detectStrategy } from './document-chunker'
@@ -291,7 +291,7 @@ class MemoryBootstrapService {
     }
 
     // Kick embedding provider readiness (non-blocking)
-    omlxEmbeddingProvider.ensureEmbeddingReady().catch(() => {
+    localEmbeddingProvider.ensureEmbeddingReady().catch(() => {
       bsLog.info('[preflight] Embedding provider not ready — facts will be embeddingPending')
     })
 
@@ -349,7 +349,7 @@ class MemoryBootstrapService {
       try {
         const facts = await this.extractFromFile(
           workspaceId, workspacePath, filePath, signal,
-          { sourceType: 'document', tags: ['bootstrap', 'docs'] }
+          { sourceType: 'bootstrap', tags: ['bootstrap', 'docs'] }
         )
         totalFacts += facts
       } catch (err) {
@@ -384,7 +384,7 @@ class MemoryBootstrapService {
         'project-manifests',
         manifestContent,
         undefined,
-        { sourceType: 'document', tags: ['bootstrap', 'stack'] }
+        { sourceType: 'bootstrap', tags: ['bootstrap', 'stack'] }
       )
       onMsg(`Stack phase complete — ${facts} facts`)
       return facts
@@ -444,7 +444,7 @@ class MemoryBootstrapService {
       try {
         const facts = await this.extractFromFile(
           workspaceId, workspacePath, absFile, signal,
-          { sourceType: 'document', tags: ['bootstrap', 'architecture'] }
+          { sourceType: 'bootstrap', tags: ['bootstrap', 'architecture'] }
         )
         totalFacts += facts
       } catch (err) {
@@ -480,18 +480,18 @@ class MemoryBootstrapService {
             .map((h) => `${h.file} (refs=${h.referenceCount}, churn=${h.gitChurn}, score=${h.hotspotScore})`)
             .join('\n  ')
 
-          await memoryEngineService.writeFact({
+          const written = await memoryEngineService.writeFact({
             workspaceId,
             category: 'reference',
             title: 'High-risk hotspots (churn × coupling)',
             content: `These files have the highest combined reference count and git churn, making them risky to modify:\n  ${hotspotList}`,
             tags: ['bootstrap', 'history', 'hotspots'],
             scopePaths: hotspots.map((h) => h.file),
-            sourceType: 'document',
+            sourceType: 'bootstrap',
             sourceRef: 'bootstrap:history',
             workspacePath
           })
-          totalFacts++
+          if (written) totalFacts++
         }
       } catch (err) {
         bsLog.warn('[phaseHistory] Hotspot analysis failed:', err)
@@ -514,18 +514,18 @@ class MemoryBootstrapService {
           .map((p) => `${p.fileA} ↔ ${p.fileB} (${p.coChangeCount} co-changes)`)
           .join('\n  ')
 
-        await memoryEngineService.writeFact({
+        const written = await memoryEngineService.writeFact({
           workspaceId,
           category: 'reference',
           title: 'Implicit coupling — files that change together',
           content: `These file pairs are frequently committed together, suggesting logical coupling beyond imports:\n  ${pairList}`,
           tags: ['bootstrap', 'history', 'coupling'],
           scopePaths: pairs.flatMap((p) => [p.fileA, p.fileB]).slice(0, 20),
-          sourceType: 'document',
+          sourceType: 'bootstrap',
           sourceRef: 'bootstrap:history',
           workspacePath
         })
-        totalFacts++
+        if (written) totalFacts++
       }
     } catch (err) {
       bsLog.warn('[phaseHistory] Co-change analysis failed:', err)
@@ -581,18 +581,18 @@ class MemoryBootstrapService {
           .map((c) => c.join(' → '))
           .join('\n  ')
 
-        await memoryEngineService.writeFact({
+        const written = await memoryEngineService.writeFact({
           workspaceId,
           category: 'gotcha',
           title: `Circular dependencies detected (${cycles.length} cycles)`,
           content: `The following circular import chains exist:\n  ${cycleList}${cycles.length > 5 ? `\n  …and ${cycles.length - 5} more` : ''}`,
           tags: ['bootstrap', 'structure', 'circular-deps'],
           scopePaths: [...new Set(cycles.flat())].slice(0, 20),
-          sourceType: 'document',
+          sourceType: 'bootstrap',
           sourceRef: 'bootstrap:structure',
           workspacePath
         })
-        totalFacts++
+        if (written) totalFacts++
       }
     } catch (err) {
       bsLog.warn('[phaseStructure] Circular dependency check failed:', err)
@@ -907,7 +907,7 @@ class MemoryBootstrapService {
     workspacePath: string,
     filePath: string,
     signal: AbortSignal,
-    opts: { sourceType: 'document' | 'commit'; tags: string[] }
+    opts: { sourceType: 'document' | 'commit' | 'bootstrap'; tags: string[] }
   ): Promise<number> {
     // Read the file
     const readResult = await readDocument(filePath)

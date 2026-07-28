@@ -229,6 +229,24 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
       .run(handoffContext, conversationId)
   }
 
+  /**
+   * Update the frozen model config snapshot for a conversation.
+   * Used by per-chat model switching to re-route an existing conversation
+   * without affecting other chats.
+   */
+  updateModelSnapshot(
+    conversationId: string,
+    snapshot: ConversationModelSnapshot,
+    llmProvider: LLMProvider
+  ): Conversation | undefined {
+    const row = this.db()
+      .prepare(
+        `UPDATE conversations SET model_config_json = ?, llm_provider = ? WHERE id = ? RETURNING *`
+      )
+      .get(JSON.stringify(snapshot), llmProvider, conversationId) as ConversationRow | undefined
+    return row ? mapRow(row) : undefined
+  }
+
   /** Find all conversations sourced from a specific audit run. */
   findByAuditRunId(auditRunId: string): Conversation[] {
     const rows = this.db()
@@ -243,6 +261,7 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
       orderedIds.forEach((id, i) => stmt.run(i, id))
     })
   }
+
 }
 
 export const conversationRepository = new ConversationRepository()

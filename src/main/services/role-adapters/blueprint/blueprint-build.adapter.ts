@@ -1,7 +1,7 @@
 /**
  * Blueprint Build Adapter — write-mode agent that executes individual BUILD tasks.
  *
- * CLI config: --permission-mode auto, --effort xhigh, goalMode: enforce (/goal via stdin)
+ * CLI config: --permission-mode auto, --effort high, goalMode: enforce (/goal via stdin)
  *
  * Key difference from other blueprint adapters: this one overrides buildMcpConfig()
  * for full write access (Write, Edit, Bash), matching the mpa-builder.adapter.ts pattern.
@@ -15,6 +15,7 @@ import type { AgentRole, ModelAction } from '../../../../shared/types'
 import type { AdapterMcpContext, AdapterMcpResult } from '../../agent-session.types'
 import type { PhaseContext } from '../../../../shared/blueprint-types'
 import { MCP_TOOLS } from '../../../../shared/constants'
+import { appPreferenceRepository } from '../../../db/repositories/app-preference.repository'
 
 export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
   readonly role: AgentRole = 'blueprint-build'
@@ -43,13 +44,17 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
     // Build the base phase prompt with context variables injected
     const basePrompt = buildPhaseSystemPrompt('build', this.phaseContext)
 
-    // Append task-specific context so the agent knows exactly which task to implement
-    const taskSection = ['', '## Current Task', '', this.taskContext].join('\n')
-
-    // Append TOOL_PRIORITY_DIRECTIVE_BUILDER (write-mode variant).
+    // Phase 1.2: Maximize prompt-prefix cache hits.
+    // REORDERED: basePrompt + TOOL_PRIORITY_DIRECTIVE_BUILDER + taskSection
+    // All 21 tasks now share the longest identical prefix (basePrompt + tool directive).
+    // Only the task-specific section differs at the end, enabling KV-cache reuse
+    // across tasks within the same build (for providers that support prefix caching).
+    //
     // The base class's appendToolGuidance() will skip the generic directive
     // because it checks for '## Tool Priority' already present.
-    return basePrompt + taskSection + TOOL_PRIORITY_DIRECTIVE_BUILDER
+    const taskSection = ['', '## Current Task', '', this.taskContext].join('\n')
+
+    return basePrompt + TOOL_PRIORITY_DIRECTIVE_BUILDER + taskSection
   }
 
   getPhaseMessage(): string {
@@ -67,8 +72,15 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
   /**
    * BUILD gets full write access — overrides the read-only base config.
    * Follows the mpa-builder.adapter.ts pattern.
+   *
+   * Phase 1.3: When `leanBuildMcp` preference is enabled, semantic-search and
+   * code-analysis tools are omitted. This saves 2 node child processes per task
+   * (and ~2-4K tokens of tool schemas), at the cost of those capabilities.
+   * Gate defaults to OFF (full MCP) — flip after timing data confirms benefit.
    */
   override buildMcpConfig(ctx: AdapterMcpContext): AdapterMcpResult {
+    const lean = appPreferenceRepository.getAppPreferences().leanBuildMcp
+
     return {
       allowedTools: [
         // Full read/write
@@ -81,16 +93,18 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
         'WebSearch',
         'WebFetch',
         'ListDir',
-        // Code graph tools
+        // Code graph tools (always — primary intelligence layer)
         ...(this.repomapEnabled && ctx.workspaceId ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES : []),
-        // Semantic search
-        ...(this.semanticSearchEnabled && ctx.workspaceId
+        // Semantic search (skipped in lean mode — saves 1 process + ~600 token schema)
+        ...(!lean && this.semanticSearchEnabled && ctx.workspaceId
           ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
           : []),
-        // Git context
+        // Git context (always — commit protocol depends on it)
         ...MCP_TOOLS.GIT_CONTEXT._ALL_NAMES,
-        // Code analysis
-        ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+        // Code analysis (skipped in lean mode — saves 1 process + ~1.5K token schemas)
+        ...(!lean ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES : []),
+        // Memory tools — phase prompts instruct memory_search/memory_record usage
+        ...(ctx.workspaceId ? MCP_TOOLS.MEMORY._ALL_NAMES : [])
       ],
       disallowedTools: ['Agent', 'ToolSearch', 'AskUserQuestion', 'TodoWrite']
     }

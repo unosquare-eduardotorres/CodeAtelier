@@ -97,7 +97,7 @@ export class OpenCodeAgentWriter {
 
   private writeDaVinciAgent(agentDir: string, opts: OpenCodeAgentOptions): void {
     const model = `${opts.provider.providerId}/${opts.provider.modelId}`
-    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 50 : 30)
+    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 200 : 50)
     const steps = opts.mode === 'build' ? maxTurns : Math.min(maxTurns, 30)
 
     // ENH-2: Build per-agent permission block matching our plan/build mode
@@ -174,7 +174,7 @@ position. They are NOT duplicated here to avoid token waste.
   private writeSpecialistAgent(agentDir: string, opts: OpenCodeAgentOptions): void {
     const model = `${opts.provider.providerId}/${opts.provider.modelId}`
     const name = opts.specialistName ?? 'Project Specialist'
-    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 50 : 30)
+    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 200 : 50)
     const steps = opts.mode === 'build' ? maxTurns : Math.min(maxTurns, 30)
 
     // ENH-2: Per-agent permission block
