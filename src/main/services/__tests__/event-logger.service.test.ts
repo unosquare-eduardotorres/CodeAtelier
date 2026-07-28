@@ -67,13 +67,13 @@ if (env) {
         sessionId: 'sess-1',
         conversationId: convId,
         workspaceId: wsId,
-        agentId: 'da-vinci'
+        agentId: 'specialist'
       })
       const event = lastEvent()
       assert.equal(event.eventType, 'session.started')
       assert.equal(event.category, 'session')
-      assert.ok(event.message.includes('da-vinci'))
-      assert.equal(event.agentId, 'da-vinci')
+      assert.ok(event.message.includes('specialist'))
+      assert.equal(event.agentId, 'specialist')
     })
 
     test('logSessionFailed creates session.failed event with error data', () => {
@@ -82,7 +82,7 @@ if (env) {
         sessionId: 'sess-2',
         conversationId: convId,
         workspaceId: wsId,
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         error: 'Connection timeout'
       })
       const event = lastEvent()
@@ -338,7 +338,7 @@ if (env) {
     test('logAgentToolCall creates agent.tool_call event', () => {
       clearEvents()
       eventLoggerService.logAgentToolCall({
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         conversationId: convId,
         toolName: 'Write',
         toolCallNumber: 5
@@ -358,7 +358,7 @@ if (env) {
     test('logAgentTimeout creates agent.timeout event', () => {
       clearEvents()
       eventLoggerService.logAgentTimeout({
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         conversationId: convId,
         elapsedMs: 300000,
         toolCallCount: 45
@@ -413,7 +413,7 @@ if (env) {
       clearEvents()
       // Insert a fresh event
       eventLoggerService.logSessionStarted({
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         workspaceId: wsId
       })
       const pruned = eventLoggerService.prune(30)
@@ -430,7 +430,7 @@ if (env) {
          VALUES ('old.event', 'session', 'ancient', '{}', datetime('now', '-60 days'))`
       ).run()
       // And a recent one
-      eventLoggerService.logSessionStarted({ agentId: 'da-vinci', workspaceId: wsId })
+      eventLoggerService.logSessionStarted({ agentId: 'specialist', workspaceId: wsId })
 
       const total = eventRepository.getRecent(100).length
       assert.ok(total >= 2, 'should have both old and new events')
@@ -464,11 +464,11 @@ if (env) {
       const sessionId = 'seq-test-session'
       eventLoggerService.logSessionStarted({
         sessionId,
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         workspaceId: wsId
       })
       eventLoggerService.logAgentToolCall({
-        agentId: 'da-vinci',
+        agentId: 'specialist',
         toolName: 'Read',
         toolCallNumber: 1
       })

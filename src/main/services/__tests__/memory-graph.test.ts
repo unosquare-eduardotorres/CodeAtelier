@@ -30,6 +30,8 @@ function makeFact(overrides: Partial<MemoryFact> & { id: string }): MemoryFact {
     lastConfirmedAt: null,
     status: 'active',
     supersededBy: null,
+    mergedInto: null,
+    volatile: false,
     sourceType: 'session',
     sourceRef: null,
     embeddingPending: false,

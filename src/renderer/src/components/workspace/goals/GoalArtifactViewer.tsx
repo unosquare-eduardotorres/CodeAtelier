@@ -8,6 +8,12 @@ const STATUS_ICONS: Record<string, JSX.Element> = {
   missing: <XCircle size={12} className="text-danger" />
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  implemented: 'Implemented',
+  partial: 'Partial',
+  missing: 'Missing'
+}
+
 interface GoalArtifactViewerProps {
   report: MpaVerifyReport
 }
@@ -102,7 +108,7 @@ export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps):
               <div className="flex items-center gap-2 mb-1">
                 {STATUS_ICONS[issue.status]}
                 <span className="text-xs font-mono text-text-muted">{issue.planItemId}</span>
-                <span className="text-xs text-text-primary">{issue.status}</span>
+                <span className="text-xs text-text-primary">{STATUS_LABELS[issue.status] ?? issue.status}</span>
               </div>
               <p className="text-xs text-text-secondary">{issue.detail}</p>
               {issue.filesChecked.length > 0 && (

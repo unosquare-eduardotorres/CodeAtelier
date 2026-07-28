@@ -13,7 +13,7 @@ import { requireObject, requireString, optionalString } from './validate-args'
  *
  * ─── Active handlers (wired to renderer) ───────────────────────────────────
  *
- *   ELICITATION_RESPONSE       — generalist MCP elicitation flow
+ *   ELICITATION_RESPONSE       — agent MCP elicitation flow
  *   SDK_ELICITATION_RESPONSE   — elicitation.service enriched flow
  *   CHAT_ASK_USER_RESPOND      — ask_user response routing
  *   SDK_STOP_TASK              — stop a SubAgent (not available without SDK)
@@ -25,7 +25,7 @@ import { requireObject, requireString, optionalString } from './validate-args'
 export function registerSdkControlIpc(): void {
   // ── Elicitation ────────────────────────────────────────────────────────
 
-  // Generalist MCP elicitation response — forwarded to the generalist's
+  // Agent MCP elicitation response — forwarded to the agent's
   // active session via an event emitter.
   ipcMain.handle(IPC_CHANNELS.ELICITATION_RESPONSE, async (event, args: unknown) => {
     validateSender(event)

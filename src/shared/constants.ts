@@ -1,5 +1,4 @@
 import type {
-  AgentRole,
   GrillTrackId,
   GrillTrack,
   AuditTrackId,
@@ -30,16 +29,15 @@ export const IPC_CHANNELS = {
   CHAT_DELETE_CONVERSATION: 'chat:deleteConversation',
   CHAT_UPDATE_MODE: 'chat:updateMode',
   CHAT_UPDATE_EFFORT: 'chat:updateEffort',
-  CHAT_UPDATE_PERSONA: 'chat:updatePersona',
   CHAT_RENAME: 'chat:renameConversation',
   CHAT_STOP: 'chat:stop',
   CHAT_COMPACT: 'chat:compact',
-  /** Swap DaVinci out for the workspace's ready Project Specialist — triggered by user accepting the swap proposal */
-  CHAT_SWAP_TO_SPECIALIST: 'chat:swapToSpecialist',
   CHAT_ASK_QUESTION: 'chat:askQuestion',
   CHAT_COMPLETE: 'chat:complete',
   CHAT_CLOSE: 'chat:close',
   CHAT_GET_FILE_CHANGES: 'chat:getFileChanges',
+  CHAT_GET_TODOS: 'chat:getTodos',
+  PLAN_GET_PHASE_PROGRESS: 'plan:getPhaseProgress',
   CHAT_SWITCH_BRANCH: 'chat:switchBranch',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
@@ -68,6 +66,12 @@ export const IPC_CHANNELS = {
   PERMISSION_RESPONSE: 'permission:response',
   /** Main → Renderer: important completion or failure from a background workspace */
   COMPLETION_NOTIFICATION: 'workspace:completion',
+  /** Main → Renderer: navigate to workspace + page after OS notification click */
+  NOTIFICATION_NAVIGATE: 'notification:navigate',
+  /** Renderer → Main: probe macOS notification support (unsigned build detection) */
+  NOTIFICATION_PROBE: 'notification:probe',
+  /** Main → Renderer: navigate to workspace/page after tray menu click */
+  TRAY_NAVIGATE: 'tray:navigate',
 
   // Dialog
   DIALOG_SELECT_DIRECTORY: 'dialog:selectDirectory',
@@ -178,6 +182,9 @@ export const IPC_CHANNELS = {
   MEMORY_EMBEDDING_BACKFILL: 'memory:embedding:backfill',
   MEMORY_EMBEDDING_PROGRESS: 'memory:embedding:progress',
   MEMORY_DEDUP_SCAN: 'memory:dedup:scan',
+  MEMORY_DEDUP_AUTORESOLVE: 'memory:dedup:autoresolve',
+  MEMORY_CONSOLIDATE: 'memory:consolidate',
+  MEMORY_READ_CLAUDE_MD: 'memory:readClaudeMd',
 
   // Memory feed (retained: doc feed + CLAUDE.md regeneration)
   MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
@@ -322,6 +329,7 @@ export const IPC_CHANNELS = {
   // AI Subscriptions
   SUBSCRIPTION_VALIDATE_ALL: 'subscription:validateAll',
   SUBSCRIPTION_CHECK_CLAUDE_CLI: 'subscription:checkClaudeCli',
+  SUBSCRIPTION_CHECK_OPENCODE_CLI: 'subscription:checkOpenCodeCli',
   SUBSCRIPTION_AUTO_CONFIGURE: 'subscription:autoConfigure',
 
   // Embedding provider (oMLX — user must have oMLX running with an embedding model)
@@ -422,6 +430,7 @@ export const IPC_CHANNELS = {
   BUG_UPDATE_NOTE: 'bug:updateNote',
   BUG_COUNT: 'bug:count',
   BUG_NEW: 'bug:new',
+  BUG_EXPORT_MARKDOWN: 'bug:exportMarkdown',
 
   // oMLX
   OMLX_CHECK_STATUS: 'omlx:checkStatus',
@@ -451,6 +460,7 @@ export const IPC_CHANNELS = {
   AUDIT_DELETE_RUN: 'audit:deleteRun',
   AUDIT_GENERATE_PLAN: 'audit:generatePlan',
   AUDIT_GET_PLANS: 'audit:getPlans',
+  AUDIT_HANDOFF_TO_CHAT: 'audit:handoffToChat',
 
   // Plan Hub (unified plan registry)
   PLAN_GET_ALL: 'plan:getAll',
@@ -458,6 +468,7 @@ export const IPC_CHANNELS = {
   PLAN_UPDATE_STATUS: 'plan:updateStatus',
   PLAN_DELETE: 'plan:delete',
   PLAN_IMPORT: 'plan:import',
+  PLAN_GET_STATUS_HISTORY: 'plan:getStatusHistory',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
@@ -487,6 +498,9 @@ export const IPC_CHANNELS = {
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
   CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
   CHAT_UPDATE_TONE: 'chat:updateTone',
+  CHAT_UPDATE_ROUTING: 'chat:updateRouting',
+
+  CHAT_SET_PLAN_ACTION: 'chat:setPlanAction',
 
   // ask_user response — renderer → main → IPC bridge → control-actions MCP server
   CHAT_ASK_USER_RESPOND: 'chat:askUserRespond',
@@ -595,6 +609,7 @@ export const IPC_CHANNELS = {
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
   BLUEPRINT_SAVE_CONSTITUTION: 'blueprint:saveConstitution',
   BLUEPRINT_RETRY_PHASE: 'blueprint:retryPhase',
+  BLUEPRINT_ACKNOWLEDGE_REVIEW: 'blueprint:acknowledgeReview',
 
   // Blueprint snapshot sync (M2 — whole-state snapshot)
   BLUEPRINT_STATE_SYNC: 'blueprint:stateSync',
@@ -604,6 +619,10 @@ export const IPC_CHANNELS = {
 
   // Blueprint snapshot (M7 — pull-based seed on mount/workspace switch)
   BLUEPRINT_GET_SNAPSHOT: 'blueprint:getSnapshot',
+
+  // Blueprint preflight (environment validation before BUILD)
+  BLUEPRINT_PREFLIGHT_RUN: 'blueprint:preflightRun',
+  BLUEPRINT_PREFLIGHT_RESULT: 'blueprint:preflightResult',
 
   // E2E Testing
   TESTING_LIST_SCENARIOS: 'testing:listScenarios',
@@ -615,18 +634,28 @@ export const IPC_CHANNELS = {
   TESTING_GET_RUNS: 'testing:getRuns',
   TESTING_GET_RUN_RESULTS: 'testing:getRunResults',
   TESTING_GET_RESULT_DETAIL: 'testing:getResultDetail',
-  TESTING_PROGRESS: 'testing:progress'
+  TESTING_PROGRESS: 'testing:progress',
+
+  // Unified Handoff Protocol
+  HANDOFF_CREATE: 'handoff:create',
+  HANDOFF_EXECUTE: 'handoff:execute',
+  HANDOFF_ACCEPT: 'handoff:accept',
+  HANDOFF_REJECT: 'handoff:reject',
+  HANDOFF_GET_HISTORY: 'handoff:getHistory',
+  HANDOFF_GET_CHAIN: 'handoff:getChain',
+  HANDOFF_PREVIEW: 'handoff:preview'
 
 } as const
+
+/** Attribution trailer appended to commits made through the app UI. */
+export const COMMIT_ATTRIBUTION = '✨ Generated with Code Atelier'
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
 export const ACTIVATION_MODEL_ID = 'claude-haiku-4-5-20251001' as const
 
 /**
- * The well-known agent ID for the **Da Vinci** (default Specialist) agent.
- *
- * Layer 2 (migration 69) rewrote all persisted `'generalist'` values to
- * `'da-vinci'`; the constant now matches.
+ * @deprecated Use 'specialist' directly. Kept for backward-compat in older DB rows
+ * and migration code. New code should not reference this constant.
  */
 export const DA_VINCI_AGENT_ID = 'da-vinci' as const
 
@@ -685,8 +714,8 @@ export const AVAILABLE_MODELS = [
     description: 'Balanced performance'
   },
   {
-    id: 'claude-opus-4-8',
-    label: 'Opus 4.8',
+    id: 'claude-opus-5',
+    label: 'Opus 5',
     tier: 'opus' as const,
     description: 'Most capable'
   },
@@ -700,36 +729,38 @@ export const AVAILABLE_MODELS = [
 
 /** Default model for each configurable action */
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
-  'da-vinci': 'claude-opus-4-8',
-  'da-vinci:plan': 'claude-opus-4-8',
-  'da-vinci:build': 'claude-sonnet-5',
-  'project-specialist': 'claude-opus-4-8',
-  'project-specialist:plan': 'claude-opus-4-8',
-  'project-specialist:build': 'claude-sonnet-5',
+  specialist: 'claude-opus-5',
+  'specialist:plan': 'claude-opus-5',
+  'specialist:build': 'claude-sonnet-5',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-5',
-  'specialist:complex': 'claude-opus-4-8',
+  'specialist:complex': 'claude-opus-5',
   memoryFeed: 'claude-haiku-4-5-20251001',
   activation: 'claude-haiku-4-5-20251001',
   haiku: 'claude-haiku-4-5-20251001',
-  audit: 'claude-opus-4-8',
-  grill: 'claude-opus-4-8',
-  'council-member': 'claude-opus-4-8',
-  'council-chairman': 'claude-opus-4-8',
-  'grill:plan': 'claude-opus-4-8',
-  'mpa:decompose': 'claude-opus-4-8',
+  audit: 'claude-opus-5',
+  grill: 'claude-opus-5',
+  'council-member': 'claude-opus-5',
+  'council-chairman': 'claude-opus-5',
+  'grill:plan': 'claude-opus-5',
+  'mpa:decompose': 'claude-opus-5',
 
   // Blueprint phase actions
-  'blueprint:specify': 'claude-opus-4-8',
+  'blueprint:specify': 'claude-opus-5',
   'blueprint:clarify': 'claude-sonnet-5',
-  'blueprint:plan': 'claude-opus-4-8',
-  'blueprint:tasks': 'claude-opus-4-8',
-  'blueprint:review': 'claude-opus-4-8',
+  'blueprint:plan': 'claude-opus-5',
+  'blueprint:tasks': 'claude-opus-5',
+  'blueprint:review': 'claude-opus-5',
   'blueprint:build': 'claude-sonnet-5',
-  'blueprint:verify': 'claude-opus-4-8',
+  'blueprint:verify': 'claude-opus-5',
 
   // Prompt optimization
-  'prompt:optimize': 'claude-haiku-4-5-20251001'
+  'prompt:optimize': 'claude-haiku-4-5-20251001',
+
+  // Background one-shot actions
+  'commit-message': 'claude-haiku-4-5-20251001',
+  'pr-description': 'claude-haiku-4-5-20251001',
+  'condense': 'claude-haiku-4-5-20251001'
 } as const
 
 // ── Role Groups (retained for Phase 2 role assignments) ──
@@ -748,12 +779,9 @@ export const ACTION_GROUPS: ActionGroup[] = [
     description: 'Plan & Build mode conversations',
     providerConstrained: true,
     actions: [
-      'da-vinci',
-      'da-vinci:plan',
-      'da-vinci:build',
-      'project-specialist',
-      'project-specialist:plan',
-      'project-specialist:build'
+      'specialist',
+      'specialist:plan',
+      'specialist:build'
     ]
   },
   {
@@ -772,10 +800,10 @@ export const ACTION_GROUPS: ActionGroup[] = [
     ]
   },
   {
-    id: 'health',
-    label: 'Health & Audit',
+    id: 'quality',
+    label: 'Quality & Review',
     icon: '🩺',
-    description: 'Grill sessions and audit tracks',
+    description: 'Audit and adversarial grill sessions',
     actions: ['audit', 'grill', 'grill:plan']
   },
   {
@@ -786,6 +814,13 @@ export const ACTION_GROUPS: ActionGroup[] = [
     actions: ['council-member', 'council-chairman']
   },
   {
+    id: 'background',
+    label: 'Background Tasks',
+    icon: '⚙️',
+    description: 'Memory extraction, prompt optimization, and lightweight tasks',
+    actions: ['memoryFeed', 'activation', 'haiku', 'prompt:optimize', 'commit-message', 'pr-description', 'condense']
+  },
+  {
     id: 'specialist',
     label: 'Specialist Routing',
     icon: '🎯',
@@ -794,12 +829,12 @@ export const ACTION_GROUPS: ActionGroup[] = [
     actions: ['specialist:simple', 'specialist:moderate', 'specialist:complex']
   },
   {
-    id: 'background',
-    label: 'Background Tasks',
-    icon: '⚙️',
-    description: 'Memory feeds, activation, and lightweight tasks',
+    id: 'decomposition',
+    label: 'Decomposition',
+    icon: '🧩',
+    description: 'MPA goal decomposition',
     advanced: true,
-    actions: ['memoryFeed', 'activation', 'haiku', 'mpa:decompose', 'prompt:optimize']
+    actions: ['mpa:decompose']
   }
 ] as const
 
@@ -808,7 +843,7 @@ export const ACTION_GROUPS: ActionGroup[] = [
 /**
  * Maps AgentRoles whose ModelAction doesn't follow the `${role}:${mode}` convention.
  * Blueprint phases map to `blueprint:*` actions (mode is irrelevant — each phase IS its action).
- * MPA phases ride on da-vinci plan/build tiers.
+ * MPA phases ride on specialist plan/build tiers.
  */
 const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./types').ModelAction>> = {
   'blueprint-specify': 'blueprint:specify',
@@ -818,24 +853,29 @@ const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./
   'blueprint-review': 'blueprint:review',
   'blueprint-build': 'blueprint:build',
   'blueprint-verify': 'blueprint:verify',
+  // Mode-independent session roles (always plan mode)
+  'audit': 'audit',
+  'grill': 'grill',
+  'council-member': 'council-member',
+  'council-chairman': 'council-chairman',
 }
 
 /**
- * MPA roles use da-vinci tiers for model resolution.
+ * MPA roles use specialist tiers for model resolution.
  * Planner/verifier share plan-tier; builder uses build-tier.
  */
 const MPA_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, { plan: import('./types').ModelAction; build: import('./types').ModelAction }>> = {
-  'mpa-planner': { plan: 'da-vinci:plan', build: 'da-vinci:plan' },
-  'mpa-builder': { plan: 'da-vinci:build', build: 'da-vinci:build' },
-  'mpa-verifier': { plan: 'da-vinci:plan', build: 'da-vinci:plan' },
+  'mpa-planner': { plan: 'specialist:plan', build: 'specialist:plan' },
+  'mpa-builder': { plan: 'specialist:build', build: 'specialist:build' },
+  'mpa-verifier': { plan: 'specialist:plan', build: 'specialist:plan' },
 }
 
 /**
  * Resolve the correct ModelAction for a given AgentRole and execution mode.
  *
  * - Blueprint phases → fixed `blueprint:*` action (mode-independent)
- * - MPA phases → da-vinci plan/build tiers
- * - Standard roles (da-vinci, project-specialist, etc.) → `${role}:${mode}`
+ * - MPA phases → specialist plan/build tiers
+ * - Standard roles (specialist, etc.) → `${role}:${mode}`
  */
 export function resolveModelAction(
   role: import('./types').AgentRole,
@@ -845,7 +885,7 @@ export function resolveModelAction(
   const fixed = FIXED_ROLE_ACTIONS[role]
   if (fixed) return fixed
 
-  // MPA phases map to da-vinci tiers
+  // MPA phases map to specialist tiers
   const mpa = MPA_ROLE_ACTIONS[role]
   if (mpa) return mpa[isBuildMode ? 'build' : 'plan']
 
@@ -863,10 +903,12 @@ export function resolveModelAction(
 export function resolvePromptVerbosity(model: string): import('./types').PromptVerbosity {
   // Fable 5 — frontier model, lean prompts
   if (model.startsWith('claude-fable-')) return 'lean'
-  // Opus 4.8+ can follow compressed instructions reliably
+  // Opus 5+ — lean prompts
+  if (model === 'claude-opus-5') return 'lean'
+  // Opus 4.8 (legacy) also gets lean
   if (model === 'claude-opus-4-8') return 'lean'
-  // Future-proof: any Opus newer than 4.8 also gets lean
-  if (model.startsWith('claude-opus-') && model > 'claude-opus-4-8') return 'lean'
+  // Future-proof: any Opus newer than 5 also gets lean
+  if (model.startsWith('claude-opus-') && model > 'claude-opus-5') return 'lean'
   // Sonnet 4.6+ follows lean instructions effectively — saves ~800-1200 tokens/turn
   if (model.startsWith('claude-sonnet-') && model >= 'claude-sonnet-4-6') return 'lean'
   return 'full'
@@ -879,6 +921,7 @@ export function resolvePromptVerbosity(model: string): import('./types').PromptV
  * Opus 4.8+ includes 1M at standard pricing. Sonnet models via context-1m beta.
  */
 export const CONTEXT_1M_SUPPORTED_MODELS = [
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-fable-5',
   'claude-sonnet-5',
@@ -902,6 +945,7 @@ export function supportsContext1M(model: string): boolean {
   return (
     (CONTEXT_1M_SUPPORTED_MODELS as readonly string[]).includes(model) ||
     model.startsWith('claude-sonnet') ||
+    model === 'claude-opus-5' ||
     model === 'claude-opus-4-8'
   )
 }
@@ -916,39 +960,21 @@ export const MODEL_ACTIONS_META: Record<
     section: 'agent' | 'specialist' | 'background'
   }
 > = {
-  'da-vinci': {
-    label: 'Da Vinci',
-    description: 'Default chat agent that handles conversations',
+  specialist: {
+    label: 'Agent',
+    description: 'Chat agent that handles conversations',
     icon: '💬',
     section: 'agent'
   },
-  'da-vinci:plan': {
-    label: 'Da Vinci (Plan Mode)',
+  'specialist:plan': {
+    label: 'Agent (Plan Mode)',
     description: 'Model for thinking, planning, and general Q&A',
     icon: '🧠',
     section: 'agent'
   },
-  'da-vinci:build': {
-    label: 'Da Vinci (Build Mode)',
+  'specialist:build': {
+    label: 'Agent (Build Mode)',
     description: 'Model for code writing and execution orchestration',
-    icon: '🔨',
-    section: 'agent'
-  },
-  'project-specialist': {
-    label: 'Project Specialist',
-    description: 'Per-workspace specialist tailored to the project\u2019s stack',
-    icon: '🔧',
-    section: 'agent'
-  },
-  'project-specialist:plan': {
-    label: 'Project Specialist (Plan Mode)',
-    description: 'Per-workspace specialist — planning & analysis',
-    icon: '🧠',
-    section: 'agent'
-  },
-  'project-specialist:build': {
-    label: 'Project Specialist (Build Mode)',
-    description: 'Per-workspace specialist — code writing & execution',
     icon: '🔨',
     section: 'agent'
   },
@@ -1071,6 +1097,24 @@ export const MODEL_ACTIONS_META: Record<
     description: 'Rewrites chat prompts for clarity before sending',
     icon: '✨',
     section: 'background'
+  },
+  'commit-message': {
+    label: 'Commit Message',
+    description: 'Generate git commit messages from diffs',
+    icon: '📦',
+    section: 'background'
+  },
+  'pr-description': {
+    label: 'PR Description',
+    description: 'Generate pull request descriptions from conversation context',
+    icon: '📝',
+    section: 'background'
+  },
+  condense: {
+    label: 'Conversation Condense',
+    description: 'Compress conversation context before compaction',
+    icon: '🗜️',
+    section: 'background'
   }
 } as const
 
@@ -1083,7 +1127,7 @@ export const MODEL_ACTIONS_META: Record<
 export const THINKING_BUDGETS = {
   haiku: '5000',
   sonnet: '', // empty = adaptive-only (Sonnet 5 removed budget_tokens — 400 error if passed)
-  opus: '' // empty = adaptive-only (Opus 4.7+ removed budget_tokens — 400 error if passed)
+  opus: '' // empty = adaptive-only (Opus 5 uses adaptive thinking; budget_tokens not supported)
 } as const
 
 /**
@@ -1093,7 +1137,7 @@ export const THINKING_BUDGETS = {
 export const COMPLEXITY_TO_EFFORT = {
   simple: 'low',
   moderate: 'medium',
-  complex: 'high' // Opus 4.8 at 'high' ≥ 4.7 at 'xhigh'; CLI 2.1+ supports all 5 levels natively
+  complex: 'high' // Opus 5 at 'high' — same default as API; CLI 2.1+ supports all 5 levels natively
 } as const satisfies Record<string, 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
 
 /**
@@ -1122,26 +1166,12 @@ export const BUDGET_CAP_MODE_MULTIPLIERS = {
 /**
  * Maps an `AgentRole` + mode into the canonical `ModelAction` key used by
  * `DEFAULT_MODEL_CONFIG` / `workspace.settings.modelOverrides`.
- *
- * Da Vinci historically uses `'generalist:*'` keys (stable DB contract); the
- * function centralizes that mapping so adapters can think in AgentRole terms
- * without knowing about the legacy labels. Project Specialists use the
- * `'project-specialist:*'` keys that were added for the Phase 2 refactor.
  */
 export function getModelActionForRole(
-  role: AgentRole,
+  _role: 'specialist',
   mode: 'plan' | 'build' | 'danger'
 ): ModelAction {
-  if (role === 'da-vinci') {
-    // Danger mode uses the same model tier as build
-    return mode === 'build' || mode === 'danger' ? 'da-vinci:build' : 'da-vinci:plan'
-  }
-  if (role === 'audit') {
-    return 'da-vinci:plan' // Audits always use plan-tier model
-  }
-  return mode === 'build' || mode === 'danger'
-    ? 'project-specialist:build'
-    : 'project-specialist:plan'
+  return mode === 'build' || mode === 'danger' ? 'specialist:build' : 'specialist:plan'
 }
 
 /** Maximum skill file size in bytes (500 KB) */
@@ -1833,7 +1863,13 @@ export const MCP_TOOLS = {
   }),
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
-    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user')
+    ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
+    PERMISSION_PROMPT: mcpTool('control-actions', 'permission_prompt', 'Control · permission_prompt'),
+    EMIT_PHASE_PROGRESS: mcpTool(
+      'control-actions',
+      'emit_phase_progress',
+      'Control · emit_phase_progress'
+    )
   }),
   MEMORY: mcpServer('memory', {
     MEMORY_SEARCH: mcpTool('memory', 'memory_search', 'Memory · memory_search'),
@@ -1942,8 +1978,8 @@ export const OLLAMA_DEFAULT_PORT = 11434 as const
 export const OMLX_DEFAULT_PORT = 8000 as const
 
 /**
- * Skill filenames that are ALWAYS injected into every prompt — DaVinci,
- * Project Specialist, and local LLM paths. These are foundational behavioral
+ * Skill filenames that are ALWAYS injected into every prompt — specialist
+ * and local LLM paths. These are foundational behavioral
  * guidelines, not domain-specific knowledge.
  */
 export const BASELINE_SKILL_FILENAMES = ['coding-discipline'] as const

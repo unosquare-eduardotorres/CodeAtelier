@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Pencil, GripVertical, Compass, Hammer, ShieldAlert } from 'lucide-react'
+import { Trash2, Pencil, GripVertical, Compass, Hammer, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { Conversation, ConversationMode, ContextUsage } from '../../../../shared/types'
 import ContextBadge from './ContextBadge'
 
@@ -263,6 +263,12 @@ export default function ChatItem({
           </span>
           {contextUsage && contextUsage.percentage > 0 && (
             <ContextBadge percentage={contextUsage.percentage} level={contextUsage.level} compact />
+          )}
+          {conversation.sourceAuditRunId && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[9px] font-medium rounded bg-success/10 text-success">
+              <ShieldCheck size={9} />
+              Audit
+            </span>
           )}
         </div>
       </div>

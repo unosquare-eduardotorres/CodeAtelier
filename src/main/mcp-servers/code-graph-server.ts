@@ -27,6 +27,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
+import { withErrorBoundary } from './tool-error-handler'
 
 // ── Environment ──
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
@@ -47,6 +48,8 @@ type CodeGraphServices = {
 }
 
 let readyPromise: Promise<CodeGraphServices> | null = null
+let retryCount = 0
+const MAX_RETRIES = 3
 
 /**
  * Memoized lazy init — imports code graph service and repositories.
@@ -58,12 +61,29 @@ let readyPromise: Promise<CodeGraphServices> | null = null
 function ensureReady(): Promise<CodeGraphServices> {
   if (!readyPromise) {
     readyPromise = (async (): Promise<CodeGraphServices> => {
+      // Pre-flight: verify native module compatibility before importing DB-backed services
+      const { checkNativeModuleCompat } = await import('./native-module-check')
+      const compat = checkNativeModuleCompat()
+      if (!compat.ok) {
+        throw new Error(compat.error ?? 'Native module check failed')
+      }
       const { codeGraphService } = await import('../services/code-graph.service')
       const { codeGraphTagRepository } = await import('../db/repositories/code-graph-tag.repository')
       const { codeGraphEdgeRepository } = await import('../db/repositories/code-graph-edge.repository')
       console.error('[code-graph-server] Services initialized')
       return { codeGraphService, codeGraphTagRepository, codeGraphEdgeRepository }
     })()
+
+    // Clear cached promise on rejection so next call can retry
+    readyPromise.catch((err) => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++
+        console.error(`[code-graph-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`, err)
+        readyPromise = null // Allow next invocation to retry
+      } else {
+        console.error(`[code-graph-server] Init failed after ${MAX_RETRIES} retries — giving up:`, err)
+      }
+    })
   }
   return readyPromise
 }
@@ -88,7 +108,7 @@ function registerToolSchemas(): void {
       priorityFiles: z.array(z.string()).optional(),
       priorityIdentifiers: z.array(z.string()).optional()
     },
-    async (args) => {
+    withErrorBoundary('graph_map', async (args) => {
       const { codeGraphService } = await ensureReady()
       const result = await codeGraphService.getRepoMap(WORKSPACE_ID, WORKSPACE_PATH, {
         focusFiles: args.focusFiles,
@@ -106,7 +126,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── search_identifiers ──
@@ -119,7 +139,7 @@ function registerToolSchemas(): void {
       includeDefinitions: z.boolean().optional().default(true),
       includeReferences: z.boolean().optional().default(true)
     },
-    async (args) => {
+    withErrorBoundary('search_identifiers', async (args) => {
       const { codeGraphService } = await ensureReady()
       const results = await codeGraphService.searchIdentifiers(
         WORKSPACE_ID,
@@ -136,7 +156,7 @@ function registerToolSchemas(): void {
           { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ results })) }
         ]
       }
-    }
+    })
   )
 
   // ── find_dead_code ──
@@ -148,7 +168,7 @@ function registerToolSchemas(): void {
       maxResults: z.number().int().min(1).max(500).optional().default(50),
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
-    async (args) => {
+    withErrorBoundary('find_dead_code', async (args) => {
       const { codeGraphService } = await ensureReady()
       const results = await codeGraphService.findDeadCode(WORKSPACE_ID, WORKSPACE_PATH, {
         path: args.path,
@@ -175,7 +195,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── file_outline ──
@@ -185,7 +205,7 @@ function registerToolSchemas(): void {
     {
       filePath: z.string().describe('Relative file path within the workspace')
     },
-    async (args) => {
+    withErrorBoundary('file_outline', async (args) => {
       const { codeGraphTagRepository } = await ensureReady()
       const tags = codeGraphTagRepository
         .findByFile(WORKSPACE_ID, args.filePath)
@@ -205,7 +225,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── find_callers ──
@@ -218,7 +238,7 @@ function registerToolSchemas(): void {
       deduplicate: z.boolean().optional().default(true).describe('Remove duplicate results (default: true)'),
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
-    async (args) => {
+    withErrorBoundary('find_callers', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
       let callers = codeGraphEdgeRepository
         .findCallersOf(WORKSPACE_ID, args.symbolName)
@@ -261,7 +281,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── find_callees ──
@@ -273,7 +293,7 @@ function registerToolSchemas(): void {
       maxResults: z.number().int().min(1).max(500).optional().default(50),
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
-    async (args) => {
+    withErrorBoundary('find_callees', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
       const callees = codeGraphEdgeRepository
         .findCalleesOf(WORKSPACE_ID, args.symbolName)
@@ -307,7 +327,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── find_references ──
@@ -320,7 +340,7 @@ function registerToolSchemas(): void {
       deduplicate: z.boolean().optional().default(true).describe('Remove duplicate results (default: true)'),
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
-    async (args) => {
+    withErrorBoundary('find_references', async (args) => {
       const { codeGraphTagRepository } = await ensureReady()
       let refs = codeGraphTagRepository.searchByName(WORKSPACE_ID, args.symbolName, {
         maxResults: args.maxResults,
@@ -361,7 +381,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── file_dependencies ──
@@ -371,7 +391,7 @@ function registerToolSchemas(): void {
     {
       filePath: z.string().describe('Relative file path to analyze')
     },
-    async (args) => {
+    withErrorBoundary('file_dependencies', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
       const deps = codeGraphEdgeRepository.findDependenciesOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
@@ -389,7 +409,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── file_dependents ──
@@ -400,7 +420,7 @@ function registerToolSchemas(): void {
       filePath: z.string().describe('Relative file path to find dependents of'),
       deduplicate: z.boolean().optional().default(true).describe('Remove duplicate file entries per edge type (default: true)')
     },
-    async (args) => {
+    withErrorBoundary('file_dependents', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
       const deps = codeGraphEdgeRepository.findDependentsOf(WORKSPACE_ID, args.filePath)
       const grouped: Record<string, string[]> = {}
@@ -424,7 +444,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── symbol_hotspots ──
@@ -435,7 +455,7 @@ function registerToolSchemas(): void {
       maxResults: z.number().int().min(1).max(500).optional().default(30),
       path: z.string().optional().describe('Filter to symbols in files under this directory')
     },
-    async (args) => {
+    withErrorBoundary('symbol_hotspots', async (args) => {
       const { codeGraphTagRepository } = await ensureReady()
       const hotspots = codeGraphTagRepository.findSymbolHotspots(WORKSPACE_ID, {
         maxResults: args.maxResults,
@@ -449,7 +469,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── coupling_analysis ──
@@ -461,7 +481,7 @@ function registerToolSchemas(): void {
       path: z.string().optional().describe('Filter to files under this directory'),
       maxResults: z.number().int().min(1).max(500).optional().default(50)
     },
-    async (args) => {
+    withErrorBoundary('coupling_analysis', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
       const coupled = codeGraphEdgeRepository.findCoupledFiles(WORKSPACE_ID, {
         minCoupling: args.minCoupling,
@@ -478,7 +498,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── circular_dependencies ──
@@ -488,7 +508,7 @@ function registerToolSchemas(): void {
     {
       path: z.string().optional().describe('Limit detection to files under this directory')
     },
-    async (args) => {
+    withErrorBoundary('circular_dependencies', async (args) => {
       const { codeGraphService } = await ensureReady()
       const cycles = codeGraphService.findCircularDependencies(WORKSPACE_ID, { path: args.path })
       return {
@@ -496,7 +516,7 @@ function registerToolSchemas(): void {
           { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ cycles, count: cycles.length }), 10_000) }
         ]
       }
-    }
+    })
   )
 
   // ── module_boundary_health ──
@@ -513,7 +533,7 @@ function registerToolSchemas(): void {
         .default(2)
         .describe('Directory depth for module boundaries')
     },
-    async (args) => {
+    withErrorBoundary('module_boundary_health', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
       const metrics = codeGraphEdgeRepository.getModuleBoundaryMetrics(WORKSPACE_ID, args.depth)
       return {
@@ -524,7 +544,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── wiring_check ──
@@ -535,7 +555,7 @@ function registerToolSchemas(): void {
       filePaths: z.array(z.string()).min(1).max(20).describe('Files to check wiring for'),
       symbolNames: z.array(z.string()).optional().describe('Key symbols to verify references for')
     },
-    async (args) => {
+    withErrorBoundary('wiring_check', async (args) => {
       const { codeGraphTagRepository, codeGraphEdgeRepository } = await ensureReady()
       const fileResults: Array<{ file: string; dependentCount: number; status: string }> = []
       for (const filePath of args.filePaths) {
@@ -596,7 +616,7 @@ function registerToolSchemas(): void {
       return {
         content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }]
       }
-    }
+    })
   )
 }
 

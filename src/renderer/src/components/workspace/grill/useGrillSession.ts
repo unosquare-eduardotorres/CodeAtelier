@@ -257,7 +257,8 @@ export function useGrillSession(opts: {
     setIsCondensing(true)
     try {
       const { condensed } = await window.api.grillCondenseRequirement({
-        text: requirementDocument
+        text: requirementDocument,
+        workspaceId: activeWorkspace?.id
       })
       setCondensedDocument(condensed)
     } catch (error) {
@@ -265,7 +266,7 @@ export function useGrillSession(opts: {
     } finally {
       setIsCondensing(false)
     }
-  }, [requirementDocument, isCondensing])
+  }, [requirementDocument, isCondensing, activeWorkspace?.id])
 
   const { saveDecisions } = useSaveGrillDecisions({
     ideaId,

@@ -666,44 +666,6 @@ describe('GreenfieldGrillRoleAdapter — prompt construction', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// §7: DaVinciRoleAdapter — lifecycle
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('DaVinciRoleAdapter — lifecycle', () => {
-  let DaVinciRoleAdapter: any
-
-  test('load_adapter', async () => {
-    try {
-      const mod = await import('../role-adapters/da-vinci.adapter')
-      DaVinciRoleAdapter = mod.DaVinciRoleAdapter
-      assert.equal(typeof DaVinciRoleAdapter, 'function')
-    } catch {
-      // skip
-    }
-  })
-
-  test('role_is_da_vinci', () => {
-    if (!DaVinciRoleAdapter) return
-    const a = new DaVinciRoleAdapter({ workspaceId: 'ws-1' })
-    assert.equal(a.role, 'da-vinci')
-  })
-
-  test('agentId_includes_workspaceId', () => {
-    if (!DaVinciRoleAdapter) return
-    const a = new DaVinciRoleAdapter({ workspaceId: 'ws-99' })
-    assert.ok(a.agentId.includes('ws-99'))
-  })
-
-  test('onSessionStop_clears_state', () => {
-    if (!DaVinciRoleAdapter) return
-    const a = new DaVinciRoleAdapter({ workspaceId: 'ws-1' })
-    ;(a as any).systemPrompt = 'test'
-    a.onSessionStop()
-    assert.equal((a as any).systemPrompt, null)
-  })
-})
-
-// ─────────────────────────────────────────────────────────────────────────────
 // §8: ProjectSpecialistRoleAdapter — identity
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -727,7 +689,7 @@ describe('ProjectSpecialistRoleAdapter — identity', () => {
       specialistId: 'spec-1',
       specialistName: 'Test Specialist'
     })
-    assert.equal(a.role, 'project-specialist')
+    assert.equal(a.role, 'specialist')
   })
 
   test('agentId_is_specialist_id', () => {

@@ -25,7 +25,7 @@ type Injectable = {
 
 function makeEntry(status: Record<string, unknown> = { status: 'idle' }): FakeEntry {
   return {
-    adapter: { role: 'da-vinci' },
+    adapter: { role: 'specialist' },
     session: { getStatus: () => status },
     forwarderCleanups: [],
     workspacePath: '/tmp/fake'
@@ -56,7 +56,7 @@ describe('ChatAgentService — workspace accessors', () => {
   test('getAdapterForWorkspace returns the injected adapter', () => {
     withEntries(['ws-b'], () => {
       const adapter = chatAgentService.getAdapterForWorkspace('ws-b') as { role: string }
-      assert.equal(adapter.role, 'da-vinci')
+      assert.equal(adapter.role, 'specialist')
       assert.equal(chatAgentService.getAdapterForWorkspace('missing'), undefined)
     })
   })
@@ -98,14 +98,14 @@ describe('ChatAgentService — workspace accessors', () => {
 // ── getStatus ──
 
 describe('ChatAgentService — getStatus', () => {
-  test('no active session → returns idle DaVinci status', () => {
+  test('no active session → returns idle specialist status', () => {
     const svc = chatAgentService as unknown as Injectable
     const original = svc._activeWorkspaceId
     svc._activeWorkspaceId = null
     try {
       const status = chatAgentService.getStatus()
       assert.equal(status.status, 'idle')
-      assert.equal(status.agentType, 'da-vinci')
+      assert.equal(status.agentType, 'specialist')
       assert.equal(status.elapsedMs, 0)
       assert.equal(status.tokenUsage, 0)
     } finally {
@@ -217,34 +217,34 @@ describe('ChatAgentService — backward-compatible getters (no session)', () => 
 // ── Role/agent accessors ──
 
 describe('ChatAgentService — role accessors', () => {
-  test('getActiveRole → da-vinci when no session', () => {
+  test('getActiveRole → specialist when no session', () => {
     const svc = chatAgentService as unknown as Injectable
     const original = svc._activeWorkspaceId
     svc._activeWorkspaceId = null
     try {
-      assert.equal(chatAgentService.getActiveRole(), 'da-vinci')
+      assert.equal(chatAgentService.getActiveRole(), 'specialist')
     } finally {
       svc._activeWorkspaceId = original
     }
   })
 
-  test('getActiveAgentId → da-vinci when no session', () => {
+  test('getActiveAgentId → specialist when no session', () => {
     const svc = chatAgentService as unknown as Injectable
     const original = svc._activeWorkspaceId
     svc._activeWorkspaceId = null
     try {
-      assert.equal(chatAgentService.getActiveAgentId(), 'da-vinci')
+      assert.equal(chatAgentService.getActiveAgentId(), 'specialist')
     } finally {
       svc._activeWorkspaceId = original
     }
   })
 
-  test('getActiveMessageRole → da-vinci when no session', () => {
+  test('getActiveMessageRole → specialist when no session', () => {
     const svc = chatAgentService as unknown as Injectable
     const original = svc._activeWorkspaceId
     svc._activeWorkspaceId = null
     try {
-      assert.equal(chatAgentService.getActiveMessageRole(), 'da-vinci')
+      assert.equal(chatAgentService.getActiveMessageRole(), 'specialist')
     } finally {
       svc._activeWorkspaceId = original
     }

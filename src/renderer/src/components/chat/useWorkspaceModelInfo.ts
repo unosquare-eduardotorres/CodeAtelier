@@ -82,7 +82,7 @@ export function useWorkspaceModelInfo(workspaceId: string | undefined): {
   }, [workspaceId])
 
   // Derive provider from routing — reads plan action's provider from modelRoles
-  const planRole = modelRoles['da-vinci:plan']
+  const planRole = modelRoles['specialist:plan']
   const derivedProvider: LLMProvider = planRole?.provider ?? llmProvider
 
   return {

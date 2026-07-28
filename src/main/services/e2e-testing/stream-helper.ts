@@ -106,6 +106,8 @@ export function chunkToTranscriptEntry(chunk: StreamChunk): E2ETranscriptEntry |
       return { role: 'system', type: 'status', content: 'permission_request: ' + (chunk.toolName ?? 'unknown'), timestamp: now }
     case 'todo_update':
       return { role: 'system', type: 'status', content: 'todo_update', timestamp: now }
+    case 'phase_progress':
+      return { role: 'system', type: 'status', content: 'phase_progress: ' + (chunk.phaseProgress?.phaseTitle ?? ''), timestamp: now }
     case 'turn_boundary':
       return { role: 'system', type: 'status', content: 'turn_boundary', timestamp: now }
     default:

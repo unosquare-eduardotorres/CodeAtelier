@@ -2,9 +2,11 @@ import { ArrowLeft, Settings } from 'lucide-react'
 import AISubscriptionsSection from './AISubscriptionsSection'
 import ThemeSection from './ThemeSection'
 import ChatBubbleSizeSection from './ChatBubbleSizeSection'
+import BlueprintBuildSection from './BlueprintBuildSection'
 import SpecialistWarningPreferencesSection from './SpecialistWarningSection'
 import SpecialistOrder from './SpecialistOrder'
 import UpdateSettingsSection from './UpdateSettingsSection'
+import NotificationSection from './NotificationSection'
 
 interface SettingsPageProps {
   onBack: () => void
@@ -45,8 +47,14 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
             {/* Theme selection */}
             <ThemeSection />
 
+            {/* OS Notifications */}
+            <NotificationSection />
+
             {/* Chat bubble size */}
             <ChatBubbleSizeSection />
+
+            {/* Blueprint parallel build agents */}
+            <BlueprintBuildSection />
 
             {/* Specialist warning preferences */}
             <SpecialistWarningPreferencesSection />

@@ -10,7 +10,8 @@ import type {
   MemorySourceType,
   IngestionProgress,
   BootstrapProgress,
-  BootstrapMode
+  BootstrapMode,
+  ContradictionStatus
 } from '../../../shared/types'
 
 type FeedSource = MemorySourceType | 'claude-md' | 'codebase' | 'document'
@@ -26,11 +27,20 @@ interface MemoryState {
   // Fact state
   facts: MemoryFact[]
   contradictions: MemoryContradiction[]
+  contradictionsPage: number
+  contradictionsTotal: number
+  contradictionsPendingCount: number
   searchQuery: string
   embeddingStatus: MemoryEmbeddingStatus | null
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
+  bootstrapWorkspaceId: string | null
+
+  // CLAUDE.md state
+  claudeMdContent: string | null
+  claudeMdPath: string | null
+  claudeMdLoading: boolean
 
   // Feed state
   feedStatus: FeedStatus
@@ -53,8 +63,12 @@ interface MemoryState {
   toggleScope: (id: string, global: boolean, workspaceId?: string) => Promise<void>
 
   // Contradiction actions
-  loadContradictions: () => Promise<void>
+  loadContradictions: (status?: ContradictionStatus, page?: number) => Promise<void>
   resolveContradiction: (id: string, resolution: string, keepFactId: string, archiveFactId?: string) => Promise<void>
+  autoResolveDuplicates: (workspaceId: string, minCosine?: number) => Promise<{ resolvedCount: number }>
+
+  // CLAUDE.md actions
+  loadClaudeMd: (workspacePath: string) => Promise<void>
 
   // Capture settings
   loadCaptureSettings: (workspaceId: string) => Promise<void>
@@ -65,8 +79,9 @@ interface MemoryState {
   triggerBackfill: (workspaceId: string) => Promise<void>
   clearBackfillError: () => void
 
-  // Dedup
-  scanForDuplicates: (workspaceId: string) => Promise<{ pairsFound: number }>
+  // Dedup & Consolidation
+  scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
+  runConsolidation: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
 
   // Search
   setSearchQuery: (query: string) => void
@@ -97,11 +112,18 @@ interface MemoryState {
 export const useMemoryStore = create<MemoryState>((set) => ({
   facts: [],
   contradictions: [],
+  contradictionsPage: 0,
+  contradictionsTotal: 0,
+  contradictionsPendingCount: 0,
   searchQuery: '',
   embeddingStatus: null,
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
+  bootstrapWorkspaceId: null,
+  claudeMdContent: null,
+  claudeMdPath: null,
+  claudeMdLoading: false,
   feedStatus: 'idle',
   feedSource: null,
   feedMessage: null,
@@ -190,10 +212,20 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   // ── Contradictions ──
 
-  loadContradictions: async () => {
+  loadContradictions: async (status, page = 0) => {
     try {
-      const contradictions = await window.api.memoryContradictionsList()
-      set({ contradictions })
+      const PAGE_SIZE = 25
+      const result = await window.api.memoryContradictionsList({
+        status,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE
+      })
+      set({
+        contradictions: result.items,
+        contradictionsPage: page,
+        contradictionsTotal: result.total,
+        contradictionsPendingCount: result.pendingCount
+      })
     } catch (error) {
       rendererLog.error('Failed to load contradictions:', error)
     }
@@ -203,10 +235,33 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     try {
       await window.api.memoryContradictionsResolve({ id, resolution, keepFactId, archiveFactId })
       set((state) => ({
-        contradictions: state.contradictions.filter((c) => c.id !== id)
+        contradictions: state.contradictions.filter((c) => c.id !== id),
+        contradictionsTotal: Math.max(0, state.contradictionsTotal - 1)
       }))
     } catch (error) {
       rendererLog.error('Failed to resolve contradiction:', error)
+    }
+  },
+
+  autoResolveDuplicates: async (workspaceId, minCosine = 0.95) => {
+    try {
+      const result = await window.api.memoryDedupAutoresolve({ workspaceId, minCosine })
+      await useMemoryStore.getState().loadContradictions()
+      return result
+    } catch (error) {
+      rendererLog.error('Failed to auto-resolve duplicates:', error)
+      return { resolvedCount: 0 }
+    }
+  },
+
+  loadClaudeMd: async (workspacePath) => {
+    try {
+      set({ claudeMdLoading: true })
+      const result = await window.api.memoryReadClaudeMd({ workspacePath })
+      set({ claudeMdContent: result.content, claudeMdPath: result.path, claudeMdLoading: false })
+    } catch (error) {
+      rendererLog.error('Failed to load CLAUDE.md:', error)
+      set({ claudeMdLoading: false })
     }
   },
 
@@ -294,7 +349,20 @@ export const useMemoryStore = create<MemoryState>((set) => ({
       return result
     } catch (error) {
       rendererLog.error('Failed to scan for duplicates:', error)
-      return { pairsFound: 0 }
+      return { clustersFound: 0, autoMerged: 0 }
+    }
+  },
+
+  runConsolidation: async (workspaceId) => {
+    try {
+      const result = await window.api.memoryConsolidate({ workspaceId })
+      // Refresh facts + contradictions after consolidation
+      await useMemoryStore.getState().loadFacts(workspaceId)
+      await useMemoryStore.getState().loadContradictions()
+      return result
+    } catch (error) {
+      rendererLog.error('Failed to run consolidation:', error)
+      return { clustersFound: 0, autoMerged: 0, staleArchived: 0 }
     }
   },
 
@@ -378,7 +446,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     const cleanup = window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
       useMemoryStore.getState().onBootstrapProgress(progress)
     })
-    set({ bootstrapCleanup: cleanup })
+    set({ bootstrapCleanup: cleanup, bootstrapWorkspaceId: workspaceId })
 
     try {
       await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode })
@@ -393,9 +461,15 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   onBootstrapProgress: (progress) => {
     set({ bootstrap: progress })
     if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
-      const { bootstrapCleanup } = useMemoryStore.getState()
+      const { bootstrapCleanup, bootstrapWorkspaceId } = useMemoryStore.getState()
       bootstrapCleanup?.()
       set({ bootstrapCleanup: null })
+
+      // Reload facts so the tab count updates immediately
+      if (progress.jobStatus === 'done' && bootstrapWorkspaceId) {
+        useMemoryStore.getState().loadFacts(bootstrapWorkspaceId)
+        useMemoryStore.getState().loadContradictions()
+      }
     }
   },
 

@@ -94,7 +94,7 @@ export default function FactCard({
               <button
                 onClick={onConfirm}
                 className="inline-flex items-center gap-1 px-2 py-1 min-h-[2.75rem] min-w-[2.75rem] text-xs text-text-muted hover:text-success hover:bg-success-muted rounded transition-colors"
-                title="Vouch for this memory — 2 confirms promote it to the next tier"
+                title="Vouch for this memory — 3 confirms promote it to the next tier"
                 aria-label="Confirm this memory"
               >
                 <CheckCircle className="w-4 h-4" />

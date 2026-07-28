@@ -38,7 +38,7 @@ describe('app-preference.ipc validation contracts', () => {
 describe('core-agent-prompt.ipc validation contracts', () => {
   test('CORE_AGENT_PROMPT_GET requires agentRole and mode', () => {
     const ch = 'coreAgentPrompt:get'
-    const args = requireObject({ agentRole: 'da-vinci', mode: 'plan' }, ch)
+    const args = requireObject({ agentRole: 'specialist', mode: 'plan' }, ch)
     assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
     assert.equal(requireString(args, 'mode', ch), 'plan')
   })
@@ -46,7 +46,7 @@ describe('core-agent-prompt.ipc validation contracts', () => {
   test('CORE_AGENT_PROMPT_UPSERT requires agentRole, mode, promptText', () => {
     const ch = 'coreAgentPrompt:upsert'
     const args = requireObject(
-      { agentRole: 'da-vinci', mode: 'build', promptText: 'You are a builder.' },
+      { agentRole: 'specialist', mode: 'build', promptText: 'You are a builder.' },
       ch
     )
     assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
@@ -56,13 +56,13 @@ describe('core-agent-prompt.ipc validation contracts', () => {
 
   test('CORE_AGENT_PROMPT_UPSERT rejects empty promptText', () => {
     const ch = 'coreAgentPrompt:upsert'
-    const args = requireObject({ agentRole: 'da-vinci', mode: 'build', promptText: '' }, ch)
+    const args = requireObject({ agentRole: 'specialist', mode: 'build', promptText: '' }, ch)
     assert.throws(() => requireString(args, 'promptText', ch), /promptText/)
   })
 
   test('CORE_AGENT_PROMPT_RESET requires agentRole and mode', () => {
     const ch = 'coreAgentPrompt:reset'
-    const args = requireObject({ agentRole: 'da-vinci', mode: 'danger' }, ch)
+    const args = requireObject({ agentRole: 'specialist', mode: 'danger' }, ch)
     assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
     assert.equal(requireString(args, 'mode', ch), 'danger')
   })
@@ -73,25 +73,25 @@ describe('core-agent-prompt.ipc validation contracts', () => {
 describe('core-agent-alias.ipc validation contracts', () => {
   test('CORE_AGENT_UPSERT requires agentRole', () => {
     const ch = 'coreAgent:upsert'
-    const args = requireObject({ agentRole: 'da-vinci', alias: 'Claude' }, ch)
+    const args = requireObject({ agentRole: 'specialist', alias: 'Claude' }, ch)
     assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
   })
 
   test('CORE_AGENT_UPSERT accepts nullable alias', () => {
     const ch = 'coreAgent:upsert'
-    const args = requireObject({ agentRole: 'da-vinci', alias: null }, ch)
+    const args = requireObject({ agentRole: 'specialist', alias: null }, ch)
     assert.equal(optionalNullableString(args, 'alias', ch), null)
   })
 
   test('CORE_AGENT_UPSERT accepts string alias', () => {
     const ch = 'coreAgent:upsert'
-    const args = requireObject({ agentRole: 'da-vinci', alias: 'Bot' }, ch)
+    const args = requireObject({ agentRole: 'specialist', alias: 'Bot' }, ch)
     assert.equal(optionalNullableString(args, 'alias', ch), 'Bot')
   })
 
   test('CORE_AGENT_UPSERT accepts absent alias', () => {
     const ch = 'coreAgent:upsert'
-    const args = requireObject({ agentRole: 'da-vinci' }, ch)
+    const args = requireObject({ agentRole: 'specialist' }, ch)
     assert.equal(optionalNullableString(args, 'alias', ch), undefined)
   })
 })

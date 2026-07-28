@@ -8,7 +8,7 @@
  * button that switches to the workspace.
  */
 
-import { X, Shield, MessageCircle, CheckCircle2 } from 'lucide-react'
+import { X, Shield, MessageCircle, CheckCircle2, Terminal } from 'lucide-react'
 import type { PendingPermission, PermissionType } from '../../../../shared/types'
 
 interface PermissionToastProps {
@@ -35,6 +35,11 @@ function TypeBadge({ type }: { type: PermissionType }): React.JSX.Element {
         icon: CheckCircle2,
         label: 'Approval',
         className: 'bg-green-500/10 text-green-400 border-green-500/20'
+      },
+      toolPermission: {
+        icon: Terminal,
+        label: 'Tool Permission',
+        className: 'bg-amber-500/10 text-amber-400 border-amber-500/20'
       }
     }
 

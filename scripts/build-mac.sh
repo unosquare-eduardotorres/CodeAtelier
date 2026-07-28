@@ -3,11 +3,13 @@
 #
 # Strategy: electron-builder's dependency resolver OOMs on large node_modules trees
 # (~20x memory amplification per file during ASAR processing). We bypass it by:
-#   1. Rebuilding native modules (better-sqlite3) against Electron headers ourselves
-#   2. Stripping runtime-unnecessary files from node_modules
-#   3. Temporarily removing `dependencies` from package.json so electron-builder
+#   1. Stripping runtime-unnecessary files from node_modules
+#   2. Temporarily removing `dependencies` from package.json so electron-builder
 #      sees no node_modules to resolve (~290 files instead of ~6,000+)
-#   4. Copying node_modules into the app bundle via afterPack hook (before signing)
+#   3. Copying node_modules into the app bundle via afterPack hook (before signing)
+#
+# With better-sqlite3 v13 (N-API), no Electron-specific rebuild is needed —
+# the same prebuilt binary works under both system Node.js and Electron.
 #
 # IMPORTANT: A trap guarantees dev-dependency restoration even if the build fails.
 #
@@ -71,6 +73,7 @@ restore_deps() {
     npm install --include=dev
     echo "  node_modules restored (clean install)"
   fi
+
 }
 trap restore_deps EXIT
 
@@ -101,16 +104,12 @@ PRUNED=true
 echo "  node_modules after prune: $(du -sh node_modules | cut -f1) ($(find node_modules -type f | wc -l | tr -d ' ') files)"
 
 echo ""
-echo "▸ Step 2b: Rebuild native modules against Electron headers"
-# Must run BEFORE stripping electron/ (rebuild needs Electron headers info).
-# better-sqlite3 is the only production native module that uses node-gyp.
-# Prebuilt NAPI modules (if any survived prune) don't need rebuilding.
-npx --yes @electron/rebuild \
-  --version 42.4.1 \
-  --module-dir "$ROOT" \
-  --types prod \
-  --force
-echo "  Native modules rebuilt for Electron 42.4.1"
+echo "▸ Step 2a: Strip unused platform prebuilts"
+# better-sqlite3 v13 ships N-API prebuilts for ALL platforms (~16MB).
+# Keep only the target platform binary to save ~14MB in the DMG.
+KEEP_PREBUILT="darwin-$(uname -m | sed 's/x86_64/x64/').node"
+find node_modules/better-sqlite3/prebuilds -name '*.node' ! -name "$KEEP_PREBUILT" -delete 2>/dev/null
+echo "  Kept only $KEEP_PREBUILT prebuilt"
 
 echo ""
 echo "▸ Step 2c: Strip runtime-unnecessary files from node_modules"
@@ -153,7 +152,7 @@ echo ""
 echo "▸ Step 3: Package with electron-builder"
 # electron-builder now processes only out/ + resources/ + package.json (~290 files).
 # asar: false — app loads from loose files in Resources/app/.
-# npmRebuild: false — we rebuilt native modules in Step 2b.
+# npmRebuild: false — N-API prebuilts don't need rebuilding.
 # afterPack: copies node_modules + restores package.json in the app bundle.
 set +e
 NODE_OPTIONS="--max-old-space-size=16384" npx electron-builder --mac "$@"
@@ -167,6 +166,25 @@ if [ -f "package.json.original" ]; then
 fi
 
 # The EXIT trap handles full dep restoration automatically.
+
+if [ $BUILD_EXIT -eq 0 ]; then
+  echo ""
+  echo "▸ Step 3b: Verify packaged app native bindings"
+  APP_DIR=$(find dist -maxdepth 1 -name "mac*" -type d | head -1)
+  if [ -z "$APP_DIR" ]; then
+    echo "  ⚠ Could not locate packaged app directory in dist/ — skipping"
+  else
+    APP_NM="$APP_DIR/Code Atelier.app/Contents/Resources/app/node_modules"
+    KEEP_PREBUILT_NAME="darwin-$(uname -m | sed 's/x86_64/x64/').node"
+    PACKAGED_PREBUILT="$APP_NM/better-sqlite3/prebuilds/$KEEP_PREBUILT_NAME"
+    if [ -f "$PACKAGED_PREBUILT" ]; then
+      echo "  ✅ N-API prebuilt present in app bundle ($APP_DIR)"
+    else
+      echo "  ❌ N-API prebuilt MISSING from app bundle ($APP_DIR)"
+      BUILD_EXIT=1
+    fi
+  fi
+fi
 
 if [ $BUILD_EXIT -eq 0 ]; then
   echo ""

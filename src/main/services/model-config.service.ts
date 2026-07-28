@@ -17,7 +17,8 @@ import type {
   ModelRoleMap,
   ResolvedAssignment
 } from '../../shared/types'
-import { workspaceRepository, specialistRepository } from '../db/repositories'
+import log from 'electron-log'
+import { workspaceRepository } from '../db/repositories'
 import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 
 /**
@@ -51,7 +52,7 @@ class ModelConfigService {
   /**
    * Resolves the model ID for a given action.
    * Uses workspace override if set, otherwise returns the default.
-   * Sub-actions (e.g. 'generalist:plan') fall back to their base action ('generalist').
+   * Sub-actions (e.g. 'specialist:plan') fall back to their base action ('specialist').
    *
    * @param workspacePath - The workspace repo path (or undefined for default)
    * @param action - The model action to resolve
@@ -60,15 +61,23 @@ class ModelConfigService {
     if (!workspacePath) return DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
 
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
+
+    // Check modelRoles (structured cross-provider path) — Claude only
+    const roles = (settings?.modelRoles ?? {}) as ModelRoleMap
+    const roleAssignment = roles[action]
+    if (roleAssignment?.modelId && roleAssignment.provider !== 'local-llm') {
+      return roleAssignment.modelId
+    }
+
+    // Legacy modelOverrides
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
-    const wsId = settings?.id as string | undefined
-    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action, wsId)
+    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
   }
 
   /**
    * Resolves the model ID for a given action using workspace ID.
    * Uses workspace override if set, otherwise returns the default.
-   * Sub-actions (e.g. 'generalist:plan') fall back to their base action ('generalist').
+   * Sub-actions (e.g. 'specialist:plan') fall back to their base action ('specialist').
    *
    * @param workspaceId - The workspace ID (or undefined for default)
    * @param action - The model action to resolve
@@ -77,8 +86,17 @@ class ModelConfigService {
     if (!workspaceId) return DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
 
     const settings = workspaceRepository.getSettings(workspaceId)
+
+    // Check modelRoles (structured cross-provider path) — Claude only
+    const roles = (settings?.modelRoles ?? {}) as ModelRoleMap
+    const roleAssignment = roles[action]
+    if (roleAssignment?.modelId && roleAssignment.provider !== 'local-llm') {
+      return roleAssignment.modelId
+    }
+
+    // Legacy modelOverrides
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
-    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action, workspaceId)
+    return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
   }
 
   // ── Provider awareness ──
@@ -153,17 +171,25 @@ class ModelConfigService {
   }
 
   /**
-   * Get the executor backend for a workspace.
-   * Default: 'cli'. Overridden by workspace settings or provider type.
+   * Derive the executor backend from the workspace's resolved LLM provider.
+   * Rule: provider === 'claude' → 'cli'; everything else → 'opencode'.
+   * No longer reads settings.executorBackend (was user-configurable, now derived).
    */
   getExecutorBackend(workspacePath: string | undefined): ExecutorBackend {
     if (!workspacePath) return 'cli'
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
-    if (settings?.llmProvider === 'local-llm') return 'opencode'
-    // SVC-08: Validate against the union type instead of blind cast
-    const raw = settings?.executorBackend as string | undefined
-    if (raw === 'cli' || raw === 'opencode') return raw
-    return 'cli'
+    const provider = settings?.llmProvider ?? 'claude'
+
+    // Log when a stored executorBackend value is being ignored (behavior-change traceability)
+    const storedBackend = settings?.executorBackend as string | undefined
+    if (storedBackend && storedBackend !== (provider === 'claude' ? 'cli' : 'opencode')) {
+      log.info(
+        `[getExecutorBackend] Ignoring stored executorBackend='${storedBackend}' — ` +
+        `now derived from provider='${provider}' → '${provider === 'claude' ? 'cli' : 'opencode'}'`
+      )
+    }
+
+    return provider === 'claude' ? 'cli' : 'opencode'
   }
 
   /**
@@ -199,33 +225,15 @@ class ModelConfigService {
   }
 
   /**
-   * Fallback: 'da-vinci:plan' → 'da-vinci' → DEFAULT_MODEL_CONFIG.
-   * When a workspace has a specialist ready, prefer 'project-specialist:*'
-   * defaults over 'da-vinci:*' for chat-tier actions.
+   * Fallback: 'specialist:plan' → 'specialist' → DEFAULT_MODEL_CONFIG.
    */
-  private fallbackAction(action: ModelAction, workspaceId?: string): string {
-    // For da-vinci chat actions, prefer project-specialist if one is ready
-    if (workspaceId && (action.startsWith('da-vinci') || action.startsWith('project-specialist'))) {
-      try {
-        const specialist = specialistRepository.findReadyByWorkspace(workspaceId)
-        if (specialist) {
-          // Map da-vinci:* → project-specialist:* for specialist-aware defaults
-          const specialistAction = action.replace(/^da-vinci/, 'project-specialist') as ModelAction
-          if (specialistAction in DEFAULT_MODEL_CONFIG) {
-            return DEFAULT_MODEL_CONFIG[specialistAction]
-          }
-        }
-      } catch {
-        // Non-fatal — fall through to standard fallback
-      }
-    }
-
+  private fallbackAction(action: ModelAction): string {
     // SVC-06: Validate that the base portion is a known ModelAction key
     const base = action.split(':')[0]
     if (base && base in DEFAULT_MODEL_CONFIG) {
       return DEFAULT_MODEL_CONFIG[base as ModelAction]
     }
-    return DEFAULT_MODEL_CONFIG['da-vinci']
+    return DEFAULT_MODEL_CONFIG['specialist']
   }
 }
 
@@ -238,10 +246,9 @@ export const modelConfigService = new ModelConfigService()
  *
  *   1. modelRoles[action]           → source: 'roles'
  *   2. modelOverrides[action] as Claude  → source: 'override'
- *   3. specialist-ready? project-specialist:* defaults
- *   4. DEFAULT_MODEL_CONFIG[action]  → source: 'default'
- *   5. DEFAULT_MODEL_CONFIG[base]    → source: 'fallback'
- *   6. DEFAULT_MODEL_CONFIG['da-vinci'] → source: 'fallback'
+ *   3. DEFAULT_MODEL_CONFIG[action]  → source: 'default'
+ *   4. DEFAULT_MODEL_CONFIG[base]    → source: 'fallback'
+ *   5. DEFAULT_MODEL_CONFIG['specialist'] → source: 'fallback'
  *
  * Pure function — all inputs are explicit. No side effects.
  */
@@ -255,16 +262,13 @@ export function resolveAssignment(opts: {
   workspaceProvider?: LLMProvider
   /** Workspace-level local backend */
   workspaceBackend?: LocalLLMBackend
-  /** Whether a project specialist is ready for this workspace */
-  hasReadySpecialist?: boolean
 }): ResolvedAssignment {
   const {
     action,
     modelRoles,
     modelOverrides,
     workspaceProvider = 'claude',
-    workspaceBackend,
-    hasReadySpecialist = false
+    workspaceBackend
   } = opts
 
   // 1. New structured model roles (highest priority)
@@ -288,22 +292,7 @@ export function resolveAssignment(opts: {
     }
   }
 
-  // 3. Specialist-aware default for chat-tier actions
-  if (
-    hasReadySpecialist &&
-    (action.startsWith('da-vinci') || action.startsWith('project-specialist'))
-  ) {
-    const specialistAction = action.replace(/^da-vinci/, 'project-specialist') as ModelAction
-    if (specialistAction in DEFAULT_MODEL_CONFIG) {
-      return {
-        provider: 'claude',
-        modelId: DEFAULT_MODEL_CONFIG[specialistAction],
-        source: 'default'
-      }
-    }
-  }
-
-  // 4. Direct default
+  // 3. Direct default
   if (action in DEFAULT_MODEL_CONFIG) {
     return {
       provider: 'claude',
@@ -312,7 +301,7 @@ export function resolveAssignment(opts: {
     }
   }
 
-  // 5. Base action fallback (e.g. 'da-vinci:plan' → 'da-vinci')
+  // 4. Base action fallback (e.g. 'specialist:plan' → 'specialist')
   const base = action.split(':')[0]
   if (base && base in DEFAULT_MODEL_CONFIG) {
     return {
@@ -322,10 +311,10 @@ export function resolveAssignment(opts: {
     }
   }
 
-  // 6. Ultimate fallback
+  // 5. Ultimate fallback
   return {
     provider: 'claude',
-    modelId: DEFAULT_MODEL_CONFIG['da-vinci'],
+    modelId: DEFAULT_MODEL_CONFIG['specialist'],
     source: 'fallback'
   }
 }
@@ -339,20 +328,14 @@ export function buildResolveOpts(workspaceId: string): {
   modelOverrides: ModelOverrides | undefined
   workspaceProvider: LLMProvider
   workspaceBackend: LocalLLMBackend | undefined
-  hasReadySpecialist: boolean
 } {
   const settings = workspaceRepository.getSettings(workspaceId)
-  let hasReadySpecialist = false
-  try {
-    hasReadySpecialist = !!specialistRepository.findReadyByWorkspace(workspaceId)
-  } catch { /* non-fatal */ }
 
   return {
     modelRoles: (settings.modelRoles ?? undefined) as ModelRoleMap | undefined,
     modelOverrides: (settings.modelOverrides ?? undefined) as ModelOverrides | undefined,
     workspaceProvider: (settings.llmProvider as LLMProvider) ?? 'claude',
     workspaceBackend: (settings.localLlmBackend as LocalLLMBackend) ?? undefined,
-    hasReadySpecialist
   }
 }
 
@@ -385,8 +368,8 @@ export function buildConversationModelSnapshot(
   }
 
   return {
-    plan: resolveAssignment({ action: 'da-vinci:plan', ...resolveOpts }),
-    build: resolveAssignment({ action: 'da-vinci:build', ...resolveOpts }),
+    plan: resolveAssignment({ action: 'specialist:plan', ...resolveOpts }),
+    build: resolveAssignment({ action: 'specialist:build', ...resolveOpts }),
     background: resolveAssignment({ action: 'haiku', ...resolveOpts }),
     snapshotAt: new Date().toISOString()
   }

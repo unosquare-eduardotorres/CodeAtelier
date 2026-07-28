@@ -61,10 +61,10 @@ describe('MpaBuilderAdapter', () => {
 
   // ── getModelAction ──
 
-  test('getModelAction_returns_da_vinci_build', () => {
+  test('getModelAction_returns_specialist_build', () => {
     const adapter = new MpaBuilderAdapter({ workspaceId: 'ws-1', goal: 'Build', plan: basePlan })
     const action = (adapter as any).getModelAction()
-    assert.equal(action, 'da-vinci:build')
+    assert.equal(action, 'specialist:build')
   })
 
   // ── getPhaseMessage branching ──

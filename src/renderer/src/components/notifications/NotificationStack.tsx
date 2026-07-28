@@ -9,15 +9,32 @@
  * Mounted at the AppLayout level so it's always visible.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBackgroundSessionStore, useWorkspaceStore } from '@renderer/store'
-import PermissionToast from './PermissionToast'
+import PermissionApprovalModal from './PermissionApprovalModal'
 import CompletionToast from './CompletionToast'
 import type { CompletionNotification, PendingPermission } from '../../../../shared/types'
 
 const MAX_VISIBLE_TOASTS = 3
 
-export default function NotificationStack(): React.JSX.Element | null {
+/** Maps a notification targetPage to AppLayout navigation state. */
+const PAGE_NAV_MAP: Record<string, { sidebarView: 'chat' | 'settings'; settingsTab?: string }> = {
+  chat: { sidebarView: 'chat' },
+  grill: { sidebarView: 'settings', settingsTab: 'ideas' },
+  audit: { sidebarView: 'settings', settingsTab: 'health' },
+  mpa: { sidebarView: 'settings', settingsTab: 'goals' },
+  council: { sidebarView: 'settings', settingsTab: 'council' },
+  blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' }
+}
+
+export interface NotificationStackProps {
+  /** Navigate to a specific page/tab after switching workspaces. */
+  onNavigateToPage?: (sidebarView: 'chat' | 'settings', settingsTab?: string) => void
+}
+
+export default function NotificationStack({
+  onNavigateToPage
+}: NotificationStackProps): React.JSX.Element | null {
   const permissions = useBackgroundSessionStore((s) => s.pendingPermissions)
   const removePermission = useBackgroundSessionStore((s) => s.removePermission)
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspace?.id)
@@ -25,12 +42,30 @@ export default function NotificationStack(): React.JSX.Element | null {
 
   // Completion notifications (auto-dismiss after 8 seconds)
   const [completions, setCompletions] = useState<(CompletionNotification & { id: string })[]>([])
+  const dismissTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+
+  // Clear all pending auto-dismiss timers on unmount
+  useEffect(() => () => {
+    dismissTimersRef.current.forEach(clearTimeout)
+  }, [])
+
+  // Listen for OS notification click → navigate to workspace + target page
+  useEffect(() => {
+    const unsub = window.api.onNotificationNavigate((data) => {
+      openWorkspace(data.workspaceId)
+      const nav = PAGE_NAV_MAP[data.targetPage]
+      if (nav && onNavigateToPage) {
+        onNavigateToPage(nav.sidebarView, nav.settingsTab)
+      }
+    })
+    return unsub
+  }, [openWorkspace, onNavigateToPage])
 
   // Listen for completion notifications
   useEffect(() => {
     const unsub = window.api.onCompletionNotification((data) => {
       const notification = data as CompletionNotification
-      // Skip silent chat completions (only show audit, mpa, grill completions + all failures)
+      // Skip silent chat completions (show all other services, all failures, all needs_input)
       if (notification.service === 'chat' && notification.status === 'completed') return
       // Skip notifications for the active workspace
       if (notification.workspaceId === activeWorkspaceId) return
@@ -39,16 +74,21 @@ export default function NotificationStack(): React.JSX.Element | null {
       setCompletions((prev) => [...prev, { ...notification, id }])
 
       // Auto-dismiss after 8 seconds
-      setTimeout(() => {
+      const timerId = setTimeout(() => {
         setCompletions((prev) => prev.filter((c) => c.id !== id))
+        dismissTimersRef.current.delete(timerId)
       }, 8000)
+      dismissTimersRef.current.add(timerId)
     })
     return unsub
   }, [activeWorkspaceId])
 
-  // Only show toasts for NON-active workspaces that haven't fallen back to badge
+  // Show toasts for NON-active workspaces, plus toolPermission for the active workspace
+  // (askQuestion/elicitation have inline chat handlers; toolPermission does not)
   const visiblePermissions = permissions.filter(
-    (p) => p.workspaceId !== activeWorkspaceId && !p.badgeFallback
+    (p) =>
+      (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') &&
+      !p.badgeFallback
   )
 
   const handlePermissionRespond = useCallback(
@@ -58,7 +98,10 @@ export default function NotificationStack(): React.JSX.Element | null {
           permissionId: permission.id,
           workspaceId: permission.workspaceId,
           type: permission.type,
-          response
+          response,
+          // For toolPermission, include the original payload so the IPC handler
+          // can extract the requestId to route back to the control-actions server.
+          ...(permission.type === 'toolPermission' ? { payload: permission.payload } : {})
         })
         .catch(console.error)
       removePermission(permission.id)
@@ -85,9 +128,14 @@ export default function NotificationStack(): React.JSX.Element | null {
   const handleCompletionView = useCallback(
     (notification: CompletionNotification & { id: string }) => {
       openWorkspace(notification.workspaceId)
+      const targetPage = notification.targetPage ?? notification.service
+      const nav = PAGE_NAV_MAP[targetPage]
+      if (nav && onNavigateToPage) {
+        onNavigateToPage(nav.sidebarView, nav.settingsTab)
+      }
       setCompletions((prev) => prev.filter((c) => c.id !== notification.id))
     },
-    [openWorkspace]
+    [openWorkspace, onNavigateToPage]
   )
 
   const handleCompletionDismiss = useCallback((id: string) => {
@@ -99,16 +147,16 @@ export default function NotificationStack(): React.JSX.Element | null {
 
   return (
     <div data-testid="notification-stack" className="fixed top-14 right-4 z-50 flex flex-col gap-3">
-      {/* Permission toasts — show first (higher priority) */}
-      {visiblePermissions.slice(0, MAX_VISIBLE_TOASTS).map((p) => (
-        <PermissionToast
-          key={p.id}
-          permission={p}
-          onRespond={(response) => handlePermissionRespond(p, response)}
-          onView={() => handlePermissionView(p)}
-          onDismiss={() => handlePermissionDismiss(p)}
+      {/* Permission modal — shows one at a time (oldest first, queue model) */}
+      {visiblePermissions.length > 0 && (
+        <PermissionApprovalModal
+          permission={visiblePermissions[0]}
+          queueCount={visiblePermissions.length}
+          onRespond={(response) => handlePermissionRespond(visiblePermissions[0], response)}
+          onView={() => handlePermissionView(visiblePermissions[0])}
+          onDismiss={() => handlePermissionDismiss(visiblePermissions[0])}
         />
-      ))}
+      )}
 
       {/* Completion toasts — fill remaining slots */}
       {completions

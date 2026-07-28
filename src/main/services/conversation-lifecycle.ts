@@ -2,20 +2,21 @@ import log from 'electron-log'
 import { conversationStateMachine } from './conversation-state-machine'
 
 /**
- * Centralized lifecycle manager for conversation request/response cycles.
+ * Per-stream lifecycle manager for conversation request/response cycles.
  *
- * Owns the full lifecycle from message send through pipeline completion,
- * providing a single abort() that cascades through all layers. This eliminates
- * the scattered cleanup problem where 7+ services must independently clean up
- * on stop/error — any miss previously resulted in leaked state.
+ * Each instance owns one stream's full lifecycle from message send through
+ * pipeline completion, providing a single abort() that cascades through all
+ * layers. This eliminates the scattered cleanup problem where 7+ services
+ * must independently clean up on stop/error — any miss previously resulted
+ * in leaked state.
  *
  * Usage:
- *   const signal = conversationLifecycle.begin(conversationId)
- *   conversationLifecycle.onDispose(() => { cleanupFn() })
+ *   const lifecycle = lifecycleRegistry.begin(conversationId)
+ *   lifecycle.onDispose(() => { cleanupFn() })
  *   // ... when done:
- *   conversationLifecycle.complete()
+ *   lifecycle.complete()
  *   // ... or on error/stop:
- *   conversationLifecycle.abort('userStop')
+ *   lifecycle.abort('userStop')
  */
 export class ConversationLifecycle {
   private abortController: AbortController | null = null
@@ -78,7 +79,7 @@ export class ConversationLifecycle {
 
   /**
    * Clean shutdown — runs all disposers in order, then resets state.
-   * Call when the full pipeline (generalist + specialists) completes successfully.
+   * Call when the full streaming pipeline completes successfully.
    */
   complete(): void {
     log.info(
@@ -105,6 +106,7 @@ export class ConversationLifecycle {
     log.warn(
       `[ConversationLifecycle] Abort: reason=${reason ?? 'unknown'} conversation=${this._conversationId} requestId=${this._requestId}`
     )
+    const convId = this._conversationId
     // LIFECYCLE-BEGIN-FROM-DISPOSER-01: Snapshot controller before disposers.
     const controllerBeforeDispose = this.abortController
     if (controllerBeforeDispose) {
@@ -122,8 +124,8 @@ export class ConversationLifecycle {
     // if we actually had an active lifecycle to abort. If controllerBeforeDispose
     // is null, this was an idle abort — force-resetting could clobber a new
     // stream's state machine transition that just started.
-    if (controllerBeforeDispose) {
-      conversationStateMachine.forceReset()
+    if (controllerBeforeDispose && convId) {
+      conversationStateMachine.forceReset(convId)
     }
   }
 
@@ -164,4 +166,136 @@ export class ConversationLifecycle {
   }
 }
 
-export const conversationLifecycle = new ConversationLifecycle()
+// ── Stream Info ──
+
+export interface StreamInfo {
+  conversationId: string
+  requestId: string
+  state: 'streaming'
+}
+
+// ── Lifecycle Registry ──
+
+/**
+ * Registry of per-conversation lifecycle instances.
+ *
+ * Replaces the old singleton `conversationLifecycle` to enable concurrent
+ * multi-chat streaming. Each conversation gets its own `ConversationLifecycle`
+ * instance with independent AbortController, disposers, and request ID.
+ *
+ * API:
+ *   lifecycleRegistry.begin(convId) → lifecycle instance
+ *   lifecycleRegistry.get(convId) → lifecycle | undefined
+ *   lifecycleRegistry.abort(convId, reason) → void
+ *   lifecycleRegistry.abortAll(reason) → void
+ *   lifecycleRegistry.active() → StreamInfo[]
+ */
+export class LifecycleRegistry {
+  private readonly lifecycles = new Map<string, ConversationLifecycle>()
+
+  /**
+   * Start a new lifecycle for a conversation. If one already exists for this
+   * conversation, auto-aborts it first (same-conversation supersede).
+   * Returns the lifecycle instance (caller accesses signal, requestId, etc.).
+   */
+  begin(conversationId: string): ConversationLifecycle {
+    // Auto-abort existing lifecycle for same conversation (supersede)
+    const existing = this.lifecycles.get(conversationId)
+    if (existing?.isActive) {
+      log.warn(
+        `[LifecycleRegistry] Superseding existing lifecycle for conversation=${conversationId}`
+      )
+      existing.abort('superseded')
+      this.lifecycles.delete(conversationId)
+    }
+
+    const lifecycle = new ConversationLifecycle()
+    lifecycle.begin(conversationId)
+
+    // Auto-remove from registry when lifecycle completes or is aborted.
+    // A4-FIX: Check both the removed flag AND that the map entry is still
+    // this lifecycle instance. If begin(sameConvId) was called from a
+    // disposer, the map entry is a fresh lifecycle — don't delete it.
+    let removed = false
+    lifecycle.onDispose(() => {
+      if (!removed && this.lifecycles.get(conversationId) === lifecycle) {
+        removed = true
+        this.lifecycles.delete(conversationId)
+      }
+    })
+
+    this.lifecycles.set(conversationId, lifecycle)
+    return lifecycle
+  }
+
+  /** Get the active lifecycle for a conversation, if any. */
+  get(conversationId: string): ConversationLifecycle | undefined {
+    const lc = this.lifecycles.get(conversationId)
+    // Clean up stale entries — lifecycle completed but disposer didn't fire
+    if (lc && !lc.isActive) {
+      this.lifecycles.delete(conversationId)
+      return undefined
+    }
+    return lc
+  }
+
+  /** Abort a specific conversation's lifecycle. No-op if not active. */
+  abort(conversationId: string, reason?: string): void {
+    const lc = this.lifecycles.get(conversationId)
+    if (lc?.isActive) {
+      lc.abort(reason)
+    }
+    // A4-FIX: Only delete if the map entry is still the same instance.
+    // A disposer inside lc.abort() may call registry.begin(sameConvId),
+    // replacing the map entry with a fresh lifecycle. Unconditionally
+    // deleting here would orphan that new lifecycle.
+    if (this.lifecycles.get(conversationId) === lc) {
+      this.lifecycles.delete(conversationId)
+    }
+  }
+
+  /** Abort all active lifecycles. Used on workspace switch / force reset. */
+  abortAll(reason?: string): void {
+    // Snapshot keys — abort() modifies the map via disposers
+    const keys = [...this.lifecycles.keys()]
+    for (const convId of keys) {
+      this.abort(convId, reason)
+    }
+  }
+
+  /** List all active streams. */
+  active(): StreamInfo[] {
+    const result: StreamInfo[] = []
+    for (const [conversationId, lc] of this.lifecycles) {
+      if (lc.isActive && lc.requestId) {
+        result.push({
+          conversationId,
+          requestId: lc.requestId,
+          state: 'streaming'
+        })
+      }
+    }
+    return result
+  }
+
+  /** Check if a specific conversation is currently streaming. */
+  isStreaming(conversationId: string): boolean {
+    return this.get(conversationId)?.isActive === true
+  }
+
+  /** Number of active streams. */
+  get size(): number {
+    // Clean stale entries during count
+    for (const [k, lc] of this.lifecycles) {
+      if (!lc.isActive) this.lifecycles.delete(k)
+    }
+    return this.lifecycles.size
+  }
+}
+
+export const lifecycleRegistry = new LifecycleRegistry()
+
+// A12-FIX: Removed deprecated `conversationLifecycle` singleton export.
+// It was a detached ConversationLifecycle instance that silently no-oped
+// for any code importing it — only the rewritten tests referenced it
+// (in a catch comment). All live code uses `lifecycleRegistry`.

@@ -150,17 +150,7 @@ export function createCircuitBreaker() {
   return { breaker: new AgentCircuitBreaker() }
 }
 
-// ── DaVinciPromptAssembler Factory ──
 
-export function createPromptAssembler() {
-  const { DaVinciPromptAssembler } = require('../../da-vinci-prompt-assembler') as {
-    DaVinciPromptAssembler: new () => InstanceType<
-      typeof import('../../da-vinci-prompt-assembler').DaVinciPromptAssembler
-    >
-  }
-
-  return { assembler: new DaVinciPromptAssembler() }
-}
 
 // ── AgentTokenTracker Factory ──
 

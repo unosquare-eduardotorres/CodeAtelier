@@ -80,6 +80,7 @@ describe('CostTracker — MODEL_PRICING', () => {
     const expectedModels = [
       'claude-haiku-4-5-20251001',
       'claude-sonnet-5',
+      'claude-opus-5',
       'claude-fable-5',
       'claude-sonnet-4-6',
       'claude-opus-4-8',

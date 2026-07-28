@@ -11,7 +11,7 @@ const log = chatIpcLogger
 
 /**
  * Auto-capture MCP tool errors to the bug tracker.
- * Called when `isToolError` is true in any pipeline (DaVinci, Grill, Audit).
+ * Called when `isToolError` is true in any pipeline (Specialist, Grill, Audit).
  */
 export function reportToolError(
   toolName: string,
@@ -19,6 +19,12 @@ export function reportToolError(
   context: { agentType: string; workspaceId?: string; agentId?: string }
 ): void {
   try {
+    // Skip expected safety-guard rejections — these aren't real bugs
+    if (toolName === 'Bash' && errorContent.includes('Blocked:')) {
+      log.debug(`Suppressed expected Bash safety rejection: ${errorContent.slice(0, 100)}`)
+      return
+    }
+
     const firstLine = errorContent.split('\n')[0]?.trim() ?? 'Unknown error'
     const SDK_BUILTIN_TOOLS = new Set(['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'])
     const prefix = SDK_BUILTIN_TOOLS.has(toolName) ? 'Tool error' : 'MCP tool error'

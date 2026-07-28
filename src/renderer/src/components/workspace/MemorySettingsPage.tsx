@@ -9,10 +9,11 @@ import {
   CircleDot,
   RefreshCw,
   Copy,
-  ArrowUpDown
+  ArrowUpDown,
+  ChevronLeft
 } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
-import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
+import { ErrorBoundary } from '@renderer/components/common/ErrorBoundary'
 import {
   MemoryExplainer,
   FactCard,
@@ -21,7 +22,8 @@ import {
   CaptureSettings,
   IngestDocuments,
   GraphView,
-  BootstrapKnowledge
+  BootstrapKnowledge,
+  ClaudeMdPanel
 } from './memory'
 import type {
   MemoryEmbeddingStatus,
@@ -45,6 +47,17 @@ const SORT_OPTIONS = [
 type SortMode = (typeof SORT_OPTIONS)[number]['value']
 const BATCH_SIZE = 60
 
+const TABS = ['graph', 'settings', 'facts', 'contradictions', 'claudemd'] as const
+type TabKey = (typeof TABS)[number]
+
+const TAB_LABELS: Record<TabKey, string> = {
+  graph: 'Brain',
+  settings: 'Ingestion',
+  facts: 'Memories',
+  contradictions: 'Review',
+  claudemd: 'CLAUDE.md'
+}
+
 // ── Main Page (thin tab-shell) ──
 
 export default function MemorySettingsPage(): React.JSX.Element {
@@ -52,6 +65,9 @@ export default function MemorySettingsPage(): React.JSX.Element {
   const {
     facts,
     contradictions,
+    contradictionsPage,
+    contradictionsTotal,
+    contradictionsPendingCount,
     searchQuery,
     embeddingStatus,
     captureSettings,
@@ -67,6 +83,8 @@ export default function MemorySettingsPage(): React.JSX.Element {
     deleteFact,
     toggleScope,
     loadContradictions,
+    resolveContradiction,
+    autoResolveDuplicates,
     loadEmbeddingStatus,
     loadCaptureSettings,
     updateCaptureSettings,
@@ -74,21 +92,16 @@ export default function MemorySettingsPage(): React.JSX.Element {
     clearBackfillError,
     scanForDuplicates,
     startFeed,
-    dismissFeed,
     setSearchQuery
   } = useMemoryStore()
 
   const [dedupScanning, setDedupScanning] = useState(false)
   const [dedupResult, setDedupResult] = useState<string | null>(null)
+  const [autoResolving, setAutoResolving] = useState(false)
+  const [autoResolveResult, setAutoResolveResult] = useState<string | null>(null)
 
-  const [activeTab, setActiveTab] = useState<'facts' | 'graph' | 'contradictions' | 'search' | 'settings'>(
-    'facts'
-  )
-  const [showDiffModal, setShowDiffModal] = useState(false)
-  const [diffData, setDiffData] = useState<{
-    existing: string | null
-    generated: string
-  } | null>(null)
+  const [activeTab, setActiveTab] = useState<TabKey>('facts')
+  const [showSearchPlayground, setShowSearchPlayground] = useState(false)
 
   // ── Toolbar state ──
   const [filterCategories, setFilterCategories] = useState<Set<MemoryFactCategory>>(new Set(ALL_CATEGORIES))
@@ -149,33 +162,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
     if (workspaceId) loadFacts(workspaceId)
   }, [activeWorkspace, workspaceId])
 
-  const handleRegenerateClaudeMd = useCallback(async () => {
-    if (!activeWorkspace || !workspaceId) return
-    startFeed('document')
-    try {
-      const result = await window.api.memoryRegenerateClaudeMd({
-        workspacePath: activeWorkspace.repoPath,
-        workspaceId
-      })
-      if (result.success && result.content) {
-        setDiffData({ existing: result.existing ?? null, generated: result.content })
-        setShowDiffModal(true)
-        dismissFeed()
-      } else {
-        // Surface the error instead of silently dismissing
-        useMemoryStore.setState({
-          feedStatus: 'error',
-          feedError: result.error || 'CLAUDE.md generation produced no content'
-        })
-      }
-    } catch (err) {
-      useMemoryStore.setState({
-        feedStatus: 'error',
-        feedError: err instanceof Error ? err.message : 'CLAUDE.md generation failed'
-      })
-    }
-  }, [activeWorkspace, workspaceId])
-
   if (!workspaceId) {
     return (
       <div className="flex items-center justify-center h-64 text-text-muted">
@@ -186,7 +172,6 @@ export default function MemorySettingsPage(): React.JSX.Element {
 
   const activeFacts = facts.filter((f) => f.status === 'active')
   const supersededFacts = facts.filter((f) => f.status === 'superseded')
-  const pendingContradictions = contradictions.filter((c) => c.status === 'pending')
 
   return (
     <div data-testid="memory-settings-page" className="space-y-6">
@@ -201,7 +186,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
 
       {/* ── Tab Navigation ── */}
       <div className="flex gap-2 border-b border-border-default pb-2">
-        {(['facts', 'graph', 'contradictions', 'search', 'settings'] as const).map((tab) => (
+        {TABS.map((tab) => (
           <button
             key={tab}
             data-testid={`memory-tab-${tab}`}
@@ -212,97 +197,26 @@ export default function MemorySettingsPage(): React.JSX.Element {
                 : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
             }`}
           >
-            {tab === 'facts' && `Memories (${activeFacts.length})`}
-            {tab === 'graph' && 'Graph'}
+            {tab === 'facts' && `${TAB_LABELS[tab]} (${activeFacts.length})`}
             {tab === 'contradictions' &&
-              `Review${pendingContradictions.length > 0 ? ` (${pendingContradictions.length})` : ''}`}
-            {tab === 'search' && 'Search'}
-            {tab === 'settings' && 'Capture'}
+              `${TAB_LABELS[tab]}${contradictionsPendingCount > 0 ? ` (${contradictionsPendingCount})` : ''}`}
+            {tab !== 'facts' && tab !== 'contradictions' && TAB_LABELS[tab]}
           </button>
         ))}
       </div>
 
-      {/* ── Facts Tab ── */}
-      {activeTab === 'facts' && (
-        <FactsTab
-          activeFacts={activeFacts}
-          supersededFacts={supersededFacts}
-          searchQuery={searchQuery}
-          filterCategories={filterCategories}
-          filterTiers={filterTiers}
-          filterStatus={filterStatus}
-          sortMode={sortMode}
-          visibleCount={visibleCount}
-          onSearch={handleSearch}
-          onSetFilterCategories={setFilterCategories}
-          onSetFilterTiers={setFilterTiers}
-          onSetFilterStatus={setFilterStatus}
-          onSetSortMode={setSortMode}
-          onSetVisibleCount={setVisibleCount}
-          onConfirm={(id) => confirmFact(id, workspaceId)}
-          onArchive={(id) => archiveFact(id, workspaceId)}
-          onDelete={(id) => deleteFact(id)}
-          onScopeToggle={(fact) =>
-            toggleScope(fact.id, !!fact.workspaceId, fact.workspaceId ? undefined : workspaceId)
-          }
-        />
-      )}
-
-      {/* ── Graph Tab ── */}
+      {/* ── Brain Tab (Graph) ── */}
       {activeTab === 'graph' && (
-        <GraphView workspaceId={workspaceId} />
-      )}
-
-      {/* ── Contradictions / Review Tab ── */}
-      {activeTab === 'contradictions' && (
-        <div className="space-y-3">
-          {/* Dedup scan button */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={async () => {
-                setDedupScanning(true)
-                setDedupResult(null)
-                const result = await scanForDuplicates(workspaceId)
-                setDedupResult(
-                  result.pairsFound > 0
-                    ? `Found ${result.pairsFound} duplicate pair${result.pairsFound !== 1 ? 's' : ''}`
-                    : 'No duplicates found'
-                )
-                setDedupScanning(false)
-              }}
-              disabled={dedupScanning || (embeddingStatus?.pendingCount ?? 0) > 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20 disabled:opacity-50"
-              title={
-                (embeddingStatus?.pendingCount ?? 0) > 0
-                  ? 'Embed memories first'
-                  : 'Scan embedded memories for near-duplicates'
-              }
-            >
-              <Copy className="w-4 h-4" />
-              {dedupScanning ? 'Scanning…' : 'Scan for duplicates'}
-            </button>
-            {dedupResult && (
-              <span className="text-xs text-text-muted">{dedupResult}</span>
-            )}
+        <ErrorBoundary fallback={
+          <div className="flex items-center justify-center h-64 text-text-muted text-sm">
+            Graph visualization encountered an error. Switch tabs and back to retry.
           </div>
-
-          {contradictions.length === 0 ? (
-            <div className="text-center py-12 text-text-muted">
-              <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>No contradictions to review.</p>
-            </div>
-          ) : (
-            contradictions.map((c) => (
-              <ContradictionCard key={c.id} contradiction={c} allFacts={facts} />
-            ))
-          )}
-        </div>
+        }>
+          <GraphView workspaceId={workspaceId} />
+        </ErrorBoundary>
       )}
 
-      {/* ── Search Playground Tab ── */}
-      {activeTab === 'search' && <SearchPlayground workspaceId={workspaceId} />}
-
-      {/* ── Capture Settings Tab ── */}
+      {/* ── Ingestion Tab (was Capture/Settings) ── */}
       {activeTab === 'settings' && (
         <div className="space-y-6">
           <BootstrapKnowledge />
@@ -319,30 +233,170 @@ export default function MemorySettingsPage(): React.JSX.Element {
             feedMessage={feedMessage}
             feedError={feedError}
             onFeedDocument={handleFeedDocument}
-            onRegenerateClaudeMd={handleRegenerateClaudeMd}
             onUpdateSettings={updateCaptureSettings}
             workspaceId={workspaceId}
           />
         </div>
       )}
 
-      {showDiffModal && diffData && (
-        <ClaudeMdDiffModal
-          existing={diffData.existing}
-          proposed={diffData.generated}
-          workspacePath={activeWorkspace?.repoPath ?? ''}
-          onConfirm={async (content) => {
-            if (!activeWorkspace) return
-            await window.api.confirmClaudeMd({ workspacePath: activeWorkspace.repoPath, content })
-            setShowDiffModal(false)
-            setDiffData(null)
-          }}
-          onDismiss={() => {
-            setShowDiffModal(false)
-            setDiffData(null)
-          }}
-          isConfirming={feedStatus === 'running'}
-        />
+      {/* ── Memories Tab (Facts + folded-in Search) ── */}
+      {activeTab === 'facts' && (
+        <div className="space-y-3">
+          <FactsTab
+            activeFacts={activeFacts}
+            supersededFacts={supersededFacts}
+            searchQuery={searchQuery}
+            filterCategories={filterCategories}
+            filterTiers={filterTiers}
+            filterStatus={filterStatus}
+            sortMode={sortMode}
+            visibleCount={visibleCount}
+            onSearch={handleSearch}
+            onSetFilterCategories={setFilterCategories}
+            onSetFilterTiers={setFilterTiers}
+            onSetFilterStatus={setFilterStatus}
+            onSetSortMode={setSortMode}
+            onSetVisibleCount={setVisibleCount}
+            onConfirm={(id) => confirmFact(id, workspaceId)}
+            onArchive={(id) => archiveFact(id, workspaceId)}
+            onDelete={(id) => deleteFact(id)}
+            onScopeToggle={(fact) =>
+              toggleScope(fact.id, !!fact.workspaceId, fact.workspaceId ? undefined : workspaceId)
+            }
+          />
+
+          {/* Collapsible Search Playground */}
+          <div className="border-t border-border-default pt-3">
+            <button
+              onClick={() => setShowSearchPlayground(!showSearchPlayground)}
+              className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
+            >
+              {showSearchPlayground ? (
+                <ChevronDown className="w-4 h-4" />
+              ) : (
+                <ChevronRight className="w-4 h-4" />
+              )}
+              <Search className="w-3.5 h-3.5" />
+              Advanced search / match insights
+            </button>
+            {showSearchPlayground && (
+              <div className="mt-3">
+                <SearchPlayground workspaceId={workspaceId} />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Review Tab (Contradictions — paginated + actionable) ── */}
+      {activeTab === 'contradictions' && (
+        <div className="space-y-3">
+          {/* Action bar */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={async () => {
+                setDedupScanning(true)
+                setDedupResult(null)
+                const result = await scanForDuplicates(workspaceId)
+                setDedupResult(
+                  (result.clustersFound > 0 || result.autoMerged > 0)
+                    ? `Found ${result.clustersFound} cluster${result.clustersFound !== 1 ? 's' : ''}, auto-merged ${result.autoMerged}`
+                    : 'No duplicates found'
+                )
+                setDedupScanning(false)
+              }}
+              disabled={dedupScanning || (embeddingStatus?.pendingCount ?? 0) > 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20 disabled:opacity-50"
+              title={
+                (embeddingStatus?.pendingCount ?? 0) > 0
+                  ? 'Embed memories first'
+                  : 'Scan embedded memories for near-duplicates'
+              }
+            >
+              <Copy className="w-4 h-4" />
+              {dedupScanning ? 'Scanning…' : 'Scan for duplicates'}
+            </button>
+
+            {/* Auto-resolve button */}
+            {contradictionsTotal > 0 && (
+              <button
+                onClick={async () => {
+                  setAutoResolving(true)
+                  setAutoResolveResult(null)
+                  const result = await autoResolveDuplicates(workspaceId, 0.95)
+                  setAutoResolveResult(
+                    result.resolvedCount > 0
+                      ? `Auto-resolved ${result.resolvedCount} near-exact duplicate${result.resolvedCount !== 1 ? 's' : ''}`
+                      : 'No near-exact duplicates to resolve'
+                  )
+                  setAutoResolving(false)
+                }}
+                disabled={autoResolving}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-success-muted text-success border border-success/30 rounded-md hover:bg-success/20 disabled:opacity-50"
+              >
+                <Zap className="w-4 h-4" />
+                {autoResolving ? 'Resolving…' : 'Auto-resolve near-exact duplicates (≥0.95)'}
+              </button>
+            )}
+
+            {/* Results */}
+            {dedupResult && <span className="text-xs text-text-muted">{dedupResult}</span>}
+            {autoResolveResult && <span className="text-xs text-success">{autoResolveResult}</span>}
+          </div>
+
+          {/* Summary header */}
+          {contradictionsTotal > 0 && (
+            <div className="text-xs text-text-muted">
+              Showing {contradictions.length === 0 ? 0 : contradictionsPage * 25 + 1}–
+              {Math.min((contradictionsPage + 1) * 25, contradictionsTotal)} of {contradictionsTotal}
+            </div>
+          )}
+
+          {/* Cards */}
+          {contradictions.length === 0 ? (
+            <div className="text-center py-12 text-text-muted">
+              <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>No contradictions to review.</p>
+            </div>
+          ) : (
+            contradictions.map((c) => (
+              <ContradictionCard
+                key={c.id}
+                contradiction={c}
+                allFacts={facts}
+                onResolve={resolveContradiction}
+              />
+            ))
+          )}
+
+          {/* Pagination */}
+          {contradictionsTotal > 25 && (
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                onClick={() => loadContradictions(undefined, contradictionsPage - 1)}
+                disabled={contradictionsPage === 0}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs bg-surface-overlay border border-border-default rounded hover:bg-surface-float disabled:opacity-30 transition-colors"
+              >
+                <ChevronLeft className="w-3 h-3" /> Previous
+              </button>
+              <span className="text-xs text-text-muted">
+                Page {contradictionsPage + 1} of {Math.ceil(contradictionsTotal / 25)}
+              </span>
+              <button
+                onClick={() => loadContradictions(undefined, contradictionsPage + 1)}
+                disabled={(contradictionsPage + 1) * 25 >= contradictionsTotal}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs bg-surface-overlay border border-border-default rounded hover:bg-surface-float disabled:opacity-30 transition-colors"
+              >
+                Next <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── CLAUDE.md Tab ── */}
+      {activeTab === 'claudemd' && (
+        <ClaudeMdPanel />
       )}
     </div>
   )
@@ -408,7 +462,7 @@ function FactsTab({
   }, [activeFacts])
 
   const validatedCount = useMemo(
-    () => activeFacts.filter((f) => f.tier >= 1 || f.confirmationCount > 0).length,
+    () => activeFacts.filter((f) => f.tier >= 1 || (f.evidenceCount ?? 0) > 0).length,
     [activeFacts]
   )
   const validatedPct = activeFacts.length > 0 ? Math.round((validatedCount / activeFacts.length) * 100) : 0
@@ -418,8 +472,8 @@ function FactsTab({
     let items = activeFacts.filter((f) => {
       if (!filterCategories.has(f.category)) return false
       if (!filterTiers.has(Math.min(f.tier, 3))) return false
-      if (filterStatus === 'validated' && f.tier < 1 && f.confirmationCount === 0) return false
-      if (filterStatus === 'unvalidated' && (f.tier >= 1 || f.confirmationCount > 0)) return false
+      if (filterStatus === 'validated' && f.tier < 1 && (f.evidenceCount ?? 0) === 0) return false
+      if (filterStatus === 'unvalidated' && (f.tier >= 1 || (f.evidenceCount ?? 0) > 0)) return false
       if (filterStatus === 'pending-embedding' && !f.embeddingPending) return false
       return true
     })

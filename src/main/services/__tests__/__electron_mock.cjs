@@ -38,6 +38,39 @@ const mockBrowserWindow = {
   getFocusedWindow: function() { return null },
 }
 
+// ── Notification mock for OS notification tests ──
+let notificationSupportedFlag = true
+let lastCreatedNotification = null
+
+class MockNotification {
+  constructor(opts) {
+    this.title = opts.title || ''
+    this.subtitle = opts.subtitle
+    this.body = opts.body || ''
+    this.silent = opts.silent ?? true
+    this.sound = opts.sound
+    this.groupId = opts.groupId
+    this.urgency = opts.urgency
+    this._listeners = {}
+    this._shown = false
+    this._closed = false
+    lastCreatedNotification = this
+  }
+  static isSupported() { return notificationSupportedFlag }
+  on(event, handler) {
+    if (!this._listeners[event]) this._listeners[event] = []
+    this._listeners[event].push(handler)
+  }
+  show() { this._shown = true }
+  close() {
+    this._closed = true
+    for (const handler of this._listeners['close'] || []) handler()
+  }
+}
+
+// ── Dock mock ──
+let lastDockBounceType = null
+
 const mockApp = {
   getPath: function(name) { return '/tmp/electron-test/' + name },
   getName: function() { return 'AgentStudio-test' },
@@ -46,6 +79,10 @@ const mockApp = {
   getAppPath: function() { return '/tmp/electron-test' },
   on: noop,
   quit: noop,
+  dock: {
+    bounce: function(type) { lastDockBounceType = type },
+    setBadge: noop,
+  },
 }
 
 module.exports = {
@@ -70,10 +107,18 @@ module.exports = {
   screen: {
     getPrimaryDisplay: function() { return { workAreaSize: { width: 1920, height: 1080 } } },
   },
+  Notification: MockNotification,
   // Internal access for test assertions
   __capturedHandlers: capturedHandlers,
   __capturedOnHandlers: capturedOnHandlers,
   __sentEvents: sentEvents,
+  __notificationMock: {
+    get lastCreated() { return lastCreatedNotification },
+    get lastDockBounceType() { return lastDockBounceType },
+    get supported() { return notificationSupportedFlag },
+    set supported(v) { notificationSupportedFlag = v },
+    reset() { lastCreatedNotification = null; lastDockBounceType = null; notificationSupportedFlag = true },
+  },
   // Default export (electron package normally exports binary path string)
   default: '/usr/local/bin/electron',
 }

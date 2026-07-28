@@ -4,7 +4,6 @@ import {
   Terminal,
   KeyRound,
   CreditCard,
-  Code2,
   Loader2,
   CheckCircle2,
   AlertTriangle,
@@ -158,7 +157,6 @@ export default function AISubscriptionsSection(): React.JSX.Element {
   const cli = deriveRowStatus(isValidating, hasResult, result?.claudeCli.installed ?? false, 'Installed', 'Not Found')
   const auth = deriveRowStatus(isValidating, hasResult, result?.claudeAuth.authenticated ?? false, 'Logged In', 'Not Authenticated', result?.claudeCli.installed ? 'error' : 'warning')
   const max = deriveRowStatus(isValidating, hasResult, result?.claudeMax.active ?? false, 'Active', 'Inactive', 'warning')
-  const codex = deriveRowStatus(isValidating, hasResult, result?.codexCli.installed ?? false, 'Installed', 'Not Found', 'warning')
 
   const showAutoConfigureButton = result && !result.claudeCli.installed
 
@@ -197,14 +195,6 @@ export default function AISubscriptionsSection(): React.JSX.Element {
           status={max.status}
           statusLabel={max.statusLabel}
           error={result?.claudeMax.error ?? null}
-        />
-        <CheckRow
-          icon={<Code2 size={14} />}
-          label="Codex CLI"
-          detail={result?.codexCli.version ?? null}
-          status={codex.status}
-          statusLabel={codex.statusLabel}
-          error={result?.codexCli.error ?? null}
         />
       </div>
 

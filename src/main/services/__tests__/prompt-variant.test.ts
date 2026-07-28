@@ -1,7 +1,7 @@
 /**
  * Unit tests for prompt-variant.ts — full/lean variant selection driven by
- * resolvePromptVerbosity(model). Lean is enabled for Opus 4.8+ and Sonnet 4.6+;
- * Haiku and older models get the full variant.
+ * resolvePromptVerbosity(model). Lean is enabled for Opus 5+, Opus 4.8 (legacy),
+ * and Sonnet 4.6+; Haiku and older models get the full variant.
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
@@ -10,12 +10,16 @@ import { selectVariant, isLeanModel, type PromptVariants } from '../prompt-varia
 const VARIANTS: PromptVariants = { full: 'FULL_TEXT', lean: 'LEAN_TEXT' }
 
 describe('prompt-variant › selectVariant', () => {
-  test('returns lean for claude-opus-4-8', () => {
+  test('returns lean for claude-opus-5', () => {
+    assert.equal(selectVariant(VARIANTS, 'claude-opus-5'), 'LEAN_TEXT')
+  })
+
+  test('returns lean for claude-opus-4-8 (legacy)', () => {
     assert.equal(selectVariant(VARIANTS, 'claude-opus-4-8'), 'LEAN_TEXT')
   })
 
-  test('returns lean for an Opus newer than 4.8', () => {
-    assert.equal(selectVariant(VARIANTS, 'claude-opus-4-9'), 'LEAN_TEXT')
+  test('returns lean for an Opus newer than 5', () => {
+    assert.equal(selectVariant(VARIANTS, 'claude-opus-5-1'), 'LEAN_TEXT')
   })
 
   test('returns lean for Sonnet 4.6', () => {
@@ -40,7 +44,11 @@ describe('prompt-variant › selectVariant', () => {
 })
 
 describe('prompt-variant › isLeanModel', () => {
-  test('true for Opus 4.8', () => {
+  test('true for Opus 5', () => {
+    assert.equal(isLeanModel('claude-opus-5'), true)
+  })
+
+  test('true for Opus 4.8 (legacy)', () => {
     assert.equal(isLeanModel('claude-opus-4-8'), true)
   })
 

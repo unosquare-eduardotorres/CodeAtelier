@@ -2,11 +2,14 @@ import { ipcMain, app } from 'electron'
 import { join, resolve } from 'node:path'
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import simpleGit from 'simple-git'
-import { conversationRepository, workspaceRepository } from '../db/repositories'
+import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
-import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { lifecycleRegistry } from '../services/conversation-lifecycle'
 import { chatStreamService } from '../services/chat-stream.service'
-import { IPC_CHANNELS } from '../../shared/constants'
+import { IPC_CHANNELS, COMMIT_ATTRIBUTION, DEFAULT_MODEL_CONFIG } from '../../shared/constants'
+import { runOneShotClaude } from '../services/one-shot-claude'
+import { modelConfigService } from '../services/model-config.service'
+import { repoService } from '../services/repo.service'
 import { githubService } from '../services/github.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -34,10 +37,10 @@ function cleanupChatImages(conversationId: string): void {
  */
 async function handleChatClose(conversationId: string): Promise<void> {
   // CONV-DEL-01: Abort active stream if it's for this conversation.
-  if (conversationLifecycle.conversationId === conversationId) {
+  if (lifecycleRegistry.isStreaming(conversationId)) {
     // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
     completeStreamMetrics(conversationId, 'aborted')
-    conversationLifecycle.abort('conversation-deleted')
+    lifecycleRegistry.abort(conversationId, 'conversation-deleted')
   }
 
   chatAgentService.clearSession(conversationId)
@@ -136,7 +139,8 @@ async function handleChatComplete(args: {
   try {
     await git.add(changedPaths)
 
-    const fullMessage = description ? `${commitMessage}\n\n${description}` : commitMessage
+    const body = description ? `${description}\n\n${COMMIT_ATTRIBUTION}` : COMMIT_ATTRIBUTION
+    const fullMessage = `${commitMessage}\n\n${body}`
     await git.commit(fullMessage)
     const commitHash = await git.revparse(['HEAD'])
 
@@ -178,10 +182,10 @@ async function handleChatComplete(args: {
     // CHAT-COMPLETE-PUSH-DELETE-RACE-01: Isolate post-push cleanup so failures
     // don't trigger the catch handler's branch-deletion recovery. The commit and
     // push already succeeded — cleanup errors are non-fatal.
-    if (conversationLifecycle.conversationId === conversationId) {
+    if (lifecycleRegistry.isStreaming(conversationId)) {
       // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
       completeStreamMetrics(conversationId, 'completed')
-      conversationLifecycle.abort('conversation-completed')
+      lifecycleRegistry.abort(conversationId, 'conversation-completed')
     }
     chatAgentService.clearSession(conversationId)
     // N1-FIX: Clear per-conversation memory dedupe state
@@ -221,6 +225,72 @@ export function registerChatCompletionIpc(): void {
     const description = optionalString(args, 'description', IPC_CHANNELS.CHAT_COMPLETE) ?? ''
     const branchNameArg = optionalString(args, 'branchName', IPC_CHANNELS.CHAT_COMPLETE)
     return handleChatComplete({ conversationId, commitMessage, description, branchNameArg })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION)
+
+    const conversation = conversationRepository.findById(conversationId)
+    if (!conversation) throw new Error('Conversation not found')
+
+    const workspace = workspaceRepository.findById(conversation.workspaceId)
+    const messages = messageRepository.findByConversation(conversationId)
+
+    if (messages.length === 0) {
+      return { description: '' }
+    }
+
+    // Truncate to last 15 messages, 500 chars each — keeps prompt small for Haiku
+    const recentMessages = messages
+      .slice(-15)
+      .map((m) => `[${m.role}]: ${m.contentMd.slice(0, 500)}`)
+      .join('\n')
+
+    // Get file changes for context (best-effort)
+    let fileChangesContext = ''
+    try {
+      const fileChanges = await repoService.getUncommittedFileDetails(workspace?.repoPath ?? '')
+      if (fileChanges.length > 0) {
+        fileChangesContext = `\n\n## Changed files (${fileChanges.length}):\n${fileChanges
+          .map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
+          .join('\n')}`
+      }
+    } catch {
+      /* best effort */
+    }
+
+    const prompt = `You are generating a concise PR description for a GitHub pull request.
+
+Based on this conversation and file changes, write a clear PR description with:
+1. A one-line summary of what changed and why
+2. A bullet list of key changes (max 8 items)
+3. Any notable decisions or trade-offs
+
+Keep it under 500 words. Use markdown formatting.
+
+## Conversation title: ${conversation.title}
+
+## Recent conversation (last ${Math.min(messages.length, 15)} messages):
+${recentMessages}${fileChangesContext}
+
+Respond with ONLY the PR description, no preamble.`
+
+    const resolvedModel = workspace?.id
+      ? modelConfigService.getModelById(workspace.id, 'pr-description')
+      : DEFAULT_MODEL_CONFIG['pr-description']
+
+    const { text } = await runOneShotClaude({
+      feature: 'pr_description',
+      model: resolvedModel,
+      workspaceId: workspace?.id ?? null,
+      conversationId,
+      args: ['-p', prompt, '--model', resolvedModel],
+      cli: { timeout: 15_000 }
+    })
+
+    return { description: text.trim() }
   })
 
   ipcMain.handle(IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE, async (event, rawArgs: unknown) => {

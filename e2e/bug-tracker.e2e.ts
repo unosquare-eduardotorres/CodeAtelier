@@ -100,7 +100,7 @@ test.describe('Bug Tracker', () => {
     })
 
     const bugCount = await bugItems.count()
-    const emptyText = page.getByText(/no bugs found/i).first()
+    const emptyText = page.getByText(/no bugs (found|detected)/i).first()
     const hasEmpty = await emptyText.isVisible({ timeout: 3_000 }).catch(() => false)
 
     expect(bugCount > 0 || hasEmpty).toBeTruthy()

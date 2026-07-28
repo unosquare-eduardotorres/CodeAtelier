@@ -38,6 +38,15 @@ export class AppPreferenceRepository extends BaseRepository<
     return value === 'true'
   }
 
+  /** Read an integer preference, clamped to [min, max]. */
+  getInt(key: string, defaultVal: number, min: number, max: number): number {
+    const raw = this.get(key)
+    if (raw === null) return defaultVal
+    const n = parseInt(raw, 10)
+    if (Number.isNaN(n)) return defaultVal
+    return Math.max(min, Math.min(max, n))
+  }
+
   /** Get all preferences as typed AppPreferences object */
   getAppPreferences(): AppPreferences {
     return {
@@ -50,7 +59,10 @@ export class AppPreferenceRepository extends BaseRepository<
       updateDrivePath: this.get('update_drive_path') ?? '',
       updateGithubOwner: this.get('update_github_owner') ?? '',
       updateGithubRepo: this.get('update_github_repo') ?? '',
-      context7ApiKey: this.get('context7_api_key') ?? ''
+      context7ApiKey: this.get('context7_api_key') ?? '',
+      notificationsEnabled: this.getBool('notifications_enabled', true),
+      parallelBuildAgents: this.getInt('parallel_build_agents', 3, 1, 6),
+      leanBuildMcp: this.getBool('lean_build_mcp', false)
     }
   }
 }

@@ -141,7 +141,8 @@ function buildProcessEnv(
   return {
     ...baseEnv,
     ...(options.envOverrides ?? {}),
-    CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${appVersion}`
+    CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${appVersion}`,
+    CLAUDE_CODE_SUPPRESS_SESSION_ATTRIBUTION: '1'
   }
 }
 
@@ -416,6 +417,11 @@ describe('buildProcessEnv', () => {
   test('handles_undefined_overrides', () => {
     const env = buildProcessEnv({}, { PATH: '/usr/bin' }, '1.0.0')
     assert.equal(env.PATH, '/usr/bin')
+  })
+
+  test('includes_CLAUDE_CODE_SUPPRESS_SESSION_ATTRIBUTION', () => {
+    const env = buildProcessEnv({}, {}, '2.5.0')
+    assert.equal(env.CLAUDE_CODE_SUPPRESS_SESSION_ATTRIBUTION, '1')
   })
 })
 

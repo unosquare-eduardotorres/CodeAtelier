@@ -1,8 +1,7 @@
 import type { ConversationMode } from '../../shared/types'
 
 /**
- * Mode-driven allow / disallow tool lists, shared by DaVinci and Project
- * Specialists. Role-specific MCP tool names (code-graph, semantic-search,
+ * Mode-driven allow / disallow tool lists, shared by all specialist Role-specific MCP tool names (code-graph, semantic-search,
  * git-context, etc.) are appended by the caller once it knows which feature
  * flags are active.
  *
@@ -13,7 +12,7 @@ import type { ConversationMode } from '../../shared/types'
  *
  * The Agent and ToolSearch tools are blocked globally:
  *   - Agent: SDK sub-agents are not part of this architecture — specialists
- *     execute directly, DaVinci doesn't delegate.
+ *     execute directly, specialists don't delegate.
  *   - ToolSearch: wastes turns looking for tools we don't surface.
  *
  * ExitPlanMode and AskUserQuestion are blocked in both modes — we surface

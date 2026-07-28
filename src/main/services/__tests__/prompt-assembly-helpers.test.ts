@@ -93,13 +93,13 @@ describe('appendMcpToolGuidance', () => {
     // Specialist/evaluation adapters have no ## Code Exploration — they get the lean guidance.
     assert.ok(
       out.includes('## Code Graph'),
-      'Lean non-DaVinci should get compressed Code Graph guidance'
+      'Lean non-specialist should get compressed Code Graph guidance'
     )
     // But semantic search should still be present
     assert.ok(out.includes('## Semantic Search'), 'Semantic search should still be injected')
   })
 
-  test('lean mode skips REPOMAP_GUIDANCE when base already has ## Code Exploration (DaVinci)', () => {
+  test('lean mode skips REPOMAP_GUIDANCE when base already has ## Code Exploration (specialist)', () => {
     const out = appendMcpToolGuidance(
       'BASE\n\n## Code Exploration\nbuilt-in',
       1,
@@ -110,10 +110,10 @@ describe('appendMcpToolGuidance', () => {
       },
       'claude-opus-4-8'
     )
-    // DaVinci lean identity already covers Code Graph rules — avoid duplication.
+    // Specialist lean identity already covers Code Graph rules — avoid duplication.
     assert.ok(
       !out.includes('## Code Graph'),
-      'DaVinci lean should not duplicate Code Graph guidance'
+      'Specialist lean should not duplicate Code Graph guidance'
     )
   })
 

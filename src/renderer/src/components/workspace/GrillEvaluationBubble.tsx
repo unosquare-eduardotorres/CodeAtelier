@@ -1,7 +1,7 @@
 /**
  * GrillEvaluationBubble — inline score + feedback card in the grill chat stream.
  *
- * Appears after DaVinci finishes analysis, before questions. Shows a compact
+ * Appears after specialist finishes analysis, before questions. Shows a compact
  * score gauge alongside feedback text, indented to align with the message bubbles.
  */
 

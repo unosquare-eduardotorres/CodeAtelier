@@ -6,13 +6,17 @@
  * - webContents.send for event forwarding (phaseStart, phaseProgress, etc.)
  */
 
-import { ipcMain, type BrowserWindow } from 'electron'
+import { app, ipcMain, BrowserWindow } from 'electron'
+import { existsSync, mkdirSync, copyFileSync, statSync, rmSync } from 'node:fs'
+import { join, isAbsolute, basename, normalize, sep } from 'node:path'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString, optionalNumber } from './validate-args'
 import { extractGrillDecisions, extractReferenceDocuments } from './blueprint-ipc-handlers'
+import { parseBlueprintPlan, parseBlueprintTasks } from '../../shared/blueprint-artifact-parsers'
 import { memoryEngineService } from '../services/memory-engine.service'
+import { setManagedDocsRoot } from '../services/blueprint-document-loader'
 // M6: Wire-once pattern — listeners registered once in registerBlueprintIpc, no TTL cleanup needed
 import { blueprintService } from '../services/blueprint.service'
 import { blueprintSpecService } from '../services/blueprint-spec.service'
@@ -22,22 +26,110 @@ import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
 import { workspaceRepository } from '../db/repositories'
+import { blueprintRepository, blueprintPhaseRepository, blueprintTaskRepository } from '../db/repositories/blueprint.repository'
 import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
 import { getSessionEventRouter } from '../services/session-event-router'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 import type { AgentStatus } from '../../shared/types'
+import { createAccumulator } from '../services/blueprint-agent-accumulator'
 import type {
   BlueprintPhaseType,
   BlueprintArtifact,
   BlueprintPriority
 } from '../../shared/blueprint-types'
+import { runPreflightChecks } from '../services/blueprint-preflight.service'
 
 const bpLog = log.scope('blueprint-ipc')
 
 // M6: No per-workspace cleanup needed — listeners are registered once and route by payload.workspaceId
 
+// ── Phase 5.1: Managed docs directory for copy-on-attach ──
+
+/** Max file size for copy-on-attach (25MB) */
+const COPY_ON_ATTACH_MAX_BYTES = 25 * 1024 * 1024
+
+/** Root directory for managed blueprint reference docs */
+function getManagedDocsRoot(): string {
+  return join(app.getPath('userData'), 'blueprint-docs')
+}
+
+/** Get the managed docs directory for a specific blueprint */
+export function getManagedDocsDir(workspaceId: string, blueprintId: string): string {
+  return join(getManagedDocsRoot(), workspaceId, blueprintId)
+}
+
+/**
+ * Phase 5.1: Copy file-type reference docs with absolute paths outside the workspace
+ * into a managed directory under userData. Returns the (possibly rewritten) docs array.
+ */
+function copyOnAttach(
+  workspaceId: string,
+  blueprintId: string,
+  docs: Array<{ type: string; path: string; name?: string }>,
+  workspacePath?: string
+): Array<{ type: string; path: string; name?: string }> {
+  return docs.map((doc, i) => {
+    if (doc.type !== 'file' || !isAbsolute(doc.path)) return doc
+
+    // Check if the path is inside the workspace — if so, no copy needed
+    // MINOR-FIX: Normalize paths + trailing-separator check to avoid
+    // false positives (e.g. /ws2 matching /ws prefix)
+    if (workspacePath) {
+      const normDoc = normalize(doc.path)
+      const normWs = normalize(workspacePath) + (normalize(workspacePath).endsWith(sep) ? '' : sep)
+      if (normDoc.startsWith(normWs) || normDoc === normalize(workspacePath)) return doc
+    }
+
+    try {
+      const stat = statSync(doc.path)
+      if (stat.size > COPY_ON_ATTACH_MAX_BYTES) {
+        bpLog.warn(`[copy-on-attach] File too large (${stat.size} bytes), keeping original: ${doc.path}`)
+        return doc
+      }
+
+      const managedDir = getManagedDocsDir(workspaceId, blueprintId)
+      mkdirSync(managedDir, { recursive: true })
+      // BASENAME-COLLISION-FIX: Prefix with map index to prevent two docs
+      // with the same basename (e.g. both named spec.pdf) from silently
+      // overwriting each other in the managed directory.
+      const destPath = join(managedDir, `${i}-${basename(doc.path)}`)
+      copyFileSync(doc.path, destPath)
+      bpLog.info(`[copy-on-attach] Copied "${doc.path}" → "${destPath}"`)
+      return { ...doc, path: destPath }
+    } catch (err) {
+      bpLog.warn(`[copy-on-attach] Failed to copy "${doc.path}": ${err} — keeping original`)
+      return doc
+    }
+  })
+}
+
+/**
+ * Clean up managed docs when a blueprint is deleted.
+ */
+function cleanupManagedDocs(workspaceId: string, blueprintId: string): void {
+  try {
+    const dir = getManagedDocsDir(workspaceId, blueprintId)
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true })
+      bpLog.info(`[managed-docs] Cleaned up ${dir}`)
+    }
+  } catch (err) {
+    bpLog.warn(`[managed-docs] Cleanup failed: ${err}`)
+  }
+}
+
 // ── Main Registration ──
 
+// GAP-6: Module-level deferred reference to accumulator cleanup.
+// Assigned in wireOnceEventForwarding (where accumulators live),
+// called from the cancel handler in registerBlueprintIpc.
+let accumulatorCleanup: ((blueprintId: string) => void) | null = null
+
 export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
+  // Phase 5.2: Register managed docs root for loader whitelist
+  setManagedDocsRoot(getManagedDocsRoot())
+
   // ── blueprint:create — Create a new blueprint ──
 
   ipcMain.handle(
@@ -53,6 +145,21 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const priority = optionalString(args, 'priority', ch) as BlueprintPriority | undefined
       const settingsJson = args.settingsJson as Record<string, unknown> | undefined
       const blueprint = blueprintService.create({ workspaceId, title, description, priority, settingsJson })
+
+      // Phase 5.1: Copy-on-attach — copy external file docs into managed dir,
+      // then update the stored settingsJson with rewritten paths.
+      const refDocs = settingsJson?.referenceDocuments as Array<{ type: string; path: string; name?: string }> | undefined
+      if (refDocs?.length && blueprint.id) {
+        const ws = workspaceRepository.findById(workspaceId)
+        const rewritten = copyOnAttach(workspaceId, blueprint.id, refDocs, ws?.repoPath)
+        // Check if any paths were rewritten
+        const anyRewritten = rewritten.some((d, i) => d.path !== refDocs[i].path)
+        if (anyRewritten) {
+          const updatedSettings = { ...(settingsJson ?? {}), referenceDocuments: rewritten }
+          blueprintRepository.update(blueprint.id, { settingsJson: updatedSettings })
+          bpLog.info(`[copy-on-attach] Updated settingsJson for ${blueprint.id} with managed doc paths`)
+        }
+      }
 
       // MEM-DOC-SPECIFY-01: Doc extraction moved to startSpecifyPhase() —
       // covers create, createFromIdea, resume, and retry paths in one place.
@@ -113,7 +220,11 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_DELETE)
     const id = requireString(args, 'id', IPC_CHANNELS.BLUEPRINT_DELETE)
+    // Phase 5.1: Look up workspaceId before delete for managed-docs cleanup
+    const bp = blueprintRepository.findById(id)
     blueprintService.delete(id)
+    // Phase 5.1: Clean up managed docs directory
+    if (bp?.workspaceId) cleanupManagedDocs(bp.workspaceId, id)
     return { deleted: true }
   })
 
@@ -130,6 +241,11 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     try {
       const activeBlueprintId = blueprintService.getActiveBlueprintId(workspaceId)
       if (activeBlueprintId) {
+        // GAP-6 FIX: Flush + clean up agent accumulators before cancel
+        // (cancel doesn't emit phaseComplete, so accumulators would leak).
+        // Uses the deferred reference assigned later in the accumulator section.
+        accumulatorCleanup?.(activeBlueprintId)
+
         // Best-effort cancel each phase service — don't let one failure block others
         const phaseServices = [
           blueprintSpecService, blueprintPlanService, blueprintTasksService,
@@ -303,6 +419,22 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         // Drive state machine: awaiting-approval → idle
         const blueprint = blueprintService.getBlueprint(blueprintId)
         if (blueprint) {
+          // G9: If preflight had blockers, persist preflightOverride in settingsJson
+          // so remediation/retry paths inherit the override
+          const pendingApproval = blueprintService.getPendingApproval(blueprint.workspaceId)
+          if (pendingApproval?.preflight) {
+            const pfResult = pendingApproval.preflight.result as Record<string, unknown>
+            if (pfResult.hasBlockers) {
+              blueprintRepository.update(blueprintId, {
+                settingsJson: {
+                  ...blueprint.settingsJson,
+                  preflightOverride: true
+                }
+              })
+              bpLog.info(`[blueprint:approvalRespond] Preflight override persisted for ${blueprintId}`)
+            }
+          }
+
           // M2: Clear approval state before machine transition (snapshot publishes on transition)
           blueprintService.setPendingApproval(blueprint.workspaceId, null)
           const machine = blueprintService.getMachine(blueprint.workspaceId)
@@ -384,6 +516,67 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       }
 
       return { responded: true }
+    }
+  )
+
+  // ── blueprint:preflightRun — Re-run preflight checks (G6: manual re-run) ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RUN,
+    async (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RUN
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+
+      // A5 fix: derive workspacePath server-side from workspaceId (don't trust renderer)
+      const workspace = workspaceRepository.findById(workspaceId)
+      if (!workspace?.repoPath) {
+        bpLog.warn(`[blueprint:preflightRun] No workspace found for ${workspaceId}`)
+        return null
+      }
+      const workspacePath = workspace.repoPath
+
+      bpLog.info(`[blueprint:preflightRun] Re-running preflight for ${blueprintId}`)
+
+      // Gather task descriptions for keyword detection (G10)
+      const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+      const taskDescriptions = tasks.map((t: { description: string }) => t.description)
+
+      const result = await runPreflightChecks(workspacePath, taskDescriptions)
+
+      // A6+R2-2 fix: atomic replace — fresh read inside repo avoids stale artifacts
+      const reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
+      if (reviewPhase) {
+        blueprintPhaseRepository.replaceArtifactOfType(reviewPhase.id, 'preflight', {
+          type: 'preflight',
+          contentJson: result as unknown as Record<string, unknown>
+        })
+      }
+
+      // Update pending approval with new preflight data
+      const pendingApproval = blueprintService.getPendingApproval(workspaceId)
+      if (pendingApproval) {
+        blueprintService.setPendingApproval(workspaceId, {
+          ...pendingApproval,
+          preflight: { result: result as unknown as Record<string, unknown>, overridden: false }
+        })
+      }
+
+      // Broadcast result to renderer
+      try {
+        const windows = BrowserWindow.getAllWindows()
+        for (const win of windows) {
+          win.webContents.send(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RESULT, {
+            blueprintId,
+            workspaceId,
+            result
+          })
+        }
+      } catch { /* non-fatal */ }
+
+      return result
     }
   )
 
@@ -764,6 +957,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       // retryPhase resets the failed phase → pending and returns the phase type
       const { phase } = blueprintService.retryPhase(blueprintId)
 
+      // RETRY-JOURNAL: Record retry dispatch in journal so hydrated transcripts
+      // show a divider explaining why a phase started again.
+      try {
+        blueprintEventRepository.append(blueprintId, 'system', {
+          event: 'retryPhase',
+          message: `Retrying ${phase} phase`
+        })
+      } catch { /* best effort */ }
+
       const workspace = workspaceRepository.findById(workspaceId)
       if (!workspace) {
         throw new Error(`Workspace not found: ${workspaceId}`)
@@ -838,6 +1040,48 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── blueprint:acknowledgeReview — Mark human-needed verify as reviewed ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_ACKNOWLEDGE_REVIEW,
+    (event, rawArgs: unknown) => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_ACKNOWLEDGE_REVIEW
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+
+      const phase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
+      if (!phase) {
+        throw new Error(`Verify phase not found for blueprint: ${blueprintId}`)
+      }
+
+      // Find verify artifact and stamp acknowledgement on its contentJson
+      const artifacts = [...phase.artifactsJson]
+      const artIdx = artifacts.findIndex(
+        (a) => a.type === 'verify' || a.type === 'verification'
+      )
+      if (artIdx >= 0) {
+        const art = artifacts[artIdx]
+        const contentJson = (art.contentJson ?? {}) as Record<string, unknown>
+        contentJson.humanReviewAcknowledged = true
+        contentJson.acknowledgedAt = new Date().toISOString()
+        artifacts[artIdx] = { ...art, contentJson }
+      }
+
+      blueprintPhaseRepository.saveArtifacts(phase.id, artifacts)
+
+      // Journal beat for transcript audit trail
+      try {
+        blueprintEventRepository.append(blueprintId, 'system', {
+          event: 'humanReviewAcknowledged',
+          message: 'Human review completed — verification acknowledged by user'
+        })
+      } catch { /* best effort */ }
+
+      return { acknowledged: true }
+    }
+  )
+
   // ── M3: blueprint:getTranscript — Retrieve journal entries for a blueprint ──
 
   ipcMain.handle(
@@ -881,7 +1125,16 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 // Registered once during IPC registration. Routes by payload.workspaceId.
 // No TTL, no per-workspace cleanup, no re-wire dance.
 
+let wireOnceEventForwardingCalled = false
 function wireOnceEventForwarding(): void {
+  // Guard: prevent double-registration if called more than once.
+  // EventEmitter.on stacks handlers, so a second call would duplicate
+  // every journal append and event forward.
+  if (wireOnceEventForwardingCalled) {
+    bpLog.warn('[wireOnceEventForwarding] Already called — skipping duplicate registration')
+    return
+  }
+  wireOnceEventForwardingCalled = true
 
   // Helper: safe event forwarding with error isolation
   function forward(emitter: EventEmitterLike, event: string, channel: string, logPrefix?: string): void {
@@ -954,6 +1207,24 @@ function wireOnceEventForwarding(): void {
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyAwaitingInput', IPC_CHANNELS.BLUEPRINT_CLARIFY_AWAITING_INPUT, 'spec-event')
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyFindings', IPC_CHANNELS.BLUEPRINT_CLARIFY_FINDINGS, 'spec-event')
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyQuestions', IPC_CHANNELS.BLUEPRINT_CLARIFY_QUESTIONS, 'spec-event')
+
+  // OS notification: Blueprint needs user input (clarify phase)
+  ;(blueprintSpecService as unknown as EventEmitterLike).on('clarifyAwaitingInput', (...args: unknown[]) => {
+    try {
+      const payload = args[0] as Record<string, unknown>
+      const wsId = payload?.workspaceId as string | undefined
+      if (!wsId) return
+      notificationService.dispatch({
+        workspaceId: wsId,
+        workspaceName: resolveWorkspaceName(wsId),
+        service: 'blueprint',
+        status: 'needs_input',
+        summary: 'Blueprint has questions — your input shapes the spec',
+        targetPage: 'blueprints',
+        entityId: payload.blueprintId as string | undefined
+      })
+    } catch { /* non-fatal */ }
+  })
   forward(blueprintSpecService as unknown as EventEmitterLike, 'clarifyGateReady', IPC_CHANNELS.BLUEPRINT_CLARIFY_GATE, 'spec-event')
   forwardStatus(blueprintSpecService as unknown as EventEmitterLike)
 
@@ -978,6 +1249,25 @@ function wireOnceEventForwarding(): void {
   forward(blueprintReviewService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'review-event')
   forwardStatus(blueprintReviewService as unknown as EventEmitterLike)
   forward(blueprintReviewService as unknown as EventEmitterLike, 'approvalNeeded', IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, 'review-event')
+  forward(blueprintReviewService as unknown as EventEmitterLike, 'preflightResult', IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RESULT, 'review-event')
+
+  // OS notification: Blueprint review complete — needs approval
+  ;(blueprintReviewService as unknown as EventEmitterLike).on('approvalNeeded', (...args: unknown[]) => {
+    try {
+      const payload = args[0] as Record<string, unknown>
+      const wsId = payload?.workspaceId as string | undefined
+      if (!wsId) return
+      notificationService.dispatch({
+        workspaceId: wsId,
+        workspaceName: resolveWorkspaceName(wsId),
+        service: 'blueprint',
+        status: 'needs_input',
+        summary: 'Blueprint review complete — approve to start build',
+        targetPage: 'blueprints',
+        entityId: payload.blueprintId as string | undefined
+      })
+    } catch { /* non-fatal */ }
+  })
 
   // ── BlueprintVerifyService events (Phase 7: Verify) ──
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseStart', IPC_CHANNELS.BLUEPRINT_PHASE_START, 'verify-event')
@@ -985,6 +1275,54 @@ function wireOnceEventForwarding(): void {
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseComplete', IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE, 'verify-event')
   forward(blueprintVerifyService as unknown as EventEmitterLike, 'phaseArtifact', IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, 'verify-event')
   forwardStatus(blueprintVerifyService as unknown as EventEmitterLike)
+
+  // OS notification: Blueprint phase completed or failed
+  // Fires for all phases — summary is phase-aware.
+  function buildBlueprintPhaseSummary(phase: string, status: string, payload: Record<string, unknown>): string {
+    if (status !== 'complete') return `Blueprint ${phase} phase failed`
+    switch (phase) {
+      case 'specify': return 'Specification complete — moving to clarification'
+      case 'clarify': return 'Clarification complete — moving to planning'
+      case 'plan': return 'Plan complete — moving to task decomposition'
+      case 'tasks': return 'Tasks generated — moving to review'
+      case 'review': return 'Review complete — ready for build'
+      case 'build': return `Build complete: ${(payload.completion as Record<string, unknown>)?.tasksCompleted ?? 0} tasks done`
+      case 'verify': return 'Blueprint finished — all phases complete'
+      default: return `Blueprint ${phase} phase complete`
+    }
+  }
+
+  for (const svc of [
+    blueprintSpecService as unknown as EventEmitterLike,
+    blueprintPlanService as unknown as EventEmitterLike,
+    blueprintTasksService as unknown as EventEmitterLike,
+    blueprintReviewService as unknown as EventEmitterLike,
+    blueprintBuildService as unknown as EventEmitterLike,
+    blueprintVerifyService as unknown as EventEmitterLike
+  ]) {
+    svc.on('phaseComplete', (...args: unknown[]) => {
+      try {
+        const payload = args[0] as Record<string, unknown>
+        const wsId = payload?.workspaceId as string | undefined
+        if (!wsId) return
+        // AUDIT-R2: remediation handoff is not a terminal completion — no notification
+        if (payload.remediationTriggered === true) return
+        // Skip 'skipped' status (e.g. clarify skip) — not interesting to notify
+        if (payload.status === 'skipped') return
+        const phase = payload.phase as string
+        const status = payload.status as string
+        notificationService.dispatch({
+          workspaceId: wsId,
+          workspaceName: resolveWorkspaceName(wsId),
+          service: 'blueprint',
+          status: status === 'complete' ? 'completed' : 'failed',
+          summary: buildBlueprintPhaseSummary(phase, status, payload),
+          targetPage: 'blueprints',
+          entityId: payload.blueprintId as string | undefined
+        })
+      } catch { /* non-fatal */ }
+    })
+  }
 
   // ───────────────────────────────────────────────────────────────────────
   // M8: Journal writers — append events to blueprint_events table.
@@ -1034,7 +1372,25 @@ function wireOnceEventForwarding(): void {
       const journalType = artifact.type === 'plan' ? 'plan'
         : artifact.type === 'tasks' ? 'tasks'
         : 'agent'
-      journalAppend(bpId, journalType, { phase: payload.phase, artifactType: artifact.type, contentMd: artifact.contentMd })
+      // Phase 2: Include contentJson for plan/tasks so hydration avoids re-parsing
+      const journalPayload: Record<string, unknown> = {
+        phase: payload.phase,
+        artifactType: artifact.type,
+        contentMd: artifact.contentMd
+      }
+      if (artifact.type === 'plan' && artifact.contentMd) {
+        try {
+          const parsed = parseBlueprintPlan(artifact.contentMd)
+          if (parsed) journalPayload.contentJson = parsed
+        } catch { /* best effort */ }
+      }
+      if (artifact.type === 'tasks' && artifact.contentMd) {
+        try {
+          const parsed = parseBlueprintTasks(artifact.contentMd)
+          if (parsed) journalPayload.contentJson = parsed
+        } catch { /* best effort */ }
+      }
+      journalAppend(bpId, journalType, journalPayload)
     })
   }
 
@@ -1070,6 +1426,51 @@ function wireOnceEventForwarding(): void {
     const bpId = payload?.blueprintId as string | undefined
     if (bpId) journalAppend(bpId, 'system', { event: 'waveComplete', wave: payload.wave, status: payload.status })
   })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // M8b: Agent stream accumulator — extracted to blueprint-agent-accumulator.ts.
+  // Buffers phaseProgress chunks into 'agent' journal entries.
+  // Flushes at tool-activity boundaries and on phaseComplete.
+  // Caps: 32KB per entry, ~1MB per (blueprintId, phase).
+  // ───────────────────────────────────────────────────────────────────────
+
+  const accumulator = createAccumulator(journalAppend)
+
+  /** GAP-6 FIX: Flush + delete ALL accumulator entries for a given blueprintId. */
+  accumulatorCleanup = (blueprintId: string): void => {
+    accumulator.flushAllForBlueprint(blueprintId)
+  }
+
+  // Tap phaseProgress on all emitters for agent journaling
+  for (const emitter of allPhaseEmitters) {
+    emitter.on('phaseProgress', (...args: unknown[]) => {
+      const payload = args[0] as Record<string, unknown>
+      const bpId = payload?.blueprintId as string | undefined
+      const phase = payload?.phase as string | undefined
+      if (!bpId || !phase) return
+
+      accumulator.handleChunk(
+        bpId,
+        phase,
+        payload.kind as string | undefined,
+        payload.text as string | undefined,
+        payload.toolActivity as Record<string, unknown> | undefined,
+        payload.taskId as string | undefined
+      )
+    })
+  }
+
+  // Flush accumulator on phaseComplete (including cancel/failure)
+  for (const emitter of allPhaseEmitters) {
+    emitter.on('phaseComplete', (...args: unknown[]) => {
+      const payload = args[0] as Record<string, unknown>
+      const bpId = payload?.blueprintId as string | undefined
+      const phase = payload?.phase as string | undefined
+      if (!bpId || !phase) return
+
+      accumulator.flushAllForPhase(bpId, phase)
+    })
+  }
 
   // ── Auto-retry dispatch for transient phase failures ──
   // blueprintService.scheduleAutoRetry() emits 'autoRetry' after a 5s delay.
@@ -1114,14 +1515,57 @@ function wireOnceEventForwarding(): void {
   })
 
   // ── Remediation dispatch (gaps_found → rebuild → re-verify) ──
-  // BP-REMEDIATION-01: blueprintVerifyService emits 'remediationNeeded' after a 5s
-  // delay when verification finds gaps and remediation tasks are appended.
-  // Same dispatch pattern as autoRetry — build phase re-runs, BP-RESUME-01 skips
-  // all complete tasks, only new remediation waves execute.
+  // BP-REMEDIATION-01: blueprintVerifyService emits 'remediationNeeded' via deferred
+  // dispatch (setImmediate after finally) when verification finds gaps and remediation
+  // tasks are appended. Same dispatch pattern as autoRetry — build phase re-runs,
+  // BP-RESUME-01 skips all complete tasks, only new remediation waves execute.
   ;(blueprintVerifyService as unknown as EventEmitterLike).on('remediationNeeded', (...args: unknown[]) => {
     const payload = args[0] as { blueprintId: string; workspaceId: string; workspacePath: string }
     const { blueprintId, workspaceId, workspacePath } = payload
+
+    // BP-REMEDIATION-CANCEL-GUARD: Verify blueprint wasn't cancelled during
+    // the deferred dispatch window before dispatching build.
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint || blueprint.status === 'cancelled' || blueprint.status === 'failed') {
+      bpLog.info(
+        `[remediation] Skipping build dispatch — blueprint ${blueprintId} is ${blueprint?.status ?? 'missing'}`
+      )
+      return
+    }
+
+    // BP-REMEDIATION-PIPELINE-GUARD: If the pipeline is occupied, decide
+    // based on WHICH blueprint owns it.
+    if (blueprintService.isRunning(workspaceId)) {
+      // Same blueprint already running (e.g. user clicked Resume during the
+      // dispatch window) → skip silently. Do NOT mark it failed while it runs.
+      if (blueprintService.getActiveBlueprintId(workspaceId) === blueprintId) {
+        bpLog.info(`[remediation] Blueprint ${blueprintId} already running — skipping duplicate dispatch`)
+        return
+      }
+      // A DIFFERENT blueprint took the pipeline → mark this one failed
+      bpLog.warn(
+        `[remediation] Pipeline occupied for workspace ${workspaceId} — ` +
+        `cannot dispatch remediation build for blueprint ${blueprintId}. Marking failed.`
+      )
+      // Reset orphaned phase statuses from remediation setup
+      // (verify set build='active', verify='pending' before releasing the pipeline)
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase?.status === 'active') {
+        blueprintPhaseRepository.updateStatus(buildPhase.id, 'failed')
+      }
+      blueprintRepository.updateStatus(blueprintId, 'failed')
+      return
+    }
+
     bpLog.info(`[remediation] Dispatching build for remediation tasks — blueprint ${blueprintId}`)
+
+    // REMEDIATION-JOURNAL: Record remediation dispatch in journal so hydrated
+    // transcripts explain why a build phase restarted after verify.
+    journalAppend(blueprintId, 'system', {
+      event: 'remediationStart',
+      message: 'Verification found gaps — dispatching remediation build'
+    })
+
     blueprintBuildService.startBuildPhase({ blueprintId, workspaceId, workspacePath })
       .catch((err) => {
         bpLog.error(`[remediation] Build phase for remediation failed:`, err)

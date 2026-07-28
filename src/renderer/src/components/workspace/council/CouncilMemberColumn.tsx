@@ -21,6 +21,7 @@ import type {
 import { COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { ToolActivity } from '../../../../../shared/types'
+import { stripBlueprintBlocks } from '../../../../../shared/blueprint-clarify-parsers'
 
 interface CouncilMemberColumnProps {
   role: CouncilAdvisorRole
@@ -131,7 +132,7 @@ export default function CouncilMemberColumn({
 
         {allContent && (
           <div className="prose prose-sm prose-invert max-w-none">
-            <ReactMarkdown>{allContent}</ReactMarkdown>
+            <ReactMarkdown>{stripBlueprintBlocks(allContent)}</ReactMarkdown>
           </div>
         )}
 

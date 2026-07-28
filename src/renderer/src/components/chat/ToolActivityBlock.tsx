@@ -135,13 +135,13 @@ function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Ele
         )}
       </span>
       {!activity.filePath && activity.input && (
-        <span className="block text-[12px] text-text-secondary min-w-0 truncate mt-0.5">
+        <span className="block text-[12px] text-text-secondary min-w-0 break-words mt-0.5">
           {shortenInput(activity.input)}
         </span>
       )}
       {activity.status !== 'running' && activity.result && (
         <span
-          className={`block text-[11px] mt-0.5 truncate ${
+          className={`block text-[11px] mt-0.5 break-words ${
             isError ? 'text-danger/80' : 'text-text-muted italic'
           }`}
         >
@@ -168,7 +168,7 @@ function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.J
         </div>
       )}
       {(activity.resultDetail || activity.result) && (
-        <div className="px-3 py-2 max-h-64 overflow-y-auto">
+        <div className="px-3 py-2 max-h-[45vh] overflow-y-auto">
           <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
             {statusStyle.outputLabel}
             <CopyButton text={activity.resultDetail || activity.result || ''} />
@@ -300,7 +300,7 @@ export default function ToolActivityBlock({
   if (errorCount > 0) summaryParts.push(`${errorCount} failed`)
 
   return (
-    <div data-testid="tool-activity-block" className="my-2">
+    <div data-testid="tool-activity-block" className="my-2 overflow-hidden">
       {/* Header toggle */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}

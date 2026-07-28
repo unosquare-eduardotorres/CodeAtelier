@@ -161,6 +161,68 @@ describe('Project IPC — validation', () => {
 
 })
 
+// ── §11B: CHAT_UPDATE_ROUTING (per-chat model switching) ─────────────
+
+describe('CHAT_UPDATE_ROUTING IPC — validation', () => {
+  test('channel_constant_exists', () => {
+    assert.ok(IPC_CHANNELS.CHAT_UPDATE_ROUTING)
+    assert.equal(IPC_CHANNELS.CHAT_UPDATE_ROUTING, 'chat:updateRouting')
+  })
+
+  test('requires_conversationId_and_workspaceId', () => {
+    const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
+    const args = requireObject({
+      conversationId: 'conv-123',
+      workspaceId: 'ws-456'
+    }, ch)
+    const convId = requireString(args, 'conversationId', ch)
+    const wsId = requireString(args, 'workspaceId', ch)
+    assert.equal(convId, 'conv-123')
+    assert.equal(wsId, 'ws-456')
+  })
+
+  test('accepts_optional_llmProvider', () => {
+    const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
+    const args = requireObject({
+      conversationId: 'conv-1',
+      workspaceId: 'ws-1',
+      llmProvider: 'local-llm'
+    }, ch)
+    const provider = optionalString(args, 'llmProvider', ch)
+    assert.equal(provider, 'local-llm')
+  })
+
+  test('accepts_optional_routingOverrides', () => {
+    const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
+    const args = requireObject({
+      conversationId: 'conv-1',
+      workspaceId: 'ws-1',
+      routingOverrides: {
+        'specialist:plan': { provider: 'claude', modelId: 'claude-opus-4-8' }
+      }
+    }, ch)
+    assert.ok(args.routingOverrides)
+    assert.equal(
+      (args.routingOverrides as Record<string, { modelId: string }>)['specialist:plan']?.modelId,
+      'claude-opus-4-8'
+    )
+  })
+
+  test('rejects_missing_required_fields', () => {
+    const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
+    // Missing conversationId should throw
+    assert.throws(
+      () => requireString(requireObject({ workspaceId: 'ws-1' }, ch), 'conversationId', ch),
+      /conversationId/
+    )
+    // Missing workspaceId should throw
+    assert.throws(
+      () => requireString(requireObject({ conversationId: 'c-1' }, ch), 'workspaceId', ch),
+      /workspaceId/
+    )
+  })
+})
+
 // ── §12: Agent lifecycle patterns ───────────────────────────────────────
 
 describe('Agent lifecycle IPC — validation', () => {

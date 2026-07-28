@@ -25,7 +25,7 @@ export function useChatPanelEffects(): {
   }, [activeWorkspace?.id, loadProjectSpecialist])
 
   // Reload specialist store when project specialist becomes ready
-  // so PersonaSelector can find it in the combobox
+  // so the model picker can find it in the combobox
   const loadSpecialists = useSpecialistStore((s) => s.loadSpecialists)
   useEffect(() => {
     if (projectSpecialist?.buildStatus === 'ready') {

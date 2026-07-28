@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { StructuredPlan, GrillQuestion } from '../../shared/types'
+import type { StructuredPlan, GrillQuestion, PhaseProgressEvent } from '../../shared/types'
 
 /**
  * Event callback signatures for control tool actions.
@@ -12,9 +12,9 @@ import type { StructuredPlan, GrillQuestion } from '../../shared/types'
 export interface ControlActionCallbacks {
   onPlan: (plan: StructuredPlan) => void
   /**
-   * `action` is an optional programmatic tag emitted by the ask_user tool
-   * (e.g. "swap-to-specialist"). The renderer maps known action tags to IPC
-   * calls when the user accepts the proposal. Undefined for plain Q&A.
+   * `action` is an optional programmatic tag emitted by the ask_user tool.
+   * The renderer maps known action tags to custom handling when the user
+   * accepts the proposal. Undefined for plain Q&A.
    *
    * `requestId` correlates the question with the user's response over the IPC
    * bridge. The production CLI path supplies it via `bridge.on('askUser')`;
@@ -22,6 +22,8 @@ export interface ControlActionCallbacks {
    * to the waiting ask_user promise. Undefined when no round-trip is wired.
    */
   onAskUser: (questions: GrillQuestion[], action?: string, requestId?: string) => void
+  /** Called when the agent reports plan phase progress via emit_phase_progress */
+  onPhaseProgress?: (progress: PhaseProgressEvent) => void
   // onMemory removed — memory tools now live on the dedicated memory MCP server
 }
 
@@ -180,10 +182,5 @@ export const askUserSchema = z.object({
   action: z
     .string()
     .optional()
-    .describe(
-      'Optional programmatic action tag for the renderer. Known values: ' +
-        '"swap-to-specialist" — when the user picks the first option, the ' +
-        'renderer will swap the workspace adapter to the ready Project ' +
-        'Specialist. Omit for plain clarifying questions.'
-    )
+    .describe('Optional programmatic action tag for the renderer. Omit for plain clarifying questions.')
 })

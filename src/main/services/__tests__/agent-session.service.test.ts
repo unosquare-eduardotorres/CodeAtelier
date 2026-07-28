@@ -54,7 +54,7 @@ function createTestAdapter(overrides: Partial<AgentRoleAdapter> = {}): {
   }
 
   const adapter: AgentRoleAdapter = {
-    role: 'project-specialist',
+    role: 'specialist',
     agentId: 'workspace-specialist-test',
     supportsEmitPlanRecovery: false,
     onSessionStart: async (ctx) => {
@@ -94,7 +94,7 @@ describe('AgentSessionService', () => {
   test('exposes_role_and_agentId_from_adapter', () => {
     const { adapter } = createTestAdapter()
     const session = new AgentSessionService(adapter)
-    assert.equal(session.getRole(), 'project-specialist')
+    assert.equal(session.getRole(), 'specialist')
     assert.equal(session.getAgentId(), 'workspace-specialist-test')
     assert.equal(session.getAdapter(), adapter)
   })
@@ -120,13 +120,13 @@ describe('AgentSessionService', () => {
     assert.equal(status.tokenUsage, 0)
   })
 
-  test('getStatus_reports_da_vinci_agentType_for_da_vinci_role', () => {
+  test('getStatus_reports_specialist_agentType_for_specialist_role', () => {
     const { adapter } = createTestAdapter({
-      role: 'da-vinci',
-      agentId: 'da-vinci'
+      role: 'specialist',
+      agentId: 'specialist'
     })
     const session = new AgentSessionService(adapter)
-    assert.equal(session.getStatus().agentType, 'da-vinci')
+    assert.equal(session.getStatus().agentType, 'specialist')
   })
 
   test('emits_forwarded_events_as_EventEmitter', () => {
@@ -378,9 +378,9 @@ describe('AgentSessionService', () => {
   })
 
   test('getRole_delegates_to_adapter_role', () => {
-    const { adapter } = createTestAdapter({ role: 'da-vinci' })
+    const { adapter } = createTestAdapter({ role: 'specialist' })
     const session = new AgentSessionService(adapter)
-    assert.equal(session.getRole(), 'da-vinci')
+    assert.equal(session.getRole(), 'specialist')
   })
 
   test('getAgentId_delegates_to_adapter_agentId', () => {
@@ -400,16 +400,16 @@ describe('AgentSessionService', () => {
     assert.equal(typeof status.elapsedMs, 'number')
   })
 
-  test('getStatus_agentType_maps_non_da_vinci_to_specialist', () => {
+  test('getStatus_agentType_maps_non_specialist_to_specialist', () => {
     const { adapter } = createTestAdapter({ role: 'grill' as AgentRoleAdapter['role'] })
     const session = new AgentSessionService(adapter)
-    // All non-da-vinci roles map to 'specialist' agentType
+    // All non-specialist roles map to 'specialist' agentType
     assert.equal(session.getStatus().agentType, 'specialist')
   })
 
   test('getStatus_agentType_maps_project_specialist_role', () => {
     const { adapter } = createTestAdapter({
-      role: 'project-specialist',
+      role: 'specialist',
       agentId: 'workspace-specialist-ws-1'
     })
     const session = new AgentSessionService(adapter)

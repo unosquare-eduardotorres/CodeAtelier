@@ -14,6 +14,8 @@ import { chatAgentService } from '../services/chat-agent.service'
 import { dbLogger } from '../logger'
 import { getDatabase } from '../db/index'
 import { encryptSettingsKeys } from './encrypt-settings-keys'
+import { specialistBuilderService } from '../services/specialist-builder.service'
+import { memoryConsolidationService } from '../services/memory-consolidation.service'
 
 // ── Extracted handler functions ───────────────────────────────────────────
 
@@ -78,6 +80,13 @@ async function handleWorkspaceCreate(
            VALUES (?, ?, ?, '🔧', '#6366F1', '', 1, 1, 'pending', datetime('now'), datetime('now'))`
       ).run(workspace.id, `workspace-specialist-${workspace.id}`, `${workspace.name} Specialist`)
       dbLogger.info(`Seeded pending Project Specialist for workspace ${workspace.id}`)
+
+      // Auto-trigger specialist generation in the background.
+      // The agent works immediately with DEFAULT_ARCHITECT_PROMPT,
+      // then seamlessly upgrades when generation completes.
+      specialistBuilderService.buildProjectSpecialist(workspace.id).catch((err) => {
+        dbLogger.warn('Auto-build specialist failed (non-fatal):', err)
+      })
     }
   } catch (err) {
     dbLogger.warn('Failed to seed Project Specialist on workspace create:', err)
@@ -128,6 +137,14 @@ async function handleWorkspaceOpen(
     }
   } catch (e) {
     dbLogger.warn('Failed to start file watcher on workspace open:', e)
+  }
+
+  // Restart idle consolidation for the newly-opened workspace
+  try {
+    memoryConsolidationService.stopIdleJob()
+    memoryConsolidationService.startIdleJob(workspace.id)
+  } catch (e) {
+    dbLogger.warn('Failed to start memory consolidation idle job:', e)
   }
 
   return workspace
@@ -217,6 +234,7 @@ export function registerWorkspaceIpc(): void {
     })
 
     fileWatcherService.stop(id)
+    memoryConsolidationService.stopIdleJobIfWorkspace(id)
     workspaceRepository.delete(id)
   })
 

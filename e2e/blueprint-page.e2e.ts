@@ -19,8 +19,12 @@
 import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
+import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Page', () => {
+  // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
+  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+
   async function ensureWorkspaceReady(
     page: import('@playwright/test').Page
   ): Promise<boolean> {

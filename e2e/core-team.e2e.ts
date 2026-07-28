@@ -6,7 +6,7 @@
  *   - Agent card shows avatar, name, and description
  *   - "Used In" badges display correctly (Chat, Grill, Plan, Build)
  *   - Agent name shows alias when configured
- *   - At least one core agent (da-vinci) is always present
+ *   - At least one core agent (specialist) is always present
  *
  * Uses CDP fixture (Electron 41+ compatible).
  *
@@ -113,7 +113,7 @@ test.describe('Core Team', () => {
       if (hasBadge) foundCount++
     }
 
-    // da-vinci should have all 4 badges
+    // specialist should have all 4 badges
     expect(foundCount).toBeGreaterThanOrEqual(1)
   })
 
@@ -135,7 +135,7 @@ test.describe('Core Team', () => {
     expect(nameText!.length).toBeGreaterThan(0)
   })
 
-  test('at least one core agent (da-vinci) is always present', async ({ electronPage: page }) => {
+  test('at least one core agent (specialist) is always present', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 

@@ -32,6 +32,7 @@ import type {
   BlueprintPhaseType
 } from '../../../../../shared/blueprint-types'
 import { BlueprintPlanCard } from './BlueprintPlanCard'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 // ── Marker Parsing ─────────────────────────────────────────────────────────
 
@@ -157,7 +158,7 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
-                        navigator.clipboard.writeText(f)
+                        void copyTextToClipboard(f)
                       }}
                       className="opacity-0 group-hover/file:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
                       title="Copy path"
@@ -272,6 +273,9 @@ function WaveAccordion({
   const hasFailed = tasks.some((t) => (waveTasks[t.taskId] ?? t.status) === 'failed')
   const allComplete = completedCount === tasks.length && tasks.length > 0
 
+  // Detect remediation wave — all tasks have R-prefixed IDs
+  const isRemediation = tasks.length > 0 && tasks.every((t) => t.taskId.startsWith('R'))
+
   // Auto-open wave when it becomes active (has running tasks)
   useEffect(() => {
     if (hasRunning && !open) {
@@ -297,7 +301,7 @@ function WaveAccordion({
         : 'text-text-muted'
 
   return (
-    <div ref={waveRef} className="rounded-lg border border-border-subtle overflow-hidden">
+    <div ref={waveRef} className={`rounded-lg border overflow-hidden ${isRemediation ? 'border-warning/30' : 'border-border-subtle'}`}>
       {/* Sticky wave header */}
       <button
         type="button"
@@ -309,8 +313,9 @@ function WaveAccordion({
         ) : (
           <ChevronRight size={14} className="text-text-muted" />
         )}
-        <span className="text-sm font-semibold text-text-primary">
+        <span className={`text-sm font-semibold ${isRemediation ? 'text-warning' : 'text-text-primary'}`}>
           Wave {waveNum}
+          {isRemediation && <span className="text-xs font-normal ml-1.5 text-warning/70">(Remediation)</span>}
         </span>
         {allComplete && <CheckCircle2 size={14} className="text-success" />}
         <span className={`text-xs font-medium ml-auto ${progressColor}`}>

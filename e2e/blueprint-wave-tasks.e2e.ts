@@ -15,8 +15,12 @@
 import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
+import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Wave Tasks', () => {
+  // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
+  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+
   /**
    * Helper: navigate to blueprints and open one in build phase.
    */

@@ -120,7 +120,7 @@ describe('SessionEventRouter', () => {
       mockWindow.webContents.send(channel, payload)
     }
 
-    send('agent:statusUpdate', { workspaceId: 'ws-1', status: 'thinking', agentId: 'da-vinci' })
+    send('agent:statusUpdate', { workspaceId: 'ws-1', status: 'thinking', agentId: 'specialist' })
 
     assert.equal(sent.length, 1)
     assert.equal(sent[0].channel, 'agent:statusUpdate')

@@ -96,7 +96,7 @@ export class SkillPromptComposer {
    *
    * Reads SKILL.md files listed in BASELINE_SKILL_FILENAMES from .claude/skills/.
    * These are behavioral guidelines (not domain skills) injected into every
-   * prompt path — DaVinci, Project Specialist, and local LLM.
+   * prompt path — specialist and local LLM.
    */
   buildBaselineSkillsLayer(budgetTier: BudgetTier = 'standard'): string {
     const sections: string[] = []

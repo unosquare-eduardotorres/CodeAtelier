@@ -19,6 +19,8 @@ import { mpaArtifactRepository } from '../db/repositories/mpa-artifact.repositor
 import { mpaCampaignRepository } from '../db/repositories/mpa-campaign.repository'
 import { workspaceRepository } from '../db/repositories'
 import { getSessionEventRouter } from '../services/session-event-router'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 import type {
   MpaPhaseType,
   MpaPhaseStartPayload,
@@ -332,6 +334,15 @@ function wireMpaEvents(workspaceId: string): void {
         workspaceId,
         payload as unknown as Record<string, unknown>
       )
+
+      notificationService.dispatch({
+        workspaceId,
+        workspaceName: resolveWorkspaceName(workspaceId),
+        service: 'mpa',
+        status: 'needs_input',
+        summary: 'Pipeline gate reached — approval needed to continue',
+        targetPage: 'mpa'
+      })
     }
   )
 
@@ -346,6 +357,27 @@ function wireMpaEvents(workspaceId: string): void {
         workspaceId,
         payload as unknown as Record<string, unknown>
       )
+
+      // Skip user-initiated cancellations — no notification needed
+      if (payload.status !== 'cancelled') {
+        notificationService.dispatch({
+          workspaceId,
+          workspaceName: resolveWorkspaceName(workspaceId),
+          service: 'mpa',
+          status:
+            payload.status === 'completed'
+              ? 'completed'
+              : payload.status === 'paused'
+                ? 'needs_input'
+                : 'failed',
+          summary:
+            payload.status === 'paused'
+              ? 'Pipeline paused — action may be needed'
+              : `Pipeline ${payload.status}`,
+          targetPage: 'mpa'
+        })
+      }
+
       mpaCleanup.runCleanup(workspaceId)
     }
   )

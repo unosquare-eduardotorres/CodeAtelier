@@ -4,8 +4,9 @@
  * exports its component (Fast Refresh requirement).
  */
 
-import { ShieldCheck, Flame, Target, Landmark, Database } from 'lucide-react'
+import { ShieldCheck, Flame, LayoutGrid, Database } from 'lucide-react'
 import type { StatusIndicatorProps } from './StatusIndicator'
+import type { BlueprintStatusBarInfo } from '../hooks/useBlueprintStatusBar'
 
 // ── Compute helpers ─────────────────────────────────────────────────────────
 
@@ -86,85 +87,67 @@ export function computeGrillIndicator(
   }
 }
 
-export interface MpaStatusInfo {
-  status: string
-  currentPhase: string | null
-  phaseIndex: number
-  totalPhases: number
+// ── Blueprint indicator ─────────────────────────────────────────────────────
+
+const PHASE_LABELS: Record<string, string> = {
+  specify: 'Specifying…',
+  clarify: 'Clarifying…',
+  plan: 'Planning…',
+  tasks: 'Tasking…',
+  review: 'Reviewing…',
+  build: 'Building…',
+  verify: 'Verifying…'
 }
 
-export function computeGoalIndicator(
-  mpaStatus: MpaStatusInfo | null | undefined,
-  onClick: () => void
+export function computeBlueprintIndicator(
+  info: BlueprintStatusBarInfo,
+  onClick: () => void,
+  onBadgeClick: () => void
 ): StatusIndicatorProps {
-  if (mpaStatus?.status === 'running') {
-    return {
-      icon: Target,
-      state: 'active',
-      activeColor: 'cyan',
-      label: `Goal: ${mpaStatus.currentPhase ?? '…'} (${mpaStatus.phaseIndex}/${mpaStatus.totalPhases})`,
-      title: `Goal in progress — ${mpaStatus.currentPhase ?? 'starting'}`,
-      onClick
-    }
-  }
-  if (mpaStatus?.status === 'paused') {
-    return {
-      icon: Target,
-      state: 'attention',
-      activeColor: 'cyan',
-      label: 'Review Plan',
-      title: 'Goal needs your approval',
-      onClick
-    }
-  }
-  return { icon: Target, state: 'idle', activeColor: 'cyan', title: 'Goals', onClick }
-}
+  const { active, backgroundCount } = info
 
-export function computeCouncilIndicator(
-  councilPhase: string | null,
-  onClick: () => void
-): StatusIndicatorProps {
-  if (councilPhase === 'deliberating') {
+  // Active workspace has a running blueprint
+  if (active) {
+    const label = PHASE_LABELS[active.currentPhase ?? ''] ?? 'Blueprint…'
+    // 'awaiting-approval' and 'awaiting-clarify-*' states need attention
+    const needsAttention = active.machineState.startsWith('awaiting-')
     return {
-      icon: Landmark,
+      icon: LayoutGrid,
+      state: needsAttention ? 'attention' : 'active',
+      activeColor: 'cyan',
+      label: needsAttention ? 'Needs Attention' : label,
+      title: needsAttention
+        ? 'Blueprint needs your input — click to view'
+        : `Blueprint ${active.currentPhase ?? 'running'} — click to view`,
+      onClick,
+      badge: backgroundCount > 0 ? backgroundCount : null,
+      onBadgeClick: backgroundCount > 0 ? onBadgeClick : undefined,
+      badgeClickable: backgroundCount > 0
+    }
+  }
+
+  // No active blueprint, but background workspaces have running ones
+  if (backgroundCount > 0) {
+    return {
+      icon: LayoutGrid,
       state: 'active',
-      activeColor: 'purple',
-      label: 'Council…',
-      title: 'Council deliberating',
-      onClick
+      activeColor: 'cyan',
+      label: `${backgroundCount} running`,
+      title: `${backgroundCount} blueprint(s) running in other workspace(s)`,
+      onClick: onBadgeClick, // main click opens dropdown
+      badge: backgroundCount,
+      badgeClickable: false
     }
   }
-  if (councilPhase === 'peer-review') {
-    return {
-      icon: Landmark,
-      state: 'active',
-      activeColor: 'purple',
-      label: 'Peer Review',
-      title: 'Council peer review',
-      onClick
-    }
+
+  // Idle — no blueprints running anywhere
+  return {
+    icon: LayoutGrid,
+    state: 'idle',
+    activeColor: 'cyan',
+    title: 'Blueprints',
+    onClick
   }
-  if (councilPhase === 'synthesizing') {
-    return {
-      icon: Landmark,
-      state: 'attention',
-      activeColor: 'purple',
-      label: 'Synthesizing',
-      title: 'Chairman synthesizing verdict',
-      onClick
-    }
-  }
-  if (councilPhase === 'framing') {
-    return {
-      icon: Landmark,
-      state: 'active',
-      activeColor: 'purple',
-      label: 'Framing…',
-      title: 'Council framing input',
-      onClick
-    }
-  }
-  return { icon: Landmark, state: 'hidden', activeColor: 'purple', title: 'Council', onClick }
 }
 
 export interface IndexingStateInfo {

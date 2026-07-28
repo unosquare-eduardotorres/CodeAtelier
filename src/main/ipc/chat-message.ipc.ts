@@ -3,7 +3,7 @@ import { extname } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { chatStreamService } from '../services/chat-stream.service'
 import { conversationStateMachine } from '../services/conversation-state-machine'
-import { conversationLifecycle } from '../services/conversation-lifecycle'
+import { lifecycleRegistry } from '../services/conversation-lifecycle'
 
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -85,21 +85,29 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     await chatStreamService.compact(extractNuance)
   })
 
-  // ── Stop generation ──
-  ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event) => {
+  // ── Stop generation (accepts optional conversationId — bare call stops ALL, fixes P6) ──
+  ipcMain.handle(IPC_CHANNELS.CHAT_STOP, async (event, rawArgs?: unknown) => {
     validateSender(event)
-    await chatStreamService.stop()
+    let conversationId: string | undefined
+    if (rawArgs && typeof rawArgs === 'object' && 'conversationId' in rawArgs) {
+      conversationId = (rawArgs as { conversationId?: string }).conversationId ?? undefined
+    }
+    await chatStreamService.stop(conversationId)
     // Specialist pool removed in migration 66 — nothing else to stop.
   })
 
   // ── Query streaming state (for conversation switch restore) ──
   ipcMain.handle(IPC_CHANNELS.CHAT_GET_STREAMING_STATE, (event) => {
     validateSender(event)
+    const streams = lifecycleRegistry.active()
     return {
+      // Per-conversation stream list (new)
+      streams,
+      // Backward compat: legacy single-stream fields (deprecated)
       isStreaming: conversationStateMachine.isStreaming(),
       conversationId: conversationStateMachine.activeConversationId,
       state: conversationStateMachine.currentState,
-      requestId: conversationLifecycle.requestId
+      requestId: streams[0]?.requestId ?? null
     }
   })
 }

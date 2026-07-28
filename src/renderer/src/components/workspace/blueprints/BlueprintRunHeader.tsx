@@ -14,9 +14,10 @@ import {
   ListTodo,
   Loader2,
   Target,
-  Wrench
+  Wrench,
+  Zap,
+  ClipboardList
 } from 'lucide-react'
-// CheckCircle2 removed — stepper replaced by phase chip step counter
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
 import { formatPhaseDuration } from '@renderer/store/blueprint.store'
 import type { BlueprintPhaseType } from '../../../../../shared/blueprint-types'
@@ -63,13 +64,17 @@ export interface BlueprintRunHeaderProps {
   taskTotal: number
   totalWaves: number
   currentWave: { wave: number; taskCount: number } | null
-  currentTask: { taskId: string; description: string } | null
+  runningTasks: Record<string, { taskId: string; description: string }>
   currentGoal: string | null
   // Panel
   panelOpen: boolean
   onTogglePanel: () => void
   // Actions
   onCancel: () => void
+  // Tab bar
+  activeTab: 'execution' | 'deliverables'
+  onTabChange: (tab: 'execution' | 'deliverables') => void
+  hasCompletedPhases: boolean
 }
 
 export function BlueprintRunHeader({
@@ -84,11 +89,14 @@ export function BlueprintRunHeader({
   taskTotal,
   totalWaves,
   currentWave,
-  currentTask,
+  runningTasks,
   currentGoal,
   panelOpen,
   onTogglePanel,
-  onCancel
+  onCancel,
+  activeTab,
+  onTabChange,
+  hasCompletedPhases
 }: BlueprintRunHeaderProps): JSX.Element {
   // Live-ticking total elapsed
   const [now, setNow] = useState(Date.now())
@@ -164,25 +172,27 @@ export function BlueprintRunHeader({
           </span>
         )}
 
-        {/* Panel toggle */}
-        <button
-          type="button"
-          onClick={onTogglePanel}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-            panelOpen
-              ? 'bg-accent/15 text-accent border-accent/30'
-              : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
-          }`}
-          title={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
-        >
-          <Layers size={14} />
-          Tasks
-          {taskTotal > 0 && (
-            <span className="text-[10px] font-mono bg-surface-inset px-1 py-0.5 rounded">
-              {tasksDone}/{taskTotal}
-            </span>
-          )}
-        </button>
+        {/* Panel toggle (hidden on deliverables tab) */}
+        {activeTab === 'execution' && (
+          <button
+            type="button"
+            onClick={onTogglePanel}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+              panelOpen
+                ? 'bg-accent/15 text-accent border-accent/30'
+                : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
+            }`}
+            title={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
+          >
+            <Layers size={14} />
+            Tasks
+            {taskTotal > 0 && (
+              <span className="text-[10px] font-mono bg-surface-inset px-1 py-0.5 rounded">
+                {tasksDone}/{taskTotal}
+              </span>
+            )}
+          </button>
+        )}
 
         {/* Stop button */}
         {isRunning && (
@@ -197,7 +207,51 @@ export function BlueprintRunHeader({
         )}
       </div>
 
-      {/* ── Row 2: Progress bar (build/verify) or Goal (other phases) ── */}
+      {/* ── Row 2: View toggle tabs (show after first phase completes) ── */}
+      {hasCompletedPhases && (
+        <div
+          className="flex items-center gap-1 px-4 py-2 bg-surface-raised border-x border-border-subtle"
+          role="tablist"
+          aria-label="Blueprint view"
+        >
+          <button
+            type="button"
+            onClick={() => onTabChange('execution')}
+            className={`
+              inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+              transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none
+              ${activeTab === 'execution'
+                ? 'bg-surface-overlay text-text-primary shadow-sm border border-border-default'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay/50'
+              }
+            `}
+            role="tab"
+            aria-selected={activeTab === 'execution'}
+          >
+            <Zap size={14} />
+            Live Execution
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange('deliverables')}
+            className={`
+              inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+              transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none
+              ${activeTab === 'deliverables'
+                ? 'bg-surface-overlay text-text-primary shadow-sm border border-border-default'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay/50'
+              }
+            `}
+            role="tab"
+            aria-selected={activeTab === 'deliverables'}
+          >
+            <ClipboardList size={14} />
+            Phase Deliverables
+          </button>
+        </div>
+      )}
+
+      {/* ── Row 3: Progress bar (build/verify) or Goal (other phases) ── */}
       {showProgress ? (
         <div className="flex items-center gap-3 px-4 py-2 bg-surface-raised border-x border-b border-border-subtle rounded-b-xl">
           {/* Full-width progress bar */}
@@ -224,26 +278,32 @@ export function BlueprintRunHeader({
             </span>
           )}
 
-          {/* Current task chip — freed space, no max-w cap */}
-          {currentTask && currentPhase === 'build' && (
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md flex-1 min-w-0 truncate ${
-                currentTask.taskId.startsWith('R')
-                  ? 'text-info bg-info/10'
-                  : 'text-info bg-info/10'
-              }`}
-              title={`${currentTask.taskId} · ${stripTaskMarkers(currentTask.description)}`}
-            >
-              {currentTask.taskId.startsWith('R') ? (
-                <Wrench size={12} className="flex-shrink-0" />
-              ) : (
+          {/* Running task chips — shows active parallel tasks */}
+          {Object.keys(runningTasks).length > 0 && currentPhase === 'build' && (
+            Object.keys(runningTasks).length === 1 ? (() => {
+              const task = Object.values(runningTasks)[0]
+              return (
+                <span
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md flex-1 min-w-0 truncate text-info bg-info/10"
+                  title={`${task.taskId} · ${stripTaskMarkers(task.description)}`}
+                >
+                  {task.taskId.startsWith('R') ? (
+                    <Wrench size={12} className="flex-shrink-0" />
+                  ) : (
+                    <Loader2 size={12} className="animate-spin flex-shrink-0" />
+                  )}
+                  {task.taskId.startsWith('R') && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0">Remediation</span>
+                  )}
+                  {task.taskId} · {stripTaskMarkers(task.description)}
+                </span>
+              )
+            })() : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md text-info bg-info/10">
                 <Loader2 size={12} className="animate-spin flex-shrink-0" />
-              )}
-              {currentTask.taskId.startsWith('R') && (
-                <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0">Remediation</span>
-              )}
-              {currentTask.taskId} · {stripTaskMarkers(currentTask.description)}
-            </span>
+                {Object.keys(runningTasks).length} tasks running
+              </span>
+            )
           )}
         </div>
       ) : currentGoal && isRunning ? (

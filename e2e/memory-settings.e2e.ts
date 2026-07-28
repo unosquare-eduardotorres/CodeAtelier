@@ -2,11 +2,14 @@
  * Memory Settings E2E Tests
  *
  * Verifies MemorySettingsPage — the tabbed memory management UI:
- *   - Page renders with Facts tab active by default
- *   - Graph tab shows canvas + legend (or empty state with 0 facts)
- *   - Review tab renders contradictions section
- *   - Search tab renders the search playground
- *   - Capture tab renders capture settings
+ *   - Page renders with Memories tab active by default
+ *   - Brain tab shows graph canvas + legend (or empty state with 0 facts)
+ *   - Review tab renders contradictions section with pagination
+ *   - Ingestion tab renders capture settings
+ *   - CLAUDE.md tab renders panel
+ *
+ * Tab order: Brain | Ingestion | Memories | Review | CLAUDE.md
+ * Internal keys: graph | settings | facts | contradictions | claudemd
  *
  * Uses CDP fixture (Electron 41+ compatible).
  *
@@ -42,7 +45,7 @@ test.describe('Memory Settings', () => {
     return nav.navigateToSettingsTab('memory')
   }
 
-  test('page renders with Facts tab active', async ({ electronPage: page }) => {
+  test('page renders with Memories tab active', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
@@ -57,14 +60,14 @@ test.describe('Memory Settings', () => {
     const factsTab = page.locator('[data-testid="memory-tab-facts"]')
     await expect(factsTab).toBeVisible()
 
-    // Search bar should be present (part of the Facts tab)
+    // Search bar should be present (part of the Memories tab)
     const searchInput = page.locator('input[placeholder*="filter" i], input[placeholder*="search" i]').first()
     const hasSearch = await searchInput.isVisible({ timeout: 3_000 }).catch(() => false)
-    // Facts tab always shows — either the search bar or the empty state
+    // Memories tab always shows — either the search bar or the empty state
     expect(hasSearch || (await memoryPage.getByText(/no facts/i).isVisible().catch(() => false))).toBeTruthy()
   })
 
-  test('Graph tab shows canvas and legend (or empty state)', async ({ electronPage: page }) => {
+  test('Brain tab shows canvas and legend (or empty state)', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
@@ -75,7 +78,7 @@ test.describe('Memory Settings', () => {
     const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasPage) { test.skip(); return }
 
-    // Click Graph tab
+    // Click Brain tab (was Graph)
     const graphTab = page.locator('[data-testid="memory-tab-graph"]')
     await expect(graphTab).toBeVisible()
     await graphTab.click()
@@ -122,7 +125,7 @@ test.describe('Memory Settings', () => {
     expect(hasEmpty || (await page.locator('[data-testid="memory-settings-page"]').isVisible())).toBeTruthy()
   })
 
-  test('Search tab renders playground', async ({ electronPage: page }) => {
+  test('Ingestion tab renders settings', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
@@ -133,31 +136,7 @@ test.describe('Memory Settings', () => {
     const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasPage) { test.skip(); return }
 
-    // Click Search tab
-    const searchTab = page.locator('[data-testid="memory-tab-search"]')
-    await expect(searchTab).toBeVisible()
-    await searchTab.click()
-    await page.waitForTimeout(500)
-
-    // SearchPlayground should render — it has its own input
-    const searchPlayground = page.locator('input[placeholder*="search" i], input[placeholder*="query" i]').first()
-    const hasPlayground = await searchPlayground.isVisible({ timeout: 3_000 }).catch(() => false)
-    // SearchPlayground component always renders some UI
-    expect(hasPlayground || (await memoryPage.isVisible())).toBeTruthy()
-  })
-
-  test('Capture tab renders settings', async ({ electronPage: page }) => {
-    const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-
-    const navigated = await navigateToMemory(page)
-    if (!navigated) { test.skip(); return }
-
-    const memoryPage = page.locator('[data-testid="memory-settings-page"]')
-    const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
-
-    // Click Capture (settings) tab
+    // Click Ingestion (settings) tab
     const captureTab = page.locator('[data-testid="memory-tab-settings"]')
     await expect(captureTab).toBeVisible()
     await captureTab.click()
@@ -166,5 +145,29 @@ test.describe('Memory Settings', () => {
     // CaptureSettings component should render capture toggles or feed document button
     const hasContent = await memoryPage.isVisible()
     expect(hasContent).toBeTruthy()
+  })
+
+  test('CLAUDE.md tab renders panel', async ({ electronPage: page }) => {
+    const ready = await ensureWorkspaceReady(page)
+    if (!ready) { test.skip(); return }
+
+    const navigated = await navigateToMemory(page)
+    if (!navigated) { test.skip(); return }
+
+    const memoryPage = page.locator('[data-testid="memory-settings-page"]')
+    const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
+    if (!hasPage) { test.skip(); return }
+
+    // Click CLAUDE.md tab
+    const claudeTab = page.locator('[data-testid="memory-tab-claudemd"]')
+    await expect(claudeTab).toBeVisible()
+    await claudeTab.click()
+    await page.waitForTimeout(500)
+
+    // ClaudeMdPanel should render — either showing content or the empty state
+    const hasRegenerate = await page.getByText(/regenerate claude\.md/i).isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasNoFile = await page.getByText(/no claude\.md exists/i).isVisible({ timeout: 2_000 }).catch(() => false)
+
+    expect(hasRegenerate || hasNoFile).toBeTruthy()
   })
 })

@@ -4,7 +4,7 @@
  * - runMemoryTiers: tier confirmation counter
  * - runMemoryDedupExact: exact duplicate → 1 active row
  * - runMemoryDedupNear: near-duplicate (cosine >0.90) merge
- * - runMemoryAmbiguous: ambiguous band (0.70–0.90) contradiction detection
+ * - runMemoryAmbiguous: ambiguous band (0.82–0.90) contradiction detection
  * - runMemoryIsolation: workspace isolation — cross-workspace leakage check
  * - runMemoryScopeBoost: scope path boost ranking
  * - runMemorySessionDedupe: per-session injection dedup
@@ -43,6 +43,10 @@ export async function runMemoryTiers(ctx: E2EServiceContext): Promise<E2ETranscr
       sourceType: 'tool',
       sourceRef: 'e2e-test'
     })
+    if (!fact1) {
+      transcript.push(errorEntry('First fact write returned null (capped/deduped)'))
+      return transcript
+    }
 
     // Small delay to let dedup/embedding run
     await new Promise((r) => setTimeout(r, 1500))
@@ -136,9 +140,9 @@ export async function runMemoryDedupNear(ctx: E2EServiceContext): Promise<E2ETra
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { omlxEmbeddingProvider } = await import('../../omlx-embedding.service')
+    const { localEmbeddingProvider } = await import('../../local-embedding.provider')
 
-    if (!omlxEmbeddingProvider.isReady) {
+    if (!localEmbeddingProvider.isReady) {
       transcript.push(statusEntry('skip_embedding_offline'))
       return transcript
     }
@@ -196,9 +200,9 @@ export async function runMemoryAmbiguous(ctx: E2EServiceContext): Promise<E2ETra
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { omlxEmbeddingProvider } = await import('../../omlx-embedding.service')
+    const { localEmbeddingProvider } = await import('../../local-embedding.provider')
 
-    if (!omlxEmbeddingProvider.isReady) {
+    if (!localEmbeddingProvider.isReady) {
       transcript.push(statusEntry('skip_embedding_offline'))
       return transcript
     }

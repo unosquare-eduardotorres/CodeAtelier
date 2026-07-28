@@ -143,4 +143,7 @@
 
   /* ── Developer-specific: no grain ── */
   --grain-opacity: 0;
+
+  /* ── Knowledge-graph: deep indigo canvas ── */
+  --graph-bg: #050710;
 }

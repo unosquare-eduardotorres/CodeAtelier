@@ -1,21 +1,38 @@
 /**
- * ModelConfigPopover — shows the frozen model configuration for a conversation.
+ * ModelConfigPopover — shows and edits the frozen model configuration for a conversation.
  *
  * Displays which models are assigned to plan/build/background roles and their
- * provenance (workspace roles, manual override, or default). Read-only.
+ * provenance (workspace roles, manual override, or default).
+ *
+ * "Switch Model" button lets users re-route an existing conversation to a different
+ * model without affecting other chats (calls CHAT_UPDATE_ROUTING IPC).
  *
  * Triggered by an info icon in the chat panel header.
  */
 
-import { useState, useRef, useEffect } from 'react'
-import { Info, X } from 'lucide-react'
-import type { ConversationModelSnapshot, ResolvedAssignment } from '../../../../shared/types'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { Info, X, RefreshCw } from 'lucide-react'
+import { AVAILABLE_MODELS } from '../../../../shared/constants'
+import type {
+  Conversation,
+  ConversationModelSnapshot,
+  LLMProvider,
+  ModelRoleAssignment,
+  ModelRoleMap,
+  ResolvedAssignment
+} from '../../../../shared/types'
 
 interface ModelConfigPopoverProps {
   /** The frozen model snapshot (null for legacy conversations) */
   snapshot: ConversationModelSnapshot | null
   /** Provider display name */
   providerLabel?: string
+  /** Conversation ID — required for editing */
+  conversationId?: string
+  /** Workspace ID — required for editing */
+  workspaceId?: string
+  /** Called when routing is updated so parent can refresh state */
+  onRoutingUpdated?: (updated: Conversation) => void
 }
 
 function sourceLabel(source: ResolvedAssignment['source']): string {
@@ -32,9 +49,8 @@ function sourceLabel(source: ResolvedAssignment['source']): string {
 }
 
 function modelLabel(modelId: string): string {
-  if (modelId.includes('opus')) return 'Opus 4.8'
-  if (modelId.includes('sonnet')) return 'Sonnet 4.6'
-  if (modelId.includes('haiku')) return 'Haiku 4.5'
+  const claude = AVAILABLE_MODELS.find((m) => m.id === modelId)
+  if (claude) return claude.label
   // Local/custom models — show as-is but truncate
   return modelId.length > 20 ? `${modelId.slice(0, 18)}…` : modelId
 }
@@ -71,12 +87,121 @@ function AssignmentRow({
   )
 }
 
+// ── Model selector for editing ──
+
+const EDITABLE_ROLES: { label: string; action: keyof ModelRoleMap }[] = [
+  { label: 'Plan', action: 'specialist:plan' },
+  { label: 'Build', action: 'specialist:build' }
+]
+
+function ModelSelector({
+  snapshot,
+  conversationId,
+  workspaceId,
+  onDone,
+  onRoutingUpdated
+}: {
+  snapshot: ConversationModelSnapshot | null
+  conversationId: string
+  workspaceId: string
+  onDone: () => void
+  onRoutingUpdated?: (updated: Conversation) => void
+}): React.JSX.Element {
+  const [saving, setSaving] = useState(false)
+  const [overrides, setOverrides] = useState<Partial<ModelRoleMap>>({})
+
+  const handleAssign = (action: keyof ModelRoleMap, modelId: string): void => {
+    const claude = AVAILABLE_MODELS.find((m) => m.id === modelId)
+    const assignment: ModelRoleAssignment = claude
+      ? { provider: 'claude' as LLMProvider, modelId }
+      : { provider: 'local-llm' as LLMProvider, modelId, localBackend: 'omlx' as const }
+    setOverrides((prev) => ({ ...prev, [action]: assignment }))
+  }
+
+  const handleSave = useCallback(async () => {
+    if (Object.keys(overrides).length === 0) {
+      onDone()
+      return
+    }
+    setSaving(true)
+    try {
+      const updated = await window.api.updateConversationRouting({
+        conversationId,
+        workspaceId,
+        routingOverrides: overrides
+      })
+      onRoutingUpdated?.(updated)
+      onDone()
+    } catch (err) {
+      console.error('[ModelConfigPopover] Failed to update routing:', err)
+    } finally {
+      setSaving(false)
+    }
+  }, [overrides, conversationId, workspaceId, onDone, onRoutingUpdated])
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border-subtle">
+      <p className="text-[10px] text-text-muted mb-2">
+        Changes only affect this conversation.
+      </p>
+      {EDITABLE_ROLES.map((role) => {
+        const current =
+          overrides[role.action]?.modelId ??
+          (role.action === 'specialist:plan'
+            ? snapshot?.plan.modelId
+            : snapshot?.build.modelId) ??
+          ''
+        return (
+          <div key={role.action} className="flex items-center justify-between gap-3 py-1">
+            <span className="text-xs text-text-secondary">{role.label}</span>
+            <select
+              value={current}
+              onChange={(e) => handleAssign(role.action, e.target.value)}
+              className="bg-surface-base border border-border-subtle rounded px-2 py-0.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-primary/50 max-w-[180px]"
+              aria-label={`${role.label} model`}
+            >
+              {AVAILABLE_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )
+      })}
+      <div className="flex items-center justify-end gap-2 mt-2">
+        <button
+          onClick={onDone}
+          className="text-xs text-text-muted hover:text-text-secondary transition-colors px-2 py-1"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving || Object.keys(overrides).length === 0}
+          className="text-xs font-medium text-primary-text bg-primary-muted hover:bg-primary-muted/80 disabled:opacity-50 rounded px-3 py-1 transition-colors"
+        >
+          {saving ? 'Saving…' : 'Apply'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Main popover ──
+
 export default function ModelConfigPopover({
   snapshot,
-  providerLabel
+  providerLabel,
+  conversationId,
+  workspaceId,
+  onRoutingUpdated
 }: ModelConfigPopoverProps): React.JSX.Element {
   const [isOpen, setIsOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
+
+  const canEdit = !!conversationId && !!workspaceId
 
   // Close on click outside
   useEffect(() => {
@@ -84,6 +209,7 @@ export default function ModelConfigPopover({
     const handleClick = (e: MouseEvent): void => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         setIsOpen(false)
+        setIsEditing(false)
       }
     }
     document.addEventListener('mousedown', handleClick)
@@ -106,7 +232,10 @@ export default function ModelConfigPopover({
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-semibold text-text-primary">Model Configuration</h4>
             <button
-              onClick={() => setIsOpen(false)}
+              onClick={() => {
+                setIsOpen(false)
+                setIsEditing(false)
+              }}
               className="p-0.5 rounded hover:bg-surface-overlay text-text-muted"
             >
               <X size={12} />
@@ -120,9 +249,30 @@ export default function ModelConfigPopover({
                 <AssignmentRow label="Build" assignment={snapshot.build} />
                 <AssignmentRow label="Background" assignment={snapshot.background} />
               </div>
-              <p className="text-[10px] text-text-muted mt-3">
-                Frozen at conversation creation · {new Date(snapshot.snapshotAt).toLocaleDateString()}
-              </p>
+              <div className="flex items-center justify-between mt-3">
+                <p className="text-[10px] text-text-muted">
+                  Frozen at creation · {new Date(snapshot.snapshotAt).toLocaleDateString()}
+                </p>
+                {canEdit && !isEditing && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="flex items-center gap-1 text-[10px] text-primary-text hover:text-primary-text/80 transition-colors"
+                  >
+                    <RefreshCw size={10} />
+                    Switch model
+                  </button>
+                )}
+              </div>
+
+              {isEditing && canEdit && (
+                <ModelSelector
+                  snapshot={snapshot}
+                  conversationId={conversationId!}
+                  workspaceId={workspaceId!}
+                  onDone={() => setIsEditing(false)}
+                  onRoutingUpdated={onRoutingUpdated}
+                />
+              )}
             </>
           ) : (
             <div className="text-xs text-text-muted py-2">

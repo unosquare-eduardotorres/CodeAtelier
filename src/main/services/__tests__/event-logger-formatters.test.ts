@@ -182,9 +182,9 @@ describe('formatAgentMessage', () => {
 
 describe('formatSessionMessage', () => {
   test('formats session started', () => {
-    const result = formatSessionMessage('started', { agentId: 'da-vinci' })
+    const result = formatSessionMessage('started', { agentId: 'specialist' })
     assert.equal(result.eventType, 'session.started')
-    assert.equal(result.message, 'Agent da-vinci session started')
+    assert.equal(result.message, 'Agent specialist session started')
   })
 
   test('formats session failed with error', () => {

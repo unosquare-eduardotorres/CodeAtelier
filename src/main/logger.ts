@@ -17,7 +17,7 @@ log.errorHandler.startCatching({
 // ── Create scoped loggers (replace LOG_PREFIX pattern) ──
 export const mainLogger = log.scope('Main')
 export const dbLogger = log.scope('DB')
-/** Scope for chat-agent runtime (Da Vinci + Project Specialist). Emitted in production logs as `(ChatAgent)`. */
+/** Scope for chat-agent runtime (specialist). Emitted in production logs as `(ChatAgent)`. */
 export const chatAgentLogger = log.scope('ChatAgent')
 export const chatIpcLogger = log.scope('ChatIPC')
 export const agentIpcLogger = log.scope('AgentIPC')

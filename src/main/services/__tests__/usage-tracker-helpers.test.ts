@@ -11,12 +11,8 @@ import { test, describe, summaryAsync } from './test-harness'
 import { featureForAgentRole } from '../usage-tracker.service'
 
 describe('featureForAgentRole', () => {
-  test('da-vinci → "chat"', () => {
-    assert.equal(featureForAgentRole('da-vinci'), 'chat')
-  })
-
-  test('project-specialist → "chat"', () => {
-    assert.equal(featureForAgentRole('project-specialist'), 'chat')
+  test('specialist → "chat"', () => {
+    assert.equal(featureForAgentRole('specialist'), 'chat')
   })
 
   test('grill → "grill"', () => {

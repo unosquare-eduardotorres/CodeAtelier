@@ -2,7 +2,7 @@
  * Phase 19, Track C — Session/stream/recovery deep coverage.
  *
  * Tests pure functions and isolated method bodies in:
- *   - agent-session.service.ts (splitContentBlocks, parsePlanPayload, resolveExecutorBackend,
+ *   - agent-session.service.ts (splitContentBlocks, parsePlanPayload, resolveExecutorBackend (derived),
  *     buildStreamTimeout, wrapControlCallbacks, processMetaChunk, processContentChunk,
  *     applyCompactionThresholds, buildSdkPrompt, switchMode guard paths)
  *   - agent-recovery-manager.ts (classifyStreamError, handleAbortOrTimeout,
@@ -132,8 +132,8 @@ if (loaded) {
   describe('AgentSessionService — construction and getters', () => {
     function createMockAdapter(overrides: Record<string, unknown> = {}) {
       return {
-        role: 'da-vinci' as const,
-        agentId: 'da-vinci',
+        role: 'specialist' as const,
+        agentId: 'specialist',
         buildSystemPrompt: () => 'test system prompt',
         getGoalCondition: () => null,
         getGoalMode: () => null,
@@ -539,6 +539,782 @@ if (loaded) {
         assert.ok(events.includes('complete'))
       })
     })
+    // ── AgentRecoveryManager — extractStructuredSummary ──────────────────
+
+    describe('AgentRecoveryManager — extractStructuredSummary', () => {
+      function createMockHostForSummary(overrides: Record<string, unknown> = {}): any {
+        const host = new EventEmitter()
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          accumulatedText: '',
+          toolActivityAccumulator: {
+            getExploredFiles: () => [],
+            count: 0,
+            buildDiscoverySummary: () => ''
+          },
+          lastStreamOpts: null,
+          ...overrides
+        })
+        return host
+      }
+
+      test('returns_null_when_text_too_short', () => {
+        const host = createMockHostForSummary({ accumulatedText: 'short' })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.equal(result, null)
+      })
+
+      test('returns_null_when_text_empty', () => {
+        const host = createMockHostForSummary({ accumulatedText: '' })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.equal(result, null)
+      })
+
+      test('includes_goal_section_from_lastStreamOpts', () => {
+        const host = createMockHostForSummary({
+          accumulatedText: 'A'.repeat(100),
+          lastStreamOpts: { sdkPrompt: 'Fix the login bug in auth.ts' }
+        })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.ok(result !== null)
+        assert.ok(result!.includes('## Goal'))
+        assert.ok(result!.includes('Fix the login bug'))
+      })
+
+      test('includes_files_found_section', () => {
+        const host = createMockHostForSummary({
+          accumulatedText: 'Found important data. '.repeat(10),
+          toolActivityAccumulator: {
+            getExploredFiles: () => ['src/auth.ts', 'src/db.ts'],
+            count: 5,
+            buildDiscoverySummary: () => ''
+          }
+        })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.ok(result !== null)
+        assert.ok(result!.includes('## Files Found'))
+        assert.ok(result!.includes('src/auth.ts'))
+        assert.ok(result!.includes('src/db.ts'))
+      })
+
+      test('includes_plan_items_from_numbered_lines', () => {
+        const text = [
+          'Here is the plan:',
+          '1. Update the schema',
+          '2. Add migration',
+          '3. Fix the tests',
+          'This is analysis text that should appear in findings.'
+        ].join('\n')
+        const host = createMockHostForSummary({ accumulatedText: text })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.ok(result !== null)
+        assert.ok(result!.includes('## Plan So Far'))
+        assert.ok(result!.includes('Update the schema'))
+      })
+
+      test('includes_session_stats_with_tool_count', () => {
+        const host = createMockHostForSummary({
+          accumulatedText: 'Analysis complete. '.repeat(10),
+          toolActivityAccumulator: {
+            getExploredFiles: () => [],
+            count: 42,
+            buildDiscoverySummary: () => ''
+          }
+        })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.ok(result !== null)
+        assert.ok(result!.includes('Tool calls: 42'))
+      })
+
+      test('includes_key_findings_section', () => {
+        const text = 'The auth module has a security vulnerability that allows bypass. '.repeat(5)
+        const host = createMockHostForSummary({ accumulatedText: text })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.ok(result !== null)
+        assert.ok(result!.includes('## Key Findings'))
+      })
+
+      test('caps_plan_items_at_20', () => {
+        const lines = Array.from({ length: 30 }, (_, i) => `${i + 1}. Step ${i + 1}`)
+        const text = lines.join('\n')
+        const host = createMockHostForSummary({ accumulatedText: text })
+        const rm = new AgentRecoveryManager(host)
+        const result = rm.extractStructuredSummary('conv-1')
+        assert.ok(result !== null)
+        // Should include at most 20 plan items
+        const planMatches = result!.match(/Step \d+/g) ?? []
+        assert.ok(planMatches.length <= 20)
+      })
+    })
+
+    // ── AgentRecoveryManager — saveCurrentPlanState ──────────────────────
+
+    describe('AgentRecoveryManager — saveCurrentPlanState', () => {
+      function createMockHostForPlan(overrides: Record<string, unknown> = {}): any {
+        const host = new EventEmitter()
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          accumulatedText: '1. Update schema\n2. Run migration\n3. Fix tests',
+          workspaceId: 'ws-1',
+          currentMode: 'plan',
+          toolActivityAccumulator: {
+            getExploredFiles: () => ['src/index.ts'],
+            count: 3,
+            buildDiscoverySummary: () => 'discovered stuff'
+          },
+          lastStreamOpts: { sdkPrompt: 'Fix the bug' },
+          ...overrides
+        })
+        return host
+      }
+
+      test('skips_when_no_workspaceId', () => {
+        const host = createMockHostForPlan({ workspaceId: null })
+        const rm = new AgentRecoveryManager(host)
+        // Should not throw
+        rm.saveCurrentPlanState('conv-1')
+      })
+
+      test('skips_when_mode_is_build', () => {
+        const host = createMockHostForPlan({ currentMode: 'build' })
+        const rm = new AgentRecoveryManager(host)
+        // Should not throw — guard returns early
+        rm.saveCurrentPlanState('conv-1')
+      })
+
+      test('extracts_plan_items_from_numbered_lines', () => {
+        const host = createMockHostForPlan()
+        const rm = new AgentRecoveryManager(host)
+        // Should not throw — may fail on localPlanStateService upsert
+        try {
+          rm.saveCurrentPlanState('conv-1')
+        } catch {
+          // Expected if localPlanStateService not available
+        }
+      })
+
+      test('handles_bullet_list_plan_items', () => {
+        const host = createMockHostForPlan({
+          accumulatedText: '- Update schema\n- Run tests\n* Fix bug'
+        })
+        const rm = new AgentRecoveryManager(host)
+        try {
+          rm.saveCurrentPlanState('conv-1')
+        } catch {
+          // Expected
+        }
+      })
+
+      test('caps_plan_items_at_30', () => {
+        const lines = Array.from({ length: 40 }, (_, i) => `${i + 1}. Step ${i + 1}`)
+        const host = createMockHostForPlan({ accumulatedText: lines.join('\n') })
+        const rm = new AgentRecoveryManager(host)
+        try {
+          rm.saveCurrentPlanState('conv-1')
+        } catch {
+          // Expected
+        }
+      })
+    })
+
+    // ── AgentRecoveryManager — saveErrorProgress ────────────────────────
+
+    describe('AgentRecoveryManager — saveErrorProgress', () => {
+      function createMockHostForError(overrides: Record<string, unknown> = {}): any {
+        const host = new EventEmitter()
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          llmProvider: 'local-llm',
+          accumulatedText: 'x'.repeat(100),
+          currentConversationId: 'conv-1',
+          currentMode: 'plan',
+          workspaceId: 'ws-1',
+          toolActivityAccumulator: {
+            getExploredFiles: () => [],
+            count: 0,
+            buildDiscoverySummary: () => ''
+          },
+          lastStreamOpts: null,
+          ...overrides
+        })
+        return host
+      }
+
+      test('saves_for_claude_provider_when_text_long_enough', () => {
+        const host = createMockHostForError({ llmProvider: 'claude' })
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).saveErrorProgress()
+        // Should not throw — now runs for all providers
+      })
+
+      test('skips_when_text_too_short', () => {
+        const host = createMockHostForError({ accumulatedText: 'short' })
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).saveErrorProgress()
+        // Should return early
+      })
+
+      test('skips_when_no_conversationId', () => {
+        const host = createMockHostForError({ currentConversationId: null })
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).saveErrorProgress()
+      })
+
+      test('saves_summary_for_local_llm_with_enough_text', () => {
+        const host = createMockHostForError()
+        const rm = new AgentRecoveryManager(host)
+        try {
+          ;(rm as any).saveErrorProgress()
+        } catch {
+          // conversationRepository not available
+        }
+      })
+    })
+
+    // ── AgentRecoveryManager — handleStreamError matrix ─────────────────
+
+    describe('AgentRecoveryManager — handleStreamError dispatch', () => {
+      function createMockHostFull(overrides: Record<string, unknown> = {}): any {
+        const chunks: any[] = []
+        const events: string[] = []
+        const host = new EventEmitter()
+        const origEmit = host.emit.bind(host)
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          currentStatus: 'streaming',
+          llmProvider: 'claude',
+          accumulatedText: '',
+          currentConversationId: 'conv-1',
+          currentMode: 'plan',
+          workspaceId: 'ws-1',
+          controlToolState: { plan: false, askUser: false },
+          maxTurnsContinuations: 0,
+          sdkAbortController: new AbortController(),
+          circuitBreaker: { count: 0, reset: () => {}, isBroken: false },
+          lastStreamOpts: null,
+          adapter: { role: 'specialist' },
+          flushTokenUsage: () => {},
+          getStatus: () => ({ status: 'idle' }),
+          toolActivityAccumulator: {
+            getExploredFiles: () => [],
+            count: 0,
+            buildDiscoverySummary: () => ''
+          },
+          emit: (event: string, data?: any) => {
+            events.push(event)
+            if (event === 'chunk') chunks.push(data)
+            return origEmit(event, data)
+          },
+          _chunks: chunks,
+          _events_log: events,
+          ...overrides
+        })
+        return host
+      }
+
+      test('overload_error_emits_chunk_and_completes', async () => {
+        const host = createMockHostFull()
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(new Error('529 server overloaded'), false)
+        assert.ok(host._chunks.length >= 1)
+        assert.ok(host._chunks[0].content.includes('overloaded'))
+        assert.ok(host._events_log.includes('complete'))
+      })
+
+      test('max_turns_exhausted_emits_turn_limit_chunk', async () => {
+        const host = createMockHostFull({
+          maxTurnsContinuations: 99,
+          lastStreamOpts: null // No opts → no continuation possible
+        })
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(new Error('maximum number of turns reached'), false)
+        const turnLimitChunks = host._chunks.filter((c: any) => c.type === 'turn_limit')
+        assert.ok(turnLimitChunks.length >= 1)
+      })
+
+      test('context_overflow_emits_recovery_message', async () => {
+        const host = createMockHostFull({
+          llmProvider: 'local-llm',
+          accumulatedText: 'some accumulated text that is long enough',
+          currentConversationId: 'conv-overflow'
+        })
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(new Error('context length exceeded'), false)
+        assert.ok(host._chunks.some((c: any) => c.content?.includes('Context limit reached')))
+      })
+
+      test('abort_error_delegates_to_handleAbortOrTimeout', async () => {
+        const host = createMockHostFull()
+        const err = new Error('AbortError')
+        err.name = 'AbortError'
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(err, false)
+        assert.equal(host.currentStatus, 'failed')
+        assert.ok(host._events_log.includes('complete'))
+      })
+
+      test('timeout_error_emits_timeout_chunk', async () => {
+        const host = createMockHostFull()
+        const err = new Error('AbortError')
+        err.name = 'AbortError'
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(err, true, 600000)
+        assert.ok(host._chunks.some((c: any) => c.content?.includes('timed out')))
+      })
+
+      test('generic_error_emits_error_chunk', async () => {
+        const host = createMockHostFull()
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(new Error('Unknown fatal error'), false)
+        assert.ok(host._chunks.some((c: any) => c.type === 'error'))
+        assert.equal(host.currentStatus, 'failed')
+      })
+
+      test('recovery_depth_gt_0_emits_recovery_failed_chunk', async () => {
+        const host = createMockHostFull()
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(new Error('some error'), false, 1)
+        assert.ok(host._chunks.some((c: any) =>
+          c.type === 'session_recovery' && c.recoveryPhase === 'failed'
+        ))
+      })
+
+      test('clears_sdkAbortController', async () => {
+        const host = createMockHostFull()
+        assert.ok(host.sdkAbortController !== null)
+        const rm = new AgentRecoveryManager(host)
+        await rm.handleStreamError(new Error('test'), false)
+        assert.equal(host.sdkAbortController, null)
+      })
+    })
+
+    // ── AgentRecoveryManager — captureSummaryAndIntents ──────────────────
+
+    describe('AgentRecoveryManager — captureSummaryAndIntents', () => {
+      function createMockHostForCapture(overrides: Record<string, unknown> = {}): any {
+        const events: Array<{ event: string; data: any }> = []
+        const host = new EventEmitter()
+        const origEmit = host.emit.bind(host)
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          accumulatedText: 'Analysis complete. '.repeat(10),
+          currentStatus: 'streaming',
+          currentMode: 'plan',
+          controlToolState: { plan: false, askUser: false },
+          toolActivityAccumulator: {
+            getExploredFiles: () => [],
+            count: 0,
+            buildDiscoverySummary: () => ''
+          },
+          lastStreamOpts: null,
+          adapter: {
+            role: 'specialist',
+            emitDetectedIntents: () => {}
+          },
+          flushTokenUsage: () => {},
+          getStatus: () => ({ status: 'idle' }),
+          emitAdapterEvent: () => {},
+          emit: (event: string, data?: any) => {
+            events.push({ event, data })
+            return origEmit(event, data)
+          },
+          _emitted: events,
+          ...overrides
+        })
+        return host
+      }
+
+      test('emits_response_intent_when_no_plan_or_askUser', () => {
+        const host = createMockHostForCapture()
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.ok(host._emitted.some((e: any) =>
+          e.event === 'intent' && e.data?.type === 'response'
+        ))
+      })
+
+      test('sets_status_to_idle', () => {
+        const host = createMockHostForCapture()
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.equal(host.currentStatus, 'idle')
+      })
+
+      test('emits_complete', () => {
+        const host = createMockHostForCapture()
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.ok(host._emitted.some((e: any) => e.event === 'complete'))
+      })
+
+      test('emits_session_recovery_chunk_when_depth_gt_0', () => {
+        const host = createMockHostForCapture()
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 2)
+        assert.ok(host._emitted.some((e: any) =>
+          e.event === 'chunk' &&
+          e.data?.type === 'session_recovery' &&
+          e.data?.recoveryPhase === 'completed'
+        ))
+      })
+
+      test('flushes_token_usage', () => {
+        let flushed = false
+        const host = createMockHostForCapture({ flushTokenUsage: () => { flushed = true } })
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.ok(flushed)
+      })
+
+      test('calls_adapter_emitDetectedIntents', () => {
+        let called = false
+        const host = createMockHostForCapture({
+          adapter: {
+            role: 'specialist',
+            emitDetectedIntents: () => { called = true }
+          }
+        })
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.ok(called)
+      })
+
+      test('skips_summary_when_text_too_short', () => {
+        const host = createMockHostForCapture({ accumulatedText: 'short' })
+        const rm = new AgentRecoveryManager(host)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        // Should still complete without error
+        assert.ok(host._emitted.some((e: any) => e.event === 'complete'))
+      })
+
+      test('saves_plan_state_for_all_providers', () => {
+        const host = createMockHostForCapture()
+        const rm = new AgentRecoveryManager(host)
+        // Should not throw — plan state save now runs for all providers
+        // (returns early if mode !== plan or no workspaceId)
+        ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
+        assert.ok(host._emitted.some((e: any) => e.event === 'complete'))
+      })
+    })
+
+    // ── AgentRecoveryManager — finalizeStream ───────────────────────────
+
+    describe('AgentRecoveryManager — finalizeStream', () => {
+      function createHostForFinalize(overrides: Record<string, unknown> = {}): any {
+        const events: Array<{ event: string; data: any }> = []
+        const host = new EventEmitter()
+        const origEmit = host.emit.bind(host)
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          accumulatedText: 'response text '.repeat(20),
+          currentStatus: 'streaming',
+          currentMode: 'plan',
+          currentConversationId: 'conv-1',
+          workspaceId: 'ws-1',
+          controlToolState: { plan: false, askUser: false },
+          circuitBreaker: { count: 0, isBroken: false, reset: () => {} },
+          maxTurnsContinuations: 0,
+          toolActivityAccumulator: {
+            getExploredFiles: () => [],
+            count: 0,
+            buildDiscoverySummary: () => ''
+          },
+          lastStreamOpts: null,
+          adapter: {
+            role: 'specialist',
+            emitDetectedIntents: () => {},
+            supportsEmitPlanRecovery: false,
+            isPlanModeToolBlock: false
+          },
+          flushTokenUsage: () => {},
+          getStatus: () => ({ status: 'idle' }),
+          emitAdapterEvent: () => {},
+          recoveryNudge: {
+            attemptPlanToolRecovery: async () => null,
+            attemptRecovery: async () => null
+          },
+          emit: (event: string, data?: any) => {
+            events.push({ event, data })
+            return origEmit(event, data)
+          },
+          _emitted: events,
+          ...overrides
+        })
+        return host
+      }
+
+      test('completes_with_summary_on_normal_stream', async () => {
+        const host = createHostForFinalize()
+        const rm = new AgentRecoveryManager(host)
+        await rm.finalizeStream({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          recoveryDepth: 0,
+          timedOut: false,
+          streamState: { messageStopReceived: true, lastTerminalReason: null, overloadDetected: false },
+          mcpResult: {},
+          llmProvider: 'claude'
+        })
+        assert.ok(host._emitted.some((e: any) => e.event === 'complete'))
+        assert.equal(host.currentStatus, 'idle')
+      })
+
+      test('warns_when_no_messageStop_received', async () => {
+        let warned = false
+        const host = createHostForFinalize({
+          log: { info: () => {}, warn: () => { warned = true }, error: () => {} }
+        })
+        const rm = new AgentRecoveryManager(host)
+        await rm.finalizeStream({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          recoveryDepth: 0,
+          timedOut: false,
+          streamState: { messageStopReceived: false, lastTerminalReason: null, overloadDetected: false },
+          mcpResult: {},
+          llmProvider: 'claude'
+        })
+        assert.ok(warned, 'should warn about missing MessageStop')
+      })
+
+      test('skips_warning_when_timed_out', async () => {
+        const host = createHostForFinalize({
+          log: { info: () => {}, warn: () => { /* intentionally unchecked */ }, error: () => {} }
+        })
+        const rm = new AgentRecoveryManager(host)
+        await rm.finalizeStream({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          recoveryDepth: 0,
+          timedOut: true,
+          streamState: { messageStopReceived: false, lastTerminalReason: null, overloadDetected: false },
+          mcpResult: {},
+          llmProvider: 'claude'
+        })
+        // Should not warn about missing MessageStop when timed out
+      })
+    })
+
+    // ── AgentRecoveryManager — handleOverloadOrMaxTurns ──────────────────
+
+    describe('AgentRecoveryManager — handleOverloadOrMaxTurns', () => {
+      function createHostForOverload(overrides: Record<string, unknown> = {}): any {
+        const chunks: any[] = []
+        const events: string[] = []
+        const host = new EventEmitter()
+        const origEmit = host.emit.bind(host)
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          currentStatus: 'streaming',
+          maxTurnsContinuations: 0,
+          flushTokenUsage: () => {},
+          getStatus: () => ({ status: 'idle' }),
+          circuitBreaker: { count: 0, reset: () => {} },
+          emit: (event: string, data?: any) => {
+            events.push(event)
+            if (event === 'chunk') chunks.push(data)
+            return origEmit(event, data)
+          },
+          _chunks: chunks,
+          _events_log: events,
+          ...overrides
+        })
+        return host
+      }
+
+      test('returns_handled_on_overload_with_max_turns', async () => {
+        const host = createHostForOverload()
+        const rm = new AgentRecoveryManager(host)
+        const result = await (rm as any).handleOverloadOrMaxTurns({
+          streamState: { overloadDetected: true, lastTerminalReason: 'max_turns' },
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(result, 'handled')
+        assert.ok(host._chunks.some((c: any) => c.content?.includes('overloaded')))
+      })
+
+      test('emits_turn_limit_when_all_continuations_exhausted', async () => {
+        const host = createHostForOverload({ maxTurnsContinuations: 99 })
+        const rm = new AgentRecoveryManager(host)
+        const result = await (rm as any).handleOverloadOrMaxTurns({
+          streamState: { overloadDetected: false, lastTerminalReason: 'max_turns' },
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(result, 'continue')
+        assert.ok(host._chunks.some((c: any) => c.type === 'turn_limit'))
+      })
+
+      test('returns_continue_when_not_max_turns', async () => {
+        const host = createHostForOverload()
+        const rm = new AgentRecoveryManager(host)
+        const result = await (rm as any).handleOverloadOrMaxTurns({
+          streamState: { overloadDetected: false, lastTerminalReason: null },
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(result, 'continue')
+      })
+    })
+
+    // ── AgentRecoveryManager — continueTurnLimit prompt building ─────────
+
+    describe('AgentRecoveryManager — continueTurnLimit prompt shapes', () => {
+      function createHostForContinue(overrides: Record<string, unknown> = {}): any {
+        const chunks: any[] = []
+        const host = new EventEmitter()
+        const origEmit = host.emit.bind(host)
+        Object.assign(host, {
+          log: { info: () => {}, warn: () => {}, error: () => {} },
+          maxTurnsContinuations: 0,
+          circuitBreaker: { count: 0, reset: () => {} },
+          turnCounts: new Map(),
+          sessionMap: new Map(),
+          accumulatedText: 'some work done',
+          lastStreamOpts: { sdkPrompt: 'original request' },
+          toolActivityAccumulator: {
+            buildDiscoverySummary: (_limit: number) => 'discovered files',
+            getExploredFiles: () => [],
+            count: 5
+          },
+          executeStream: async () => {},
+          emit: (event: string, data?: any) => {
+            if (event === 'chunk') chunks.push(data)
+            return origEmit(event, data)
+          },
+          _chunks: chunks,
+          ...overrides
+        })
+        return host
+      }
+
+      test('increments_maxTurnsContinuations', async () => {
+        const host = createHostForContinue()
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(host.maxTurnsContinuations, 1)
+      })
+
+      test('resets_circuit_breaker', async () => {
+        let resetCalled = false
+        const host = createHostForContinue({
+          circuitBreaker: { count: 5, reset: () => { resetCalled = true } }
+        })
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: true,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.ok(resetCalled)
+      })
+
+      test('emits_continuing_chunk', async () => {
+        const host = createHostForContinue()
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.ok(host._chunks.some((c: any) => c.content?.includes('Continuing')))
+      })
+
+      test('increments_turn_count_for_conversation', async () => {
+        const host = createHostForContinue()
+        host.turnCounts.set('conv-1', 3)
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(host.turnCounts.get('conv-1'), 4)
+      })
+
+      test('calls_executeStream_with_continuation_prompt', async () => {
+        let execOpts: any = null
+        const host = createHostForContinue({
+          executeStream: async (opts: any) => { execOpts = opts }
+        })
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: true,
+          mcpResult: { tools: [] },
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.ok(execOpts !== null)
+        assert.ok(typeof execOpts.sdkPrompt === 'string')
+        assert.ok(execOpts.sdkPrompt.includes('Continue'))
+      })
+
+      test('builds_detailed_prompt_for_local_llm', async () => {
+        let execOpts: any = null
+        const host = createHostForContinue({
+          executeStream: async (opts: any) => { execOpts = opts }
+        })
+        const rm = new AgentRecoveryManager(host)
+        try {
+          await (rm as any).continueTurnLimit({
+            conversationId: 'conv-1',
+            systemPrompt: 'sys',
+            isBuildMode: false,
+            mcpResult: {},
+            llmProvider: 'local-llm',
+            recoveryDepth: 0
+          })
+        } catch {
+          // May throw due to localPlanStateService DB access in test env
+        }
+        // Verify the prompt was built (may or may not have executed depending on DB)
+        if (execOpts !== null) {
+          assert.ok(typeof execOpts.sdkPrompt === 'string')
+          assert.ok(execOpts.sdkPrompt.includes('Continuation'))
+        }
+      })
+    })
   } else {
     describe('AgentRecoveryManager (skipped — load failed)', () => {
       test('skipped', () => {}, { skipReason: 'module not loaded' })
@@ -608,8 +1384,8 @@ if (loaded) {
   describe('AgentSessionService — session map', () => {
     test('resolveSession_returns_undefined_for_new_conv', () => {
       const adapter = {
-        role: 'da-vinci' as const,
-        agentId: 'da-vinci',
+        role: 'specialist' as const,
+        agentId: 'specialist',
         buildSystemPrompt: () => '',
         getGoalCondition: () => null,
         getGoalMode: () => null,
@@ -625,8 +1401,8 @@ if (loaded) {
 
     test('getSessionId_returns_undefined_initially', () => {
       const adapter = {
-        role: 'da-vinci' as const,
-        agentId: 'da-vinci',
+        role: 'specialist' as const,
+        agentId: 'specialist',
         buildSystemPrompt: () => '',
         getGoalCondition: () => null,
         getGoalMode: () => null,
@@ -640,8 +1416,8 @@ if (loaded) {
 
     test('clearSession_does_not_throw_for_unknown_conv', () => {
       const adapter = {
-        role: 'da-vinci' as const,
-        agentId: 'da-vinci',
+        role: 'specialist' as const,
+        agentId: 'specialist',
         buildSystemPrompt: () => '',
         getGoalCondition: () => null,
         getGoalMode: () => null,

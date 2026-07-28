@@ -9,14 +9,42 @@ import {
   AlertCircle,
   Info,
   Shield,
-  BarChart3
+  BarChart3,
+  RefreshCw,
+  Terminal,
+  Key,
+  Globe
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import { GATE_ICON } from './phase-icons'
+import { stripBlueprintBlocks } from '../../../../../shared/blueprint-clarify-parsers'
 
 // ── Types ──
+
+/** Single preflight check result. */
+interface PreflightCheckUI {
+  id: string
+  name: string
+  kind: string // 'cli-tool' | 'env-var' | 'service'
+  status: string // 'pass' | 'warn' | 'blocker'
+  message: string
+  remediation?: string
+  sources: string[]
+}
+
+interface PreflightResultUI {
+  checks: PreflightCheckUI[]
+  ranAt: string
+  hasBlockers: boolean
+  hasWarnings: boolean
+}
+
+interface PreflightDataUI {
+  result: PreflightResultUI
+  overridden: boolean
+}
 
 interface BlueprintApprovalGateProps {
   planSummary: string
@@ -24,6 +52,10 @@ interface BlueprintApprovalGateProps {
   completion?: Record<string, unknown>
   /** Full review report markdown (detailed findings, gaps, risks) */
   reviewMarkdown?: string
+  /** Preflight check results (environment validation). */
+  preflight?: PreflightDataUI
+  /** Callback to re-run preflight checks. */
+  onRerunPreflight?: () => void
   onApprove: () => void
   onReject: (feedback: string) => void
   onCancel: () => void
@@ -79,10 +111,50 @@ function SeverityChip({ label, count }: { label: string; count: number }): JSX.E
 
 // ── Main Component ──
 
+// ── Preflight Check Row ──
+
+function PreflightCheckRow({ check }: { check: PreflightCheckUI }): JSX.Element {
+  const statusConfig = {
+    pass: { icon: CheckCircle, color: 'text-success', bg: 'bg-success/10', label: 'Pass' },
+    warn: { icon: AlertTriangle, color: 'text-warning', bg: 'bg-warning/10', label: 'Warning' },
+    blocker: { icon: AlertCircle, color: 'text-danger', bg: 'bg-danger/10', label: 'Blocker' }
+  }
+  const config = statusConfig[check.status as keyof typeof statusConfig] ?? statusConfig.warn
+  const StatusIcon = config.icon
+
+  const kindIcon = check.kind === 'cli-tool' ? Terminal
+    : check.kind === 'env-var' ? Key
+    : Globe
+  const KindIcon = kindIcon
+
+  return (
+    <div className={`flex items-start gap-2 px-3 py-2 rounded-lg ${config.bg} border border-transparent`}>
+      <StatusIcon size={14} className={`${config.color} mt-0.5 shrink-0`} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <KindIcon size={11} className="text-text-muted" />
+          <span className="text-xs font-medium text-text-primary truncate">{check.name}</span>
+          <span className={`text-[10px] px-1.5 py-0 rounded-full border ${config.bg} ${config.color} font-medium`}>
+            {config.label}
+          </span>
+        </div>
+        <p className="text-[11px] text-text-secondary mt-0.5">{check.message}</p>
+        {check.remediation && check.status !== 'pass' && (
+          <p className="text-[11px] text-text-muted mt-0.5 italic">
+            💡 {check.remediation}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function BlueprintApprovalGate({
   planSummary,
   completion,
   reviewMarkdown,
+  preflight,
+  onRerunPreflight,
   onApprove,
   onReject,
   onCancel
@@ -90,6 +162,19 @@ export default function BlueprintApprovalGate({
   const [showFeedback, setShowFeedback] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [reportExpanded, setReportExpanded] = useState(false)
+  // D13: default expanded only when there are issues (reduces noise for all-pass)
+  const [preflightExpanded, setPreflightExpanded] = useState(
+    () => !!(preflight?.result.hasBlockers || preflight?.result.hasWarnings)
+  )
+
+  // R3-3 fix: auto-expand when a re-run introduces blockers.
+  // Uses React's "adjust state during render" pattern instead of useEffect
+  // to avoid the react-hooks/set-state-in-effect lint error.
+  const [lastPreflightRanAt, setLastPreflightRanAt] = useState(preflight?.result.ranAt)
+  if (preflight?.result.ranAt !== lastPreflightRanAt) {
+    setLastPreflightRanAt(preflight?.result.ranAt)
+    if (preflight?.result.hasBlockers) setPreflightExpanded(true)
+  }
 
   // Extract structured metrics from completion
   const findings = completion?.findings as
@@ -234,7 +319,7 @@ export default function BlueprintApprovalGate({
                 prose-li:text-sm prose-li:text-text-body
               ">
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                  {reviewMarkdown!}
+                  {stripBlueprintBlocks(reviewMarkdown!)}
                 </ReactMarkdown>
               </div>
             </div>
@@ -254,9 +339,63 @@ export default function BlueprintApprovalGate({
             prose-li:text-sm prose-li:text-text-body
           ">
             <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-              {planSummary}
+              {stripBlueprintBlocks(planSummary)}
             </ReactMarkdown>
           </div>
+        </div>
+      )}
+
+      {/* ── Environment Preflight Checks ── */}
+      {preflight && preflight.result.checks.length > 0 && (
+        <div className="rounded-lg border border-border-subtle overflow-hidden">
+          {/* A4 fix: header is a div with two sibling buttons — no nested <button> */}
+          <div className="w-full flex items-center gap-2 px-3 py-2 bg-surface-overlay">
+            <button
+              type="button"
+              onClick={() => setPreflightExpanded(!preflightExpanded)}
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity text-left flex-1 min-w-0"
+              aria-expanded={preflightExpanded}
+              aria-label="Toggle environment checks"
+            >
+              {preflightExpanded ? (
+                <ChevronDown size={14} className="text-text-muted flex-shrink-0" />
+              ) : (
+                <ChevronRight size={14} className="text-text-muted flex-shrink-0" />
+              )}
+              <Terminal size={14} className={`flex-shrink-0 ${preflight.result.hasBlockers ? 'text-danger' : preflight.result.hasWarnings ? 'text-warning' : 'text-success'}`} />
+              <span className="text-xs font-semibold text-text-primary">Environment Checks</span>
+              <span className="text-[10px] text-text-muted ml-1">
+                {preflight.result.checks.filter((c) => c.status === 'pass').length} pass
+                {preflight.result.checks.filter((c) => c.status === 'warn').length > 0 && (
+                  <>, {preflight.result.checks.filter((c) => c.status === 'warn').length} warn</>
+                )}
+                {preflight.result.checks.filter((c) => c.status === 'blocker').length > 0 && (
+                  <>, <span className="text-danger font-medium">{preflight.result.checks.filter((c) => c.status === 'blocker').length} blocker{preflight.result.checks.filter((c) => c.status === 'blocker').length > 1 ? 's' : ''}</span></>
+                )}
+              </span>
+            </button>
+            {onRerunPreflight && (
+              <button
+                type="button"
+                onClick={onRerunPreflight}
+                className="ml-auto flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors flex-shrink-0"
+                title="Re-run environment checks"
+              >
+                <RefreshCw size={11} />
+                Re-run
+              </button>
+            )}
+          </div>
+          {preflightExpanded && (
+            <div className="bg-surface-base border-t border-border-subtle p-2 space-y-1 max-h-64 overflow-y-auto">
+              {preflight.result.checks.map((check) => (
+                <PreflightCheckRow key={check.id} check={check} />
+              ))}
+              <p className="text-[10px] text-text-muted pt-1 px-3">
+                Checked at {new Date(preflight.result.ranAt).toLocaleTimeString()}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -305,10 +444,23 @@ export default function BlueprintApprovalGate({
           <button
             type="button"
             onClick={onApprove}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-success hover:bg-success/80 rounded-lg transition-colors"
+            className={`flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white rounded-lg transition-colors ${
+              preflight?.result.hasBlockers
+                ? 'bg-warning hover:bg-warning/80'
+                : 'bg-success hover:bg-success/80'
+            }`}
           >
-            <CheckCircle size={14} />
-            Approve & Build
+            {preflight?.result.hasBlockers ? (
+              <>
+                <AlertTriangle size={14} />
+                Build Anyway
+              </>
+            ) : (
+              <>
+                <CheckCircle size={14} />
+                Approve & Build
+              </>
+            )}
           </button>
         </div>
       )}

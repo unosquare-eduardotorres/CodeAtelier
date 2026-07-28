@@ -17,7 +17,7 @@ interface ImageAttachment {
 
 interface AgentStatus {
   agentId: string
-  agentType: 'da-vinci' | 'specialist'
+  agentType: 'specialist'
   status: string
   elapsedMs: number
   tokenUsage: number
@@ -46,7 +46,7 @@ function getStatus(params: {
 
   return {
     agentId: params.adapterId,
-    agentType: params.adapterRole === 'da-vinci' ? 'da-vinci' : 'specialist',
+    agentType: 'specialist',
     status: params.currentStatus,
     elapsedMs: isActive && params.messageStartedAt ? Date.now() - params.messageStartedAt : 0,
     tokenUsage: params.tokenUsage,
@@ -123,7 +123,11 @@ function enrichLocalLLMContext(params: {
 }
 
 /**
- * Replicated session resolution logic (agent-session.service.ts:878-892).
+ * Replicated session resolution logic (agent-session.service.ts).
+ *
+ * NOTE: The real resolveSession now rejects DB-loaded sessions (cross-restart
+ * guard) — sessions loaded from DB return undefined instead of being cached.
+ * This simplified double preserves the pre-guard behavior for its own tests.
  */
 class SessionResolver {
   private readonly sessionMap = new Map<string, string>()
@@ -181,15 +185,15 @@ describe('getStatus', () => {
     const status = getStatus({
       currentStatus: 'idle',
       messageStartedAt: null,
-      adapterId: 'da-vinci-1',
-      adapterRole: 'da-vinci',
+      adapterId: 'specialist-1',
+      adapterRole: 'specialist',
       tokenUsage: 1000,
       inputTokens: 600,
       outputTokens: 400,
       lastContextTokens: 50000
     })
-    assert.equal(status.agentId, 'da-vinci-1')
-    assert.equal(status.agentType, 'da-vinci')
+    assert.equal(status.agentId, 'specialist-1')
+    assert.equal(status.agentType, 'specialist')
   })
 
   test('specialist_role_returns_specialist_type', () => {

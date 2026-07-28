@@ -14,7 +14,7 @@ interface CoreAgentCard {
 }
 
 const CORE_AGENT_DESCRIPTIONS: Record<string, { description: string; usedIn: string[] }> = {
-  'da-vinci': {
+  specialist: {
     description:
       'Your primary development partner for planning, building, code review, and technical exploration.',
     usedIn: ['Chat', 'Grill', 'Plan', 'Build']

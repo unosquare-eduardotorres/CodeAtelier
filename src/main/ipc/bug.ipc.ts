@@ -1,12 +1,13 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, dialog } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { bugRepository } from '../db/repositories/bug.repository'
 import type { CreateBugInput, BugFilters } from '../db/repositories/bug.repository'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 import { requireObject, requireString } from './validate-args'
+import { writeFile } from 'node:fs/promises'
 
-export function registerBugIpc(_mainWindow: BrowserWindow): void {
+export function registerBugIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.BUG_REPORT, (event, rawArgs: unknown) => {
     validateSender(event)
     const input = requireObject(rawArgs, IPC_CHANNELS.BUG_REPORT)
@@ -70,5 +71,20 @@ export function registerBugIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.BUG_COUNT, (event) => {
     validateSender(event)
     return bugRepository.getUnresolvedCount()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BUG_EXPORT_MARKDOWN, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BUG_EXPORT_MARKDOWN)
+    const markdown = requireString(args, 'markdown', IPC_CHANNELS.BUG_EXPORT_MARKDOWN)
+    const defaultFilename = (args.defaultFilename as string) ?? 'bug-report.md'
+
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export Bug Report',
+      defaultPath: defaultFilename,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    })
+    if (canceled || !filePath) return
+    await writeFile(filePath, markdown, 'utf-8')
   })
 }

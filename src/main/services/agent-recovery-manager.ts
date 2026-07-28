@@ -386,10 +386,9 @@ export class AgentRecoveryManager {
         this.s.log.warn('[S6:summary-capture-failed]', err)
       }
 
-      // Save plan state for cross-session continuity (local LLMs only)
-      if (llmProvider === 'local-llm') {
-        this.saveCurrentPlanState(conversationId)
-      }
+      // Save plan state for cross-session continuity (all providers).
+      // saveCurrentPlanState returns early when mode !== 'plan' or no workspaceId.
+      this.saveCurrentPlanState(conversationId)
     }
 
     // Delegate intent detection to the adapter
@@ -484,10 +483,9 @@ export class AgentRecoveryManager {
 
   // ── handleStreamError helpers ──────────────────────────────────────────
 
-  /** Save partial progress on error (local LLMs only). */
+  /** Save partial progress on error (all providers). */
   private saveErrorProgress(): void {
     if (
-      this.s.llmProvider !== 'local-llm' ||
       this.s.accumulatedText.length <= 50 ||
       !this.s.currentConversationId
     ) {
@@ -496,10 +494,20 @@ export class AgentRecoveryManager {
     try {
       const summary = this.extractStructuredSummary(this.s.currentConversationId)
       if (summary) {
-        conversationRepository.updateSummary(this.s.currentConversationId, summary)
-        this.s.log.info(
-          `[S6:error-summary-saved] conversationId=${this.s.currentConversationId} len=${summary.length}`
-        )
+        // Guard: don't overwrite a richer prior summary with a sparse error-path one.
+        // A brief error turn can produce near-empty output that would clobber
+        // detailed context from a prior successful turn.
+        const existingSummary = conversationRepository.getSummary(this.s.currentConversationId)
+        if (existingSummary && summary.length < existingSummary.length) {
+          this.s.log.info(
+            `[S6:error-summary-skipped] existing=${existingSummary.length} new=${summary.length} — keeping richer summary`
+          )
+        } else {
+          conversationRepository.updateSummary(this.s.currentConversationId, summary)
+          this.s.log.info(
+            `[S6:error-summary-saved] conversationId=${this.s.currentConversationId} provider=${this.s.llmProvider} len=${summary.length}`
+          )
+        }
       }
     } catch {
       /* non-fatal */
@@ -587,6 +595,7 @@ export class AgentRecoveryManager {
 
     // API overload — don't auto-continue
     if (isOverload) {
+      this.s.lastSendOutcome = 'overload'
       this.s.log.warn(`[PIPELINE:overload-error] API overload error: ${error.message}`)
       this.s.emit('chunk', {
         type: 'text',
@@ -639,6 +648,7 @@ export class AgentRecoveryManager {
 
     // Max turns — all continuations exhausted
     if (isMaxTurns) {
+      this.s.lastSendOutcome = 'turn_limit_exhausted'
       this.s.log.info(
         `[PIPELINE:max-turns-exhausted-error] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
           'continuations used (error path) — emitting turn_limit chunk'
@@ -658,6 +668,7 @@ export class AgentRecoveryManager {
 
     // Context overflow — graceful handling for local LLMs
     if (isContextOverflow && this.s.currentConversationId) {
+      this.s.lastSendOutcome = 'context_overflow'
       this.s.log.warn(
         `[S10:context-overflow] conversationId=${this.s.currentConversationId} — ` +
           `saving progress and emitting recovery message. Error: ${error.message}`
@@ -678,8 +689,10 @@ export class AgentRecoveryManager {
 
     // Abort / timeout / generic error
     if (isAbort) {
+      this.s.lastSendOutcome = 'aborted'
       this.handleAbortOrTimeout(error, timedOut, effectiveTimeoutMs)
     } else {
+      this.s.lastSendOutcome = 'error'
       this.s.log.error('SDK send failed:', error)
       this.s.emit('chunk', {
         type: 'error',

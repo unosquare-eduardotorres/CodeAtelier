@@ -58,6 +58,7 @@ import type {
   GrillTrackScore,
   GrillStructuredPlan,
   PlanRecord,
+  PlanStatusHistoryEntry,
   MemoryFact,
   MemoryFactCategory,
   MemoryFactTier,
@@ -74,6 +75,19 @@ import type {
   E2EResultDetail,
   E2EProgressEvent
 } from '../shared/types'
+import type {
+  HandoffRecord,
+  HandoffSource,
+  HandoffTarget,
+  HandoffPriority,
+  HandoffRenderFormat,
+  CompletedStep,
+  RemainingStep,
+  HandoffDecision,
+  HandoffRisk,
+  ArtifactRef,
+  CodeAnchor,
+} from '../shared/handoff-types'
 
 const api = {
   // ── Workspace ──
@@ -159,12 +173,10 @@ const api = {
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    sourceAuditRunId?: string
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
-  updatePersona: (args: {
-    conversationId: string
-    personaSpecialistId: string | null
-  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_PERSONA, args),
+
 
   updateMcpOverrides: (args: {
     conversationId: string
@@ -176,11 +188,21 @@ const api = {
     communicationTone: CommunicationTone | null
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_TONE, args),
 
+  updateConversationRouting: (args: {
+    conversationId: string
+    workspaceId: string
+    llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
+  }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_ROUTING, args),
+
   checkExternalMcp: (args: { command: string }): Promise<{ available: boolean; path?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
+
+  getTodos: (args: { conversationId: string }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_TODOS, args),
 
   deleteConversation: (args: { conversationId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_DELETE_CONVERSATION, args),
@@ -198,7 +220,13 @@ const api = {
   renameConversation: (args: { conversationId: string; title: string }): Promise<Conversation> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RENAME, args),
 
-  stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP),
+  // MULTI-CHAT-03: Accept optional conversationId so only the target chat is stopped.
+  // The CHAT_STOP handler already supports this; the preload was the missing link.
+  stopGeneration: (conversationId?: string): Promise<void> =>
+    ipcRenderer.invoke(
+      IPC_CHANNELS.CHAT_STOP,
+      conversationId ? { conversationId } : undefined
+    ),
 
   getStreamingState: (): Promise<{
     isStreaming: boolean
@@ -210,12 +238,7 @@ const api = {
   compactConversation: (args?: { extractNuance?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, args),
 
-  /**
-   * Accept DaVinci's specialist-swap proposal — tears down the DaVinci session
-   * and rebuilds as the workspace's ready Project Specialist.
-   */
-  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SWAP_TO_SPECIALIST, args),
+
 
   // Chat commands
   completeConversation: (args: {
@@ -493,7 +516,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_DELETE, args),
 
   // Contradictions
-  memoryContradictionsList: (args?: { status?: ContradictionStatus }): Promise<MemoryContradiction[]> =>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }): Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST, args),
 
   memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }): Promise<MemoryContradiction> =>
@@ -527,8 +550,17 @@ const api = {
   },
 
   // Dedup scan
-  memoryDedupScan: (args: { workspaceId: string }): Promise<{ pairsFound: number }> =>
+  memoryDedupScan: (args: { workspaceId: string }): Promise<{ clustersFound: number; autoMerged: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_SCAN, args),
+
+  memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }): Promise<{ resolvedCount: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_AUTORESOLVE, args),
+
+  memoryConsolidate: (args: { workspaceId: string }): Promise<{ clustersFound: number; autoMerged: number; reviewItemsCreated: number; staleArchived: number; contradictionsPruned: number; reviewQueueCapped: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONSOLIDATE, args),
+
+  memoryReadClaudeMd: (args: { workspacePath: string }): Promise<{ content: string | null; path: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_READ_CLAUDE_MD, args),
 
   // Memory graph
   memoryGraphGet: (args: { workspaceId: string }): Promise<MemoryGraphData> =>
@@ -717,6 +749,7 @@ const api = {
         text: string
         index?: number
       }
+      phaseProgress?: import('../shared/types').PhaseProgressEvent
       turnLimit?: {
         continuable: boolean
         continuationsUsed: number
@@ -764,6 +797,7 @@ const api = {
           text: string
           index?: number
         }
+        phaseProgress?: import('../shared/types').PhaseProgressEvent
         turnLimit?: {
           continuable: boolean
           continuationsUsed: number
@@ -1063,7 +1097,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_LIST),
 
   upsertCoreAgentAlias: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     alias: string | null
     avatarKey: string | null
   }): Promise<CoreAgentAlias> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_UPSERT, args),
@@ -1073,19 +1107,19 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_LIST),
 
   getCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }): Promise<CoreAgentPrompt | undefined> =>
     ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_GET, args),
 
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
     promptText: string
   }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_UPSERT, args),
 
   resetCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }): Promise<CoreAgentPrompt> => ipcRenderer.invoke(IPC_CHANNELS.CORE_AGENT_PROMPT_RESET, args),
 
@@ -1347,6 +1381,11 @@ const api = {
     version: string | null
     error: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_CLAUDE_CLI),
+  checkOpenCodeCli: (): Promise<{
+    available: boolean
+    version?: string
+    error?: string
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_CHECK_OPENCODE_CLI),
   autoConfigureClaude: (): Promise<AutoConfigureResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
@@ -1746,6 +1785,10 @@ const api = {
     outcomeCounts: Record<string, number>
   }> => ipcRenderer.invoke(IPC_CHANNELS.STREAM_METRICS_GET),
 
+  // Persist plan card action on a message
+  chatSetPlanAction: (args: { messageId: string; action: string }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_SET_PLAN_ACTION, args),
+
   // Chat resume at checkpoint — undo to a specific message point
   chatResumeAt: (args: { conversationId: string; messageId: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_RESUME_AT, args),
@@ -1793,6 +1836,9 @@ const api = {
 
   getBugCount: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.BUG_COUNT),
 
+  bugExportMarkdown: (args: { markdown: string; defaultFilename?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BUG_EXPORT_MARKDOWN, args),
+
   onNewBug: (callback: (bug: unknown) => void): (() => void) => {
     const handler = (_event: unknown, bug: unknown): void => callback(bug)
     ipcRenderer.on(IPC_CHANNELS.BUG_NEW, handler)
@@ -1818,6 +1864,14 @@ const api = {
     findings: AuditFinding[]
   }): Promise<{ conversationId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_CONVERT_FINDINGS, args),
+
+  auditHandoffToChat: (args: {
+    workspaceId: string
+    auditRunId: string
+    trackIds?: AuditTrackId[]
+    mode: 'consolidated' | 'split'
+  }): Promise<{ conversationIds: string[]; count: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_HANDOFF_TO_CHAT, args),
 
   auditRerunTrack: (args: {
     workspaceId: string
@@ -1875,7 +1929,18 @@ const api = {
   }): Promise<{ conversationId: string; planId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
 
+  planGetStatusHistory: (args: {
+    planId: string
+  }): Promise<PlanStatusHistoryEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_STATUS_HISTORY, args),
 
+  getPhaseProgress: (args: { conversationId: string }): Promise<{
+    planId: string
+    planTitle: string
+    phases: Array<{ id: number; title: string }>
+    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[] }>
+  } | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_PHASE_PROGRESS, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -1965,7 +2030,7 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
   },
 
-  grillCondenseRequirement: (args: { text: string }): Promise<{ condensed: string }> =>
+  grillCondenseRequirement: (args: { text: string; workspaceId?: string }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
   grillGeneratePlan: (args: {
@@ -2430,6 +2495,34 @@ const api = {
     response: unknown
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RESPONSE, args),
 
+  /** Probe macOS notification support (detects unsigned build issues). */
+  probeNotificationSupport: (): Promise<'granted' | 'denied' | 'unsupported'> =>
+    ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_PROBE),
+
+  /** Listen for OS notification click-to-navigate events. */
+  onNotificationNavigate: (
+    cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { workspaceId: string; targetPage: string; entityId?: string }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
+  },
+
+  /** Listen for tray context-menu navigate events. */
+  onTrayNavigate: (
+    cb: (data: { view: string; workspaceId?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: { view: string; workspaceId?: string }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.TRAY_NAVIGATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TRAY_NAVIGATE, handler)
+  },
+
   /** Listen for completion/failure notifications from background workspaces. */
   onCompletionNotification: (
     cb: (data: {
@@ -2438,6 +2531,8 @@ const api = {
       service: string
       status: string
       summary: string
+      targetPage?: string
+      entityId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2448,6 +2543,8 @@ const api = {
         service: string
         status: string
         summary: string
+        targetPage?: string
+        entityId?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.COMPLETION_NOTIFICATION, handler)
@@ -2563,6 +2660,11 @@ const api = {
   }): Promise<{ retrying: boolean; phase: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RETRY_PHASE, args),
 
+  blueprintAcknowledgeReview: (args: {
+    blueprintId: string
+  }): Promise<{ acknowledged: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_ACKNOWLEDGE_REVIEW, args),
+
   // M3: Transcript retrieval
   blueprintGetTranscript: (args: {
     blueprintId: string
@@ -2596,6 +2698,7 @@ const api = {
       text: string
       kind?: 'text' | 'tool'
       toolActivity?: Record<string, unknown>
+      taskId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2607,6 +2710,7 @@ const api = {
         text: string
         kind?: 'text' | 'tool'
         toolActivity?: Record<string, unknown>
+        taskId?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS, handler)
@@ -2641,7 +2745,7 @@ const api = {
       blueprintId: string
       workspaceId: string
       phase: string
-      artifact: { type: string; contentMd?: string; contentJson?: unknown }
+      artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2650,7 +2754,7 @@ const api = {
         blueprintId: string
         workspaceId: string
         phase: string
-        artifact: { type: string; contentMd?: string; contentJson?: unknown }
+        artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, handler)
@@ -2663,6 +2767,69 @@ const api = {
     feedback?: string
   }): Promise<{ responded: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND, args),
+
+  blueprintPreflightRun: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{
+    checks: Array<{
+      id: string
+      name: string
+      kind: string
+      status: string
+      message: string
+      remediation?: string
+      sources: string[]
+    }>
+    ranAt: string
+    hasBlockers: boolean
+    hasWarnings: boolean
+  } | null> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RUN, args),
+
+  onBlueprintPreflightResult: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      result: {
+        checks: Array<{
+          id: string
+          name: string
+          kind: string
+          status: string
+          message: string
+          remediation?: string
+          sources: string[]
+        }>
+        ranAt: string
+        hasBlockers: boolean
+        hasWarnings: boolean
+      }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        result: {
+          checks: Array<{
+            id: string
+            name: string
+            kind: string
+            status: string
+            message: string
+            remediation?: string
+            sources: string[]
+          }>
+          ranAt: string
+          hasBlockers: boolean
+          hasWarnings: boolean
+        }
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RESULT, handler)
+  },
 
   onBlueprintClarifyAwaitingInput: (
     cb: (data: { blueprintId: string; workspaceId: string }) => void
@@ -2710,6 +2877,23 @@ const api = {
         planSummary: string
         completion?: Record<string, unknown>
         reviewMarkdown?: string
+        preflight?: {
+          result: {
+            checks: Array<{
+              id: string
+              name: string
+              kind: string
+              status: string
+              message: string
+              remediation?: string
+              sources: string[]
+            }>
+            ranAt: string
+            hasBlockers: boolean
+            hasWarnings: boolean
+          }
+          overridden: boolean
+        }
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED, handler)
@@ -2812,8 +2996,9 @@ const api = {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
     }) => void
   ): (() => void) => {
@@ -2834,8 +3019,9 @@ const api = {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+    runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT, args),
 
@@ -2925,6 +3111,114 @@ const api = {
 
   councilDeleteSession: (args: { sessionId: string }): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_DELETE_SESSION, args),
+
+  // ── Unified Handoff Protocol ──
+
+  handoffCreate: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    extensions?: Record<string, unknown>
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    expiresAt?: string
+  }): Promise<HandoffRecord> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_CREATE, args),
+
+  handoffExecute: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    extensions?: Record<string, unknown>
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    expiresAt?: string
+  }): Promise<{ record: HandoffRecord; action: unknown }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_EXECUTE, args),
+
+  handoffAccept: (args: {
+    handoffId: string
+    targetSessionId: string
+  }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_ACCEPT, args),
+
+  handoffReject: (args: {
+    handoffId: string
+    reason: string
+  }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_REJECT, args),
+
+  handoffGetHistory: (args: {
+    workspaceId: string
+    limit?: number
+  }): Promise<HandoffRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_GET_HISTORY, args),
+
+  handoffGetChain: (args: {
+    handoffId: string
+  }): Promise<HandoffRecord[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_GET_CHAIN, args),
+
+  handoffPreview: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    format?: HandoffRenderFormat
+  }): Promise<{ envelope: unknown; markdown: string; action: unknown }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_PREVIEW, args),
 
   // ── E2E Testing ──
 

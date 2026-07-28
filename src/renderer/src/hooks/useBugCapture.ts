@@ -1,5 +1,14 @@
 import { useEffect } from 'react'
 
+/** Errors that are benign browser/engine noise — not actionable bugs. */
+const BENIGN_ERROR_PATTERNS = [
+  /ResizeObserver loop/i // Chromium: loop completed with undelivered notifications / loop limit exceeded
+]
+
+function isBenignError(message: string): boolean {
+  return BENIGN_ERROR_PATTERNS.some((p) => p.test(message))
+}
+
 /**
  * Global error capture hook — call once at App root level.
  * Captures uncaught JS errors and unhandled promise rejections
@@ -45,6 +54,8 @@ export function useBugCapture(): void {
     }
 
     function handleError(event: ErrorEvent): void {
+      if (isBenignError(event.message)) return // Skip noise
+
       if (event.error instanceof Error) {
         reportError(event.error, 'error')
       } else {

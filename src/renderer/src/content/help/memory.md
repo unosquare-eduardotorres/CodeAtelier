@@ -8,7 +8,7 @@ The **Memory** tab shows how Code Atelier remembers important information about 
 
 The **Knowledge Engine** is a fact-based memory system that automatically captures and manages workspace knowledge. Facts are:
 
-- **Tiered** — Data (T0) → Information (T1, 2 confirms) → Knowledge (T2, 3 confirms) → Wisdom (T3, 5 confirms)
+- **Tiered** — Data (T0) → Information (T1, 3 confirms) → Knowledge (T2, 5 confirms) → Wisdom (T3, 8 confirms)
 - **Deduplicated** — Embedding-based similarity prevents storing the same fact twice
 - **Contradiction-aware** — Conflicting facts are detected, the newer fact supersedes the older one
 - **Context-injected** — Relevant facts are prepended to each prompt, with per-session deduplication
@@ -52,7 +52,7 @@ flowchart LR
 
 ## Capture Sources
 
-Facts are extracted from three sources, each controlled by a toggle in **Settings**:
+Facts are extracted from three sources, each controlled by a toggle in the **Ingestion** tab:
 
 1. **Session transcripts** — After each chat session, decisions and conventions are extracted
 2. **Commit changes** — Git diffs are analyzed for architectural decisions
@@ -105,7 +105,7 @@ The engine captures **project knowledge** — decisions, conventions, gotchas. P
 Each fact is embedded into a 384-dimensional vector. When a new fact is similar (≥90% cosine similarity) to an existing one, it's treated as a confirmation rather than a duplicate entry.
 
 **Q: What happens when facts contradict?**
-The engine detects contradictions (70–90% similarity + Haiku classification). The newer fact supersedes the older one, and the contradiction is recorded for your review.
+The engine detects contradictions (82–90% similarity + Haiku classification). The newer fact supersedes the older one, and the contradiction is recorded for your review.
 
 **Q: Does memory transfer between workspaces?**
 No. Each workspace has its own separate fact store. Facts can optionally be scoped to a workspace or marked as global.

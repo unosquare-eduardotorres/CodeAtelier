@@ -25,7 +25,7 @@ describe('Session Recovery - buildRecoverySummary', () => {
   test('builds summary from recent messages', () => {
     const messages = [
       { role: 'user', contentMd: 'Hello' },
-      { role: 'da-vinci', contentMd: 'Hi there!' }
+      { role: 'specialist', contentMd: 'Hi there!' }
     ]
     const summaryText = buildRecoverySummary(messages)
     assert.ok(summaryText.includes('[User]: Hello'))

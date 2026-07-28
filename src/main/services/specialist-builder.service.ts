@@ -34,7 +34,7 @@ import { modelConfigService } from './model-config.service'
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { skillEnrichmentService } from './skill-enrichment.service'
 import type { SkillEnrichment } from './skill-enrichment.service'
-import { skillRepository, workspaceRepository } from '../db/repositories'
+import { skillRepository } from '../db/repositories'
 
 const buildLog = log.scope('specialist-builder')
 
@@ -109,7 +109,7 @@ export class SpecialistBuilderService {
       .get(specialistId) as SpecialistRow | undefined
     if (!specialist) throw new Error(`Specialist ${specialistId} not found`)
     if (!specialist.workspace_id) {
-      throw new Error(`Specialist ${specialistId} is not workspace-bound (is it the Generalist?)`)
+      throw new Error(`Specialist ${specialistId} is not workspace-bound — only workspace-bound specialists are supported`)
     }
     const workspace = db
       .prepare(`SELECT id, name, repo_path FROM workspaces WHERE id = ?`)
@@ -219,26 +219,6 @@ export class SpecialistBuilderService {
       buildLog.info(
         `✓ Built Project Specialist ${specialist.id} (workspace=${workspace.name}, techs=${techResult.detectedTechs.length}, usedLLM=${usedLLM})`
       )
-
-      // 3b. Auto-activate: set specialistSwapAccepted so resolveAdapter() picks
-      // the specialist adapter for new conversations without requiring the
-      // ask_user swap proposal. Existing sessions (still DaVinci) can still
-      // trigger the manual swap flow for the current conversation.
-      try {
-        const wsSettings = workspaceRepository.getSettings(workspace.id)
-        if (!wsSettings.specialistSwapAccepted) {
-          wsSettings.specialistSwapAccepted = true
-          db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`).run(
-            JSON.stringify(wsSettings),
-            workspace.id
-          )
-          buildLog.info(
-            `[auto-activate] Set specialistSwapAccepted=true for workspace=${workspace.id}`
-          )
-        }
-      } catch (activateErr) {
-        buildLog.warn('[auto-activate] Failed to set specialistSwapAccepted:', activateErr)
-      }
 
       // 4. Refresh skill recommendations if stale (non-blocking)
       void this.refreshRecommendationsIfStale(
@@ -370,7 +350,7 @@ export class SpecialistBuilderService {
     }
   }
 
-  /** Hard cap on specialist skill section size (chars). Matches DaVinci's 4K budget. */
+  /** Hard cap on specialist skill section size (chars). 4K budget. */
   private static readonly SKILL_BUDGET_CHARS = 4000
 
   /**
@@ -509,9 +489,9 @@ export class SpecialistBuilderService {
       '',
       `## Tool usage`,
       `Keep these bullets verbatim from the skeleton:`,
-      `- Use Code Graph (search_identifiers, graph_map, file_outline) and Semantic Search FIRST.`,
+      `- Use Code Graph (mcp__code-graph__search_identifiers, mcp__code-graph__graph_map, mcp__code-graph__file_outline) and Semantic Search FIRST.`,
       `- Read only files identified by code intelligence. Grep only for exact strings.`,
-      `- file_outline before Read on any file over 80 lines.`,
+      `- mcp__code-graph__file_outline before Read on any file over 80 lines.`,
       `- For action/change proposals, call **emit_plan** — plain-text plans are not actionable.`,
       `- For questions (why/what/how), answer directly in text.`,
       '',
@@ -543,7 +523,7 @@ export class SpecialistBuilderService {
     workspaceId?: string
   ): Promise<string> {
     const claudeMdReference = this.readClaudeMd(workspacePath, 5_000)
-    const resolvedModel = modelConfigService.getModel(workspacePath, 'project-specialist:plan')
+    const resolvedModel = modelConfigService.getModel(workspacePath, 'specialist:plan')
     const verbosity = resolvePromptVerbosity(resolvedModel)
     const metaPrompt = this.buildMetaPrompt({
       workspaceName,

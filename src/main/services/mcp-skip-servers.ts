@@ -17,14 +17,16 @@ import { MCP_TOOLS } from '../../shared/constants'
  * MCP server groups that can be skipped if their tools aren't in allowedTools.
  * Maps server ID → prefix used in tool names (e.g. 'mcp__control-actions__').
  *
- * Servers NOT listed here are never skipped (e.g. git-context, code-analysis
- * are always useful even if not explicitly in allowedTools since the CLI may
- * expose them as built-in tools).
+ * Servers NOT listed here are never skipped (e.g. git-context is always useful
+ * since the CLI may expose it as a built-in tool).
  */
 const SKIPPABLE_SERVERS: Array<{ id: string; prefix: string }> = [
   { id: 'checkpoint-context', prefix: MCP_TOOLS.CHECKPOINT_CONTEXT._PREFIX },
   { id: 'control-actions', prefix: MCP_TOOLS.CONTROL_ACTIONS._PREFIX },
-  { id: 'github-context', prefix: MCP_TOOLS.GITHUB_CONTEXT._PREFIX }
+  { id: 'github-context', prefix: MCP_TOOLS.GITHUB_CONTEXT._PREFIX },
+  // Phase 1.3: Allow lean MCP config to skip these when their tools aren't in allowedTools
+  { id: 'semantic-search', prefix: MCP_TOOLS.SEMANTIC_SEARCH._PREFIX },
+  { id: 'code-analysis', prefix: MCP_TOOLS.CODE_ANALYSIS._PREFIX }
 ]
 
 /**

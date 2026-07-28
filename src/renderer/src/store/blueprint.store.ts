@@ -3,6 +3,7 @@ import { rendererLog } from '@renderer/utils/logger'
 import { useWorkspaceStore } from './workspace.store'
 import {
   useBlueprintStreamStore,
+  useBlueprintLaneStore,
   getFlatContent,
   getFlatToolActivities
 } from './blueprint-stream.store'
@@ -14,6 +15,8 @@ import type {
   QuestionAnswerState
 } from '../../../shared/blueprint-clarify-parsers'
 import { parseBlueprintPlan, parseBlueprintTasks } from '../../../shared/blueprint-artifact-parsers'
+import { journalEventsToChatMessages, type JournalEvent } from '../../../shared/blueprint-journal-mapper'
+import { resolveHydrationAction, resolvePostFetchAction } from '../../../shared/blueprint-hydration-helpers'
 import type {
   Blueprint,
   BlueprintWithDetails,
@@ -53,6 +56,9 @@ export function formatPhaseDuration(ms: number): string {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
 }
 
+// Phase 1: Re-export mapper from shared module for consumers importing from the store
+export { journalEventsToChatMessages, type JournalEvent, type HydratedChatMessage } from '../../../shared/blueprint-journal-mapper'
+
 // ── Cancelled-event guard ──
 
 /**
@@ -62,6 +68,26 @@ export function formatPhaseDuration(ms: number): string {
  * stale events until the next startBlueprint/retryPhase clears the entry.
  */
 const recentlyCancelledIds = new Set<string>()
+
+/**
+ * BP-REMEDIATION-HANDOFF-GUARD: Track when a remediation verify→build handoff
+ * is in progress. During the < 10s handoff window, transient idle snapshots
+ * that would flip isRunning=false are dropped to prevent the "Interrupted" banner.
+ * Module-scoped so both cancelBlueprint (store method) and applySnapshot
+ * (inside registerListeners) can access it.
+ */
+const remediationPendingAt = new Map<string, number>()
+
+/** Tracks the last workspace ID that triggered a reset — prevents same-workspace re-mount from wiping transcript */
+let lastResetWorkspaceId: string | null = null
+
+/** Tracks which blueprint has been hydrated to prevent duplicate hydration */
+let hydratedBlueprintId: string | null = null
+
+/** CRITICAL-2: In-flight guard — prevents concurrent hydrateTranscript calls
+ * (e.g. StrictMode double-mount or racing mount-restore + user-click) from
+ * both passing the sentinel check and doubling the transcript via merge. */
+const hydrationInFlight = new Set<string>()
 
 /**
  * Returns true if the given blueprintId was recently cancelled and should be
@@ -136,14 +162,29 @@ interface BlueprintState {
   clarifyBlueprintId: string | null
 
   // Approval gate (review → build transition)
-  pendingApproval: { blueprintId: string; planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+  pendingApproval: {
+    blueprintId: string
+    planSummary: string
+    completion?: Record<string, unknown>
+    reviewMarkdown?: string
+    preflight?: {
+      result: {
+        checks: Array<{
+          id: string; name: string; kind: string; status: string
+          message: string; remediation?: string; sources: string[]
+        }>
+        ranAt: string; hasBlockers: boolean; hasWarnings: boolean
+      }
+      overridden: boolean
+    }
+  } | null
 
   // Goal tracking — current phase/task goal condition for UI display
   currentGoal: string | null
   /** Per-task goals keyed by taskId */
   taskGoals: Record<string, string>
-  /** Currently executing task (shown as chip in header) */
-  currentTask: { taskId: string; description: string } | null
+  /** G3: Currently executing tasks during parallel build (shown as chips in header). */
+  runningTasks: Record<string, { taskId: string; description: string }>
   /** Phase completion metrics (from phaseComplete event) */
   phaseCompletions: Partial<Record<BlueprintPhaseType, Record<string, unknown>>>
   /** Total task count across all waves (for progress bar) */
@@ -198,13 +239,21 @@ interface BlueprintState {
   }) => Promise<void>
   cancelBlueprint: (workspaceId: string) => Promise<string | null>
   respondToApproval: (blueprintId: string, approved: boolean, feedback?: string) => Promise<void>
+  rerunPreflight: (blueprintId: string, workspaceId: string) => Promise<void>
   sendClarifyAnswer: (blueprintId: string, workspaceId: string, message: string, answers?: Record<string, QuestionAnswerState>) => Promise<void>
   skipClarify: (blueprintId: string) => Promise<void>
   proceedClarifyGate: (blueprintId: string, workspaceId: string) => Promise<void>
   iterateClarify: (blueprintId: string, workspaceId: string) => Promise<void>
   deleteBlueprint: (blueprintId: string, workspaceId: string) => Promise<void>
   retryPhase: (blueprintId: string, workspaceId: string) => Promise<void>
+  acknowledgeReview: (blueprintId: string) => Promise<void>
   loadPipelineStatus: (workspaceId: string) => Promise<void>
+
+  // Transcript hydration from journal (Phase 1: durability)
+  hydrateTranscript: (blueprintId: string) => Promise<void>
+
+  // Workspace switch — clears stale state without touching history
+  resetForWorkspaceSwitch: (workspaceId: string) => void
 
   // IPC event handlers
   registerListeners: () => () => void
@@ -233,7 +282,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   clarifyBlueprintId: null,
   currentGoal: null,
   taskGoals: {},
-  currentTask: null,
+  runningTasks: {},
   phaseCompletions: {},
   totalTaskCount: 0,
   totalWaves: 0,
@@ -268,7 +317,31 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         id: blueprintId
       })) as BlueprintWithDetails | null
       if (data) {
-        set({ currentBlueprint: data })
+        const updates: Partial<BlueprintState> = { currentBlueprint: data }
+
+        // Phase 3: Seed totalTaskCount/totalWaves from DB tasks when zero
+        // (restores remediation progress after restart)
+        if (get().totalTaskCount === 0 && data.tasks?.length) {
+          updates.totalTaskCount = data.tasks.length
+        }
+        if (get().totalWaves === 0 && data.tasks?.length) {
+          // Derive wave count from max wave number across tasks
+          const maxWave = data.tasks.reduce(
+            (max, t) => Math.max(max, t.wave ?? 0), 0
+          )
+          if (maxWave > 0) updates.totalWaves = maxWave
+        }
+
+        // Phase 3: Seed waveTasks from DB task statuses for remediation restore
+        if (Object.keys(get().waveTasks).length === 0 && data.tasks?.length) {
+          const wt: Record<string, BlueprintTaskStatus> = {}
+          for (const t of data.tasks) {
+            wt[t.taskId] = t.status as BlueprintTaskStatus
+          }
+          updates.waveTasks = wt
+        }
+
+        set(updates)
       }
     } catch (error) {
       rendererLog.error('Failed to load blueprint details:', error)
@@ -288,7 +361,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // Clear cancelled guard — this blueprint should receive events
       recentlyCancelledIds.delete(result.id)
 
+      // SEED-FIX: Load the new blueprint immediately so the task panel
+      // has a currentBlueprint even before the first phaseStart event.
+      void get().loadBlueprint(result.id)
+
       useBlueprintStreamStore.getState().reset()
+      useBlueprintLaneStore.getState().resetAll()
       set({
         isRunning: true,
         activeWorkspaceId: params.workspaceId,
@@ -307,7 +385,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyBlueprintId: null,
         currentGoal: null,
         taskGoals: {},
-        currentTask: null,
+        runningTasks: {},
         phaseCompletions: {},
         totalTaskCount: 0,
         totalWaves: 0,
@@ -346,6 +424,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         recentlyCancelledIds.add(cancelledBlueprintId)
       }
       useBlueprintStreamStore.getState().reset()
+      useBlueprintLaneStore.getState().resetAll()
+      // BP-REMEDIATION-HANDOFF-CLEAR: Clear remediation guard on cancel
+      remediationPendingAt.delete(workspaceId)
       set({
         isRunning: false,
         activeWorkspaceId: null,
@@ -359,7 +440,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         clarifyBlueprintId: null,
         currentGoal: null,
         taskGoals: {},
-        currentTask: null,
+        runningTasks: {},
         phaseCompletions: {},
         totalTaskCount: 0,
         totalWaves: 0,
@@ -397,6 +478,18 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
 
   respondToApproval: async (blueprintId: string, approved: boolean, feedback?: string) => {
     try {
+      // D13: Mark preflight as overridden if approving with blockers
+      if (approved) {
+        const pa = get().pendingApproval
+        if (pa?.preflight?.result?.hasBlockers) {
+          set({
+            pendingApproval: {
+              ...pa,
+              preflight: { ...pa.preflight, overridden: true }
+            }
+          })
+        }
+      }
       await window.api.blueprintApprovalRespond({
         blueprintId,
         approved,
@@ -405,6 +498,29 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       set({ pendingApproval: null })
     } catch (error) {
       rendererLog.error('Failed to respond to blueprint approval:', error)
+    }
+  },
+
+  rerunPreflight: async (blueprintId: string, workspaceId: string) => {
+    try {
+      const result = await window.api.blueprintPreflightRun({
+        blueprintId,
+        workspaceId
+      })
+      // R2-3 fix: IPC returns null when workspace lookup fails
+      if (!result) return
+      // Update pending approval with fresh preflight data
+      set((state) => {
+        if (!state.pendingApproval) return state
+        return {
+          pendingApproval: {
+            ...state.pendingApproval,
+            preflight: { result, overridden: false }
+          }
+        }
+      })
+    } catch (error) {
+      rendererLog.error('Failed to re-run preflight:', error)
     }
   },
 
@@ -519,6 +635,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     // Set running state BEFORE await — main emits phaseStart ~22ms into the call;
     // if activeWorkspaceId isn't set, the workspace guard drops the event.
     useBlueprintStreamStore.getState().reset()
+    useBlueprintLaneStore.getState().resetAll()
     set({
       isRunning: true,
       activeWorkspaceId: workspaceId,
@@ -539,7 +656,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
-      currentTask: null,
+      runningTasks: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,
@@ -553,6 +670,23 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       rendererLog.error('Failed to retry blueprint phase:', error)
       // Roll back on error
       set({ isRunning: false, activeWorkspaceId: null })
+    }
+  },
+
+  acknowledgeReview: async (blueprintId: string) => {
+    try {
+      await window.api.blueprintAcknowledgeReview({ blueprintId })
+      // Refresh blueprint so outcomeStats re-compute with acknowledged flag
+      await get().loadBlueprint(blueprintId)
+      // Append local system message for immediate transcript feedback
+      const msg: BlueprintChatMessage = {
+        type: 'system' as const,
+        content: 'Human review acknowledged — verification marked as complete',
+        timestamp: Date.now()
+      }
+      set({ chatMessages: [...get().chatMessages, msg] })
+    } catch (error) {
+      rendererLog.error('Failed to acknowledge blueprint review:', error)
     }
   },
 
@@ -587,9 +721,11 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         BlueprintState['orphanedBlueprint'] | undefined
       set({ orphanedBlueprint: orphan ?? null })
 
-      // If a pipeline is running, load its blueprint details
+      // If a pipeline is running, load its blueprint details + hydrate transcript
       if (status.running && status.blueprintId) {
         await get().loadBlueprint(status.blueprintId)
+        // Phase 1: Hydrate transcript from journal on app restart
+        await get().hydrateTranscript(status.blueprintId)
       }
     } catch (error) {
       rendererLog.error('Failed to load blueprint pipeline status:', error)
@@ -621,7 +757,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     // Cross-workspace guard + self-healing: ignore events from a different
     // workspace, but adopt if activeWorkspaceId is null and the event
     // matches the currently viewed workspace (race-condition recovery).
-    const resolveAction = (eventWorkspaceId: string) => {
+    const resolveAction = (eventWorkspaceId: string): 'process' | 'adopt' | 'drop' => {
       const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id ?? null
       return resolveBlueprintEventAction(get().activeWorkspaceId, viewedWsId, eventWorkspaceId)
     }
@@ -634,11 +770,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     // Part E: Throttled blueprint refetch so currentBlueprint.tasks stays fresh
     // across waves without hammering the IPC channel.
     let refetchTimer: ReturnType<typeof setTimeout> | null = null
-    const throttledRefetch = (): void => {
+    let pendingRefetchId: string | undefined
+    const throttledRefetch = (blueprintId?: string): void => {
+      if (blueprintId) pendingRefetchId = blueprintId
       if (refetchTimer) return // trailing throttle already scheduled
       refetchTimer = setTimeout(() => {
         refetchTimer = null
-        const bpId = get().currentBlueprint?.id
+        const bpId = pendingRefetchId ?? get().currentBlueprint?.id
+        pendingRefetchId = undefined
         if (bpId) void get().loadBlueprint(bpId)
       }, 2000)
     }
@@ -714,10 +853,26 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       const action = resolveAction(data.workspaceId)
       if (action === 'drop') return
       rendererLog.info(`[blueprint] Phase started: ${data.phase} (action=${action})`)
+
+      // SEED-FIX: Ensure currentBlueprint tracks the running blueprint.
+      // Covers runs started in-session (startBlueprint never seeded it) and
+      // blueprint-ID changes (restart-from-scratch, remediation re-entry).
+      if (get().currentBlueprint?.id !== data.blueprintId) {
+        void get().loadBlueprint(data.blueprintId)
+      }
+      // BP-REMEDIATION-HANDOFF-CLEAR: Build phaseStart confirms the remediation
+      // handoff completed — clear the guard so idle snapshots propagate normally.
+      if (data.phase === 'build') {
+        remediationPendingAt.delete(data.workspaceId)
+      }
       const now = Date.now()
       // Reset stream store + accumulated raw text for fresh phase
       accumulatedPhaseRawText = ''
       useBlueprintStreamStore.getState().reset()
+      // C5 FIX: Clear stale lane stores on every phaseStart. Without this,
+      // lanes from the last build wave persist and suppress the un-keyed store
+      // output during verify (or any subsequent non-build phase).
+      useBlueprintLaneStore.getState().resetAll()
       // Part B: Extract totalTasks/totalWaves from build phaseStart payload
       const payloadData = data as Record<string, unknown>
       const phaseTotalTasks = payloadData.totalTasks as number | undefined
@@ -735,8 +890,11 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           chatMessages: msgs,
           // Store phase goal for UI display
           currentGoal: payloadData.goal as string | null ?? null,
-          // Part A: Clear current task on phase start
-          currentTask: null,
+          // Part A: Clear running tasks on phase start
+          runningTasks: {},
+          // FIX-B: Clear wave task statuses on phase boundary so each fresh
+          // build (including remediation re-entry) starts clean.
+          waveTasks: {},
           // Self-heal: adopt the workspace if it wasn't set
           activeWorkspaceId: state.activeWorkspaceId ?? data.workspaceId,
           // Clear old text for this phase so rewinds (reject → re-plan) start fresh
@@ -760,15 +918,19 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       const key = data.phase
       const kind: StreamEvent['kind'] = (data as Record<string, unknown>).kind === 'tool' ? 'tool' : 'text'
 
-      // Feed the blueprint stream store for chat bubble rendering (ALL phases)
-      const bss = useBlueprintStreamStore.getState()
+      // Resolve target stream store: keyed lane for build-phase tasks, un-keyed for all others.
+      const taskId = data.taskId
+      const targetStore = taskId
+        ? useBlueprintLaneStore.getState().getOrCreateLane(taskId).getState()
+        : useBlueprintStreamStore.getState()
+
       if (kind === 'tool') {
         // Use real toolActivity from the forwarder when available; fall back
         // to a name-only stub for backward compatibility with old payloads.
         const rawTA = (data as Record<string, unknown>).toolActivity as
           | Record<string, unknown>
           | undefined
-        bss.handleStreamChunk({
+        targetStore.handleStreamChunk({
           type: 'tool_activity',
           toolActivity: rawTA
             ? {
@@ -793,7 +955,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
               }
         })
       } else {
-        bss.handleStreamChunk({ type: 'text', content: data.text })
+        targetStore.handleStreamChunk({ type: 'text', content: data.text })
       }
 
       if (kind === 'tool') {
@@ -885,14 +1047,33 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         chatMessages: [...state.chatMessages, { type: 'system' as const, content: systemMsg, timestamp: Date.now() }]
       }))
 
+      // Refresh full blueprint details so the phases array stays complete
+      // (new phase rows are created just before each phase runs, not at blueprint creation)
+      if (data.status === 'complete' && data.phase !== 'verify') {
+        void get().loadBlueprint(data.blueprintId)
+      }
+
       // If the pipeline-level status is 'complete' or 'failed', mark as not running
-      if (data.status === 'complete' && data.phase === 'verify') {
+      // BP-REMEDIATION-AWARE: Check remediationTriggered before de-adopting.
+      const remediationTriggered =
+        (data as Record<string, unknown>).remediationTriggered === true ||
+        ((data as Record<string, unknown>).completion as Record<string, unknown> | undefined)?._remediationTriggered === true
+
+      if (data.status === 'complete' && data.phase === 'verify' && !remediationTriggered) {
         const wsId = get().activeWorkspaceId
         // BP-SNAPSHOT-RESURRECTION-GUARD: Record terminal completion timestamp
         // so applySnapshot can reject stale phase-running snapshots.
         if (wsId) terminalPhaseSeenAt.set(wsId, Date.now())
         set({ isRunning: false, activeWorkspaceId: null })
         if (wsId) void get().loadHistory(wsId)
+      }
+      if (data.status === 'complete' && data.phase === 'verify' && remediationTriggered) {
+        // Keep run adopted: do NOT touch isRunning/activeWorkspaceId/terminalPhaseSeenAt.
+        // Record remediation handoff timestamp for the snapshot guard.
+        const wsId = data.workspaceId
+        if (wsId) remediationPendingAt.set(wsId, Date.now())
+        // Refetch so appended R-tasks appear in the task list.
+        void get().loadBlueprint(data.blueprintId)
       }
       if (data.status === 'failed') {
         const wsId = get().activeWorkspaceId
@@ -917,6 +1098,34 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
       rendererLog.info(`[blueprint] Phase artifact: ${data.phase} — ${data.artifact.type}`)
+
+      // Merge artifact into currentBlueprint.phases[].artifactsJson so the
+      // Deliverables view can display phase outputs during execution.
+      const state = get()
+      if (
+        state.currentBlueprint &&
+        state.currentBlueprint.id === data.blueprintId
+      ) {
+        const phaseIndex = state.currentBlueprint.phases.findIndex(
+          (p) => p.phase === data.phase
+        )
+        if (phaseIndex !== -1) {
+          const updatedPhases = [...state.currentBlueprint.phases]
+          updatedPhases[phaseIndex] = {
+            ...updatedPhases[phaseIndex],
+            artifactsJson: [
+              ...updatedPhases[phaseIndex].artifactsJson,
+              data.artifact
+            ]
+          }
+          set({
+            currentBlueprint: {
+              ...state.currentBlueprint,
+              phases: updatedPhases
+            }
+          })
+        }
+      }
     })
 
     // ── Clarify-specific events ──
@@ -1012,7 +1221,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           blueprintId: data.blueprintId,
           planSummary: data.planSummary,
           completion: data.completion ? (data.completion as Record<string, unknown>) : undefined,
-          reviewMarkdown: data.reviewMarkdown
+          reviewMarkdown: data.reviewMarkdown,
+          preflight: data.preflight
         },
         chatMessages: [
           ...state.chatMessages,
@@ -1021,17 +1231,37 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       }))
     })
 
+    // ── Preflight result (re-run updates) ──
+
+    safeSubscribe(window.api.onBlueprintPreflightResult, 'onBlueprintPreflightResult', (data) => {
+      if (resolveAction(data.workspaceId) === 'drop') return
+      set((state) => {
+        if (!state.pendingApproval) return state
+        return {
+          pendingApproval: {
+            ...state.pendingApproval,
+            preflight: { result: data.result, overridden: false }
+          }
+        }
+      })
+    })
+
     // ── Build wave events → system messages ──
 
     safeSubscribe(window.api.onBlueprintWaveStart, 'onBlueprintWaveStart', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} started (${data.taskCount} tasks)`)
+      // FIX-B: Do NOT resetAll() lane stores on wave start — completed lanes
+      // must survive across waves so their accumulated content remains visible.
+      // Phase-boundary cleanup in onBlueprintPhaseStart handles the full reset.
       set((state) => ({
         currentWave: { wave: data.wave, taskCount: data.taskCount },
         // Part B: totalTaskCount now comes from phaseStart — don't overwrite here.
         // Fallback for historical runs: use currentBlueprint.tasks.length via totalTaskCount default.
-        waveTasks: {},
+        // FIX-B: Preserve waveTasks so completed/failed statuses persist across waves.
+        // runningTasks is cleared since new wave dispatches fresh tasks.
+        runningTasks: {},
         chatMessages: [
           ...state.chatMessages,
           { type: 'system' as const, content: `Wave ${data.wave} started — ${data.taskCount} tasks`, timestamp: Date.now() }
@@ -1051,11 +1281,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         taskGoals: taskGoal
           ? { ...state.taskGoals, [data.taskId]: taskGoal }
           : state.taskGoals,
-        // Part A: Track currently executing task for header chip.
-        currentTask: { taskId: data.taskId, description: data.description }
+        // Part A: Track currently executing tasks for header chip (G3: multi-task).
+        runningTasks: {
+          ...state.runningTasks,
+          [data.taskId]: { taskId: data.taskId, description: data.description }
+        }
       }))
       // Part E: Refresh currentBlueprint.tasks from DB for accurate statuses
-      throttledRefetch()
+      throttledRefetch(data.blueprintId)
     })
 
     safeSubscribe(window.api.onBlueprintWaveTaskComplete, 'onBlueprintWaveTaskComplete', (data) => {
@@ -1067,11 +1300,15 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           ...state.waveTasks,
           [data.taskId]: data.status as BlueprintTaskStatus
         },
-        // Part A: Clear current task on completion
-        currentTask: state.currentTask?.taskId === data.taskId ? null : state.currentTask
+        // Part A: Remove completed task from running set (G3)
+        runningTasks: (() => {
+          const next = { ...state.runningTasks }
+          delete next[data.taskId]
+          return next
+        })()
       }))
       // Part E: Refresh currentBlueprint.tasks from DB for accurate statuses
-      throttledRefetch()
+      throttledRefetch(data.blueprintId)
     })
 
     safeSubscribe(window.api.onBlueprintWaveComplete, 'onBlueprintWaveComplete', (data) => {
@@ -1079,15 +1316,15 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (resolveAction(data.workspaceId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} complete — ${data.status}`)
       set((state) => ({
-        // Part A: Clear current task on wave complete
-        currentTask: null,
+        // Part A: Clear running tasks on wave complete
+        runningTasks: {},
         chatMessages: [
           ...state.chatMessages,
           { type: 'system' as const, content: `Wave ${data.wave} complete — ${data.status}`, timestamp: Date.now() }
         ]
       }))
       // Part E: Refresh currentBlueprint.tasks from DB for accurate statuses
-      throttledRefetch()
+      throttledRefetch(data.blueprintId)
       if (data.status === 'failed') {
         const wsId = get().activeWorkspaceId
         set({ isRunning: false, activeWorkspaceId: null })
@@ -1140,6 +1377,21 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         return
       }
 
+      // BP-REMEDIATION-HANDOFF-GUARD: During the verify→build remediation handoff
+      // (< 10s), ignore transient idle snapshots that would flip isRunning=false
+      // and flash the "Interrupted" banner. Only drop machineState==='idle' —
+      // failed/cancelled snapshots must still propagate.
+      const remTs = remediationPendingAt.get(snap.workspaceId)
+      if (
+        remTs &&
+        machineState === 'idle' &&
+        !snap.running &&
+        Date.now() - remTs < 10_000
+      ) {
+        rendererLog.info('[blueprint] Dropping transient idle snapshot during remediation handoff')
+        return
+      }
+
       // COHERENT-SNAPSHOT-FIX (defense in depth): idle/failed/cancelled +
       // running:true is impossible during correct operation, but if a stale
       // snapshot sneaks through, this prevents permanent "Analyzing…".
@@ -1167,7 +1419,10 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
               blueprintId: snap.blueprintId ?? '',
               planSummary: snap.pendingApproval.planSummary,
               completion: snap.pendingApproval.completion,
-              reviewMarkdown: snap.pendingApproval.reviewMarkdown
+              reviewMarkdown: snap.pendingApproval.reviewMarkdown,
+              // IPC boundary types preflight.result as Record<string,unknown> but runtime data
+              // matches the strongly-typed PreflightResult shape used by the store
+              preflight: snap.pendingApproval.preflight as NonNullable<BlueprintState['pendingApproval']>['preflight']
             }
           : null,
         // Wave state
@@ -1177,6 +1432,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         waveTasks: snap.wave?.tasks
           ? (snap.wave.tasks as Record<string, BlueprintTaskStatus>)
           : {},
+        // G3: Running tasks from snapshot
+        runningTasks: (snap as Record<string, unknown>).runningTasks as Record<string, { taskId: string; description: string }> ?? {},
         // Error state
         lastError: snap.lastError
           ? { blueprintId: snap.blueprintId ?? 'unknown', message: snap.lastError }
@@ -1210,8 +1467,78 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     }
   },
 
-  reset: () => {
+  hydrateTranscript: async (blueprintId: string) => {
+    // Use pure helper to decide action (extracted for unit testing).
+    // NOTE: No early sentinel-only return here — resolveHydrationAction handles
+    // all skip conditions including sentinel match. A sentinel-only guard would
+    // block re-hydration after startBlueprint/cancelBlueprint/retryPhase clear
+    // chatMessages without clearing hydratedBlueprintId.
+    const action = resolveHydrationAction(
+      get().chatMessages.length,
+      get().currentBlueprint?.id ?? null,
+      blueprintId,
+      hydratedBlueprintId,
+      hydrationInFlight.has(blueprintId)
+    )
+
+    if (action === 'skip') return
+
+    if (action === 'clear-then-apply') {
+      set({ chatMessages: [], clarifyRound: 0 })
+      // Also clear the sentinel
+      if (hydratedBlueprintId !== null && hydratedBlueprintId !== blueprintId) {
+        hydratedBlueprintId = null
+      }
+    }
+
+    hydrationInFlight.add(blueprintId)
+    try {
+      rendererLog.info(`[blueprint] Hydrating transcript for ${blueprintId} (action=${action})`)
+      const events = await window.api.blueprintGetTranscript({ blueprintId }) as JournalEvent[]
+      if (!events.length) {
+        hydratedBlueprintId = blueprintId
+        return
+      }
+
+      const messages = journalEventsToChatMessages(events)
+      hydratedBlueprintId = blueprintId
+
+      // Post-fetch decision: live messages may have arrived during the async fetch
+      const postAction = resolvePostFetchAction(get().chatMessages.length)
+
+      if (postAction === 'apply') {
+        // Clean apply — no live messages arrived during the fetch
+        const findingsCount = messages.filter((m) => m.type === 'findings').length
+        set({
+          chatMessages: messages,
+          clarifyRound: findingsCount
+        })
+        rendererLog.info(`[blueprint] Hydrated ${messages.length} transcript messages (${findingsCount} findings rounds)`)
+      } else {
+        // BUG-5 fix: merge hydrated history with live messages that arrived
+        // during the async fetch (restart-during-active-run race).
+        const liveMessages = get().chatMessages
+        const merged = [...messages, ...liveMessages]
+        const findingsCount = merged.filter((m) => m.type === 'findings').length
+        set({
+          chatMessages: merged,
+          clarifyRound: findingsCount
+        })
+        rendererLog.info(`[blueprint] Merged ${messages.length} hydrated + ${liveMessages.length} live messages`)
+      }
+    } catch (error) {
+      rendererLog.error('Failed to hydrate blueprint transcript:', error)
+    } finally {
+      hydrationInFlight.delete(blueprintId)
+    }
+  },
+
+  resetForWorkspaceSwitch: (workspaceId) => {
+    if (lastResetWorkspaceId === workspaceId) return // same workspace re-mount — keep transcript
+    lastResetWorkspaceId = workspaceId
+    hydratedBlueprintId = null // Phase 1: clear hydration sentinel on workspace switch
     useBlueprintStreamStore.getState().reset()
+    useBlueprintLaneStore.getState().resetAll()
     set({
       isRunning: false,
       activeWorkspaceId: null,
@@ -1233,7 +1560,47 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyBlueprintId: null,
       currentGoal: null,
       taskGoals: {},
-      currentTask: null,
+      runningTasks: {},
+      phaseCompletions: {},
+      totalTaskCount: 0,
+      totalWaves: 0,
+      pendingApproval: null,
+      currentWave: null,
+      waveTasks: {},
+      lastError: null,
+      orphanedBlueprint: null
+      // Keep history — it's loaded lazily per workspace
+    })
+  },
+
+  reset: () => {
+    lastResetWorkspaceId = null
+    hydratedBlueprintId = null
+    remediationPendingAt.clear()
+    useBlueprintStreamStore.getState().reset()
+    useBlueprintLaneStore.getState().resetAll()
+    set({
+      isRunning: false,
+      activeWorkspaceId: null,
+      currentBlueprint: null,
+      currentPhase: null,
+      chatMessages: [],
+      clarifyRound: 0,
+      phaseStartedAt: null,
+      lastChunkAt: null,
+      phaseStreamText: {},
+      phaseStreamEvents: {},
+      phaseDurations: {},
+      phaseStartTimestamps: {},
+      clarifyAwaitingInput: false,
+      clarifyFindings: null,
+      clarifyQuestions: null,
+      clarifyGateReady: false,
+      clarifyInFlight: false,
+      clarifyBlueprintId: null,
+      currentGoal: null,
+      taskGoals: {},
+      runningTasks: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,

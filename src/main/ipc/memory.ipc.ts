@@ -21,12 +21,13 @@ import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { memoryRetrievalService } from '../services/memory-retrieval.service'
 import { memoryEngineService } from '../services/memory-engine.service'
 import { memoryExtractionService } from '../services/memory-extraction.service'
-import { omlxEmbeddingProvider } from '../services/omlx-embedding.service'
+import { localEmbeddingProvider } from '../services/local-embedding.provider'
 import { workspaceRepository } from '../db/repositories'
 import { memoryDocWatcherService } from '../services/memory-doc-watcher.service'
 import { buildMemoryGraph } from '../services/memory-graph'
 import { memoryIngestionService } from '../services/memory-ingestion.service'
 import { memoryBootstrapService } from '../services/memory-bootstrap.service'
+import { memoryConsolidationService } from '../services/memory-consolidation.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 
@@ -57,7 +58,14 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         20,
         args.category
       )
-      return results.map((r) => ({ ...r.fact, _score: r.score, _matchType: r.matchType }))
+      const facts = results.map((r) => r.fact)
+      const evidence = memoryFactRepository.getEvidenceCounts(facts.map((f) => f.id))
+      return results.map((r) => ({
+        ...r.fact,
+        evidenceCount: evidence.get(r.fact.id) ?? 0,
+        _score: r.score,
+        _matchType: r.matchType
+      }))
     }
   )
 
@@ -152,9 +160,14 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST,
-    (event, args?: { status?: ContradictionStatus }) => {
+    (event, args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => {
       validateSender(event)
-      return memoryFactRepository.findContradictions(args?.status)
+      const limit = args?.limit ?? 25
+      const offset = args?.offset ?? 0
+      const items = memoryFactRepository.findContradictionsPaged(args?.status, limit, offset)
+      const total = memoryFactRepository.countContradictions(args?.status)
+      const pendingCount = memoryFactRepository.countContradictions('pending')
+      return { items, total, pendingCount }
     }
   )
 
@@ -239,10 +252,10 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ? memoryFactRepository.countByWorkspace(args.workspaceId)
         : { active: 0, superseded: 0, archived: 0, pendingEmbedding: 0 }
       return {
-        isReady: omlxEmbeddingProvider.isReady,
+        isReady: localEmbeddingProvider.isReady,
         pendingCount: counts.pendingEmbedding,
         totalCount: counts.active + counts.superseded + counts.archived,
-        modelName: omlxEmbeddingProvider.isReady ? omlxEmbeddingProvider.activeModelName : null
+        modelName: localEmbeddingProvider.isReady ? localEmbeddingProvider.activeModelName : null
       }
     }
   )
@@ -253,8 +266,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       validateSender(event)
 
       // Attempt full provider ready (auto-start oMLX, auto-load model) if offline
-      if (!omlxEmbeddingProvider.isReady) {
-        const ready = await omlxEmbeddingProvider.ensureEmbeddingReady()
+      if (!localEmbeddingProvider.isReady) {
+        const ready = await localEmbeddingProvider.ensureEmbeddingReady()
         if (!ready) {
           const errorMsg = 'Embedding model could not be initialized. ' +
             'Please ensure oMLX is running with an embedding model downloaded and loaded.'
@@ -353,6 +366,40 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     (event, args: { workspaceId: string }) => {
       validateSender(event)
       return memoryEngineService.scanForDuplicates(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DEDUP_AUTORESOLVE,
+    (event, args: { workspaceId: string; minCosine?: number }) => {
+      validateSender(event)
+      const resolvedCount = memoryFactRepository.bulkAutoResolveDuplicates(args.minCosine ?? 0.95)
+      return { resolvedCount }
+    }
+  )
+
+  // ── Read CLAUDE.md ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_READ_CLAUDE_MD,
+    (event, args: { workspacePath: string }) => {
+      validateSender(event)
+      const filePath = join(args.workspacePath, 'CLAUDE.md')
+      let content: string | null = null
+      try {
+        content = readFileSync(filePath, 'utf-8')
+      } catch { /* file doesn't exist */ }
+      return { content, path: filePath }
+    }
+  )
+
+  // ── Consolidation ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_CONSOLIDATE,
+    async (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return memoryConsolidationService.runFullConsolidation(args.workspaceId)
     }
   )
 

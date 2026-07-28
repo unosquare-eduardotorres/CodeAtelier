@@ -22,13 +22,14 @@ import { BlueprintClarifyAdapter } from './role-adapters/blueprint/blueprint-cla
 import { buildSpecifyGoalCondition, buildClarifyGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
+import { modelConfigService } from './model-config.service'
 import { blueprintPlanService } from './blueprint-plan.service'
 import { codeGraphService } from './code-graph.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository
 } from '../db/repositories/blueprint.repository'
-import { workspaceRepository } from '../db/repositories'
+import { workspaceRepository, conversationRepository } from '../db/repositories'
 import {
   parseClarifyFindings,
   parseClarifyQuestions,
@@ -214,9 +215,22 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 3c. Load reference documents (if provided)
       const mappedDocs = referenceDocuments?.map((d) => ({ type: d.type as 'file' | 'workspace-file' | 'url', path: d.path, name: d.name }))
-      const referenceDocsBlock = mappedDocs?.length
+      const docsResult = mappedDocs?.length
         ? await buildReferenceDocsBlock(workspacePath, mappedDocs)
         : undefined
+      const referenceDocsBlock = docsResult?.block
+
+      // Phase 5.3: Surface reference doc failures as visible warnings
+      if (docsResult?.failedDocs.length) {
+        const failedNames = docsResult.failedDocs.join(', ')
+        bpLog.warn(`[startSpecifyPhase] Reference docs unavailable: ${failedNames}`)
+        this.emit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'specify',
+          text: `⚠️ Reference documents unavailable: ${failedNames} — proceeding without them.`
+        })
+      }
 
       // 3d. MEM-DOC-SPECIFY-01: Extract memories from reference documents.
       // Moved here from BLUEPRINT_CREATE — covers create, createFromIdea, resume, and retry paths.
@@ -295,8 +309,31 @@ export class BlueprintSpecService extends EventEmitter {
       // 9. Start session in plan mode (read-only)
       await session.start(workspacePath, 'plan')
 
-      // 10. Create synthetic conversation ID and send
-      const syntheticConvId = `blueprint-specify-${blueprintId}-${Date.now()}`
+      // 10. Create or reuse synthetic conversation ID
+      // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
+      const specPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
+      const priorConvId = specPhaseRecord?.conversationId
+      let syntheticConvId: string
+      if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
+        // Guard: if model/provider changed between attempts, session resume is invalid
+        const priorConv = conversationRepository.findById(priorConvId)
+        const currentProvider = modelConfigService.getProvider(workspacePath)
+        if (priorConv?.llmProvider === currentProvider) {
+          syntheticConvId = priorConvId
+          bpLog.info(`[startSpecifyPhase] Resuming conversation ${priorConvId} from failed attempt`)
+        } else {
+          syntheticConvId = `blueprint-specify-${blueprintId}-${Date.now()}`
+          bpLog.info(`[startSpecifyPhase] Provider changed — falling back to fresh conversation`)
+        }
+      } else {
+        syntheticConvId = `blueprint-specify-${blueprintId}-${Date.now()}`
+      }
+
+      // Persist conversation ID early so retries can find it
+      if (specPhaseRecord) {
+        try { blueprintPhaseRepository.setConversation(specPhaseRecord.id, syntheticConvId) }
+        catch { /* conversation may not exist yet in DB */ }
+      }
 
       // Timeout + stall watchdog + abort race
       let timeoutId: NodeJS.Timeout | undefined
@@ -326,7 +363,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 11. Get accumulated text and parse completion
       const text = session.getStreamedContent()
-      const completion = parsePhaseCompletionBlock(text) ?? undefined
+      const completion = parsePhaseCompletionBlock(text, 'specify') ?? undefined
 
       // 12. Save spec artifact to phase
       if (specifyPhase) {
@@ -351,6 +388,10 @@ export class BlueprintSpecService extends EventEmitter {
       // 13. Advance to CLARIFY phase (both needs_clarification and complete go here)
       if (specifyPhase) {
         blueprintPhaseRepository.updateStatus(specifyPhase.id, 'complete')
+        // BP-RETRY-CONTEXT-CLEAR: Clear retry context on successful completion
+        if (specifyPhase.contextSnapshot) {
+          blueprintPhaseRepository.saveContextSnapshot(specifyPhase.id, null)
+        }
       }
       blueprintRepository.updateStatus(blueprintId, 'clarifying')
       blueprintRepository.update(blueprintId, { currentPhase: 'clarify' })
@@ -419,6 +460,10 @@ export class BlueprintSpecService extends EventEmitter {
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
       blueprintService.failPipeline(workspaceId, errorMsg)
+
+      // BP-RETRY-CONTEXT: Save structured retry context for next attempt
+      try { blueprintService.saveRetryContext(blueprintId, 'specify', { error: errorMsg }) }
+      catch { /* best effort — don't let context capture block error reporting */ }
 
       const autoRetrying = blueprintService.scheduleAutoRetry({
         blueprintId, workspaceId, workspacePath, phase: 'specify', error: errorMsg
@@ -509,7 +554,30 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 6. Create session
       session = new AgentSessionService(adapter)
-      const syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
+
+      // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
+      const clarifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
+      const priorClarifyConvId = clarifyPhaseRec?.conversationId
+      let syntheticConvId: string
+      if (priorClarifyConvId && conversationRepository.getSessionId(priorClarifyConvId)) {
+        const priorConv = conversationRepository.findById(priorClarifyConvId)
+        const currentProvider = modelConfigService.getProvider(workspacePath)
+        if (priorConv?.llmProvider === currentProvider) {
+          syntheticConvId = priorClarifyConvId
+          bpLog.info(`[startClarifyPhase] Resuming conversation ${priorClarifyConvId} from failed attempt`)
+        } else {
+          syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
+          bpLog.info(`[startClarifyPhase] Provider changed — falling back to fresh conversation`)
+        }
+      } else {
+        syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
+      }
+
+      // Persist conversation ID early so retries can find it
+      if (clarifyPhaseRec) {
+        try { blueprintPhaseRepository.setConversation(clarifyPhaseRec.id, syntheticConvId) }
+        catch { /* conversation may not exist yet in DB */ }
+      }
 
       // Store session reference for follow-up user messages
       this.clarifySessions.set(blueprintId, {
@@ -622,6 +690,10 @@ export class BlueprintSpecService extends EventEmitter {
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
       blueprintService.failPipeline(workspaceId, errorMsg)
+
+      // BP-RETRY-CONTEXT: Save structured retry context for next attempt
+      try { blueprintService.saveRetryContext(blueprintId, 'clarify', { error: errorMsg }) }
+      catch { /* best effort */ }
 
       this.safeEmit('phaseComplete', {
         blueprintId,
@@ -794,7 +866,7 @@ export class BlueprintSpecService extends EventEmitter {
     // 3. Check for completion
     const completionRaw = parseClarifyCompletion(text)
     const completion = completionRaw
-      ? (parsePhaseCompletionBlock(text) ?? (completionRaw as unknown as BlueprintPhaseCompletion))
+      ? (parsePhaseCompletionBlock(text, 'clarify') ?? (completionRaw as unknown as BlueprintPhaseCompletion))
       : null
 
     // M5 (nudge restructure): Hoist zero-block check ABOVE the emit cascade.
@@ -1032,6 +1104,10 @@ export class BlueprintSpecService extends EventEmitter {
         contentJson: completion as unknown as Record<string, unknown>
       })
       blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'complete')
+      // BP-RETRY-CONTEXT-CLEAR: Clear retry context on successful completion
+      if (clarifyPhase.contextSnapshot) {
+        blueprintPhaseRepository.saveContextSnapshot(clarifyPhase.id, null)
+      }
     }
 
     // Plan B: Merge resolved clarifications into the specify phase's spec artifact in-place.

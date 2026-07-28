@@ -53,7 +53,10 @@ export default function ModelConfigTab(): React.JSX.Element {
   return (
     <div data-testid="model-config-tab" className="w-full pb-8">
       <div className="px-6 pt-6">
-        <h2 className="text-base font-semibold text-text-primary mb-6">Model Configuration</h2>
+        <h2 className="text-base font-semibold text-text-primary mb-1">Model Configuration</h2>
+        <p className="text-xs text-text-muted mb-6">
+          Default for <span className="font-medium text-text-secondary">new</span> chats — existing chats keep their own settings
+        </p>
 
         {/* ── Provider Connections ── */}
         <div className="flex items-center gap-2 mb-3">
@@ -63,9 +66,9 @@ export default function ModelConfigTab(): React.JSX.Element {
         </div>
         <ProviderCards
           claudeCliStatus={config.claudeCliStatus}
-          fastMode={config.fastMode}
-          budgetCapUsd={config.budgetCapUsd}
-          executorBackend={config.executorBackend}
+          openCodeCliStatus={config.openCodeCliStatus}
+          localLlmBackend={config.localLlmBackend}
+          onBackendChange={config.setLocalLlmBackend}
           connectionDraft={config.connectionDraft}
           isConnectionDirty={config.isConnectionDirty}
           localStatus={config.localStatus}
@@ -75,9 +78,6 @@ export default function ModelConfigTab(): React.JSX.Element {
           localBaseUrl={config.localBaseUrl}
           isRemoteServer={config.isRemoteServer}
           platformInfo={config.platformInfo}
-          onFastModeToggle={config.handleFastModeToggle}
-          onBudgetCapChange={config.handleBudgetCapChange}
-          onExecutorBackendChange={config.handleExecutorBackendChange}
           onHostChange={config.setLocalHost}
           onPortChange={config.setLocalPort}
           onApiKeyChange={config.setLocalApiKey}
@@ -89,6 +89,8 @@ export default function ModelConfigTab(): React.JSX.Element {
           onLocalModelSelect={config.handleLocalModelSelect}
           onLoadOmlxModel={config.handleLoadOmlxModel}
           onUnloadOmlxModel={config.handleUnloadOmlxModel}
+          ollamaEmbeddingModel={config.ollamaEmbeddingModel}
+          onOllamaEmbeddingModelChange={config.handleOllamaEmbeddingModelChange}
         />
 
         {/* ── Model Routing (cross-provider) ── */}

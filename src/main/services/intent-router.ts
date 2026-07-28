@@ -19,7 +19,7 @@ export class IntentRouter {
   constructor(private mainWindow: BrowserWindow) {}
 
   /**
-   * Route a single generalist intent to the appropriate IPC channel.
+   * Route a single agent intent to the appropriate IPC channel.
    */
   route(conversationId: string, intent: AgentIntent): void {
     switch (intent.type) {

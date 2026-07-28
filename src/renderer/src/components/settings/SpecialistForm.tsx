@@ -102,7 +102,7 @@ export default function SpecialistForm({
           }
         }
       } else {
-        await createSpecialist({
+        const created = await createSpecialist({
           agentId: agentId.trim(),
           displayName: displayName.trim(),
           icon,
@@ -110,6 +110,11 @@ export default function SpecialistForm({
           prompt,
           priority
         })
+
+        // Assign any selected skills to the newly created specialist
+        for (const skillId of selectedSkillIds) {
+          await assignSkill(created.id, skillId)
+        }
       }
       onClose()
     } catch (err) {
@@ -170,7 +175,7 @@ export default function SpecialistForm({
               type="text"
               value={alias}
               onChange={(e) => setAlias(e.target.value)}
-              placeholder='e.g., "Da Vinci"'
+              placeholder='e.g., "Archie"'
               maxLength={50}
               className="w-full px-3 py-2 rounded-lg bg-surface-base border border-border-subtle text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
             />

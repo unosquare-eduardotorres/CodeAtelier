@@ -80,8 +80,8 @@ describe('IPC contract compatibility', () => {
     'exposes DEFAULT_MODEL_CONFIG["da-vinci"] as a string',
     () => {
       assert.ok(runtimeContracts)
-      assert.equal(typeof runtimeContracts.DEFAULT_MODEL_CONFIG['da-vinci'], 'string')
-      assert.ok(runtimeContracts.DEFAULT_MODEL_CONFIG['da-vinci'].length > 0)
+      assert.equal(typeof runtimeContracts.DEFAULT_MODEL_CONFIG['specialist'], 'string')
+      assert.ok(runtimeContracts.DEFAULT_MODEL_CONFIG['specialist'].length > 0)
     },
     { skipReason }
   )

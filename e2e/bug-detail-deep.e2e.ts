@@ -79,10 +79,12 @@ test.describe('Bug Detail Deep', () => {
     const hasSeverity = await severityInfo.isVisible({ timeout: 3_000 }).catch(() => false)
     expect(hasSeverity).toBeTruthy()
 
-    // Should show First Seen / Last Seen timestamps
-    const firstSeen = detail.getByText('First Seen')
-    const hasTimestamp = await firstSeen.isVisible({ timeout: 3_000 }).catch(() => false)
-    expect(hasTimestamp).toBeTruthy()
+    // Should show timestamp range (inline "First → Last" format) or occurrence count
+    const timestampRange = detail.getByText(/→/).first()
+    const occurrences = detail.getByText(/occurrence/i).first()
+    const hasTimestamp = await timestampRange.isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasOccurrences = await occurrences.isVisible({ timeout: 3_000 }).catch(() => false)
+    expect(hasTimestamp || hasOccurrences).toBeTruthy()
   })
 
   test('stack trace section displayed with copy-to-clipboard button', async ({
@@ -163,17 +165,31 @@ test.describe('Bug Detail Deep', () => {
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
 
-    // Note section heading
-    const noteHeading = detail.getByText('Note')
-    const hasNote = await noteHeading.isVisible({ timeout: 3_000 }).catch(() => false)
-    expect(hasNote).toBeTruthy()
+    // Note section: either a "Note" collapsible section (bug has note) or "Add Note" button (no note)
+    const noteSection = detail.getByText('Note').first()
+    const addNoteBtn = detail.getByRole('button', { name: /add note/i }).first()
+    const hasNoteSection = await noteSection.isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasAddNote = await addNoteBtn.isVisible({ timeout: 3_000 }).catch(() => false)
+    expect(hasNoteSection || hasAddNote).toBeTruthy()
 
-    // Textarea for note entry
+    // If "Add Note" button visible, click it to expand textarea
+    if (hasAddNote) {
+      await addNoteBtn.click()
+      await page.waitForTimeout(300)
+    } else if (hasNoteSection) {
+      // Click pencil edit button to enter edit mode
+      const editBtn = detail.getByRole('button', { name: /edit note/i }).first()
+      const hasEdit = await editBtn.isVisible({ timeout: 2_000 }).catch(() => false)
+      if (hasEdit) await editBtn.click()
+      await page.waitForTimeout(300)
+    }
+
+    // Textarea should now be visible in edit mode
     const textarea = detail.locator('textarea')
     await expect(textarea).toBeVisible()
 
-    // Save Note button
-    const saveBtn = detail.getByRole('button', { name: /save note/i }).first()
+    // Save button (text is "Save", not "Save Note")
+    const saveBtn = detail.getByRole('button', { name: /^save$/i }).first()
     await expect(saveBtn).toBeVisible()
   })
 

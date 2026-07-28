@@ -26,7 +26,6 @@
  */
 
 import type Database from 'better-sqlite3'
-import { app } from 'electron'
 import { join } from 'node:path'
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import log from 'electron-log'
@@ -63,7 +62,8 @@ function exportSpecialistsBackup(db: Database.Database): string | null {
     // Skip if the backup dir already contains a file for this migration.
     let userData: string
     try {
-      userData = app.getPath('userData')
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      userData = (require('electron') as typeof import('electron')).app.getPath('userData')
     } catch {
       // When running inside unit tests Electron's app is not available.
       return null

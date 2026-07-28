@@ -30,10 +30,14 @@ import { grillAgentService } from '../services/grill-agent.service'
 import { grillPersistenceController } from '../services/grill-persistence.controller'
 import { grillPlanGeneratorService } from '../services/grill-plan-generator.service'
 import { runOneShotClaude } from '../services/one-shot-claude'
+import { modelConfigService } from '../services/model-config.service'
+import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
 import { grillPlanToStructuredPlan } from '../services/grill-plan-mapper'
 import { getSessionEventRouter } from '../services/session-event-router'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 import log from 'electron-log'
 
 const grillLog = log.scope('grill-ipc')
@@ -300,7 +304,7 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
 
   // ── grill:seedPlanCard — seed an already-generated plan as a chat card ──
   // Maps the GrillStructuredPlan to the chat StructuredPlan shape and writes it
-  // as a `da-vinci` message containing a ```plan block. Deterministic — no LLM
+  // as a `specialist` message containing a ```plan block. Deterministic — no LLM
   // round-trip — so the grill→chat handoff renders the existing plan instantly.
 
   ipcMain.handle(IPC_CHANNELS.GRILL_SEED_PLAN_CARD, (event, rawArgs: unknown) => {
@@ -319,7 +323,7 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
     grillLog.info(
       `[grill:seedPlanCard] Seeding plan card into conversation=${conversationId} (${structured.phases?.length ?? 0} phases)`
     )
-    return messageRepository.create(conversationId, 'da-vinci', contentMd)
+    return messageRepository.create(conversationId, 'specialist', contentMd)
   })
 
   // ── grill:complete — strip transient state at final handoff, keep plan ──
@@ -382,6 +386,7 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
       validateSender(event)
       const args = requireObject(rawArgs, IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT)
       const text = requireString(args, 'text', IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT)
+      const workspaceId = optionalString(args, 'workspaceId', IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT)
       if (text.length < 1000) {
         return { condensed: text }
       }
@@ -402,14 +407,18 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
           '- Output plain markdown — no code fences around the result'
         ].join('\n')
 
+        const resolvedCondenseModel = workspaceId
+          ? modelConfigService.getModelById(workspaceId, 'condense')
+          : DEFAULT_MODEL_CONFIG['condense']
+
         const { text: condensed } = await runOneShotClaude({
           feature: 'condense',
-          model: 'claude-haiku-4-5-20251001',
+          model: resolvedCondenseModel,
           args: [
             '-p',
             text,
             '--model',
-            'claude-haiku-4-5-20251001',
+            resolvedCondenseModel,
             '--system-prompt',
             systemPrompt,
             '--permission-mode',
@@ -506,7 +515,26 @@ function wireGrillEvents(workspaceId: string, workspacePath: string): void {
     grillAgentService,
     'complete',
     () => {
+      // GRILL-DEDUP-NOTIF-01: Read evaluationHandled BEFORE handleComplete()
+      // clears tracking state. The normal path dispatches 'needs_input' from
+      // handleEvaluationResult — only fire the 'completed' notification when
+      // no evaluation was parsed (recovery/empty-evaluation path).
+      const tracking = grillPersistenceController.getTrackingForWorkspace(workspaceId)
+      const evaluationWasHandled = tracking?.evaluationHandled ?? false
+
       grillPersistenceController.handleComplete(workspaceId, router)
+
+      if (!evaluationWasHandled) {
+        notificationService.dispatch({
+          workspaceId,
+          workspaceName: resolveWorkspaceName(workspaceId),
+          service: 'grill',
+          status: 'completed',
+          summary: 'Grill evaluation complete — review your score and questions',
+          targetPage: 'grill'
+        })
+      }
+
       grillCleanup.runCleanup(workspaceId)
     }
   )

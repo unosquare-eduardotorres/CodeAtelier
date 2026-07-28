@@ -8,7 +8,17 @@
  * - All failures show regardless of service.
  */
 
-import { X, CheckCircle2, XCircle, Zap, Shield, Target } from 'lucide-react'
+import {
+  X,
+  CheckCircle2,
+  XCircle,
+  Zap,
+  Shield,
+  Target,
+  Layers,
+  Users,
+  PauseCircle
+} from 'lucide-react'
 import type { CompletionNotification } from '../../../../shared/types'
 
 interface CompletionToastProps {
@@ -21,7 +31,9 @@ function ServiceIcon({ service }: { service: string }): React.JSX.Element {
   const iconMap: Record<string, typeof Zap> = {
     grill: Zap,
     audit: Shield,
-    mpa: Target
+    mpa: Target,
+    blueprint: Layers,
+    council: Users
   }
   const Icon = iconMap[service] ?? Zap
   return <Icon size={14} />
@@ -33,6 +45,7 @@ export default function CompletionToast({
   onDismiss
 }: CompletionToastProps): React.JSX.Element {
   const isSuccess = notification.status === 'completed'
+  const isNeedsInput = notification.status === 'needs_input'
 
   return (
     <div
@@ -51,10 +64,18 @@ export default function CompletionToast({
           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${
             isSuccess
               ? 'bg-green-500/10 text-green-400 border-green-500/20'
-              : 'bg-red-500/10 text-red-400 border-red-500/20'
+              : isNeedsInput
+                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                : 'bg-red-500/10 text-red-400 border-red-500/20'
           }`}
         >
-          {isSuccess ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+          {isSuccess ? (
+            <CheckCircle2 size={10} />
+          ) : isNeedsInput ? (
+            <PauseCircle size={10} />
+          ) : (
+            <XCircle size={10} />
+          )}
           <ServiceIcon service={notification.service} />
         </span>
         <button

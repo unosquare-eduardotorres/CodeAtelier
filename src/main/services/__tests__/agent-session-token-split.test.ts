@@ -108,7 +108,7 @@ describe('AgentSession token split — accumulation logic', () => {
 
     const status = {
       agentId: 'test-agent',
-      agentType: 'da-vinci' as const,
+      agentType: 'specialist' as const,
       status: 'idle' as const,
       elapsedMs: 0,
       tokenUsage,

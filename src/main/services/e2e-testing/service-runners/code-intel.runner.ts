@@ -58,19 +58,19 @@ export async function runEmbeddingGeneration(_ctx: E2EServiceContext): Promise<E
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { omlxEmbeddingProvider } = await import('../../omlx-embedding.service')
+    const { localEmbeddingProvider } = await import('../../local-embedding.provider')
 
     transcript.push(statusEntry('embedding_initializing'))
     const baseUrl = `http://127.0.0.1:${OMLX_DEFAULT_PORT}`
 
-    await omlxEmbeddingProvider.initialize(baseUrl)
+    await localEmbeddingProvider.initialize(baseUrl)
 
-    if (!omlxEmbeddingProvider.isReady) {
+    if (!localEmbeddingProvider.isReady) {
       transcript.push(statusEntry('embedding_not_ready'))
       return transcript
     }
 
-    const vectors = await omlxEmbeddingProvider.embed(['hello world', 'test embedding'])
+    const vectors = await localEmbeddingProvider.embed(['hello world', 'test embedding'])
     const dim = vectors.length > 0 ? vectors[0].length : 0
 
     log.info(`[embedding-gen] Generated ${vectors.length} vectors, dim=${dim}`)

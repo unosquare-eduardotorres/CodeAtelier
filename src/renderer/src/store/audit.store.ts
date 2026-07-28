@@ -80,7 +80,12 @@ interface AuditState {
   rerunningTrackId: AuditTrackId | null
   liveStreamText: Record<string, string> // trackId → live text (legacy, still used by progress)
   selectedFindings: AuditFinding[] // for "Fix in Chat" / Build Plan
-  pendingFixContext: { title: string; description: string } | null
+  pendingFixContext: {
+    title: string
+    description: string
+    autoSend?: boolean
+    sourceAuditRunId?: string
+  } | null
   // Plan generation
   currentPlan: AuditPlanRecord | null
   isGeneratingPlan: boolean
@@ -108,7 +113,9 @@ interface AuditState {
   clearSelectedFindings: () => void
   generatePlan: (workspaceId: string) => Promise<AuditPlanRecord>
   clearPlan: () => void
-  setPendingFixContext: (ctx: { title: string; description: string } | null) => void
+  setPendingFixContext: (
+    ctx: { title: string; description: string; autoSend?: boolean; sourceAuditRunId?: string } | null
+  ) => void
   convertFindings: (workspaceId: string) => Promise<string> // returns conversationId
   handleProgress: (data: AuditProgressEvent) => void
   handleResult: (data: AuditResult) => void

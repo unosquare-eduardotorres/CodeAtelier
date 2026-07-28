@@ -55,6 +55,8 @@ export { GrillSessionRepository, grillSessionRepository } from './grill-session.
 export type { GrillSession, GrillSessionStatus } from './grill-session.repository'
 export { PlanRepository, planRepository } from './plan.repository'
 export type { SavePlanParams } from './plan.repository'
+export { TodoRepository, todoRepository } from './todo.repository'
+export type { TodoItem } from './todo.repository'
 export { LibraryDocRepository, libraryDocRepository } from './library-doc.repository'
 export type { LibraryDoc, PackageSummary } from './library-doc.repository'
 
@@ -71,3 +73,5 @@ export { E2ETestRunRepository, e2eTestRunRepository } from './e2e-test-run.repos
 export type { E2ETestRunRecord } from './e2e-test-run.repository'
 export { E2ETestResultRepository, e2eTestResultRepository } from './e2e-test-result.repository'
 export type { E2ETestResultRecord } from './e2e-test-result.repository'
+
+export { HandoffRepository, handoffRepository } from './handoff.repository'

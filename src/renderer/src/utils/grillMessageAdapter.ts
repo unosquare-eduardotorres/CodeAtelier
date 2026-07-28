@@ -15,7 +15,7 @@ export function grillAgentToMessage(
   return {
     id: `grill-msg-${index ?? counter++}`,
     conversationId: 'grill-session',
-    role: 'da-vinci',
+    role: 'specialist',
     contentMd: content,
     attachmentsJson: '[]',
     createdAt: new Date().toISOString(),

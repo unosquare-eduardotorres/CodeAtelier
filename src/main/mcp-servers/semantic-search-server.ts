@@ -20,6 +20,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
+import { withErrorBoundary } from './tool-error-handler'
 
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 if (!WORKSPACE_ID) {
@@ -37,11 +38,19 @@ const server = new McpServer(
 type VectorService = typeof import('../services/vector-search.service').vectorSearchService
 
 let readyPromise: Promise<VectorService> | null = null
+let retryCount = 0
+const MAX_RETRIES = 3
 
 /** Memoized lazy init — imports service + hydrates vector index. */
 function ensureReady(): Promise<VectorService> {
   if (!readyPromise) {
     readyPromise = (async (): Promise<VectorService> => {
+      // Pre-flight: verify native module compatibility before importing DB-backed services
+      const { checkNativeModuleCompat } = await import('./native-module-check')
+      const compat = checkNativeModuleCompat()
+      if (!compat.ok) {
+        throw new Error(compat.error ?? 'Native module check failed')
+      }
       const { vectorSearchService } = await import('../services/vector-search.service')
 
       // Hydrate the in-memory vector collection from SQLite. In the main process this
@@ -63,6 +72,17 @@ function ensureReady(): Promise<VectorService> {
       console.error('[semantic-search-server] Services initialized')
       return vectorSearchService
     })()
+
+    // Clear cached promise on rejection so next call can retry
+    readyPromise.catch((err) => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++
+        console.error(`[semantic-search-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`, err)
+        readyPromise = null // Allow next invocation to retry
+      } else {
+        console.error(`[semantic-search-server] Init failed after ${MAX_RETRIES} retries — giving up:`, err)
+      }
+    })
   }
   return readyPromise
 }
@@ -86,7 +106,7 @@ function registerToolSchemas(): void {
         .default(10)
         .describe('Number of results to return')
     },
-    async (args) => {
+    withErrorBoundary('semantic_search', async (args) => {
       const vectorSearchService = await ensureReady()
       // Build where clause from optional filters
       const where: Record<string, unknown> = {}
@@ -109,7 +129,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   server.tool(
@@ -119,7 +139,7 @@ function registerToolSchemas(): void {
       code: z.string().describe('Code snippet to find similar patterns for'),
       nResults: z.number().int().min(1).max(100).optional().default(5)
     },
-    async (args) => {
+    withErrorBoundary('similar_code', async (args) => {
       const vectorSearchService = await ensureReady()
       const results = await vectorSearchService.searchByCode(WORKSPACE_ID, args.code, {
         nResults: args.nResults
@@ -135,7 +155,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   server.tool(
@@ -144,7 +164,7 @@ function registerToolSchemas(): void {
     {
       maxConcepts: z.number().int().min(1).max(100).optional().default(20)
     },
-    async (args) => {
+    withErrorBoundary('codebase_concepts', async (args) => {
       const vectorSearchService = await ensureReady()
       const concepts = await vectorSearchService.getConceptClusters(WORKSPACE_ID, {
         maxClusters: args.maxConcepts
@@ -157,7 +177,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 }
 

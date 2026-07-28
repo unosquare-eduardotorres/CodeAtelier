@@ -1,4 +1,7 @@
 export { default as BugTrackerPage } from './BugTrackerPage'
 export { default as BugCard } from './BugCard'
+export { default as BugRow } from './BugRow'
 export { default as BugDetail } from './BugDetail'
 export { default as BugFilters } from './BugFilters'
+export { default as BulkActionBar } from './BulkActionBar'
+export { default as BugSummaryBar } from './BugSummaryBar'

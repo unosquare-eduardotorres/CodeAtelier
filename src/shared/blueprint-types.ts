@@ -88,6 +88,7 @@ export interface BlueprintTask {
   executorRunId: string | null
   startedAt: string | null
   completedAt: string | null
+  completionJson: { filesCreated: string[]; filesModified: string[] } | null
 }
 
 // ── Composite / Joined Types ──
@@ -145,6 +146,16 @@ export interface PhaseContext {
   grillDecisions?: GrillDecisionForBlueprint[]
   /** Pre-loaded workspace docs (CLAUDE.md, README.md, package.json, PLAN.md) for prompt injection */
   workspaceDocs?: string
+  /** Structured retry context — populated only when retrying a failed phase */
+  retryContext?: {
+    attempt: number
+    previousError: string
+    previousPhase: string
+    filesModified: string[]
+    filesCreated: string[]
+    tasksCompleted: number
+    totalTasks: number
+  }
 }
 
 export interface GrillDecisionForBlueprint {
@@ -185,6 +196,8 @@ export interface BlueprintPhaseProgressPayload {
   kind?: 'text' | 'tool'
   /** Full tool activity data — enables expandable input/output panels in the UI */
   toolActivity?: Partial<ToolActivity> & { id: string; toolName: string }
+  /** Build-phase task ID — routes progress into the correct per-task lane. */
+  taskId?: string
 }
 
 export interface BlueprintPhaseCompletePayload {
@@ -197,6 +210,8 @@ export interface BlueprintPhaseCompletePayload {
   error?: string
   /** When true, an automatic retry has been scheduled for this transient failure. */
   autoRetry?: boolean
+  /** True when verify found gaps and a remediation build round is starting. */
+  remediationTriggered?: boolean
   /** Phase completion metrics (tasksCompleted, filesCreated, recommendation, etc.) */
   completionMetrics?: Record<string, unknown>
 }

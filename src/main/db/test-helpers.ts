@@ -2,7 +2,36 @@
  * Test helpers for creating in-memory SQLite databases with the full schema.
  * Used by integration tests that need real DB access without Electron's app.getPath().
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import Module from 'node:module'
 import Database from 'better-sqlite3'
+
+// Vite inlines `?raw` imports at build time; under tsx/Node we need
+// schema.sql loaded as plain text. tsx's transformer wraps Module.load
+// and bypasses require.extensions, so we:
+// 1. Strip the `?raw` suffix during resolution (Node appends `=` → `?raw=`)
+// 2. Pre-populate the require cache with the raw SQL text
+const schemaSqlPath = resolve(__dirname, 'schema.sql')
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const origResolve = (Module as any)._resolveFilename
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(Module as any)._resolveFilename = function (request: string, ...args: any[]) {
+  // Strip Vite's ?raw query so Node resolves the bare .sql file
+  if (request.endsWith('.sql?raw')) {
+    request = request.slice(0, -4) // remove '?raw'
+  }
+  return origResolve.call(this, request, ...args)
+}
+
+if (!require.cache[schemaSqlPath]) {
+  const m = new Module(schemaSqlPath)
+  m.filename = schemaSqlPath
+  m.exports = readFileSync(schemaSqlPath, 'utf8')
+  ;(m as unknown as { loaded: boolean }).loaded = true
+  require.cache[schemaSqlPath] = m
+}
 
 /**
  * Create an in-memory SQLite database with the full application schema.
@@ -21,6 +50,7 @@ export function createTestDb(): Database.Database {
   db.pragma('foreign_keys = ON')
 
   // Lazy require to avoid triggering electron imports at module load time.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { SCHEMA_SQL, migrations } = require('./index') as {
     SCHEMA_SQL: string
     migrations: Array<{ version: number; name: string; up: (d: Database.Database) => void }>
@@ -59,7 +89,7 @@ export function seedWorkspace(db: Database.Database, id = 'test-workspace-1'): s
   db.prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`).run(
     id,
     'Test Project',
-    '/tmp/test-project'
+    `/tmp/test-project-${id}`
   )
   return id
 }

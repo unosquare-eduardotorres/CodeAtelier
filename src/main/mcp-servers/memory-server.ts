@@ -21,6 +21,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
+import { withErrorBoundary } from './tool-error-handler'
 
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 
@@ -38,17 +39,36 @@ type Services = {
 }
 
 let readyPromise: Promise<Services> | null = null
+let retryCount = 0
+const MAX_RETRIES = 3
 
 /** Memoized lazy init — safe to call from every handler; only loads once. */
 function ensureReady(): Promise<Services> {
   if (!readyPromise) {
     readyPromise = (async (): Promise<Services> => {
+      // Pre-flight: verify native module compatibility before importing DB-backed services
+      const { checkNativeModuleCompat } = await import('./native-module-check')
+      const compat = checkNativeModuleCompat()
+      if (!compat.ok) {
+        throw new Error(compat.error ?? 'Native module check failed')
+      }
       const { memoryRetrievalService } = await import('../services/memory-retrieval.service')
       const { memoryEngineService } = await import('../services/memory-engine.service')
       const { memoryFactRepository } = await import('../db/repositories/memory-fact.repository')
       console.error('[memory-server] Services initialized')
       return { memoryRetrievalService, memoryEngineService, memoryFactRepository }
     })()
+
+    // Clear cached promise on rejection so next call can retry
+    readyPromise.catch((err) => {
+      if (retryCount < MAX_RETRIES) {
+        retryCount++
+        console.error(`[memory-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`, err)
+        readyPromise = null // Allow next invocation to retry
+      } else {
+        console.error(`[memory-server] Init failed after ${MAX_RETRIES} retries — giving up:`, err)
+      }
+    })
   }
   return readyPromise
 }
@@ -75,7 +95,7 @@ function registerToolSchemas(): void {
         .default(5)
         .describe('Number of results to return')
     },
-    async (args) => {
+    withErrorBoundary('memory_search', async (args) => {
       const { memoryRetrievalService } = await ensureReady()
       const results = await memoryRetrievalService.retrieve(
         WORKSPACE_ID,
@@ -92,7 +112,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── memory_record ─────────────────────────────────────────────────────
@@ -122,7 +142,7 @@ function registerToolSchemas(): void {
         .default(false)
         .describe('If true, fact is cross-workspace (for user preferences/corrections)')
     },
-    async (args) => {
+    withErrorBoundary('memory_record', async (args) => {
       const { memoryEngineService } = await ensureReady()
       const fact = await memoryEngineService.writeFact({
         workspaceId: args.global ? null : WORKSPACE_ID || null,
@@ -133,6 +153,11 @@ function registerToolSchemas(): void {
         sourceType: 'tool',
         sourceRef: null
       })
+      if (!fact) {
+        return {
+          content: [{ type: 'text' as const, text: 'Fact deduplicated or capped — no new record created.' }]
+        }
+      }
       const tierLabel = ['Observed', 'Confirmed', 'Established', 'Wisdom'][fact.tier]
       return {
         content: [
@@ -142,7 +167,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 
   // ── memory_flag ───────────────────────────────────────────────────────
@@ -159,7 +184,7 @@ function registerToolSchemas(): void {
         .optional()
         .describe('Explanation of why you are confirming or contradicting this fact')
     },
-    async (args) => {
+    withErrorBoundary('memory_flag', async (args) => {
       const { memoryEngineService, memoryFactRepository } = await ensureReady()
       const existing = memoryFactRepository.findById(args.factId) as
         | import('../../shared/types').MemoryFact
@@ -171,7 +196,7 @@ function registerToolSchemas(): void {
       }
 
       if (args.intent === 'confirm') {
-        const confirmed = memoryEngineService.confirmFactWithPromotion(args.factId)
+        const confirmed = memoryEngineService.confirmFactWithPromotion(args.factId, 'tool')
         const tierLabel = ['Observed', 'Confirmed', 'Established', 'Wisdom'][confirmed.tier]
         return {
           content: [
@@ -194,18 +219,27 @@ function registerToolSchemas(): void {
           sourceType: 'tool',
           sourceRef: null
         })
-        memoryFactRepository.supersedeFact(existing.id, newFact.id)
-        memoryFactRepository.createContradiction({
-          oldFactId: existing.id,
-          newFactId: newFact.id,
-          status: 'auto_resolved',
-          resolution: args.note
-        })
+        if (!newFact) {
+          return { content: [{ type: 'text' as const, text: 'Contradiction note deduplicated — no change made.' }] }
+        }
+        // Guard: writeFact may UPDATE-match the replacement against the very fact
+        // being contradicted and return it — don't self-supersede.
+        if (newFact.id !== existing.id) {
+          memoryFactRepository.supersedeFact(existing.id, newFact.id)
+          memoryFactRepository.createContradiction({
+            oldFactId: existing.id,
+            newFactId: newFact.id,
+            status: 'auto_resolved',
+            resolution: args.note
+          })
+        }
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Fact "${existing.title}" superseded by "${newFact.title}" (id: ${newFact.id})`
+              text: newFact.id !== existing.id
+                ? `Fact "${existing.title}" superseded by "${newFact.title}" (id: ${newFact.id})`
+                : `Fact "${existing.title}" updated in place (id: ${existing.id})`
             }
           ]
         }
@@ -221,7 +255,7 @@ function registerToolSchemas(): void {
           }
         ]
       }
-    }
+    })
   )
 }
 

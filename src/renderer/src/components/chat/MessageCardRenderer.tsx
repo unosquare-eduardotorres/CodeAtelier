@@ -97,6 +97,9 @@ export interface MessageCardRendererProps {
   onRefine: () => void
   onSaveAsIdea?: () => void
   onCouncilReview?: () => void
+  planActionTaken?: string
+  /** Conversation ID for live phase status badges */
+  conversationId?: string
 }
 
 /**
@@ -114,7 +117,9 @@ export default function MessageCardRenderer({
   onBuildNow,
   onRefine,
   onSaveAsIdea,
-  onCouncilReview
+  onCouncilReview,
+  planActionTaken,
+  conversationId
 }: MessageCardRendererProps): React.JSX.Element | null {
   const {
     planContent,
@@ -184,6 +189,8 @@ export default function MessageCardRenderer({
           onSaveAsIdea={onSaveAsIdea}
           onRefine={onRefine}
           onCouncilReview={onCouncilReview}
+          planActionTaken={planActionTaken}
+          conversationId={conversationId}
         />
       </div>
     )

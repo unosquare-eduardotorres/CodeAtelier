@@ -38,11 +38,14 @@ export interface StreamChunk {
     | 'lsp_diagnostics'
     | 'todo_update'
     | 'turn_limit'
+    | 'phase_progress'
   content?: string
   toolName?: string
   toolInput?: string
   toolId?: string
   error?: string
+  /** True when the CLI's tool_result had is_error: true (e.g. permission denied). */
+  isError?: boolean
   /** Elapsed time in seconds for tool_progress */
   elapsedSeconds?: number
   /** Rate limit info for rate_limit type */
@@ -105,6 +108,15 @@ export interface StreamChunk {
     action: 'add' | 'complete' | 'remove' | 'update'
     text: string
     index?: number
+  }
+  /** Phase progress update from plan execution */
+  phaseProgress?: {
+    planId: string | null
+    phaseId: number
+    phaseTitle: string
+    status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
+    totalPhases: number
+    message?: string
   }
   /** Turn limit reached — emitted when all auto-continuations are exhausted */
   turnLimit?: {
@@ -180,7 +192,7 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /**
    * Links the DB session to a conversation after the conversation ID becomes known.
-   * Use for long-lived agents (e.g. generalist) where conversationId is not available at start().
+   * Use for long-lived agents (e.g. the chat agent) where conversationId is not available at start().
    */
   protected updateDbSessionConversation(conversationId: string): void {
     if (!this.dbSessionId) return
@@ -193,7 +205,7 @@ export abstract class AgentBaseService extends EventEmitter {
 
   /**
    * Flushes current token usage to the DB session without completing it.
-   * Use for long-lived agents (e.g. generalist) so the dashboard shows live data.
+   * Use for long-lived agents (e.g. the chat agent) so the dashboard shows live data.
    */
   protected flushTokenUsage(): void {
     if (!this.dbSessionId) return

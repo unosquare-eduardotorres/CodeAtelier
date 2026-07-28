@@ -7,6 +7,7 @@ import type { StructuredPlan } from '../../../../shared/types'
 import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
 import MessageListFooter from './MessageListFooter'
+import AuditProvenanceBanner from './AuditProvenanceBanner'
 import { useAutoScroll } from './useAutoScroll'
 import { useMessageVirtualizer } from './useMessageVirtualizer'
 import { useThinkingIdentity } from './useThinkingIdentity'
@@ -38,12 +39,15 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   }, [])
 
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
+  const sourceAuditRunId = useChatStore((s) => s.activeConversation?.sourceAuditRunId ?? null)
 
   const handleBuildFromPlan = useCallback(
     async (_plan: StructuredPlan, _planContent: string): Promise<void> => {
       if (!activeConversationId) return
       await updateMode('build')
-      await sendMessage('Build the plan.')
+      await sendMessage(
+        'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.'
+      )
     },
     [activeConversationId, updateMode, sendMessage]
   )
@@ -62,9 +66,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   // ── Specialist identity resolution (extracted hook) ──
   const thinkingIdentity = useThinkingIdentity()
 
-  const generalistAlias = useSpecialistStore((s) => {
-    const spec = s.specialists.find((sp) => sp.agentId === 'da-vinci')
-    return spec?.alias ?? spec?.displayName ?? 'da Vinci'
+  const agentAlias = useSpecialistStore((s) => {
+    const spec = s.specialists.find((sp) => sp.agentId === 'specialist')
+    return spec?.alias ?? spec?.displayName ?? 'Agent'
   })
 
   // Aggregate all tool activities for the thinking indicator
@@ -141,8 +145,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
         </h3>
         <p className="relative z-10 text-sm text-text-muted max-w-md">
           {userName
-            ? `Ask anything, brainstorm ideas, or describe what you want built — ${generalistAlias} and the specialists are standing by.`
-            : `Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or describe what you want built — ${generalistAlias} will handle it or hand off to specialists.`}
+            ? `Ask anything, brainstorm ideas, or describe what you want built — ${agentAlias} is standing by.`
+            : `Chat with your AI development partner. Ask questions, brainstorm ideas, review code, or describe what you want built — ${agentAlias} is ready to help.`}
         </p>
       </div>
     )
@@ -155,6 +159,16 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     <div data-testid="message-list" className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
       <FloatingRobots />
       <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full">
+        {/* Audit provenance banner (when conversation originated from Health audit) */}
+        {sourceAuditRunId && (
+          <AuditProvenanceBanner
+            auditRunId={sourceAuditRunId}
+            onViewAudit={() => {
+              // Navigate to health page — handled by app layout
+              window.dispatchEvent(new CustomEvent('navigate-to-health'))
+            }}
+          />
+        )}
         {/* Virtualized message list */}
         <div
           style={{

@@ -1,7 +1,7 @@
 /**
  * SystemPromptCache — extracted cache for assembled system prompts.
  *
- * Pattern 7 centralization: both DaVinciPromptAssembler and
+ * Pattern 7 centralization: the legacy prompt assembler and
  * ProjectSpecialistRoleAdapter maintained identical 5-field caches with
  * matching invalidation logic. This class provides a single implementation.
  *

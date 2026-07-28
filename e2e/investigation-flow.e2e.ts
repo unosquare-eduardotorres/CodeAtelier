@@ -6,7 +6,7 @@
  * 2. Task plan card renders after coordinator decomposes
  * 3. After specialist completes, investigation report card renders
  * 4. Action buttons (Fix Sequential, Fix Parallel, Revise, Save as Idea) are present
- * 5. Visual ordering: Da Vinci → Task Plan → Specialist output → Report card
+ * 5. Visual ordering: Specialist → Task Plan → Specialist output → Report card
  *
  * Uses CDP approach (same as ux-audit-screenshots.e2e.ts) because
  * Playwright's _electron.launch() is incompatible with Electron 41+.
@@ -124,11 +124,11 @@ test.describe('Investigation Flow', () => {
     }
   })
 
-  test('message ordering: Da Vinci → Handoff → Task Plan → Specialist', async () => {
+  test('message ordering: Specialist → Handoff → Task Plan → Specialist', async () => {
     test.skip(!page, 'Page not available — Electron may not have launched')
 
     // Verify DOM ordering of rendered messages
-    // Da Vinci message should appear before the task plan card
+    // Specialist message should appear before the task plan card
     const messageElements = page!.locator(
       '[data-testid="message-bubble"], [data-testid="task-plan-card"], [data-testid="handoff-indicator"]'
     )

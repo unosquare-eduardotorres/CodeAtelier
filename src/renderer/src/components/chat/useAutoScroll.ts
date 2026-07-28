@@ -18,6 +18,7 @@ export function useAutoScroll(
 } {
   const shouldAutoScroll = useRef(true)
   const isUserScrolling = useRef(false)
+  const lastScrollTop = useRef(0)
   const [isAtBottom, setIsAtBottom] = useState(true)
 
   // Force scroll to bottom when switching conversations
@@ -28,6 +29,7 @@ export function useAutoScroll(
     setIsAtBottom(true)
     requestAnimationFrame(() => {
       if (scrollRef.current) {
+        lastScrollTop.current = scrollRef.current.scrollHeight
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight
       }
     })
@@ -44,7 +46,19 @@ export function useAutoScroll(
       const { scrollTop, scrollHeight, clientHeight } = container
       // Use 150px threshold (larger than virtualizer's estimateSize) to avoid jitter
       const nearBottom = scrollHeight - scrollTop - clientHeight < 150
-      shouldAutoScroll.current = nearBottom
+      const scrolledDown = scrollTop >= lastScrollTop.current
+      lastScrollTop.current = scrollTop
+
+      // Only re-enable auto-scroll when user scrolls DOWN to the bottom.
+      // Virtualizer re-measurements can shift scroll position toward the bottom —
+      // don't let those programmatic adjustments re-engage auto-scroll.
+      if (nearBottom && scrolledDown) {
+        shouldAutoScroll.current = true
+      } else if (!nearBottom) {
+        shouldAutoScroll.current = false
+      }
+      // When nearBottom but scrolledUp (virtualizer adjustment), keep current state.
+
       setIsAtBottom(nearBottom)
 
       isUserScrolling.current = true

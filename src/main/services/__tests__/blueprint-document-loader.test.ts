@@ -132,76 +132,79 @@ describe('buildReferenceDocsBlock', () => {
 
   test('text doc content loaded and included', async () => {
     writeFileSync(join(tmpDir, 'spec.md'), '# Specification\n\nDetails here.')
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block, failedDocs } = await buildReferenceDocsBlock(tmpDir, [
       makeDoc({ path: 'spec.md', name: 'My Spec' })
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('### My Spec'))
-    assert.ok(result!.includes('# Specification'))
-    assert.ok(result!.includes('Details here.'))
+    assert.ok(block)
+    assert.ok(block!.includes('### My Spec'))
+    assert.ok(block!.includes('# Specification'))
+    assert.ok(block!.includes('Details here.'))
+    assert.equal(failedDocs.length, 0)
   })
 
   test('binary listed by path, not read', async () => {
     // Don't create the binary file — it should never be read
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block } = await buildReferenceDocsBlock(tmpDir, [
       makeDoc({ path: 'logo.png', name: 'logo.png' })
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('### Binary Reference Files'))
-    assert.ok(result!.includes('`logo.png`'))
+    assert.ok(block)
+    assert.ok(block!.includes('### Binary Reference Files'))
+    assert.ok(block!.includes('`logo.png`'))
   })
 
   test('mixed text + binary produces both sections', async () => {
     writeFileSync(join(tmpDir, 'notes.txt'), 'Some notes')
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block } = await buildReferenceDocsBlock(tmpDir, [
       makeDoc({ path: 'notes.txt', name: 'notes.txt' }),
       makeDoc({ path: 'diagram.pdf', name: 'diagram.pdf' })
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('### notes.txt'))
-    assert.ok(result!.includes('Some notes'))
-    assert.ok(result!.includes('### Binary Reference Files'))
-    assert.ok(result!.includes('`diagram.pdf`'))
-    assert.ok(result!.includes('---'))
+    assert.ok(block)
+    assert.ok(block!.includes('### notes.txt'))
+    assert.ok(block!.includes('Some notes'))
+    assert.ok(block!.includes('### Binary Reference Files'))
+    assert.ok(block!.includes('`diagram.pdf`'))
+    assert.ok(block!.includes('---'))
   })
 
   test('missing file produces graceful error string (no throw)', async () => {
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block, failedDocs } = await buildReferenceDocsBlock(tmpDir, [
       makeDoc({ path: 'nonexistent.md', name: 'ghost.md' })
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('Failed to load'))
+    assert.ok(block)
+    assert.ok(block!.includes('Failed to load'))
+    assert.deepEqual(failedDocs, ['ghost.md'])
   })
 
   test('traversal path produces error string', async () => {
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block, failedDocs } = await buildReferenceDocsBlock(tmpDir, [
       makeDoc({ path: '../../etc/passwd', name: 'traversal' })
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('Failed to load') || result!.includes('Path traversal'))
+    assert.ok(block)
+    assert.ok(block!.includes('Failed to load') || block!.includes('Path traversal'))
+    assert.equal(failedDocs.length, 1)
   })
 
-  test('empty array returns undefined', async () => {
-    const result = await buildReferenceDocsBlock(tmpDir, [])
-    assert.equal(result, undefined)
+  test('empty array returns undefined block and empty failedDocs', async () => {
+    const { block, failedDocs } = await buildReferenceDocsBlock(tmpDir, [])
+    assert.equal(block, undefined)
+    assert.deepEqual(failedDocs, [])
   })
 
   test('text doc content capped at MAX_DOC_CHARS', async () => {
     writeFileSync(join(tmpDir, 'big.md'), 'x'.repeat(60_000))
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block } = await buildReferenceDocsBlock(tmpDir, [
       makeDoc({ path: 'big.md', name: 'big.md' })
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('[… truncated]'))
+    assert.ok(block)
+    assert.ok(block!.includes('[… truncated]'))
   })
 
   test('uses doc.path as fallback heading when name is absent', async () => {
-    writeFileSync(join(tmpDir, 'unnamed.md'), 'content')
-    const result = await buildReferenceDocsBlock(tmpDir, [
+    const { block } = await buildReferenceDocsBlock(tmpDir, [
       { type: 'workspace-file' as const, path: 'unnamed.md' }
     ])
-    assert.ok(result)
-    assert.ok(result!.includes('### unnamed.md'))
+    assert.ok(block)
+    assert.ok(block!.includes('### unnamed.md'))
   })
 })
 

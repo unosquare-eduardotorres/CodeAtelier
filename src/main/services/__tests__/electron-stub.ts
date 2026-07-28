@@ -150,6 +150,13 @@ export function setupElectronStub(): void {
     if (request === 'electron-log/main' || request === 'electron-log') {
       return require(electronLogMockPath)
     }
+    // Handle Vite ?raw imports for .sql files — read as plain text string
+    if (request.endsWith('.sql?raw') || (request.endsWith('.sql') && parent?.filename)) {
+      const fs = require('node:fs') as typeof import('node:fs')
+      const resolved = request.replace(/\?raw$/, '')
+      const absPath = path.resolve(path.dirname(parent.filename), resolved)
+      return fs.readFileSync(absPath, 'utf-8')
+    }
     return origLoad.call(this, request, parent, isMain)
   }
 }

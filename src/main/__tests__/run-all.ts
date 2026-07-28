@@ -49,7 +49,6 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/intent-router.test',
   // Run 3 — P0 continued
   '../services/__tests__/agent-circuit-breaker.test',
-  '../services/__tests__/da-vinci-prompt-assembler.test',
   // Run 4 — P1 targets
   '../services/__tests__/cost-tracker.test',
   '../services/__tests__/agent-token-tracker.test',
@@ -58,12 +57,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/model-config.test',
   '../services/__tests__/opus-48-thinking.test',
   '../services/__tests__/session-recovery.test',
-  '../services/__tests__/health-check.test',
   // Run 6 — lifecycle
   '../services/__tests__/conversation-lifecycle.test',
   // Run 6b — Project Specialist refactor (Phase 1)
   '../services/__tests__/agent-session.service.test',
-  '../services/__tests__/da-vinci-adapter.test',
   // Run 6c — Project Specialist refactor (Phase 2)
   '../services/__tests__/prompt-assembly-helpers.test',
   '../services/__tests__/project-specialist-prompt-template.test',
@@ -78,10 +75,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../ipc/__tests__/validate-args.test',
   // Run 8 — bubble identity / role tagging / consent regression
   '../services/__tests__/chat-stream-role-tagging.test',
-  '../services/__tests__/resolve-adapter-consent.test',
-  '../ipc/__tests__/chat-swap-handler.test',
   // Run 9 — renderer utilities (pure logic, no DOM)
   '../services/__tests__/sentence-buffer.test',
+  '../services/__tests__/parse-blocked-by-error.test',
   // ─── Run 11: Prompt optimization (Opus 4.8) ───
   '../services/__tests__/prompt-verbosity.test',
   '../services/__tests__/prompt-lean-identity.test',
@@ -114,7 +110,6 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/workspace-mcp-config-tiers.test',
   '../services/__tests__/tag-to-chunk-adapter.test',
   '../services/__tests__/skill-summary.test',
-  '../services/__tests__/prompt-assembler-turn-count.test',
   '../services/__tests__/agent-session-token-split.test',
   // ─── Run 20: Coverage expansion — streaming / tools / hooks (pure logic) ───
   '../services/__tests__/thinking-parser.test',
@@ -181,6 +176,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-parsers-conditions.test',
   '../services/__tests__/blueprint-review.service.test',
   '../services/__tests__/blueprint-build.service.test',
+  '../services/__tests__/blueprint-send-outcome.test',
   '../services/__tests__/blueprint-verify-conditions.test',
   // ─── Run 31: Plan Hub — unified plan registry ───
   '../services/__tests__/audit-plan-mapper.test',
@@ -224,10 +220,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/base-adapter-strategies.test',
   '../services/__tests__/heuristic-description-logic.test',
   '../services/__tests__/event-logger-service.test',
-  '../ipc/__tests__/ipc-registration.test',
   '../mcp-servers/__tests__/mcp-server-registration.test',
   // ─── Run 36: Phase 14 coverage mega-push — IPC registration, executors, service methods ───
-  '../ipc/__tests__/ipc-remaining-registration.test',
   '../services/__tests__/cli-executor-args.test',
   '../services/__tests__/opencode-executor-pure.test',
   '../services/__tests__/agent-session-deep.test',
@@ -287,21 +281,24 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Pipeline Stabilization Round 2 — phase watchdog + registry sync guard ───
   '../services/__tests__/blueprint-phase-watchdog.test',
   '../services/__tests__/cli-executor-kill.test',
-  '../services/__tests__/test-registry-sync.test',
   // ─── Memory Engine (knowledge-aware) ───
   '../services/__tests__/memory-engine.test',
   '../services/__tests__/memory-retrieval.test',
   '../services/__tests__/memory-extraction.test',
   '../services/__tests__/memory-doc-watcher.test',
+  // ─── Memory Consolidation (cluster merge, idle job) ───
+  '../services/__tests__/memory-consolidation.test',
+  '../services/__tests__/memory-consolidation-archival.test',
   // ─── Memory Graph (knowledge graph edge derivation) ───
   '../services/__tests__/memory-graph.test',
   // ─── E2E Testing Infrastructure ───
-  '../services/__tests__/scenario-catalog.test',
-  '../services/__tests__/e2e-assertions.test',
-  '../services/__tests__/e2e-runner.test',
   '../services/__tests__/e2e-contracts.test',
   // ─── Blueprint document loader ───
   '../services/__tests__/blueprint-document-loader.test',
+  // ─── Blueprint durability (journal mapper, viewState precedence) ───
+  '../services/__tests__/blueprint-durability.test',
+  // ─── Blueprint agent accumulator (flush boundaries, caps, cancel, taskId) ───
+  '../services/__tests__/blueprint-agent-accumulator.test',
   // ─── Phase 18: Coverage Mega-Push IV — giant services deep + MCP tool bodies ───
   '../services/__tests__/giant-services-deep.test',
   '../services/__tests__/adapter-completion-round2.test',
@@ -329,6 +326,36 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/orchestrator-pipeline-deep.test',
   '../services/__tests__/memory-vector-deep.test',
   '../services/__tests__/mcp-servers-deep.test',
+  // ─── Phase 20A: Coverage Mega-Push VI — giant services deep ───
+  '../services/__tests__/agent-session-body-deep.test',
+  '../services/__tests__/chat-stream-body-deep.test',
+  '../services/__tests__/code-analysis-handlers.test',
+  '../services/__tests__/blueprint-spec-deep.test',
+  '../services/__tests__/blueprint-parallel-scheduler.test',
+  '../services/__tests__/blueprint-verify-extractor.test',
+  // ─── Phase 21: Coverage Mega-Push ───
+  '../services/__tests__/memory-engine-extraction-deep.test',
+  '../services/__tests__/blueprint-services-deep-phase21.test',
+  '../services/__tests__/council-mpa-grill-services-deep.test',
+  '../services/__tests__/quick-win-coverage-boost.test',
+  '../services/__tests__/ipc-conversation-handlers.test',
+  '../services/__tests__/ipc-workspace-agent-handlers.test',
+  '../services/__tests__/ipc-grill-audit-council-handlers.test',
+  '../services/__tests__/ipc-remaining-handlers.test',
+  // ─── Blueprint Environment Preflight ───
+  '../services/__tests__/blueprint-preflight.test',
+  // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
+  '../services/__tests__/phase-summaries-verify.test',
+  // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
+  '../services/__tests__/permission-prompt-flow.test',
+  // ─── Background CLI Session (persistent warm process for prompt optimizer) ───
+  '../services/__tests__/background-cli-session.test',
+  // ─── PR Description Generation (CHAT_GENERATE_PR_DESCRIPTION handler logic) ───
+  '../services/__tests__/pr-description-generation.test',
+  // ─── Executor derivation (Phase A: provider → backend mapping) ───
+  '../services/__tests__/executor-derivation.test',
+  // ─── Local embedding provider facade (oMLX/Ollama routing) ───
+  '../services/__tests__/local-embedding-provider.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -353,6 +380,7 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/mpa-run.repository.test',
   '../db/repositories/__tests__/council-session.repository.test',
   '../db/repositories/__tests__/plan.repository.test',
+  '../db/repositories/__tests__/plan-status-history.test',
   '../db/repositories/__tests__/remaining-repos.test',
   '../db/repositories/__tests__/code-graph-repos.test',
   '../db/repositories/__tests__/migration-suite.test',

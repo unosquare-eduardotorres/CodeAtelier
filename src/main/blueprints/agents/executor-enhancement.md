@@ -73,3 +73,16 @@ Continuously scan for stubs introduced during implementation:
 
 If you must create a temporary stub to unblock another task, add a
 `// STUB: <reason> — to be replaced by task T0XX` comment.
+
+## Progress Visibility
+
+Between tool calls, emit short narration text so the execution log is human-readable:
+- Before a group of reads: state what you're investigating
+- After discovering an issue: state the issue and your response
+- Before writing/editing: state what you're implementing
+- After running tests: state pass/fail and next action
+
+Pattern: `Intent → Tool(s) → Finding → Decision`
+
+Bad (silent): Read → Read → Bash → Write (observer sees only tool names)
+Good (narrated): "Checking auth middleware..." → Read → "Uses session tokens, not JWT — adapting approach" → Write

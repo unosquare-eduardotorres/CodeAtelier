@@ -3,6 +3,19 @@ const path = require('path')
 const fs = require('fs')
 const { execSync } = require('child_process')
 
+/** Count files recursively — cross-platform replacement for `find ... | wc -l` */
+function countFiles(dir) {
+  let count = 0
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.isFile()) count++
+      else if (entry.isDirectory()) count += countFiles(path.join(dir, entry.name))
+    }
+  } catch { /* skip unreadable dirs */ }
+  return count
+}
+
 /**
  * electron-builder afterPack hook:
  *  1. Copy node_modules into the app bundle (bypasses electron-builder's
@@ -37,7 +50,7 @@ module.exports = async function afterPack(context) {
       execSync(`cp -a "${nmSource}" "${nmTarget}"`, { stdio: 'inherit' })
     }
 
-    const fileCount = execSync(`find "${nmTarget}" -type f | wc -l`, { encoding: 'utf8' }).trim()
+    const fileCount = countFiles(nmTarget)
     console.log(`[afterPack] node_modules copied (${fileCount} files)`)
 
     // ── 1b. Remove unnecessary assets that trigger Apple codesign failures ──
@@ -80,7 +93,7 @@ module.exports = async function afterPack(context) {
     prune(nmTarget)
     if (removed) console.log(`[afterPack] Removed ${removed} non-essential file(s)`)
 
-    const afterCount = execSync(`find "${nmTarget}" -type f | wc -l`, { encoding: 'utf8' }).trim()
+    const afterCount = countFiles(nmTarget)
     console.log(`[afterPack] node_modules: ${fileCount} → ${afterCount} files`)
   } else {
     console.warn('[afterPack] node_modules not found at project root — skipping copy')

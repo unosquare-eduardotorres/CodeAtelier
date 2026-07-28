@@ -5,9 +5,9 @@ import { ChevronDown, ChevronRight, HelpCircle } from 'lucide-react'
 
 const TIERS = [
   { label: 'T0 Observed', confirms: '—', color: 'text-text-muted', dotColor: 'bg-text-muted' },
-  { label: 'T1 Confirmed', confirms: '2', color: 'text-info', dotColor: 'bg-info' },
-  { label: 'T2 Established', confirms: '3', color: 'text-success', dotColor: 'bg-success' },
-  { label: 'T3 Wisdom', confirms: '5', color: 'text-primary-text', dotColor: 'bg-primary-text' }
+  { label: 'T1 Confirmed', confirms: '3', color: 'text-info', dotColor: 'bg-info' },
+  { label: 'T2 Established', confirms: '5', color: 'text-success', dotColor: 'bg-success' },
+  { label: 'T3 Wisdom', confirms: '8', color: 'text-primary-text', dotColor: 'bg-primary-text' }
 ]
 
 const CATEGORIES = [
@@ -59,6 +59,7 @@ export default function MemoryExplainer(): React.JSX.Element {
             <p className="mt-1.5 text-text-muted">
               Each confirmation from a session or agent bumps the count.
               Higher tiers rank higher in retrieval and survive longer.
+              Wisdom (T3) additionally requires human confirmations and a 30-day evidence span.
             </p>
           </div>
 

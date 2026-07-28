@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants'
 import { appPreferenceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString } from './validate-args'
+import { notificationService } from '../services/notification.service'
 
 export function registerAppPreferenceIpc(): void {
   ipcMain.handle(IPC_CHANNELS.APP_PREFERENCE_GET_ALL, async (event) => {
@@ -22,5 +23,15 @@ export function registerAppPreferenceIpc(): void {
     }
 
     appPreferenceRepository.set(key, value)
+
+    // Sync notification preference with the service
+    if (key === 'notifications_enabled') {
+      notificationService.setEnabled(value === 'true')
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.NOTIFICATION_PROBE, async (event) => {
+    validateSender(event)
+    return notificationService.probeNotificationSupport()
   })
 }

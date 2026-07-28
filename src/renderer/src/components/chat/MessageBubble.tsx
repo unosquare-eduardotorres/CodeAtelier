@@ -19,12 +19,13 @@ import type {
   StructuredPlan
 } from '../../../../shared/types'
 import ToolActivityBlock from './ToolActivityBlock'
+import HookActivityIndicator from './HookActivityIndicator'
 import MessageCardRenderer from './MessageCardRenderer'
 import AttachmentList from './AttachmentList'
 import { useMessageContent } from './useMessageContent'
 import { useMessageIdentity } from './useMessageIdentity'
 import type { MessageIdentity } from './useMessageIdentity'
-import { useChatBubbleSize, useWorkspaceStore } from '@renderer/store'
+import { useChatBubbleSize, useChatAvatarSize, useChatStore, useWorkspaceStore, usePlanExecutionStore } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
 import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar } from '@renderer/components/common'
@@ -35,7 +36,7 @@ export interface MessageBubbleActions {
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
   saveAsIdea?: (title: string, description: string) => void
-  /** Direct plan-to-build: skip generalist round-trip when structured plan is available */
+  /** Direct plan-to-build: skip agent round-trip when structured plan is available */
   buildFromPlan?: (plan: StructuredPlan, planContent: string) => Promise<void>
 }
 
@@ -106,13 +107,6 @@ const BUBBLE_SIZE_CLASSES: Record<
   xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[92%]' }
 }
 
-/** Avatar portrait size — scales with the user's bubble-size preference */
-const AVATAR_SIZE_MAP: Record<ChatBubbleSize, 'md' | 'lg' | 'xl'> = {
-  small: 'md', // 48px
-  medium: 'lg', // 64px
-  large: 'xl', // 80px
-  xl: 'xl' // 80px
-}
 
 // Module-level constants — stable references, never recreated on render
 const REMARK_PLUGINS_BASE = [
@@ -232,6 +226,7 @@ interface BubbleContentBodyProps {
   onRefine: () => void
   onSaveAsIdea?: () => void
   onCouncilReview?: () => void
+  planActionTaken?: string
 }
 
 function BubbleContentBody({
@@ -244,7 +239,8 @@ function BubbleContentBody({
   onBuildNow,
   onRefine,
   onSaveAsIdea,
-  onCouncilReview
+  onCouncilReview,
+  planActionTaken
 }: BubbleContentBodyProps): React.JSX.Element | null {
   const {
     imageAttachments,
@@ -267,6 +263,8 @@ function BubbleContentBody({
         onRefine={onRefine}
         onSaveAsIdea={onSaveAsIdea}
         onCouncilReview={planContent ? onCouncilReview : undefined}
+        planActionTaken={planActionTaken}
+        conversationId={message.conversationId}
       />
     )
   }
@@ -381,26 +379,16 @@ function BubbleFooterActions({
         <ToolActivityBlock activities={toolActivities} defaultExpanded={!!isStreaming} />
       )}
 
+      {/* Hook execution indicator — only during streaming, renders null when no hooks active */}
+      {isStreaming && !isUser && <HookActivityIndicator />}
+
       <div className="flex items-center gap-2 mt-1 px-1 group">
         <span className="text-xs text-text-secondary inline-flex items-center gap-1">
           {formatTime(message.createdAt)}
           {isStreaming && (
             <>
               <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1 ml-0.5">
-                <span
-                  className="typing-dot !w-[4px] !h-[4px]"
-                  style={{ animationDelay: '0ms' }}
-                />
-                <span
-                  className="typing-dot !w-[4px] !h-[4px]"
-                  style={{ animationDelay: '150ms' }}
-                />
-                <span
-                  className="typing-dot !w-[4px] !h-[4px]"
-                  style={{ animationDelay: '300ms' }}
-                />
-              </span>
+              <span className="text-text-muted italic animate-thinking-pulse ml-0.5">writing…</span>
             </>
           )}
         </span>
@@ -441,6 +429,7 @@ function MessageBubbleInner({
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
+  const avatarSize = useChatAvatarSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
   const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } =
     actions ?? ({} as MessageBubbleActions)
@@ -463,22 +452,52 @@ function MessageBubbleInner({
   /** True when the message contains a structured block that MessageCardRenderer handles */
   const hasStructuredContent = buildSummaryData != null || planContent != null
 
+  const persistPlanAction = (action: string): void => {
+    if (message.planAction) return // already persisted
+    // Update in-memory store so virtualizer remounts get the correct value
+    useChatStore.setState((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === message.id ? { ...m, planAction: action } : m
+      )
+    }))
+    window.api.chatSetPlanAction({ messageId: message.id, action }).catch(console.error)
+  }
+
   const handleBuildNow = (): void => {
+    persistPlanAction('build')
+
+    // Initialize plan execution tracking
+    if (structuredPlan?.phases?.length && message.conversationId) {
+      const { startExecution } = usePlanExecutionStore.getState()
+      startExecution(message.conversationId, {
+        planId: null,
+        title: structuredPlan.title,
+        phases: structuredPlan.phases.map((p) => ({ id: p.id, title: p.title })),
+        phaseFiles: Object.fromEntries(
+          structuredPlan.phases.map((p) => [p.id, (p.files ?? []).map((f) => f.file)])
+        )
+      })
+    }
+
     if (structuredPlan && planContent && buildFromPlan) {
       buildFromPlan(structuredPlan, planContent)
       return
     }
     updateMode('build')
     sendMessage(
-      'Implement the plan we just discussed. If the plan has multiple phases (3+ sections or 8+ steps), start with only the first phase and let me know you will continue with the remaining phases afterward. If the plan is small enough, implement it all at once.'
+      'Implement the plan we just discussed. If the plan has multiple phases, ' +
+        'call emit_phase_progress as you begin and complete each phase. ' +
+        'If the plan is small enough, implement it all at once.'
     )
   }
 
   const handleRefine = (): void => {
+    persistPlanAction('refine')
     appendLocalMessage("Refine this plan — tell me what to change and I'll update it.")
   }
 
   const handleSaveAsIdea = (): void => {
+    persistPlanAction('save_as_idea')
     if (!actions?.saveAsIdea) return
     const title = 'Implementation Plan'
     const description = planContent ?? ''
@@ -486,6 +505,7 @@ function MessageBubbleInner({
   }
 
   const handleCouncilReview = (): void => {
+    persistPlanAction('council')
     const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
     if (!workspaceId || !planContent) return
     startCouncilReview(workspaceId, planContent, structuredPlan, message.contentMd ?? '')
@@ -504,7 +524,7 @@ function MessageBubbleInner({
       <div className="flex-shrink-0 mt-0.5">
         <Avatar
           avatarKey={identity.avatarKey}
-          size={AVATAR_SIZE_MAP[bubbleSize]}
+          size={avatarSize}
           accentColor={identity.accentColor}
         />
       </div>
@@ -537,6 +557,7 @@ function MessageBubbleInner({
           onRefine={handleRefine}
           onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
           onCouncilReview={planContent ? handleCouncilReview : undefined}
+          planActionTaken={message.planAction}
         />
 
         <BubbleFooterActions

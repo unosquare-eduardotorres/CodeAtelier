@@ -74,7 +74,7 @@ export const useAgentStore = create<AgentState>((set) => ({
 
       // Extract context window size from the latest non-zero status of ANY agent
       // (chat, grill, council, mpa, audit) — point-in-time value. Unifies the live
-      // context badge across every feature, not just da-vinci.
+      // context badge across every feature, not just specialist.
       const contextWindowTokens =
         status.contextTokens && status.contextTokens > 0
           ? status.contextTokens

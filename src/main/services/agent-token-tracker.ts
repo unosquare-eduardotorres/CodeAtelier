@@ -125,7 +125,7 @@ export class AgentTokenTracker {
           outputTokens: meta.tokenUsage.output,
           cacheReadTokens: cacheReadInputTokens,
           cacheCreationTokens: cacheCreationInputTokens,
-          model: opts.model ?? modelConfigService.getModel(opts.workspacePath, 'da-vinci')
+          model: opts.model ?? modelConfigService.getModel(opts.workspacePath, 'specialist')
         })
         // Token growth rate alert — warn if input tokens spiked >30%
         if (previousTurn && previousTurn.inputTokens > 0) {

@@ -54,7 +54,7 @@ export function registerSpecialistIpc(): void {
     const args = requireObject(rawArgs, ch)
     const id = requireString(args, 'id', ch)
 
-    // Block deletion of core agents (generalist, coordinator, user)
+    // Block deletion of core agents (specialist, user)
     const specialist = specialistRepository.findById(id)
     if (specialist?.isCore) {
       throw new Error('Cannot delete core agents')

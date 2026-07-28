@@ -61,6 +61,7 @@ import type {
   GrillTrackScore,
   GrillStructuredPlan,
   PlanRecord,
+  PlanStatusHistoryEntry,
   MemoryFact,
   MemoryFactCategory,
   MemoryFactTier,
@@ -78,7 +79,8 @@ import type {
   E2ERunSummary,
   E2EResultSummary,
   E2EResultDetail,
-  E2EProgressEvent
+  E2EProgressEvent,
+  PhaseProgressEvent
 } from '../shared/types'
 
 interface Api {
@@ -141,11 +143,9 @@ interface Api {
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
+    sourceAuditRunId?: string
   }) => Promise<Conversation>
-  updatePersona: (args: {
-    conversationId: string
-    personaSpecialistId: string | null
-  }) => Promise<Conversation>
+
   updateMcpOverrides: (args: {
     conversationId: string
     overrides: Record<string, boolean>
@@ -154,8 +154,23 @@ interface Api {
     conversationId: string
     communicationTone: CommunicationTone | null
   }) => Promise<Conversation>
+  updateConversationRouting: (args: {
+    conversationId: string
+    workspaceId: string
+    llmProvider?: LLMProvider
+    routingOverrides?: Partial<ModelRoleMap>
+  }) => Promise<Conversation>
   checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
+  getTodos: (args: { conversationId: string }) => Promise<Array<{
+    id: number
+    conversationId: string
+    text: string
+    completed: boolean
+    itemIndex: number | null
+    createdAt: string
+    updatedAt: string
+  }>>
   deleteConversation: (args: { conversationId: string }) => Promise<void>
   updateConversationMode: (args: {
     conversationId: string
@@ -166,16 +181,17 @@ interface Api {
     effort: 'low' | 'medium' | 'high'
   }) => Promise<{ effort: string }>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
-  stopGeneration: () => Promise<void>
+  stopGeneration: (conversationId?: string) => Promise<void>
   getStreamingState: () => Promise<{
     isStreaming: boolean
     conversationId: string | null
     state: string
     requestId: string | null
+    /** MULTI-CHAT-06: Per-conversation active streams from LifecycleRegistry */
+    streams: Array<{ conversationId: string; requestId: string }>
   }>
   compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
-  /** Accept DaVinci's specialist-swap proposal — rebuilds the session as the Project Specialist. */
-  swapToSpecialist: (args: { workspaceId?: string; workspacePath?: string }) => Promise<void>
+
 
   // Chat commands
   completeConversation: (args: {
@@ -316,14 +332,17 @@ interface Api {
   memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }) => Promise<MemoryFact>
   memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }) => Promise<MemoryFact>
   memoryFactsDelete: (args: { id: string }) => Promise<void>
-  memoryContradictionsList: (args?: { status?: ContradictionStatus }) => Promise<MemoryContradiction[]>
+  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }>
   memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }) => Promise<MemoryContradiction>
   memoryCaptureSettingsGet: (args: { workspaceId: string }) => Promise<MemoryCaptureSettings>
   memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }) => Promise<void>
   memoryEmbeddingStatus: (args?: { workspaceId?: string }) => Promise<MemoryEmbeddingStatus>
   memoryEmbeddingBackfill: () => Promise<{ backfilled: number; error?: string }>
   onMemoryEmbeddingProgress: (callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void) => () => void
-  memoryDedupScan: (args: { workspaceId: string }) => Promise<{ pairsFound: number }>
+  memoryDedupScan: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number }>
+  memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }) => Promise<{ resolvedCount: number }>
+  memoryConsolidate: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number; reviewItemsCreated: number; staleArchived: number; contradictionsPruned: number; reviewQueueCapped: number }>
+  memoryReadClaudeMd: (args: { workspacePath: string }) => Promise<{ content: string | null; path: string }>
   memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
 
@@ -434,6 +453,7 @@ interface Api {
         text: string
         index?: number
       }
+      phaseProgress?: PhaseProgressEvent
       turnLimit?: {
         continuable: boolean
         continuationsUsed: number
@@ -569,7 +589,7 @@ interface Api {
   // Core Agent Aliases
   listCoreAgentAliases: () => Promise<CoreAgentAlias[]>
   upsertCoreAgentAlias: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     alias: string | null
     avatarKey: string | null
   }) => Promise<CoreAgentAlias>
@@ -577,16 +597,16 @@ interface Api {
   // Core Agent Prompts
   listCoreAgentPrompts: () => Promise<CoreAgentPrompt[]>
   getCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }) => Promise<CoreAgentPrompt | undefined>
   upsertCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
     promptText: string
   }) => Promise<CoreAgentPrompt>
   resetCoreAgentPrompt: (args: {
-    agentRole: 'da-vinci'
+    agentRole: 'specialist'
     mode: 'plan' | 'build' | 'danger'
   }) => Promise<CoreAgentPrompt>
 
@@ -753,6 +773,11 @@ interface Api {
     version: string | null
     error: string | null
   }>
+  checkOpenCodeCli: () => Promise<{
+    available: boolean
+    version?: string
+    error?: string
+  }>
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
   // Embedding Provider
@@ -903,6 +928,9 @@ interface Api {
     error?: string
   }>
 
+  // Persist plan card action on a message
+  chatSetPlanAction: (args: { messageId: string; action: string }) => Promise<{ success: boolean }>
+
   // Chat resume at checkpoint
   chatResumeAt: (args: { conversationId: string; messageId: string }) => Promise<void>
 
@@ -935,6 +963,7 @@ interface Api {
   deleteBug: (args: { id: string }) => Promise<void>
   updateBugNote: (args: { id: string; note: string }) => Promise<void>
   getBugCount: () => Promise<number>
+  bugExportMarkdown: (args: { markdown: string; defaultFilename?: string }) => Promise<void>
   onNewBug: (callback: (bug: BugRecord) => void) => () => void
 
   // Audit (Workspace Health)
@@ -951,6 +980,12 @@ interface Api {
     workspaceId: string
     findings: AuditFinding[]
   }) => Promise<{ conversationId: string }>
+  auditHandoffToChat: (args: {
+    workspaceId: string
+    auditRunId: string
+    trackIds?: AuditTrackId[]
+    mode: 'consolidated' | 'split'
+  }) => Promise<{ conversationIds: string[]; count: number }>
   auditRerunTrack: (args: {
     workspaceId: string
     trackId: AuditTrackId
@@ -986,6 +1021,13 @@ interface Api {
     planId: string
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
+  planGetStatusHistory: (args: { planId: string }) => Promise<PlanStatusHistoryEntry[]>
+  getPhaseProgress: (args: { conversationId: string }) => Promise<{
+    planId: string
+    planTitle: string
+    phases: Array<{ id: number; title: string }>
+    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[] }>
+  } | null>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
   onAuditResult: (cb: (data: AuditResult) => void) => () => void
@@ -1021,7 +1063,7 @@ interface Api {
     }) => void
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
-  grillCondenseRequirement: (args: { text: string }) => Promise<{ condensed: string }>
+  grillCondenseRequirement: (args: { text: string; workspaceId?: string }) => Promise<{ condensed: string }>
   grillGeneratePlan: (args: {
     sessionId: string
     ideaId?: string
@@ -1281,6 +1323,9 @@ interface Api {
     blueprintId: string
     workspaceId: string
   }) => Promise<{ retrying: boolean; phase: string }>
+  blueprintAcknowledgeReview: (args: {
+    blueprintId: string
+  }) => Promise<{ acknowledged: boolean }>
   blueprintGetTranscript: (args: {
     blueprintId: string
     afterSeq?: number
@@ -1303,6 +1348,7 @@ interface Api {
       text: string
       kind?: 'text' | 'tool'
       toolActivity?: Record<string, unknown>
+      taskId?: string
     }) => void
   ) => () => void
   onBlueprintPhaseComplete: (
@@ -1319,7 +1365,7 @@ interface Api {
       blueprintId: string
       workspaceId: string
       phase: string
-      artifact: { type: string; contentMd?: string; contentJson?: unknown }
+      artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
     }) => void
   ) => () => void
   blueprintApprovalRespond: (args: {
@@ -1333,6 +1379,43 @@ interface Api {
   onBlueprintClarifyFindings: (cb: (data: unknown) => void) => () => void
   onBlueprintClarifyQuestions: (cb: (data: unknown) => void) => () => void
   onBlueprintClarifyGate: (cb: (data: unknown) => void) => () => void
+  blueprintPreflightRun: (args: {
+    blueprintId: string
+    workspaceId: string
+  }) => Promise<{
+    checks: Array<{
+      id: string
+      name: string
+      kind: string
+      status: string
+      message: string
+      remediation?: string
+      sources: string[]
+    }>
+    ranAt: string
+    hasBlockers: boolean
+    hasWarnings: boolean
+  } | null>
+  onBlueprintPreflightResult: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      result: {
+        checks: Array<{
+          id: string
+          name: string
+          kind: string
+          status: string
+          message: string
+          remediation?: string
+          sources: string[]
+        }>
+        ranAt: string
+        hasBlockers: boolean
+        hasWarnings: boolean
+      }
+    }) => void
+  ) => () => void
   onBlueprintApprovalNeeded: (
     cb: (data: {
       blueprintId: string
@@ -1341,6 +1424,23 @@ interface Api {
       planSummary: string
       completion?: Record<string, unknown>
       reviewMarkdown?: string
+      preflight?: {
+        result: {
+          checks: Array<{
+            id: string
+            name: string
+            kind: string
+            status: string
+            message: string
+            remediation?: string
+            sources: string[]
+          }>
+          ranAt: string
+          hasBlockers: boolean
+          hasWarnings: boolean
+        }
+        overridden: boolean
+      }
     }) => void
   ) => () => void
   onBlueprintWaveStart: (
@@ -1385,8 +1485,9 @@ interface Api {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
     }) => void
   ) => () => void
@@ -1402,8 +1503,9 @@ interface Api {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+    runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
   }>
 
@@ -1478,7 +1580,16 @@ interface Api {
       service: string
       status: string
       summary: string
+      targetPage?: string
+      entityId?: string
     }) => void
+  ) => () => void
+  onNotificationNavigate: (
+    cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
+  ) => () => void
+  probeNotificationSupport: () => Promise<'granted' | 'denied' | 'unsupported'>
+  onTrayNavigate: (
+    cb: (data: { view: string; workspaceId?: string }) => void
   ) => () => void
 
   // E2E Testing

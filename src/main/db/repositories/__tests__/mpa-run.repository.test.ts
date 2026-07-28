@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb } from './db-test-helper'
+import { trySetupTestDb, seedConversation } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -31,11 +31,14 @@ if (!env) {
       assert.equal(run.title, 'Feature Implementation')
       assert.equal(run.goal, 'Implement user auth')
       assert.equal(run.goalType, 'feature')
-      assert.equal(run.status, 'pending')
+      assert.equal(run.status, 'running')
       assert.deepEqual(run.configJson, {})
     })
 
     test('createRun() accepts optional fields', () => {
+      // Seed a campaign so the FK is satisfied
+      const campId = 'camp-opt-' + Date.now()
+      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campId, wsId, 'Test Campaign', 'running')
       const run = mpaRunRepository.createRun({
         workspaceId: wsId,
         title: 'Full Run',
@@ -43,12 +46,12 @@ if (!env) {
         goalType: 'bugfix',
         grillSessionId: 'grill-1',
         configJson: { maxRetries: 3 },
-        campaignId: 'camp-1',
+        campaignId: campId,
         orderIndex: 0
       })
       assert.equal(run.grillSessionId, 'grill-1')
       assert.deepEqual(run.configJson, { maxRetries: 3 })
-      assert.equal(run.campaignId, 'camp-1')
+      assert.equal(run.campaignId, campId)
       assert.equal(run.orderIndex, 0)
     })
 
@@ -84,12 +87,14 @@ if (!env) {
         goal: 'g',
         goalType: 'feature'
       })
+      const campX = 'camp-x-' + Date.now()
+      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campX, freshWs, 'Campaign', 'running')
       mpaRunRepository.createRun({
         workspaceId: freshWs,
         title: 'Campaign Run',
         goal: 'g',
         goalType: 'feature',
-        campaignId: 'camp-x',
+        campaignId: campX,
         orderIndex: 0
       })
       const runs = mpaRunRepository.findByWorkspace(freshWs)
@@ -101,6 +106,7 @@ if (!env) {
 
     test('findByCampaign() returns runs ordered by orderIndex', () => {
       const campId = 'camp-order-test-' + Date.now()
+      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campId, wsId, 'Order Campaign', 'running')
       mpaRunRepository.createRun({
         workspaceId: wsId,
         title: 'Goal 2',
@@ -131,16 +137,17 @@ if (!env) {
         goal: 'g',
         goalType: 'feature'
       })
+      const convId = seedConversation(env.db, wsId, 'MPA Conv')
       const updated = mpaRunRepository.updateRun(run.id, {
         status: 'running',
         currentPhase: 'planning',
-        conversationId: 'conv-1',
+        conversationId: convId,
         totalTokens: 5000
       })
       assert.ok(updated)
       assert.equal(updated.status, 'running')
       assert.equal(updated.currentPhase, 'planning')
-      assert.equal(updated.conversationId, 'conv-1')
+      assert.equal(updated.conversationId, convId)
       assert.equal(updated.totalTokens, 5000)
     })
 
@@ -160,6 +167,7 @@ if (!env) {
 
     test('deleteByCampaignOrder() removes runs for campaign+order', () => {
       const campId = 'camp-del-test-' + Date.now()
+      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campId, wsId, 'Del Campaign', 'running')
       mpaRunRepository.createRun({
         workspaceId: wsId,
         title: 'To Delete',
@@ -212,7 +220,7 @@ if (!env) {
       })
       mpaRunRepository.createPhase({
         runId: run.id,
-        phaseType: 'build',
+        phaseType: 'execute',
         iteration: 1,
         agentRole: 'builder'
       })
@@ -257,7 +265,7 @@ if (!env) {
       })
       const phase = mpaRunRepository.createPhase({
         runId: run.id,
-        phaseType: 'build',
+        phaseType: 'execute',
         iteration: 1,
         agentRole: 'builder'
       })

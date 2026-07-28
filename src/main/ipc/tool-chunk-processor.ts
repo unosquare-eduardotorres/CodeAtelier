@@ -38,6 +38,52 @@ export interface ToolChunkOptions {
 // with false positives every time a model reaches for Write to author a plan).
 const PLAN_BLOCKED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 
+// ── Conditionally-loaded MCP tools ──
+// These tools belong to MCP servers that may not be running (e.g., memory server
+// when no workspace is configured). "No such tool available" for these is expected,
+// not a bug — suppress from the bug tracker.
+const CONDITIONAL_MCP_TOOLS = new Set(MCP_TOOLS.MEMORY._ALL_NAMES)
+
+/**
+ * True when a tool_use_error is a transient LLM JSON generation error —
+ * Claude occasionally drops key names or generates invalid JSON for tool
+ * parameters. The CLI rejects these with InputValidationError. These are
+ * self-correcting (the error goes back to Claude, which retries) and
+ * should not pollute the bug tracker.
+ */
+export function isTransientLlmJsonError(content: string | undefined): boolean {
+  if (!content) return false
+  return content.includes('could not be parsed as JSON') || content.includes('InputValidationError')
+}
+
+/**
+ * True when a tool_use_error is a self-correcting agent mistake —
+ * the error goes back to Claude which retries with corrected parameters.
+ * These should not pollute the bug tracker.
+ */
+export function isAgentToolMistake(content: string | undefined): boolean {
+  if (!content) return false
+  return (
+    /replace_all is false/i.test(content) ||
+    /has not been read yet/i.test(content) ||
+    /old_string and new_string are exactly the same/i.test(content) ||
+    /Path does not exist/i.test(content)
+  )
+}
+
+/**
+ * True when a tool_use_error is the expected outcome of calling a conditionally-loaded
+ * MCP tool that isn't currently available — not a real failure to report.
+ */
+export function isExpectedToolUnavailable(
+  toolName: string | undefined,
+  content: string | undefined
+): boolean {
+  if (!toolName || !content) return false
+  if (!content.includes('No such tool available')) return false
+  return CONDITIONAL_MCP_TOOLS.has(toolName)
+}
+
 /**
  * True when a tool_use_error is the expected "blocked in Plan mode" outcome of a
  * Write/Edit attempt — i.e. a permission gate, not a real failure to report.
@@ -157,15 +203,32 @@ export function processToolChunk(
       resultSummary = `${resultSummary} — ${toolInputSummary}`
     }
 
-    // Tag the activity as 'error' when the SDK returned a tool_use_error
+    // Tag the activity as 'error' when the SDK returned a tool_use_error,
+    // the stream-normalizer propagated is_error, or the content indicates a
+    // permission denial from the CLI.
+    const contentStr = typeof chunk.content === 'string' ? chunk.content : ''
+    const isPermissionDenial = /Claude requested permissions/.test(contentStr)
     const isToolError =
-      typeof chunk.content === 'string' && chunk.content.includes('<tool_use_error>')
+      contentStr.includes('<tool_use_error>') || chunk.isError === true || isPermissionDenial
 
-    // Auto-capture tool errors to the bug tracker (skip known format tags and
-    // expected plan-mode Write/Edit permission blocks).
+    // Auto-capture tool errors to the bug tracker (skip known format tags,
+    // expected plan-mode Write/Edit permission blocks, and permission denials
+    // which are user-initiated and not bugs).
     const skipTags = new Set(options.formatTagsToSkip ?? [])
     const isPlanModeBlock = isExpectedPlanModeBlock(chunk.toolName, chunk.content, options.mode)
-    if (isToolError && chunk.content && !skipTags.has(chunk.toolName ?? '') && !isPlanModeBlock) {
+    const isConditionalToolMissing = isExpectedToolUnavailable(chunk.toolName, chunk.content)
+    const isTransientJson = isTransientLlmJsonError(chunk.content)
+    const isAgentMistake = isAgentToolMistake(chunk.content)
+    if (
+      isToolError &&
+      chunk.content &&
+      !skipTags.has(chunk.toolName ?? '') &&
+      !isPlanModeBlock &&
+      !isConditionalToolMissing &&
+      !isTransientJson &&
+      !isAgentMistake &&
+      !isPermissionDenial
+    ) {
       reportToolError(chunk.toolName ?? 'Unknown', chunk.content, {
         agentType: options.agentType,
         workspaceId: options.workspaceId,
@@ -187,7 +250,12 @@ export function processToolChunk(
       operationType: meta.operationType
     }
     if (toolInputSummary) toolActivity.input = toolInputSummary
-    if (resultSummary) toolActivity.result = resultSummary
+    // Override result summary for permission denials with a clear label
+    if (isPermissionDenial) {
+      toolActivity.result = 'Permission denied'
+    } else if (resultSummary) {
+      toolActivity.result = resultSummary
+    }
     if (resultDetail) toolActivity.resultDetail = resultDetail
 
     return { type: 'tool_activity', toolActivity }

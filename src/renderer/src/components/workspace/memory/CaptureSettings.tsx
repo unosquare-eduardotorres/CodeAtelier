@@ -1,4 +1,4 @@
-import { Upload, Sparkles } from 'lucide-react'
+import { Upload } from 'lucide-react'
 
 import { SettingsCard } from '@renderer/components/common'
 import type { MemoryCaptureSettings } from '../../../../../shared/types'
@@ -46,7 +46,6 @@ interface CaptureSettingsProps {
   feedMessage: string | null
   feedError: string | null
   onFeedDocument: () => void
-  onRegenerateClaudeMd: () => void
   onUpdateSettings: (workspaceId: string, settings: Partial<MemoryCaptureSettings>) => void
   workspaceId: string
 }
@@ -57,7 +56,6 @@ export default function CaptureSettings({
   feedMessage,
   feedError,
   onFeedDocument,
-  onRegenerateClaudeMd,
   onUpdateSettings,
   workspaceId
 }: CaptureSettingsProps): React.JSX.Element {
@@ -65,7 +63,7 @@ export default function CaptureSettings({
     <div className="space-y-4">
       <SettingsCard>
         <h3 className="text-sm font-medium text-text-primary">Document Feed</h3>
-        <p className="text-xs text-text-secondary mt-0.5">Extract memories from documents and regenerate CLAUDE.md</p>
+        <p className="text-xs text-text-secondary mt-0.5">Extract memories from documents</p>
         <div className="flex gap-2 mt-3">
           <button
             onClick={onFeedDocument}
@@ -73,13 +71,6 @@ export default function CaptureSettings({
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20 disabled:opacity-50"
           >
             <Upload className="w-4 h-4" /> Feed Document
-          </button>
-          <button
-            onClick={onRegenerateClaudeMd}
-            disabled={feedStatus === 'running'}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-surface-overlay text-text-primary rounded-md hover:bg-surface-float disabled:opacity-50"
-          >
-            <Sparkles className="w-4 h-4" /> Regenerate CLAUDE.md
           </button>
         </div>
         {feedStatus !== 'idle' && (

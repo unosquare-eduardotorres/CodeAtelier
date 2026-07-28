@@ -9,7 +9,7 @@ import { MCP_TOOLS } from '../../../../shared/constants'
 /**
  * MPA Builder Adapter — implements the approved plan with full write access.
  *
- * CLI config: --permission-mode auto, --effort xhigh, --goal "condition", --max-turns 50
+ * CLI config: --permission-mode auto, --effort high, --goal "condition", --max-turns 50
  */
 export class MpaBuilderAdapter extends MpaBaseAdapter {
   readonly role: AgentRole = 'mpa-builder'
@@ -33,7 +33,7 @@ export class MpaBuilderAdapter extends MpaBaseAdapter {
   }
 
   protected getModelAction(): import('../../../../shared/types').ModelAction {
-    return 'da-vinci:build' // Builder uses build-tier model
+    return 'specialist:build' // Builder uses build-tier model
   }
 
   protected buildPhaseSystemPrompt(): string {

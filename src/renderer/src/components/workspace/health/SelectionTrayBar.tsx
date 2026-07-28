@@ -4,13 +4,14 @@
  * Summarizes the cross-track selection and offers Build Plan / Clear actions.
  */
 
-import { Wand2, X, Loader2 } from 'lucide-react'
+import { Wand2, X, Loader2, MessageSquare } from 'lucide-react'
 
 interface SelectionTrayBarProps {
   count: number
   auditorCount: number
   isGenerating: boolean
   onBuildPlan: () => void
+  onFixInChat: () => void
   onClear: () => void
 }
 
@@ -19,6 +20,7 @@ export default function SelectionTrayBar({
   auditorCount,
   isGenerating,
   onBuildPlan,
+  onFixInChat,
   onClear
 }: SelectionTrayBarProps): React.JSX.Element | null {
   if (count === 0) return null
@@ -40,6 +42,14 @@ export default function SelectionTrayBar({
           >
             <X size={13} />
             Clear
+          </button>
+          <button
+            onClick={onFixInChat}
+            disabled={isGenerating}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-lg bg-surface-overlay text-text-primary hover:bg-surface-float transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <MessageSquare size={14} />
+            Fix in Chat
           </button>
           <button
             onClick={onBuildPlan}

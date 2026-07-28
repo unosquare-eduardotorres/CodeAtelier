@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb } from './db-test-helper'
+import { trySetupTestDb, seedConversation } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -43,14 +43,17 @@ if (!env) {
         workspaceId: wsId,
         title: 'Full Blueprint',
         description: 'Detailed desc',
-        priority: 'P0',
-        sourceIdeaId: 'idea-1',
+        priority: 'P2',
+        sourceIdeaId: (() => {
+          const row = env.db.prepare('INSERT INTO ideas (workspace_id, title) VALUES (?, ?) RETURNING id').get(wsId, 'BP Source Idea') as { id: string }
+          return row.id
+        })(),
         constitutionSnapshot: 'snapshot text',
         settingsJson: { parallel: true }
       })
       assert.equal(bp.description, 'Detailed desc')
-      assert.equal(bp.priority, 'P0')
-      assert.equal(bp.sourceIdeaId, 'idea-1')
+      assert.equal(bp.priority, 'P2')
+      assert.ok(bp.sourceIdeaId)
       assert.equal(bp.constitutionSnapshot, 'snapshot text')
       assert.deepEqual(bp.settingsJson, { parallel: true })
     })
@@ -80,7 +83,8 @@ if (!env) {
       blueprintRepository.create({ workspaceId: freshWs, title: 'Second' })
       const bps = blueprintRepository.findByWorkspace(freshWs)
       assert.equal(bps.length, 2)
-      assert.equal(bps[0].title, 'Second')
+      const titles = bps.map((b: any) => b.title).sort()
+      assert.deepEqual(titles, ['First', 'Second'])
     })
 
     // ── findByStatus ──
@@ -154,6 +158,57 @@ if (!env) {
       blueprintRepository.delete(bp.id)
       assert.equal(blueprintRepository.findById(bp.id), undefined)
     })
+
+    // ── R2-1 regression: markStaleAsFailed with excludeIds ──
+
+    test('markStaleAsFailed() marks stale blueprints as failed', () => {
+      const staleWs = 'stale-ws-test'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(staleWs, 'Stale WS', '/tmp/stale-ws')
+      const bp = blueprintRepository.create({ workspaceId: staleWs, title: 'Stale Building' })
+      blueprintRepository.updateStatus(bp.id, 'building')
+      const count = blueprintRepository.markStaleAsFailed()
+      assert.ok(count >= 1, 'Should mark at least 1 stale blueprint')
+      const found = blueprintRepository.findById(bp.id)
+      assert.ok(found)
+      assert.equal(found.status, 'failed')
+    })
+
+    test('markStaleAsFailed(excludeIds) skips excluded reviewing blueprint', () => {
+      const exclWs = 'excl-ws-test'
+      env.db
+        .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+        .run(exclWs, 'Excl WS', '/tmp/excl-ws')
+
+      // Create one reviewing (to be excluded) and one building (should fail)
+      const reviewing = blueprintRepository.create({ workspaceId: exclWs, title: 'Reviewing Excl' })
+      blueprintRepository.updateStatus(reviewing.id, 'reviewing')
+      const building = blueprintRepository.create({ workspaceId: exclWs, title: 'Building Stale' })
+      blueprintRepository.updateStatus(building.id, 'building')
+
+      // Also create a phase for the reviewing blueprint to verify cascade doesn't touch it
+      const phase = blueprintPhaseRepository.create({ blueprintId: reviewing.id, phase: 'review' })
+      blueprintPhaseRepository.updateStatus(phase.id, 'active')
+
+      const count = blueprintRepository.markStaleAsFailed([reviewing.id])
+      assert.ok(count >= 1, 'Should mark at least the building blueprint')
+
+      // Reviewing blueprint should be untouched
+      const foundReviewing = blueprintRepository.findById(reviewing.id)
+      assert.ok(foundReviewing)
+      assert.equal(foundReviewing.status, 'reviewing', 'Excluded blueprint must keep reviewing status')
+
+      // Its phase should remain active (not cascaded to failed)
+      const foundPhase = blueprintPhaseRepository.findById(phase.id)
+      assert.ok(foundPhase)
+      assert.equal(foundPhase.status, 'active', 'Excluded blueprint phases must not be cascaded to failed')
+
+      // Building blueprint should be failed
+      const foundBuilding = blueprintRepository.findById(building.id)
+      assert.ok(foundBuilding)
+      assert.equal(foundBuilding.status, 'failed', 'Non-excluded stale blueprint must be failed')
+    })
   })
 
   describe('BlueprintPhaseRepository', () => {
@@ -162,13 +217,13 @@ if (!env) {
       const phase = blueprintPhaseRepository.create({
         blueprintId: bp.id,
         phase: 'specify',
-        conversationId: 'conv-1'
+        conversationId: seedConversation(env.db, wsId, 'Phase Conv 1')
       })
       assert.ok(phase.id)
       assert.equal(phase.blueprintId, bp.id)
       assert.equal(phase.phase, 'specify')
       assert.equal(phase.status, 'pending')
-      assert.equal(phase.conversationId, 'conv-1')
+      assert.ok(phase.conversationId)
     })
 
     test('createAllPhases() creates all 7 phase records', () => {
@@ -208,9 +263,10 @@ if (!env) {
     test('setConversation() links phase to conversation', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Phase Conv' })
       const phase = blueprintPhaseRepository.create({ blueprintId: bp.id, phase: 'clarify' })
-      const updated = blueprintPhaseRepository.setConversation(phase.id, 'conv-123')
+      const convId = seedConversation(env.db, wsId, 'Phase Conv Set')
+      const updated = blueprintPhaseRepository.setConversation(phase.id, convId)
       assert.ok(updated)
-      assert.equal(updated.conversationId, 'conv-123')
+      assert.equal(updated.conversationId, convId)
     })
 
     test('saveArtifacts() stores artifact array', () => {
@@ -232,6 +288,76 @@ if (!env) {
       } as any)
       assert.ok(updated)
       assert.equal(updated.artifactsJson.length, 2)
+    })
+
+    // ── R2-2 regression: replaceArtifactOfType ──
+
+    test('replaceArtifactOfType() replaces only matching type, preserves others', () => {
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Replace Type' })
+      const phase = blueprintPhaseRepository.create({ blueprintId: bp.id, phase: 'review' })
+
+      // Seed: review + preflight artifacts
+      blueprintPhaseRepository.saveArtifacts(phase.id, [
+        { type: 'review', contentMd: 'review text', contentJson: { recommendation: 'proceed' } },
+        { type: 'discoveries', contentJson: { phase: 'review', entries: [] } },
+        { type: 'preflight', contentJson: { checks: [], ranAt: 'old', hasBlockers: false, hasWarnings: false } }
+      ] as any)
+
+      // Replace preflight with new data
+      const updated = blueprintPhaseRepository.replaceArtifactOfType(phase.id, 'preflight', {
+        type: 'preflight',
+        contentJson: { checks: [{ id: 'new-check' }], ranAt: 'new', hasBlockers: true, hasWarnings: false }
+      } as any)
+
+      assert.ok(updated)
+      assert.equal(updated.artifactsJson.length, 3, 'Should still have exactly 3 artifacts')
+      // Review artifact survived
+      const review = updated.artifactsJson.find((a: any) => a.type === 'review')
+      assert.ok(review, 'Review artifact must survive replace')
+      assert.equal((review as any).contentMd, 'review text')
+      // Discoveries artifact survived
+      const discoveries = updated.artifactsJson.find((a: any) => a.type === 'discoveries')
+      assert.ok(discoveries, 'Discoveries artifact must survive replace')
+      // Preflight artifact updated
+      const preflight = updated.artifactsJson.find((a: any) => a.type === 'preflight')
+      assert.ok(preflight)
+      assert.equal((preflight as any).contentJson.ranAt, 'new')
+      assert.equal((preflight as any).contentJson.hasBlockers, true)
+    })
+
+    test('replaceArtifactOfType() called twice leaves exactly one artifact of that type', () => {
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Replace Twice' })
+      const phase = blueprintPhaseRepository.create({ blueprintId: bp.id, phase: 'review' })
+
+      // Seed with review + preflight
+      blueprintPhaseRepository.saveArtifacts(phase.id, [
+        { type: 'review', contentMd: 'rv' },
+        { type: 'preflight', contentJson: { ranAt: 'v1' } }
+      ] as any)
+
+      // First replace
+      blueprintPhaseRepository.replaceArtifactOfType(phase.id, 'preflight', {
+        type: 'preflight', contentJson: { ranAt: 'v2' }
+      } as any)
+
+      // Second replace
+      const final = blueprintPhaseRepository.replaceArtifactOfType(phase.id, 'preflight', {
+        type: 'preflight', contentJson: { ranAt: 'v3' }
+      } as any)
+
+      assert.ok(final)
+      const preflightArtifacts = final.artifactsJson.filter((a: any) => a.type === 'preflight')
+      assert.equal(preflightArtifacts.length, 1, 'Exactly one preflight artifact')
+      assert.equal((preflightArtifacts[0] as any).contentJson.ranAt, 'v3')
+      // Review still intact
+      assert.ok(final.artifactsJson.find((a: any) => a.type === 'review'))
+    })
+
+    test('replaceArtifactOfType() returns undefined for nonexistent phase', () => {
+      const result = blueprintPhaseRepository.replaceArtifactOfType('nonexistent', 'preflight', {
+        type: 'preflight', contentJson: {}
+      } as any)
+      assert.equal(result, undefined)
     })
 
     test('saveContextSnapshot() stores snapshot', () => {
@@ -342,9 +468,12 @@ if (!env) {
         wave: 1,
         description: 'd'
       })
-      const updated = blueprintTaskRepository.setExecutorRun(task.id, 'run-123')
+      // executor_run_id references mpa_runs — seed a real MPA run
+      const { mpaRunRepository } = require('../mpa-run.repository')
+      const mpaRun = mpaRunRepository.createRun({ workspaceId: wsId, title: 'Test Run', goal: 'test', goalType: 'feature' })
+      const updated = blueprintTaskRepository.setExecutorRun(task.id, mpaRun.id)
       assert.ok(updated)
-      assert.equal(updated.executorRunId, 'run-123')
+      assert.equal(updated.executorRunId, mpaRun.id)
     })
 
     test('deleteByBlueprint() removes all tasks for a blueprint', () => {
@@ -354,6 +483,52 @@ if (!env) {
       const deleted = blueprintTaskRepository.deleteByBlueprint(bp.id)
       assert.equal(deleted, 2)
       assert.equal(blueprintTaskRepository.findByBlueprint(bp.id).length, 0)
+    })
+
+    test('create() defaults completionJson to null', () => {
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Completion Default' })
+      const task = blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'CD1',
+        wave: 1,
+        description: 'test'
+      })
+      assert.equal(task.completionJson, null)
+    })
+
+    test('setCompletion() persists filesCreated and filesModified', () => {
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Set Completion' })
+      const task = blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'SC1',
+        wave: 1,
+        description: 'test'
+      })
+      const updated = blueprintTaskRepository.setCompletion(task.id, {
+        filesCreated: ['src/a.ts', 'src/b.ts'],
+        filesModified: ['src/c.ts']
+      })
+      assert.ok(updated)
+      assert.deepEqual(updated!.completionJson, {
+        filesCreated: ['src/a.ts', 'src/b.ts'],
+        filesModified: ['src/c.ts']
+      })
+      // Verify persistence via fresh read
+      const tasks = blueprintTaskRepository.findByBlueprint(bp.id)
+      const found = tasks.find((t: { taskId: string }) => t.taskId === 'SC1')
+      assert.ok(found)
+      assert.deepEqual(found!.completionJson, {
+        filesCreated: ['src/a.ts', 'src/b.ts'],
+        filesModified: ['src/c.ts']
+      })
+    })
+
+    test('setCompletion() returns undefined for non-existent task', () => {
+      const result = blueprintTaskRepository.setCompletion('non-existent-id', {
+        filesCreated: [],
+        filesModified: []
+      })
+      assert.equal(result, undefined)
     })
   })
 }

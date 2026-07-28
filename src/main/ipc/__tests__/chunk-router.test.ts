@@ -29,7 +29,7 @@ function ctx(conversationId: string, window: BrowserWindow): ChunkRouterContext 
   return {
     mainWindow: window,
     conversationId,
-    role: 'da-vinci',
+    role: 'specialist',
     contentAccumulator: { value: '' }
   }
 }
@@ -407,6 +407,50 @@ describe('chunk-router › handleStatus busy suppression', () => {
       { type: 'status', content: '{"type":"idle"}' } as StreamChunk
     )
     assert.equal(send.callCount, 0)
+  })
+})
+
+describe('chunk-router › handlePhaseProgress', () => {
+  test('missing phaseProgress → no send', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-no-phase', window), { type: 'phase_progress' } as StreamChunk)
+    assert.equal(send.callCount, 0)
+  })
+
+  test('with phaseProgress → sends CHAT_MESSAGE_CHUNK with payload', () => {
+    const { window, send } = mockWindow()
+    const progress = {
+      planId: 'plan-123',
+      phaseId: 2,
+      phaseTitle: 'Implementing API routes',
+      status: 'in_progress' as const,
+      totalPhases: 5,
+      message: 'Working on route handlers'
+    }
+    routeChunk(ctx('c-phase', window), {
+      type: 'phase_progress',
+      phaseProgress: progress
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.CHAT_MESSAGE_CHUNK)
+    const payload = send.lastCall?.[1] as Record<string, unknown>
+    assert.deepEqual(payload.phaseProgress, progress)
+    assert.equal(payload.chunk, '')
+  })
+
+  test('phaseProgress with null planId → sends correctly', () => {
+    const { window, send } = mockWindow()
+    routeChunk(ctx('c-null-plan', window), {
+      type: 'phase_progress',
+      phaseProgress: {
+        planId: null,
+        phaseId: 1,
+        phaseTitle: 'Setup',
+        status: 'started',
+        totalPhases: 3
+      }
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
   })
 })
 

@@ -18,6 +18,8 @@ describe('deriveSkipServers', () => {
     assert.ok(result.includes('checkpoint-context'), 'Should skip checkpoint-context')
     assert.ok(result.includes('control-actions'), 'Should skip control-actions')
     assert.ok(result.includes('github-context'), 'Should skip github-context')
+    assert.ok(result.includes('semantic-search'), 'Should skip semantic-search')
+    assert.ok(result.includes('code-analysis'), 'Should skip code-analysis')
   })
 
   test('skips_control_actions_when_no_control_tools_in_allowed', () => {
@@ -59,13 +61,15 @@ describe('deriveSkipServers', () => {
     const result = deriveSkipServers([
       'mcp__checkpoint-context__list_checkpoints',
       'mcp__control-actions__emit_plan',
-      'mcp__github-context__get_pr_status'
+      'mcp__github-context__get_pr_status',
+      'mcp__semantic-search__semantic_search',
+      'mcp__code-analysis__eslint_check'
     ])
     assert.equal(result, undefined, 'No servers to skip when all have tools allowed')
   })
 
   test('blueprint_typical_allowedTools_skips_correct_servers', () => {
-    // Simulates the actual blueprint allowedTools after W1 changes
+    // Simulates the actual blueprint allowedTools (full mode, not lean)
     const blueprintTools = [
       'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
       'mcp__code-graph__search_identifiers',
@@ -83,7 +87,30 @@ describe('deriveSkipServers', () => {
     assert.ok(result.includes('checkpoint-context'), 'Skip checkpoint-context')
     assert.ok(result.includes('control-actions'), 'Skip control-actions')
     assert.ok(result.includes('github-context'), 'Skip github-context')
+    // semantic-search and code-analysis are in allowedTools — NOT skipped
+    assert.ok(!result.includes('semantic-search'), 'Keep semantic-search')
+    assert.ok(!result.includes('code-analysis'), 'Keep code-analysis')
     assert.equal(result.length, 3, 'Exactly 3 servers skipped')
+  })
+
+  // Phase 1.3: Lean build MCP removes semantic-search + code-analysis
+  test('lean_build_allowedTools_skips_semantic_search_and_code_analysis', () => {
+    // Simulates build allowedTools with leanBuildMcp=true (no semantic-search, no code-analysis)
+    const leanBuildTools = [
+      'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch', 'ListDir',
+      'mcp__code-graph__search_identifiers',
+      'mcp__code-graph__file_outline',
+      'mcp__git-context__git_log',
+      'mcp__memory__memory_search'
+    ]
+    const result = deriveSkipServers(leanBuildTools)
+    assert.ok(result, 'Should return skip list for lean build')
+    assert.ok(result.includes('semantic-search'), 'Lean: skip semantic-search')
+    assert.ok(result.includes('code-analysis'), 'Lean: skip code-analysis')
+    assert.ok(result.includes('checkpoint-context'), 'Lean: skip checkpoint-context')
+    assert.ok(result.includes('control-actions'), 'Lean: skip control-actions')
+    assert.ok(result.includes('github-context'), 'Lean: skip github-context')
+    assert.equal(result.length, 5, 'All 5 skippable servers absent from lean build')
   })
 })
 

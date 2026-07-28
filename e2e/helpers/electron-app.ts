@@ -53,3 +53,19 @@ export async function clickByText(page: Page, text: string): Promise<void> {
 export async function waitForSelector(page: Page, selector: string, timeout = 5000): Promise<void> {
   await page.waitForSelector(selector, { timeout })
 }
+
+/**
+ * H3 FIX: Pin parallelBuildAgents=1 in e2e tests to prevent nondeterministic
+ * parallel scheduling from breaking shim-based blueprint expectations.
+ * Call this in blueprint e2e test setup before triggering build operations.
+ */
+export async function pinSequentialBuild(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    (window as unknown as { api: { setAppPreference: (args: { key: string; value: string }) => Promise<void> } }).api.setAppPreference({
+      key: 'parallel_build_agents',
+      value: '1'
+    })
+  ).catch(() => {
+    // Swallow if preload API not yet available (page not fully loaded)
+  })
+}

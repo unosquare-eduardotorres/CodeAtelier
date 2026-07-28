@@ -14,8 +14,8 @@ export function registerCoreAgentAliasIpc(): void {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.CORE_AGENT_UPSERT)
     const agentRole = requireString(args, 'agentRole', IPC_CHANNELS.CORE_AGENT_UPSERT)
-    if (agentRole !== 'da-vinci') {
-      throw new Error(`${IPC_CHANNELS.CORE_AGENT_UPSERT}: agentRole must be "da-vinci"`)
+    if (agentRole !== 'specialist') {
+      throw new Error(`${IPC_CHANNELS.CORE_AGENT_UPSERT}: agentRole must be "specialist"`)
     }
     const alias = optionalNullableString(args, 'alias', IPC_CHANNELS.CORE_AGENT_UPSERT)
     const avatarKey = optionalNullableString(args, 'avatarKey', IPC_CHANNELS.CORE_AGENT_UPSERT)

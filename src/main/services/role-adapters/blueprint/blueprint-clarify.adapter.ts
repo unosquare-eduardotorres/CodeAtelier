@@ -4,7 +4,7 @@
  * Unlike SPECIFY (one-shot), CLARIFY is interactive: the first turn triggers
  * gap analysis, follow-up turns are user answers via session.send().
  *
- * CLI config: --permission-mode plan, --effort xhigh, goalMode: enforce (/goal via stdin)
+ * CLI config: --permission-mode plan, --effort high, goalMode: enforce (/goal via stdin)
  */
 
 import { BlueprintBaseAdapter } from './blueprint-base.adapter'

@@ -87,7 +87,7 @@ test.describe('Grill Sidebar & Decisions', () => {
     const trackInfo = sidebar.getByText(/track|iteration|score/i).first()
     const hasTrackInfo = await trackInfo.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    // Should show DaVinci analyst portrait or score gauge
+    // Should show specialist analyst portrait or score gauge
     const scoreGauge = sidebar.locator('svg, [class*="gauge"]').first()
     const hasGauge = await scoreGauge.isVisible({ timeout: 3_000 }).catch(() => false)
 
@@ -230,7 +230,7 @@ test.describe('Grill Sidebar & Decisions', () => {
       return
     }
 
-    // Evaluation bubble appears in the chat stream after DaVinci analysis
+    // Evaluation bubble appears in the chat stream after specialist analysis
     const evalBubble = page.locator('[data-testid="grill-evaluation-bubble"]')
     const hasBubble = await evalBubble.isVisible({ timeout: 30_000 }).catch(() => false)
 

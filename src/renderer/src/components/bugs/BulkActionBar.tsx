@@ -1,10 +1,11 @@
-import { CheckCircle, Download, Trash2, X } from 'lucide-react'
+import { CheckCircle, Copy, Download, Trash2, X } from 'lucide-react'
 
 interface BulkActionBarProps {
   selectedCount: number
   onResolveAll: () => void
   onDeleteAll: () => void
   onExport: () => void
+  onCopyErrors: () => void
   onClearSelection: () => void
 }
 
@@ -13,6 +14,7 @@ export default function BulkActionBar({
   onResolveAll,
   onDeleteAll,
   onExport,
+  onCopyErrors,
   onClearSelection
 }: BulkActionBarProps): React.JSX.Element {
   return (
@@ -29,6 +31,15 @@ export default function BulkActionBar({
         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
       >
         <CheckCircle size={14} /> Resolve
+      </button>
+
+      {/* Copy Errors */}
+      <button
+        data-testid="bug-bulk-copy"
+        onClick={onCopyErrors}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-surface-base text-text-secondary hover:bg-surface-hover transition-colors"
+      >
+        <Copy size={14} /> Copy Errors
       </button>
 
       {/* Export */}

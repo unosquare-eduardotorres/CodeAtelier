@@ -40,7 +40,7 @@ export function notifyChunkTaps(requestId: string | undefined, chunk: StreamChun
 export function forwardChunkToRenderer(
   mainWindow: BrowserWindow,
   conversationId: string,
-  role: 'da-vinci' | 'specialist',
+  role: 'specialist',
   chunk: StreamChunk,
   contentAccumulator: { value: string },
   workspacePath?: string,

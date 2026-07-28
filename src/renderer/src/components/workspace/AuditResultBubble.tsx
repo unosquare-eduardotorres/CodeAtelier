@@ -7,6 +7,7 @@
 
 import { ShieldCheck } from 'lucide-react'
 import { Avatar } from '@renderer/components/common'
+import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import ScoreGauge from './ScoreGauge'
 
 interface AuditResultBubbleProps {
@@ -22,6 +23,7 @@ export default function AuditResultBubble({
   trackName,
   findingsCount
 }: AuditResultBubbleProps): React.JSX.Element {
+  const avatarSize = useChatAvatarSize()
   const hasStructuredScore = score > 0 || findingsCount > 0
   const borderColor = hasStructuredScore ? 'border-primary/30' : 'border-warning/30'
   const bgColor = hasStructuredScore ? 'bg-primary-muted/10' : 'bg-warning/5'
@@ -30,7 +32,7 @@ export default function AuditResultBubble({
     <div className="flex gap-3 flex-row">
       {/* Avatar — same as message bubbles */}
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey="atelier-auditor" size="xl" />
+        <Avatar avatarKey="atelier-auditor" size={avatarSize} />
       </div>
 
       <div
@@ -64,6 +66,7 @@ export default function AuditResultBubble({
                 {findingsCount} finding{findingsCount !== 1 ? 's' : ''}
               </span>
             </div>
+            {/* Plain text — no markdown expected in audit summaries */}
             <p className="text-sm text-text-secondary leading-relaxed line-clamp-4">{summary}</p>
             {!hasStructuredScore && (
               <p className="text-[10px] text-text-muted mt-1.5 italic">

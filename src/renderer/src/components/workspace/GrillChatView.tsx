@@ -10,6 +10,7 @@
 
 import { useGrillStreamStore } from '@renderer/store/grill-stream.store'
 import { Avatar } from '@renderer/components/common'
+import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import { MessageBubble, QuestionItem } from '@renderer/components/chat'
 import type { MessageIdentity } from '@renderer/components/chat'
 import type { QuestionState } from '@renderer/components/chat'
@@ -77,7 +78,7 @@ interface GrillChatViewProps {
 
 // ── Message-history renderer ────────────────────────────────────────────────
 
-function renderGrillMessage(msg: GrillChatMessage, i: number): React.ReactNode {
+function renderGrillMessage(msg: GrillChatMessage, i: number, avatarSize: 'md' | 'lg' | 'xl'): React.ReactNode {
   switch (msg.type) {
     case 'agent':
       return (
@@ -104,7 +105,7 @@ function renderGrillMessage(msg: GrillChatMessage, i: number): React.ReactNode {
             {msg.content}
           </div>
           <div className="flex-shrink-0 mt-0.5">
-            <Avatar avatarKey="user" size="md" />
+            <Avatar avatarKey="user" size={avatarSize} />
           </div>
         </div>
       )
@@ -145,6 +146,8 @@ export default function GrillChatView({
   onQuestionChange,
   round
 }: GrillChatViewProps): React.JSX.Element {
+  const avatarSize = useChatAvatarSize()
+
   // Read live streaming state for progressive rendering during evaluation.
   const segments = useGrillStreamStore((s) => s.segments)
   const currentContent = useGrillStreamStore((s) => s.currentContent)
@@ -190,7 +193,7 @@ export default function GrillChatView({
     <div data-testid="grill-chat-view" className="flex-1 min-w-0 flex flex-col min-h-0">
       <StreamingTranscript
         messages={messages}
-        renderMessage={renderGrillMessage}
+        renderMessage={(msg, i) => renderGrillMessage(msg, i, avatarSize)}
         segments={segments}
         currentContent={currentContent}
         currentToolActivities={currentToolActivities}

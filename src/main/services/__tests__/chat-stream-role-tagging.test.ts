@@ -3,7 +3,7 @@
  *
  * The plan ("Fix bubble identity drift + auto-swap + role-tagging alignment")
  * required chat-stream.service to write the active adapter's role + agentId to
- * messageRepository.create() instead of hardcoding 'da-vinci'. This test pins
+ * messageRepository.create() instead of hardcoding a role. This test pins
  * the contract by:
  *
  *   1. Verifying the ChatAgentService accessors return the correct
@@ -19,15 +19,14 @@ import { ProjectSpecialistRoleAdapter } from '../role-adapters/project-specialis
 import { trySetupTestDb } from '../../db/repositories/__tests__/db-test-helper'
 
 describe('ChatStreamService role tagging', () => {
-  test('getActiveMessageRole_returns_da-vinci_for_DaVinciRoleAdapter', () => {
-    // When no workspace session is active, getActiveAdapter() falls back to
-    // the built-in daVinciAdapter. Clear _activeWorkspaceId to ensure fallback.
+  test('getActiveMessageRole_returns_specialist_when_no_session', () => {
+    // When no workspace session is active, getActiveMessageRole() returns 'specialist'.
     const svc = chatAgentService as unknown as { _activeWorkspaceId: string | null }
     const originalActiveId = svc._activeWorkspaceId
     svc._activeWorkspaceId = null
     try {
-      assert.equal(chatAgentService.getActiveMessageRole(), 'da-vinci')
-      assert.equal(chatAgentService.getActiveAgentId(), 'da-vinci')
+      assert.equal(chatAgentService.getActiveMessageRole(), 'specialist')
+      assert.equal(chatAgentService.getActiveAgentId(), 'specialist')
     } finally {
       svc._activeWorkspaceId = originalActiveId
     }
@@ -82,15 +81,15 @@ describe('ChatStreamService role tagging', () => {
     .get(wsId, 'Role-tagging test', 'plan') as { id: string }
   const conversationId = conv.id
 
-  test('messageRepository_persists_da-vinci_role_with_da-vinci_agentId', () => {
+  test('messageRepository_persists_specialist_role_with_specialist_agentId', () => {
     const saved = messageRepository.create(
       conversationId,
-      'da-vinci',
-      'hello from DaVinci',
-      'da-vinci'
+      'specialist',
+      'hello from specialist',
+      'specialist'
     )
-    assert.equal(saved.role, 'da-vinci')
-    assert.equal(saved.agentId, 'da-vinci')
+    assert.equal(saved.role, 'specialist')
+    assert.equal(saved.agentId, 'specialist')
   })
 
   test('messageRepository_persists_specialist_role_with_workspace_specialist_agentId', () => {
@@ -107,12 +106,12 @@ describe('ChatStreamService role tagging', () => {
 
   test('messages_table_round_trip_preserves_role_and_agent_id', () => {
     const all = messageRepository.findByConversation(conversationId)
-    const dv = all.find((m) => m.role === 'da-vinci')
-    const sp = all.find((m) => m.role === 'specialist')
-    assert.ok(dv, 'expected a da-vinci message in the conversation')
+    const sp = all.find((m) => m.agentId === 'specialist')
+    const wsSp = all.find((m) => m.agentId === `workspace-specialist-${wsId}`)
     assert.ok(sp, 'expected a specialist message in the conversation')
-    assert.equal(dv!.agentId, 'da-vinci')
-    assert.equal(sp!.agentId, `workspace-specialist-${wsId}`)
+    assert.ok(wsSp, 'expected a workspace-specialist message in the conversation')
+    assert.equal(sp!.role, 'specialist')
+    assert.equal(wsSp!.role, 'specialist')
   })
 })
 

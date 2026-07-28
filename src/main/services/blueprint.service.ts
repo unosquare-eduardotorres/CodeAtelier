@@ -92,13 +92,15 @@ interface BlueprintPipelineState {
   abortController: AbortController | null
   // M2: Additional fields for snapshot sync
   phaseStartedAt: number | null
-  pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null
+  pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
   lastError: string | null
   waveState: {
     wave: number
     taskCount: number
     tasks: Record<string, BlueprintTaskStatus>
   } | null
+  /** G3: Currently running tasks during Build phase parallel execution. */
+  runningTasks: Record<string, { taskId: string; description: string }> | null
 }
 
 // ── Service ──
@@ -126,7 +128,8 @@ export class BlueprintService extends EventEmitter {
         phaseStartedAt: null,
         pendingApproval: null,
         lastError: null,
-        waveState: null
+        waveState: null,
+        runningTasks: null
       }
       this.pipelines.set(workspaceId, state)
     }
@@ -180,6 +183,7 @@ export class BlueprintService extends EventEmitter {
       clarifyQuestions,
       pendingApproval: state?.pendingApproval ?? null,
       wave: state?.waveState ?? null,
+      runningTasks: state?.runningTasks ?? null,
       lastError: state?.lastError ?? null
     }
   }
@@ -207,10 +211,16 @@ export class BlueprintService extends EventEmitter {
   }
 
   /** Set pending approval state (from review service). */
-  setPendingApproval(workspaceId: string, approval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string } | null): void {
+  setPendingApproval(workspaceId: string, approval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null): void {
     const state = this.getOrCreatePipeline(workspaceId)
     state.pendingApproval = approval
     this.publishSnapshot(workspaceId)
+  }
+
+  /** Get pending approval state (for preflight re-run updates). */
+  getPendingApproval(workspaceId: string): { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null {
+    const state = this.getOrCreatePipeline(workspaceId)
+    return state.pendingApproval
   }
 
   /** Set last error for snapshot (from phase failures). */
@@ -226,6 +236,16 @@ export class BlueprintService extends EventEmitter {
   ): void {
     const state = this.getOrCreatePipeline(workspaceId)
     state.waveState = wave
+    this.publishSnapshot(workspaceId)
+  }
+
+  /** G3: Update running tasks map (from build service parallel scheduler). */
+  setRunningTasks(
+    workspaceId: string,
+    tasks: Record<string, { taskId: string; description: string }> | null
+  ): void {
+    const state = this.getOrCreatePipeline(workspaceId)
+    state.runningTasks = tasks
     this.publishSnapshot(workspaceId)
   }
 
@@ -272,6 +292,17 @@ export class BlueprintService extends EventEmitter {
   /** Mark a pipeline as running for a workspace. Called by phase services. */
   markPipelineRunning(workspaceId: string, blueprintId: string, phase: BlueprintPhaseType): void {
     const machine = this.getMachine(workspaceId)
+
+    // Auto-recover from terminal states when starting a NEW blueprint.
+    // A previous blueprint's failed/cancelled state should not block a fresh run.
+    if (machine.isTerminal() && machine.blueprintId !== blueprintId) {
+      bpLog.info(
+        `[markPipelineRunning] Auto-resetting terminal machine (state=${machine.currentState}, ` +
+          `old=${machine.blueprintId}) for new blueprint ${blueprintId}`
+      )
+      machine.forceReset()
+    }
+
     // BP-01: State machine guards against concurrent starts — startPhase is only
     // valid from idle. If the machine is in any other state, the transition fails.
     if (!machine.transition('startPhase', { blueprintId, phase })) {
@@ -304,9 +335,12 @@ export class BlueprintService extends EventEmitter {
     const state = this.pipelines.get(workspaceId)
     if (state) {
       state.running = false
+      state.blueprintId = null       // Clear stale identity
+      state.currentPhase = null      // Clear stale phase
       state.abortController = null
       state.phaseStartedAt = null
       state.waveState = null
+      state.runningTasks = null
     }
     const machine = this.getMachine(workspaceId)
     // phaseComplete is idempotent when idle — safe to call multiple times.
@@ -418,7 +452,16 @@ export class BlueprintService extends EventEmitter {
     // Delay to let finally blocks (session.stop, markPipelineStopped) complete
     setTimeout(() => {
       try {
-        this.retryPhase(ctx.blueprintId)
+        // Guard: if the pipeline is now running (user started another blueprint),
+        // skip the auto-retry — don't interrupt the active pipeline.
+        if (this.isRunning(ctx.workspaceId)) {
+          bpLog.info(
+            `[phase-auto-retry] Pipeline now running for workspace ${ctx.workspaceId} ` +
+              `— skipping scheduled retry for blueprint ${ctx.blueprintId}`
+          )
+          return
+        }
+        this.retryPhase(ctx.blueprintId, { resetRemediation: false })
         this.emit('autoRetry', {
           blueprintId: ctx.blueprintId,
           workspaceId: ctx.workspaceId,
@@ -601,6 +644,11 @@ export class BlueprintService extends EventEmitter {
       for (const phase of phases) {
         if (phase.status === 'active') {
           blueprintPhaseRepository.updateStatus(phase.id, 'pending')
+          // BP-CANCEL-CONTEXT-CLEAR: Clear retry context when cancelling to prevent
+          // stale metadata from leaking into future retry attempts.
+          if (phase.contextSnapshot) {
+            blueprintPhaseRepository.saveContextSnapshot(phase.id, null)
+          }
         }
       }
       blueprintRepository.updateStatus(bpId!, 'cancelled')
@@ -657,6 +705,11 @@ export class BlueprintService extends EventEmitter {
         // Mark pending→complete to avoid orphaned phases
         blueprintPhaseRepository.updateStatus(currentPhaseRecord.id, 'complete')
       }
+      // BP-RETRY-CONTEXT-CLEAR: Clear retry context on successful completion to prevent
+      // stale data from leaking into future retries (e.g., remediation cycle retries).
+      if (currentPhaseRecord.contextSnapshot) {
+        blueprintPhaseRepository.saveContextSnapshot(currentPhaseRecord.id, null)
+      }
     }
 
     // Activate next phase
@@ -704,6 +757,11 @@ export class BlueprintService extends EventEmitter {
       const phaseIdx = BLUEPRINT_PHASE_ORDER.indexOf(phase.phase)
       if (phaseIdx >= targetIdx && phase.status !== 'pending') {
         blueprintPhaseRepository.updateStatus(phase.id, 'pending')
+        // BP-REWIND-CONTEXT-CLEAR: Clear stale retry context when rewinding
+        // to prevent outdated failure metadata from polluting the re-run.
+        if (phase.contextSnapshot) {
+          blueprintPhaseRepository.saveContextSnapshot(phase.id, null)
+        }
       }
     }
 
@@ -725,7 +783,10 @@ export class BlueprintService extends EventEmitter {
    *
    * Resets the target phase to 'pending' and restores blueprint status.
    */
-  retryPhase(blueprintId: string): { phase: BlueprintPhaseType; workspaceId: string } {
+  retryPhase(
+    blueprintId: string,
+    opts?: { resetRemediation?: boolean }
+  ): { phase: BlueprintPhaseType; workspaceId: string } {
     const blueprint = blueprintRepository.findById(blueprintId)
     if (!blueprint) {
       throw new Error(`Blueprint not found: ${blueprintId}`)
@@ -760,6 +821,16 @@ export class BlueprintService extends EventEmitter {
       }
       throw new Error(
         `Cannot retry blueprint ${blueprintId} — status is '${blueprint.status}', expected 'failed', 'cancelled', or an orphaned in-progress status`
+      )
+    }
+
+    // BP-RETRY-PIPELINE-EARLY-GUARD: Check pipeline availability BEFORE any DB
+    // mutations. Without this, the state machine guard at line 890 can throw
+    // AFTER tasks, status, and remediationRound have already been modified,
+    // orphaning the blueprint in a partially-reset state.
+    if (this.isRunning(blueprint.workspaceId)) {
+      throw new Error(
+        `Cannot retry blueprint ${blueprintId} — pipeline is currently active for workspace ${blueprint.workspaceId}`
       )
     }
 
@@ -806,6 +877,25 @@ export class BlueprintService extends EventEmitter {
             targetPhase = buildPhaseRecord
           }
         }
+        // else: all R-tasks complete — keep them for UI history.
+        // BP-COLLISION-SAFE-RENUMBER in blueprint-verify.service.ts
+        // auto-renumbers new R-task IDs to avoid collisions.
+      }
+    }
+
+    // BP-RETRY-PARTIAL-CLEANUP: Keep only the most recent partial artifact
+    // from the failed attempt. Without this, repeated retries would accumulate
+    // stale partials and bloat the system prompt.
+    // NOTE: Cleanup happens BEFORE status reset — we need the phase record in its
+    // current state, and a fresh DB read guards against stale in-memory objects.
+    const freshPhaseForCleanup = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, targetPhase.phase)
+    if (freshPhaseForCleanup && freshPhaseForCleanup.artifactsJson.length > 0) {
+      const partials = freshPhaseForCleanup.artifactsJson.filter((a) => a.type.endsWith('-partial'))
+      if (partials.length > 1) {
+        const nonPartials = freshPhaseForCleanup.artifactsJson.filter((a) => !a.type.endsWith('-partial'))
+        const latestPartial = partials[partials.length - 1]
+        blueprintPhaseRepository.saveArtifacts(freshPhaseForCleanup.id, [...nonPartials, latestPartial])
+        bpLog.info(`[retryPhase] Cleaned ${partials.length - 1} stale partial artifact(s) for ${targetPhase.phase} phase`)
       }
     }
 
@@ -837,13 +927,37 @@ export class BlueprintService extends EventEmitter {
       status: PHASE_TO_STATUS[targetPhase.phase]
     })
 
+    // BP-RETRY-RESET-REMEDIATION: Reset remediationRound when manually retrying
+    // so remediation can trigger again if verify finds new gaps.
+    // Skip reset during auto-retry — preserves the round counter so the 2-round
+    // cap is enforced across transient failures (BUG-N).
+    if (opts?.resetRemediation !== false &&
+        (targetPhase.phase === 'build' || targetPhase.phase === 'verify')) {
+      const settings = blueprint.settingsJson ?? {}
+      if ((settings as Record<string, unknown>).remediationRound != null) {
+        blueprintRepository.update(blueprintId, {
+          settingsJson: { ...settings, remediationRound: 0 }
+        })
+        bpLog.info(`[retryPhase] Reset remediationRound to 0 for blueprint ${blueprintId}`)
+      }
+    }
+
     // Drive the state machine: retry transitions cancelled/failed → idle,
     // making the machine ready for the next startPhase call.
     const machine = this.getMachine(blueprint.workspaceId)
     if (machine.isTerminal()) {
       machine.transition('retry')
     } else if (!machine.isIdle()) {
-      // Orphan recovery — machine may be stuck in a non-terminal state after crash.
+      // Guard: if machine is phase-running, a pipeline IS actively executing.
+      // Don't force-reset it — that would kill the running blueprint.
+      if (machine.isRunning()) {
+        throw new Error(
+          `Cannot retry blueprint ${blueprintId} — pipeline is currently active ` +
+            `for workspace ${blueprint.workspaceId} (machine=${machine.currentState})`
+        )
+      }
+      // Orphan recovery — machine may be stuck in a non-terminal, non-running
+      // state after crash (e.g. awaiting-clarify-input with no active session).
       machine.forceReset()
     }
 
@@ -888,6 +1002,28 @@ export class BlueprintService extends EventEmitter {
       }
     }
 
+    // BP-RETRY-PARTIAL-01: On retry, include the current phase's own partial artifacts.
+    // Partial artifacts (e.g., 'build-partial', 'plan-partial') are saved by the catch
+    // block on failure. They contain the agent's streamed output from the prior attempt.
+    // Feeding them back avoids a total context reset on retry.
+    const MAX_PARTIAL_CHARS = 8000
+    const currentPhaseRecord = phases.find((p) => p.phase === phase)
+    if (currentPhaseRecord && currentPhaseRecord.artifactsJson.length > 0) {
+      for (const artifact of currentPhaseRecord.artifactsJson) {
+        if (artifact.type.endsWith('-partial')) {
+          if (artifact.contentMd && artifact.contentMd.length > MAX_PARTIAL_CHARS) {
+            previousArtifacts.push({
+              ...artifact,
+              contentMd: artifact.contentMd.slice(0, MAX_PARTIAL_CHARS) +
+                '\n\n…[truncated — prior attempt output exceeded 8K chars]'
+            })
+          } else {
+            previousArtifacts.push(artifact)
+          }
+        }
+      }
+    }
+
     // Extract grill decisions from settings if available (with runtime validation)
     const grillDecisions = parseGrillDecisions(blueprint.settingsJson?.grillDecisions)
 
@@ -895,6 +1031,24 @@ export class BlueprintService extends EventEmitter {
     let workspaceDocs: string | undefined
     if (workspacePath) {
       workspaceDocs = await buildWorkspaceDocsBlock(workspacePath)
+    }
+
+    // BP-RETRY-CONTEXT-01: Read structured retry context from context_snapshot.
+    // Populated by saveRetryContext() on phase failure, read back here on retry.
+    let retryContext: PhaseContext['retryContext'] | undefined
+    if (currentPhaseRecord?.contextSnapshot) {
+      const parsed = safeParseJSON<Record<string, unknown>>(currentPhaseRecord.contextSnapshot, {})
+      if (typeof parsed.attempt === 'number' && parsed.attempt > 0) {
+        retryContext = {
+          attempt: parsed.attempt + 1,
+          previousError: String(parsed.previousError ?? 'Unknown error'),
+          previousPhase: phase,
+          filesModified: Array.isArray(parsed.filesModified) ? parsed.filesModified as string[] : [],
+          filesCreated: Array.isArray(parsed.filesCreated) ? parsed.filesCreated as string[] : [],
+          tasksCompleted: typeof parsed.tasksCompleted === 'number' ? parsed.tasksCompleted : 0,
+          totalTasks: typeof parsed.totalTasks === 'number' ? parsed.totalTasks : 0
+        }
+      }
     }
 
     return {
@@ -912,7 +1066,8 @@ export class BlueprintService extends EventEmitter {
       specFilePath: `blueprints/${blueprint.shortName || blueprint.id}/spec.md`,
       blueprintDir: `blueprints/${blueprint.shortName || blueprint.id}`,
       grillDecisions,
-      workspaceDocs
+      workspaceDocs,
+      retryContext
     }
   }
 
@@ -922,6 +1077,43 @@ export class BlueprintService extends EventEmitter {
   async buildSystemPrompt(blueprintId: string, phase: BlueprintPhaseType, workspacePath?: string): Promise<string> {
     const context = await this.assemblePhaseContext(blueprintId, phase, workspacePath)
     return buildPhaseSystemPrompt(phase, context)
+  }
+
+  /**
+   * Save structured retry context for a phase so the next attempt knows
+   * what was accomplished and why the prior attempt failed.
+   * Uses the existing context_snapshot column.
+   */
+  saveRetryContext(
+    blueprintId: string,
+    phase: BlueprintPhaseType,
+    context: {
+      error: string
+      filesModified?: string[]
+      filesCreated?: string[]
+      tasksCompleted?: number
+      totalTasks?: number
+    }
+  ): void {
+    const phaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, phase)
+    if (!phaseRecord) return
+
+    // Read existing snapshot to increment attempt counter
+    const existing = safeParseJSON<Record<string, unknown>>(phaseRecord.contextSnapshot, {})
+    const attempt = (typeof existing.attempt === 'number' ? existing.attempt : 0) + 1
+
+    const snapshot = JSON.stringify({
+      attempt,
+      previousError: context.error.slice(0, 500),
+      failedAt: new Date().toISOString(),
+      filesModified: context.filesModified ?? [],
+      filesCreated: context.filesCreated ?? [],
+      tasksCompleted: context.tasksCompleted ?? 0,
+      totalTasks: context.totalTasks ?? 0
+    })
+
+    blueprintPhaseRepository.saveContextSnapshot(phaseRecord.id, snapshot)
+    bpLog.info(`[saveRetryContext] Saved retry context for ${phase} phase (attempt ${attempt})`)
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1054,6 +1246,37 @@ export class BlueprintService extends EventEmitter {
     bpLog.info(
       `[appendTasks] Appending ${parsedTasks.length} remediation tasks as wave ${nextWave} for blueprint ${blueprintId}`
     )
+
+    // TASK-02: Validate remediation task graph — cycles and duplicates only.
+    // Reference integrity and cross-wave ordering produce false positives for
+    // partial batches (all tasks share one wave, may depend on existing T-tasks).
+    const batchTaskIds = new Set(parsedTasks.map((t) => t.taskId))
+    const duplicates = parsedTasks.filter((t, i) =>
+      parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
+    )
+    if (duplicates.length > 0) {
+      bpLog.warn(
+        `[appendTasks] Duplicate taskIds in remediation batch: ${duplicates.map((t) => t.taskId).join(', ')}`
+      )
+    }
+
+    // Check for cycles within the batch (ignore deps on external tasks)
+    const internalDeps = parsedTasks.map((t) => ({
+      taskId: t.taskId,
+      wave: nextWave,
+      dependsOn: (t.dependsOn ?? []).filter((dep) => batchTaskIds.has(dep))
+    }))
+    const validation = validateTaskGraph(internalDeps)
+    if (!validation.valid) {
+      // Filter out cross-wave warnings (all tasks share nextWave, expected)
+      const realErrors = validation.errors.filter((e) => !e.includes('must be in an earlier wave'))
+      if (realErrors.length > 0) {
+        bpLog.warn(
+          `[appendTasks] Remediation task graph has ${realErrors.length} issue(s) for blueprint=${blueprintId}: ` +
+          realErrors.join('; ')
+        )
+      }
+    }
 
     return blueprintTaskRepository.createBulk(
       blueprintId,
@@ -1189,13 +1412,127 @@ export class BlueprintService extends EventEmitter {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Mark any blueprints that were active when the app last quit as 'failed'.
+   * Reconcile blueprints that were active when the app last quit.
+   *
+   * C10 fix: Blueprints in 'reviewing' status with a completed review phase
+   * are restored to the awaiting-approval state (not marked failed). This fixes
+   * the original stale-execution bug where restarting at the approval gate
+   * destroyed the blueprint.
+   *
+   * All other active-status blueprints are marked failed.
    */
   reconcileStaleBlueprints(): void {
-    const count = blueprintRepository.markStaleAsFailed()
+    // C10: Check for reviewing blueprints that can be restored before marking stale
+    const db = getDatabase()
+    const reviewingRows = db.prepare(
+      `SELECT id, workspace_id FROM blueprints WHERE status = 'reviewing'`
+    ).all() as Array<{ id: string; workspace_id: string }>
+
+    const restoredIds: string[] = []
+    for (const row of reviewingRows) {
+      const restored = this.tryRestoreAwaitingApproval(row.id, row.workspace_id)
+      if (restored) restoredIds.push(row.id)
+    }
+
+    if (restoredIds.length > 0) {
+      bpLog.info(`[reconcile] Restored ${restoredIds.length} blueprint(s) to awaiting-approval state`)
+    }
+
+    // R2-1 fix: pass restored IDs so markStaleAsFailed skips them — they
+    // legitimately sit in status='reviewing' as the pre-restart approval gate.
+    const count = blueprintRepository.markStaleAsFailed(restoredIds)
     if (count > 0) {
       bpLog.info(`[reconcile] Marked ${count} stale blueprint(s) as failed`)
     }
+  }
+
+  /**
+   * Try to restore a reviewing blueprint to the awaiting-approval state.
+   * Returns true if successful, false if the blueprint can't be restored.
+   */
+  private tryRestoreAwaitingApproval(blueprintId: string, workspaceId: string): boolean {
+    try {
+      // Check if review phase exists and has artifacts
+      const reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
+      if (!reviewPhase || reviewPhase.status !== 'complete') {
+        return false // Review didn't finish — can't restore
+      }
+
+      // Extract review artifact for planSummary
+      const reviewArtifact = reviewPhase.artifactsJson.findLast(
+        (a: { type: string }) => a.type === 'review'
+      )
+      const completion = reviewArtifact?.contentJson as Record<string, unknown> | undefined
+
+      // Extract persisted preflight artifact (premortem #7: read-back)
+      const preflightArtifact = reviewPhase.artifactsJson.findLast(
+        (a: { type: string }) => a.type === 'preflight'
+      )
+      const preflightResult = preflightArtifact?.contentJson as Record<string, unknown> | undefined
+
+      // Build approval summary (mirrors review service step 11)
+      const planSummary = completion
+        ? this.buildApprovalSummaryFromCompletion(completion)
+        : 'Review completed — restored after app restart.'
+
+      // Restore state machine to awaiting-approval
+      // Path: idle → startPhase → phase-running → approvalNeeded → awaiting-approval
+      const machine = this.getMachine(workspaceId)
+      machine.forceReset()
+      machine.transition('startPhase', { blueprintId, phase: 'review' })
+      machine.transition('approvalNeeded')
+
+      // Rebuild pendingApproval (in-memory) from persisted artifacts
+      this.setPendingApproval(workspaceId, {
+        planSummary,
+        completion: completion ?? undefined,
+        reviewMarkdown: reviewArtifact?.contentMd || undefined,
+        ...(preflightResult ? { preflight: { result: preflightResult, overridden: false } } : {})
+      })
+
+      // Mark the pipeline as having this blueprint
+      const state = this.getOrCreatePipeline(workspaceId)
+      state.blueprintId = blueprintId
+      state.currentPhase = 'review'
+
+      // Publish snapshot so renderer picks it up
+      this.publishSnapshot(workspaceId)
+
+      bpLog.info(`[reconcile] Restored blueprint ${blueprintId} to awaiting-approval for workspace ${workspaceId}`)
+      return true
+    } catch (err) {
+      bpLog.warn(`[reconcile] Failed to restore blueprint ${blueprintId}:`, err)
+      return false
+    }
+  }
+
+  /**
+   * Build approval summary from a review completion payload.
+   * Mirrors BlueprintReviewService.buildApprovalSummary() but is accessible
+   * without a service instance (used in reconciliation).
+   */
+  private buildApprovalSummaryFromCompletion(completion: Record<string, unknown>): string {
+    const findings = completion.findings as
+      | { critical?: number; high?: number; medium?: number; low?: number }
+      | undefined
+    const recommendation = typeof completion.recommendation === 'string' ? completion.recommendation : 'unknown'
+    const coverage = completion.coveragePercent as number | undefined
+
+    const lines: string[] = []
+    if (coverage !== undefined) {
+      lines.push(`Coverage: ${coverage}% of requirements have implementation tasks`)
+    }
+    if (findings) {
+      const parts: string[] = []
+      if (findings.critical) parts.push(`${findings.critical} critical`)
+      if (findings.high) parts.push(`${findings.high} high`)
+      if (findings.medium) parts.push(`${findings.medium} medium`)
+      if (findings.low) parts.push(`${findings.low} low`)
+      lines.push(`Findings: ${parts.join(', ') || 'none'}`)
+    }
+    lines.push(`Recommendation: ${recommendation.replace(/_/g, ' ')}`)
+
+    return lines.join('\n')
   }
 
   /**

@@ -16,6 +16,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { execSync } from 'node:child_process'
+import { existsSync, writeFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
 import { LibraryDocService } from '../services/library-doc.service'
@@ -23,6 +26,103 @@ import { LibraryDocService } from '../services/library-doc.service'
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 const CONTEXT7_API_KEY = process.env.CONTEXT7_API_KEY ?? ''
+
+// ── ESLint strategy resolution (memoized) ──
+//
+// Three config strategies, resolved once per session:
+//   'flat'   — workspace has eslint.config.(js|mjs|cjs|ts) → run normally
+//   'legacy' — workspace has only .eslintrc.* → run with ESLINT_USE_FLAT_CONFIG=false
+//   'fallback' — no config at all → provision a minimal flat config in os.tmpdir()
+//   null     — ESLint binary not available at all
+
+type EslintStrategy = 'flat' | 'legacy' | 'fallback' | null
+
+let eslintStrategy: EslintStrategy | undefined // undefined = not yet resolved
+let fallbackConfigPath: string | null = null
+
+/** Detect which ESLint config strategy to use for this workspace. */
+function resolveEslintStrategy(): EslintStrategy {
+  if (eslintStrategy !== undefined) return eslintStrategy
+
+  // 1. Check ESLint binary availability (--no-install prevents silent download)
+  let hasEslint = false
+  try {
+    execSync('npx --no-install eslint --version', {
+      cwd: WORKSPACE_PATH,
+      timeout: 15_000,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    hasEslint = true
+  } catch {
+    // npx --no-install failed — try explicit versioned install into cache
+    try {
+      execSync('npx --yes eslint@9 --version', {
+        cwd: WORKSPACE_PATH,
+        timeout: 30_000,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      hasEslint = true
+    } catch {
+      // ESLint truly unavailable
+    }
+  }
+
+  if (!hasEslint) {
+    eslintStrategy = null
+    return eslintStrategy
+  }
+
+  // 2. Detect workspace config type
+  const flatConfigFiles = [
+    'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'
+  ]
+  const legacyConfigFiles = [
+    '.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yml', '.eslintrc.yaml'
+  ]
+
+  const hasFlatConfig = flatConfigFiles.some(f => existsSync(join(WORKSPACE_PATH, f)))
+  if (hasFlatConfig) {
+    eslintStrategy = 'flat'
+    return eslintStrategy
+  }
+
+  const hasLegacyConfig = legacyConfigFiles.some(f => existsSync(join(WORKSPACE_PATH, f)))
+  if (hasLegacyConfig) {
+    eslintStrategy = 'legacy'
+    return eslintStrategy
+  }
+
+  // 3. No config at all — provision a minimal flat config in tmpdir
+  eslintStrategy = 'fallback'
+  return eslintStrategy
+}
+
+/** Get (or lazily create) the fallback ESLint config path. */
+function getFallbackConfigPath(): string {
+  if (fallbackConfigPath) return fallbackConfigPath
+  const dir = join(tmpdir(), 'agentstudio-eslint-fallback')
+  mkdirSync(dir, { recursive: true })
+  fallbackConfigPath = join(dir, 'eslint-fallback.config.mjs')
+  writeFileSync(
+    fallbackConfigPath,
+    [
+      '// Auto-generated minimal ESLint config for workspaces without their own.',
+      '// Only enables the rules layered via --rule flags (e.g. complexity).',
+      '// TS files require @typescript-eslint/parser in the workspace to parse.',
+      "export default [{ files: ['**/*.{js,mjs,cjs,jsx,ts,tsx,mts,cts}'], rules: {} }]",
+      ''
+    ].join('\n'),
+    'utf-8'
+  )
+  return fallbackConfigPath
+}
+
+/** Back-compat wrapper — returns true when any ESLint strategy is usable. */
+function checkEslintAvailable(): boolean {
+  return resolveEslintStrategy() !== null
+}
 
 // Service instance — standalone (no Electron) so we instantiate directly
 const libraryDocService = new LibraryDocService()
@@ -71,7 +171,7 @@ async function handleAnalyzeComplexity(args: {
   path: string
   threshold: number
   maxResults: number
-}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+}): Promise<{ isError?: boolean; content: Array<{ type: 'text'; text: string }> }> {
   const targetPath = sanitizePath(args.path)
 
   // Check for non-JS/TS files (single file mode)
@@ -89,10 +189,19 @@ async function handleAnalyzeComplexity(args: {
     }
   }
 
+  if (!checkEslintAvailable()) {
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `[analyze_complexity] ESLint not available via npx. Complexity analysis requires ESLint.`
+      }]
+    }
+  }
+
   try {
     // Run ESLint with complexity rule at max:0 to report ALL functions
     const { stdout } = runEslint(
-      ['--format', 'json', '--rule', '"complexity: [\\"warn\\", {\\"max\\": 0}]"', quotePaths([targetPath])],
+      ['--format', 'json', '--rule', `'{"complexity": ["warn", {"max": 0}]}'`, quotePaths([targetPath])],
       WORKSPACE_PATH
     )
 
@@ -149,7 +258,17 @@ async function handleAnalyzeComplexity(args: {
       content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 15_000) }]
     }
   } catch (err) {
+    // Graceful degradation for config errors — non-alarming message
+    if (err instanceof EslintConfigError) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `[analyze_complexity] ⚠️ ${err.message}`
+        }]
+      }
+    }
     return {
+      isError: true,
       content: [
         {
           type: 'text' as const,
@@ -301,6 +420,7 @@ async function registerTools(): Promise<void> {
         }
       } catch (err) {
         return {
+          isError: true,
           content: [
             {
               type: 'text' as const,
@@ -357,6 +477,7 @@ async function registerTools(): Promise<void> {
         }
       } catch (err) {
         return {
+          isError: true,
           content: [
             {
               type: 'text' as const,
@@ -394,14 +515,72 @@ function sanitizePath(p: string): string {
   return p
 }
 
+/** Build the ESLint CLI prefix and env overrides for the current strategy. */
+function buildEslintCommand(
+  args: string[],
+  strategy: 'flat' | 'legacy' | 'fallback'
+): { command: string; env: Record<string, string> } {
+  const env: Record<string, string> = {}
+  const prefix = 'npx eslint'
+  let extraArgs = ''
+
+  if (strategy === 'legacy') {
+    env.ESLINT_USE_FLAT_CONFIG = 'false'
+  } else if (strategy === 'fallback') {
+    const cfgPath = getFallbackConfigPath()
+    extraArgs = `--no-config-lookup --config "${cfgPath}"`
+  }
+  // 'flat' — no extra flags, workspace config is used as-is
+
+  const fullArgs = extraArgs ? `${extraArgs} ${args.join(' ')}` : args.join(' ')
+  return { command: `${prefix} ${fullArgs}`, env }
+}
+
+/**
+ * Config-error patterns that indicate a missing/incompatible ESLint config.
+ * When matched, runEslint retries with the next strategy before giving up.
+ */
+const CONFIG_ERROR_PATTERNS = [
+  "couldn't find an eslint.config",
+  'No ESLint configuration found',
+  'eslint.config',
+  'no matching configuration'
+]
+
+function isConfigError(stderr: string): boolean {
+  const lower = stderr.toLowerCase()
+  return CONFIG_ERROR_PATTERNS.some(p => lower.includes(p.toLowerCase()))
+}
+
+/** Strategy fallback order: flat → legacy → fallback */
+const STRATEGY_FALLBACK: Record<string, 'legacy' | 'fallback' | null> = {
+  flat: 'legacy',
+  legacy: 'fallback',
+  fallback: null
+}
+
 function runEslint(args: string[], cwd: string): { stdout: string; exitCode: number } {
+  const strategy = resolveEslintStrategy()
+  if (!strategy) {
+    throw new Error('ESLint not found. Analysis requires ESLint to be available via npx.')
+  }
+  return _runEslintWithStrategy(args, cwd, strategy)
+}
+
+function _runEslintWithStrategy(
+  args: string[],
+  cwd: string,
+  strategy: 'flat' | 'legacy' | 'fallback'
+): { stdout: string; exitCode: number } {
+  const { command, env: extraEnv } = buildEslintCommand(args, strategy)
   try {
-    const stdout = execSync(`npx eslint ${args.join(' ')}`, {
+    const stdout = execSync(command, {
       cwd,
       timeout: 60_000,
       maxBuffer: 4 * 1024 * 1024,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...extraEnv }
     })
     return { stdout, exitCode: 0 }
   } catch (err: unknown) {
@@ -411,15 +590,35 @@ function runEslint(args: string[], cwd: string): { stdout: string; exitCode: num
       return { stdout: execErr.stdout, exitCode: 1 }
     }
     if (execErr.status === 2) {
-      const msg = execErr.stderr || execErr.stdout || 'ESLint fatal error (exit code 2)'
-      throw new Error(`ESLint fatal: ${String(msg).slice(0, 500)}`)
+      const stderr = String(execErr.stderr || execErr.stdout || '')
+      // Config error — retry with next strategy before giving up
+      if (isConfigError(stderr)) {
+        const next = STRATEGY_FALLBACK[strategy]
+        if (next) {
+          return _runEslintWithStrategy(args, cwd, next)
+        }
+        // All strategies exhausted — throw graceful degradation error
+        throw new EslintConfigError(
+          `ESLint analysis skipped — no usable ESLint config in this workspace. ` +
+          `Tried strategies: flat, legacy, fallback. Last error: ${stderr.slice(0, 300)}`
+        )
+      }
+      throw new Error(`ESLint fatal: ${stderr.slice(0, 500)}`)
     }
     // ESLint not found or other spawn errors
     const message = err instanceof Error ? err.message : String(err)
     if (message.includes('ENOENT') || message.includes('not found')) {
-      throw new Error('ESLint not found in workspace. Ensure eslint is installed (npm install eslint).')
+      throw new Error('ESLint not found in workspace. Ensure eslint is available via npx.')
     }
     throw err
+  }
+}
+
+/** Sentinel error class for config-related failures (enables graceful degradation). */
+class EslintConfigError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'EslintConfigError'
   }
 }
 
@@ -549,7 +748,7 @@ function quotePaths(paths: string[]): string {
 async function handleEslintCheck(args: {
   paths?: string[]
   format: 'summary' | 'full'
-}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+}): Promise<{ isError?: boolean; content: Array<{ type: 'text'; text: string }> }> {
   try {
     let targetPaths = args.paths ?? []
     let fromGit = false
@@ -574,7 +773,11 @@ async function handleEslintCheck(args: {
       content: [{ type: 'text' as const, text: truncateToolOutput(prefix + output, 15_000) }]
     }
   } catch (err) {
+    if (err instanceof EslintConfigError) {
+      return { content: [{ type: 'text' as const, text: `[eslint_check] ⚠️ ${err.message}` }] }
+    }
     return {
+      isError: true,
       content: [
         {
           type: 'text' as const,
@@ -587,7 +790,7 @@ async function handleEslintCheck(args: {
 
 async function handleEslintFix(args: {
   paths: string[]
-}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+}): Promise<{ isError?: boolean; content: Array<{ type: 'text'; text: string }> }> {
   try {
     const quoted = quotePaths(args.paths)
 
@@ -626,7 +829,11 @@ async function handleEslintFix(args: {
       content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 15_000) }]
     }
   } catch (err) {
+    if (err instanceof EslintConfigError) {
+      return { content: [{ type: 'text' as const, text: `[eslint_fix] ⚠️ ${err.message}` }] }
+    }
     return {
+      isError: true,
       content: [
         {
           type: 'text' as const,
@@ -703,7 +910,7 @@ function formatRulesOutput(
 
 async function handleEslintRules(args: {
   filePath?: string
-}): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+}): Promise<{ isError?: boolean; content: Array<{ type: 'text'; text: string }> }> {
   try {
     const targetFile = resolveTargetFile(args.filePath)
     const { stdout } = runEslint(['--print-config', `"${sanitizePath(targetFile)}"`], WORKSPACE_PATH)
@@ -714,7 +921,11 @@ async function handleEslintRules(args: {
       content: [{ type: 'text' as const, text: truncateToolOutput(output, 15_000) }]
     }
   } catch (err) {
+    if (err instanceof EslintConfigError) {
+      return { content: [{ type: 'text' as const, text: `[eslint_rules] ⚠️ ${err.message}` }] }
+    }
     return {
+      isError: true,
       content: [
         {
           type: 'text' as const,
@@ -735,12 +946,16 @@ async function handleAuditScan(args: {
   const sections: string[] = ['## Audit Scan Results\n']
 
   // ── 1. Run ESLint with complexity rule (single pass for lint + complexity) ──
-  try {
+  if (!checkEslintAvailable()) {
+    sections.push(
+      `### ESLint + Complexity\n⚠️ ESLint not available via npx. Complexity analysis requires ESLint.\n`
+    )
+  } else try {
     const targetPaths = args.paths.map(sanitizePath)
     const { stdout } = runEslint(
       [
         '--format', 'json',
-        '--rule', '"complexity: [\\"warn\\", {\\"max\\": 0}]"',
+        '--rule', `'{"complexity": ["warn", {"max": 0}]}'`,
         quotePaths(targetPaths)
       ],
       WORKSPACE_PATH
@@ -811,9 +1026,18 @@ async function handleAuditScan(args: {
       sections.push('')
     }
   } catch (err) {
-    sections.push(
-      `### ESLint + Complexity\n⚠️ Error: ${err instanceof Error ? err.message : String(err)}\n`
-    )
+    if (err instanceof EslintConfigError) {
+      // Graceful degradation — config issue, not a crash
+      sections.push(`### ESLint + Complexity\n⚠️ ${err.message}\n`)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      const hint = !checkEslintAvailable()
+        ? ' ESLint is not available via npx.'
+        : msg.includes('exit code 2')
+          ? ' ESLint could not parse the project config. Check eslint.config.* for syntax errors.'
+          : ''
+      sections.push(`### ESLint + Complexity\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
+    }
   }
 
   // ── 2. Dead code via code-graph (if available) ──
@@ -836,12 +1060,28 @@ async function handleAuditScan(args: {
         sections.push('')
       }
     } catch (err) {
-      sections.push(
-        `### Dead Code\n⚠️ Error: ${err instanceof Error ? err.message : String(err)}\n`
-      )
+      const msg = err instanceof Error ? err.message : String(err)
+      const isNative = msg.includes('NODE_MODULE_VERSION') || msg.includes('ABI') || msg.includes('was compiled against') || msg.includes('.node')
+      const hint = isNative
+        ? ' The better-sqlite3 native module failed to load. Reinstall with `npm install better-sqlite3`.'
+        : ''
+      sections.push(`### Dead Code\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
     }
   } else {
     sections.push('### Dead Code\n⚠️ Skipped — code graph unavailable (no WORKSPACE_ID).\n')
+  }
+
+  // ── Summary if both sub-scans failed ──
+  const eslintFailed = sections.some(s => s.includes('### ESLint + Complexity\n⚠️'))
+  const deadCodeFailed = sections.some(s => s.includes('### Dead Code\n⚠️'))
+
+  if (eslintFailed && deadCodeFailed) {
+    sections.push(
+      `### Summary\n⚠️ Both sub-scans produced warnings. Common causes:\n`
+      + `- ESLint not available via npx\n`
+      + `- No ESLint config in workspace (eslint.config.* or .eslintrc.*)\n`
+      + `- Native module load failure: reinstall with \`npm install better-sqlite3\`\n`
+    )
   }
 
   return {

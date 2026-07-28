@@ -15,6 +15,8 @@ import type {
   MemoryFactTier,
   MemorySourceType,
   MemoryContradiction,
+  MemoryConfirmation,
+  ConfirmationSourceType,
   ContradictionStatus,
   MemoryDocState
 } from '../../../shared/types'
@@ -35,6 +37,8 @@ interface MemoryFactRow {
   last_confirmed_at: string | null
   status: MemoryFactStatus
   superseded_by: string | null
+  merged_into: string | null
+  volatile: number // SQLite stores booleans as 0/1
   source_type: MemorySourceType
   source_ref: string | null
   embedding: Buffer | null
@@ -42,6 +46,15 @@ interface MemoryFactRow {
   last_accessed_at: string | null
   created_at: string
   updated_at: string
+  evidence_count?: number // populated by UI-facing queries only
+}
+
+interface ConfirmationRow {
+  id: string
+  fact_id: string
+  source_type: ConfirmationSourceType
+  weight: number
+  created_at: string
 }
 
 interface ContradictionRow {
@@ -78,12 +91,25 @@ function mapFactRow(row: MemoryFactRow): MemoryFact {
     lastConfirmedAt: row.last_confirmed_at,
     status: row.status,
     supersededBy: row.superseded_by,
+    mergedInto: row.merged_into ?? null,
+    volatile: (row.volatile ?? 0) === 1,
     sourceType: row.source_type,
     sourceRef: row.source_ref,
     embeddingPending: row.embedding_pending === 1,
     lastAccessedAt: row.last_accessed_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    evidenceCount: row.evidence_count
+  }
+}
+
+function mapConfirmationRow(row: ConfirmationRow): MemoryConfirmation {
+  return {
+    id: row.id,
+    factId: row.fact_id,
+    sourceType: row.source_type,
+    weight: row.weight,
+    createdAt: row.created_at
   }
 }
 
@@ -122,10 +148,14 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   findByWorkspace(workspaceId: string, status: MemoryFactStatus = 'active'): MemoryFact[] {
     const rows = this.db()
       .prepare(
-        `SELECT * FROM memory_facts
-         WHERE (workspace_id = ? OR workspace_id IS NULL)
-           AND status = ?
-         ORDER BY tier DESC, confidence DESC, updated_at DESC`
+        `SELECT mf.*, (
+           SELECT COUNT(*) FROM memory_confirmations c
+           WHERE c.fact_id = mf.id AND c.source_type != 'auto_dedup'
+         ) AS evidence_count
+         FROM memory_facts mf
+         WHERE (mf.workspace_id = ? OR mf.workspace_id IS NULL)
+           AND mf.status = ?
+         ORDER BY mf.tier DESC, mf.confidence DESC, mf.updated_at DESC`
       )
       .all(workspaceId, status) as MemoryFactRow[]
     return rows.map(mapFactRow)
@@ -135,9 +165,13 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   findAllByWorkspace(workspaceId: string): MemoryFact[] {
     const rows = this.db()
       .prepare(
-        `SELECT * FROM memory_facts
-         WHERE workspace_id = ? OR workspace_id IS NULL
-         ORDER BY updated_at DESC`
+        `SELECT mf.*, (
+           SELECT COUNT(*) FROM memory_confirmations c
+           WHERE c.fact_id = mf.id AND c.source_type != 'auto_dedup'
+         ) AS evidence_count
+         FROM memory_facts mf
+         WHERE mf.workspace_id = ? OR mf.workspace_id IS NULL
+         ORDER BY mf.updated_at DESC`
       )
       .all(workspaceId) as MemoryFactRow[]
     return rows.map(mapFactRow)
@@ -454,11 +488,12 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     newFactId: string
     status?: ContradictionStatus
     resolution?: string
-  }): MemoryContradiction {
+  }): MemoryContradiction | null {
     const row = this.db()
       .prepare(
         `INSERT INTO memory_contradictions (old_fact_id, new_fact_id, status, resolution)
          VALUES (?, ?, ?, ?)
+         ON CONFLICT DO NOTHING
          RETURNING *`
       )
       .get(
@@ -466,8 +501,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
         params.newFactId,
         params.status ?? 'auto_resolved',
         params.resolution ?? null
-      ) as ContradictionRow
-    return mapContradictionRow(row)
+      ) as ContradictionRow | undefined
+    return row ? mapContradictionRow(row) : null
   }
 
   findContradictions(status?: ContradictionStatus): MemoryContradiction[] {
@@ -481,6 +516,70 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .prepare('SELECT * FROM memory_contradictions ORDER BY created_at DESC')
       .all() as ContradictionRow[]
     return rows.map(mapContradictionRow)
+  }
+
+  findContradictionsPaged(
+    status: ContradictionStatus | undefined,
+    limit: number,
+    offset: number
+  ): MemoryContradiction[] {
+    const sql = status
+      ? 'SELECT * FROM memory_contradictions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+      : 'SELECT * FROM memory_contradictions ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    const args = status ? [status, limit, offset] : [limit, offset]
+    const rows = this.db().prepare(sql).all(...args) as ContradictionRow[]
+    return rows.map(mapContradictionRow)
+  }
+
+  countContradictions(status?: ContradictionStatus): number {
+    const sql = status
+      ? 'SELECT COUNT(*) as cnt FROM memory_contradictions WHERE status = ?'
+      : 'SELECT COUNT(*) as cnt FROM memory_contradictions'
+    const args = status ? [status] : []
+    const row = this.db().prepare(sql).get(...args) as { cnt: number }
+    return row.cnt
+  }
+
+  /** Bulk-resolve pending duplicates with cosine ≥ threshold, archiving the older fact. */
+  bulkAutoResolveDuplicates(minCosine: number): number {
+    // Find pending contradictions whose resolution contains a cosine score ≥ threshold
+    const pending = this.db()
+      .prepare(
+        `SELECT * FROM memory_contradictions WHERE status = 'pending' AND resolution LIKE 'duplicate%'`
+      )
+      .all() as ContradictionRow[]
+
+    let resolved = 0
+    const resolveStmt = this.db().prepare(
+      `UPDATE memory_contradictions SET status = 'user_resolved', resolution = ?, resolved_at = datetime('now') WHERE id = ?`
+    )
+    const archiveStmt = this.db().prepare(
+      `UPDATE memory_facts SET status = 'archived', updated_at = datetime('now') WHERE id = ?`
+    )
+
+    this.db().transaction(() => {
+      for (const row of pending) {
+        // Extract cosine score from resolution like "duplicate cluster (3 facts, cosine: 0.923)"
+        const match = row.resolution?.match(/cosine:\s*(\d+\.\d+)/)
+        if (!match) continue
+        const cosine = parseFloat(match[1])
+        if (cosine < minCosine) continue
+
+        // Determine which fact is older by comparing created_at
+        const oldFact = this.findById(row.old_fact_id)
+        const newFact = this.findById(row.new_fact_id)
+        if (!oldFact || !newFact) continue
+
+        const oldIsOlder = new Date(oldFact.createdAt).getTime() <= new Date(newFact.createdAt).getTime()
+        const archiveId = oldIsOlder ? oldFact.id : newFact.id
+
+        resolveStmt.run(`auto-resolved duplicate (cosine: ${cosine.toFixed(3)}, archived older)`, row.id)
+        archiveStmt.run(archiveId)
+        resolved++
+      }
+    })()
+
+    return resolved
   }
 
   resolveContradiction(id: string, resolution: string, status: ContradictionStatus = 'user_resolved'): MemoryContradiction {
@@ -524,6 +623,198 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .prepare('SELECT * FROM memory_doc_state WHERE workspace_id = ?')
       .all(workspaceId) as DocStateRow[]
     return rows.map(mapDocStateRow)
+  }
+
+  // ── Confirmation event log ──────────────────────────────────────────────
+
+  /** Record a confirmation event with source type and weight. */
+  addConfirmation(factId: string, sourceType: ConfirmationSourceType, weight = 1.0): MemoryConfirmation {
+    const row = this.db()
+      .prepare(
+        `INSERT INTO memory_confirmations (fact_id, source_type, weight)
+         VALUES (?, ?, ?)
+         RETURNING *`
+      )
+      .get(factId, sourceType, weight) as ConfirmationRow
+    return mapConfirmationRow(row)
+  }
+
+  /** Get all confirmation events for a fact (for evidence-based promotion). */
+  getConfirmations(factId: string): MemoryConfirmation[] {
+    const rows = this.db()
+      .prepare('SELECT * FROM memory_confirmations WHERE fact_id = ? ORDER BY created_at ASC')
+      .all(factId) as ConfirmationRow[]
+    return rows.map(mapConfirmationRow)
+  }
+
+  /** Count distinct days with confirmations for a fact. */
+  countConfirmationDays(factId: string): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(DISTINCT date(created_at)) as days
+         FROM memory_confirmations WHERE fact_id = ?`
+      )
+      .get(factId) as { days: number }
+    return row.days
+  }
+
+  /** Count distinct source types for a fact's confirmations. */
+  countConfirmationSourceTypes(factId: string): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(DISTINCT source_type) as types
+         FROM memory_confirmations WHERE fact_id = ?`
+      )
+      .get(factId) as { types: number }
+    return row.types
+  }
+
+  /** Check if a fact has any human confirmation. */
+  hasHumanConfirmation(factId: string): boolean {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(*) as cnt FROM memory_confirmations
+         WHERE fact_id = ? AND source_type = 'human'`
+      )
+      .get(factId) as { cnt: number }
+    return row.cnt > 0
+  }
+
+  /** Compute weighted confirmation sum for a fact. */
+  getWeightedConfirmationSum(factId: string): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COALESCE(SUM(weight), 0) as total
+         FROM memory_confirmations WHERE fact_id = ?`
+      )
+      .get(factId) as { total: number }
+    return row.total
+  }
+
+  /** Map of factId → non-auto_dedup confirmation count, for a set of facts. */
+  getEvidenceCounts(ids: string[]): Map<string, number> {
+    const counts = new Map<string, number>()
+    if (ids.length === 0) return counts
+    const placeholders = ids.map(() => '?').join(',')
+    const rows = this.db()
+      .prepare(
+        `SELECT fact_id, COUNT(*) AS n
+         FROM memory_confirmations
+         WHERE fact_id IN (${placeholders}) AND source_type != 'auto_dedup'
+         GROUP BY fact_id`
+      )
+      .all(...ids) as Array<{ fact_id: string; n: number }>
+    for (const r of rows) counts.set(r.fact_id, r.n)
+    return counts
+  }
+
+  // ── Volatile / merge helpers ────────────────────────────────────────────
+
+  /** Mark a fact as volatile (version/count patterns). */
+  setVolatile(id: string, volatile: boolean): void {
+    this.db()
+      .prepare(
+        `UPDATE memory_facts SET volatile = ?, updated_at = datetime('now') WHERE id = ?`
+      )
+      .run(volatile ? 1 : 0, id)
+  }
+
+  /** Re-parent confirmation events from one fact to another (used during cluster merge). */
+  reparentConfirmations(fromFactId: string, toFactId: string): number {
+    const result = this.db()
+      .prepare('UPDATE memory_confirmations SET fact_id = ? WHERE fact_id = ?')
+      .run(toFactId, fromFactId)
+
+    // Sync the canonical fact's confirmation_count to match actual evidence
+    if (result.changes > 0) {
+      this.db()
+        .prepare(
+          `UPDATE memory_facts SET confirmation_count = (
+             SELECT COUNT(*) FROM memory_confirmations WHERE fact_id = ?
+           ) WHERE id = ?`
+        )
+        .run(toFactId, toFactId)
+    }
+
+    return result.changes
+  }
+
+  /** Mark a fact as merged into a canonical fact and archive it. */
+  mergeFact(sourceId: string, canonicalId: string): void {
+    this.db()
+      .prepare(
+        `UPDATE memory_facts SET
+           merged_into = ?,
+           status = 'archived',
+           updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(canonicalId, sourceId)
+  }
+
+  /** Update a fact's content in-place (for UPDATE action on volatile/dedup).
+   *  Preserves existing tags/scopePaths when the caller doesn't provide them. */
+  updateFactInPlace(id: string, params: {
+    title: string
+    content: string
+    tags?: string[]
+    scopePaths?: string[]
+  }): MemoryFact {
+    // Only overwrite tags/scopePaths when explicitly provided — undefined means "keep existing"
+    const row = this.db()
+      .prepare(
+        `UPDATE memory_facts SET
+           title = ?,
+           content = ?,
+           tags = COALESCE(?, tags),
+           scope_paths = COALESCE(?, scope_paths),
+           updated_at = datetime('now')
+         WHERE id = ?
+         RETURNING *`
+      )
+      .get(
+        params.title,
+        params.content,
+        params.tags !== undefined ? JSON.stringify(params.tags) : null,
+        params.scopePaths !== undefined ? JSON.stringify(params.scopePaths) : null,
+        id
+      ) as MemoryFactRow
+    return mapFactRow(row)
+  }
+
+  /** Find volatile facts matching a workspace. */
+  findVolatileFacts(workspaceId: string): MemoryFact[] {
+    const rows = this.db()
+      .prepare(
+        `SELECT * FROM memory_facts
+         WHERE (workspace_id = ? OR workspace_id IS NULL)
+           AND status = 'active' AND volatile = 1
+         ORDER BY updated_at DESC`
+      )
+      .all(workspaceId) as MemoryFactRow[]
+    return rows.map(mapFactRow)
+  }
+
+  // ── Cleanup helpers ─────────────────────────────────────────────────────
+
+  /** Delete resolved/expired contradiction records older than N days. */
+  pruneOldContradictions(daysThreshold: number): number {
+    const result = this.db()
+      .prepare(
+        `DELETE FROM memory_contradictions
+         WHERE status != 'pending'
+           AND julianday('now') - julianday(created_at) > ?`
+      )
+      .run(daysThreshold)
+    return result.changes
+  }
+
+  /** Count pending contradictions (review queue size). */
+  countPendingContradictions(): number {
+    const row = this.db()
+      .prepare(`SELECT COUNT(*) as cnt FROM memory_contradictions WHERE status = 'pending'`)
+      .get() as { cnt: number }
+    return row.cnt
   }
 }
 

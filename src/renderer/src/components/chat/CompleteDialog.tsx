@@ -59,7 +59,7 @@ function useCompleteDialogInit(
   conversationTitle: string,
   conversationId: string,
   onCancel: () => void
-): DialogInitState {
+): DialogInitState & { userEditedRef: React.MutableRefObject<boolean> } {
   const [branchName, setBranchName] = useState('')
   const [commitMessage, setCommitMessage] = useState('')
   const [prDescription, setPrDescription] = useState('')
@@ -73,68 +73,82 @@ function useCompleteDialogInit(
   const [insights, setInsights] = useState<ConversationInsights | null>(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const userEditedRef = useRef(false)
 
   useEffect(() => {
-    if (isOpen) {
-      // Pre-fill branch name from chat title
-      const slug = conversationTitle
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .slice(0, 50)
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setBranchName(`chat/${slug}-${conversationId.slice(0, 8)}`)
+    if (!isOpen) return
+    let cancelled = false
 
-      // Pre-fill commit message
-      setCommitMessage(conversationTitle)
-      setError(null)
-      setIsSubmitting(false)
-      setGenerationError(null)
+    // Pre-fill branch name from chat title
+    const slug = conversationTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 50)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBranchName(`chat/${slug}-${conversationId.slice(0, 8)}`)
 
-      // Focus the input after a short delay to ensure the dialog is rendered
-      setTimeout(() => inputRef.current?.focus(), 50)
+    // Pre-fill commit message
+    setCommitMessage(conversationTitle)
+    setError(null)
+    setIsSubmitting(false)
+    setGenerationError(null)
+    userEditedRef.current = false
 
-      // Load tracked file changes
-      window.api
-        .getFileChanges({ conversationId })
-        .then((changes) => {
-          const typed = changes as Array<{ filePath: string; changeType: string }>
-          setFileChanges(typed)
-          const lines = typed.map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
-          setPrDescription(lines.length > 0 ? `Changes:\n${lines.join('\n')}` : '')
-        })
-        .catch((err) => {
-          console.warn('[CompleteDialog] Non-fatal: file changes load failed:', err)
-          setFileChanges([])
-          setPrDescription('')
-        })
+    // Focus the input after a short delay to ensure the dialog is rendered
+    setTimeout(() => inputRef.current?.focus(), 50)
 
-      // Fetch session insights
-      setInsightsLoading(true)
-      window.api
-        .getConversationInsights({ conversationId })
-        .then((result) => {
+    // Load tracked file changes
+    window.api
+      .getFileChanges({ conversationId })
+      .then((changes) => {
+        if (cancelled) return
+        const typed = changes as Array<{ filePath: string; changeType: string }>
+        setFileChanges(typed)
+        const lines = typed.map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
+        setPrDescription(lines.length > 0 ? `Changes:\n${lines.join('\n')}` : '')
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.warn('[CompleteDialog] Non-fatal: file changes load failed:', err)
+        setFileChanges([])
+        setPrDescription('')
+      })
+
+    // Fetch session insights (independent)
+    setInsightsLoading(true)
+    window.api
+      .getConversationInsights({ conversationId })
+      .then((result) => {
+        if (!cancelled) {
           setInsights(result)
           setInsightsLoading(false)
-        })
-        .catch((err) => {
-          console.warn('[CompleteDialog] Non-fatal: insights load failed:', err)
-          setInsightsLoading(false)
-        })
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.warn('[CompleteDialog] Non-fatal: insights load failed:', err)
+        setInsightsLoading(false)
+      })
 
-      // Auto-generate PR description
-      setIsGenerating(true)
-      window.api
-        .generatePrDescription({ conversationId })
-        .then((result) => {
-          setPrDescription(result.description)
-          setIsGenerating(false)
-        })
-        .catch((err) => {
-          console.warn('[CompleteDialog] Non-fatal: PR description generation failed:', err)
-          setGenerationError('Failed to auto-generate. You can write one manually.')
-          setIsGenerating(false)
-        })
+    // Auto-generate PR description — only overwrites if user hasn't manually edited
+    setIsGenerating(true)
+    window.api
+      .generatePrDescription({ conversationId })
+      .then((result) => {
+        if (cancelled || userEditedRef.current) return
+        setPrDescription(result.description)
+        setIsGenerating(false)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.warn('[CompleteDialog] Non-fatal: PR description generation failed:', err)
+        setGenerationError('Failed to auto-generate. You can write one manually.')
+        setIsGenerating(false)
+      })
+
+    return () => {
+      cancelled = true
     }
   }, [isOpen, conversationTitle, conversationId])
 
@@ -163,7 +177,8 @@ function useCompleteDialogInit(
     setError,
     insights,
     insightsLoading,
-    inputRef
+    inputRef,
+    userEditedRef
   }
 }
 
@@ -203,7 +218,8 @@ export default function CompleteDialog({
     setError,
     insights,
     insightsLoading,
-    inputRef
+    inputRef,
+    userEditedRef
   } = useCompleteDialogInit(isOpen, conversationTitle, conversationId, onCancel)
 
   if (!isOpen) return null
@@ -290,22 +306,26 @@ export default function CompleteDialog({
           >
             PR Description
           </label>
-          {isGenerating ? (
-            <div className="w-full px-3 py-4 bg-surface-base border border-border-default rounded-lg flex items-center gap-3">
-              <Loader2 size={16} className="animate-spin text-primary-text" />
-              <span className="text-sm text-text-secondary">Generating description with AI...</span>
-            </div>
-          ) : (
+          <div className="relative">
             <textarea
               id="pr-description"
               value={prDescription}
-              onChange={(e) => setPrDescription(e.target.value)}
+              onChange={(e) => {
+                userEditedRef.current = true
+                setPrDescription(e.target.value)
+              }}
               disabled={isSubmitting}
               rows={6}
               className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
               placeholder="Describe the changes in this PR..."
             />
-          )}
+            {isGenerating && (
+              <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-surface-overlay/90 rounded text-xs text-text-secondary">
+                <Loader2 size={12} className="animate-spin text-primary-text" />
+                Generating...
+              </div>
+            )}
+          </div>
           {generationError && <p className="text-xs text-warning mt-1">{generationError}</p>}
         </div>
 
@@ -366,18 +386,13 @@ export default function CompleteDialog({
           </button>
           <button
             onClick={handleConfirm}
-            disabled={isSubmitting || isGenerating || !commitMessage.trim() || !branchName.trim()}
+            disabled={isSubmitting || !commitMessage.trim() || !branchName.trim()}
             className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success bg-success hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
           >
             {isSubmitting ? (
               <>
                 <Loader2 size={14} className="animate-spin" />
                 Completing...
-              </>
-            ) : isGenerating ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                Generating...
               </>
             ) : (
               buttonLabel

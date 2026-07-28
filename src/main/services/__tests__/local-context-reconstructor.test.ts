@@ -136,7 +136,7 @@ describe('LocalContextReconstructor.buildMessageSection', () => {
   test('assistant message > 300 chars → truncated with ellipsis', () => {
     const longContent = 'B'.repeat(400)
     const result = recon.buildMessageSection(
-      [{ role: 'da-vinci', contentMd: longContent }],
+      [{ role: 'specialist', contentMd: longContent }],
       5000
     )
     assert.ok(result.includes('...'))
@@ -181,7 +181,7 @@ describe('LocalContextReconstructor.buildMessageSection', () => {
   test('mixed roles → both User and Assistant labels', () => {
     const messages = [
       { role: 'user', contentMd: 'What is this?' },
-      { role: 'da-vinci', contentMd: 'It is a test file' }
+      { role: 'specialist', contentMd: 'It is a test file' }
     ]
     const result = recon.buildMessageSection(messages, 5000)
     assert.ok(result.includes('**User:**'))

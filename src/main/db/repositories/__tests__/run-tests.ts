@@ -38,6 +38,9 @@ import './repo-branch-coverage.test'
 // ─── Phase 17: Track 8: Repo deep branch completion ───
 import './repo-deep-branch.test'
 
+// ─── Plan Detail: Status History + Revision Linking ───
+import './plan-status-history.test'
+
 // ─── E2E Testing Repos ───
 import './e2e-test-repos.test'
 

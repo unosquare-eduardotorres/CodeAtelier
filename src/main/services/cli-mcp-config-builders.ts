@@ -103,7 +103,10 @@ export function buildCoreServers(params: BuildCoreServersParams): Record<string,
   servers['code-analysis'] = {
     command: 'node',
     args: [join(serverBasePath, 'code-analysis-server.js')],
-    env: { WORKSPACE_PATH: workspacePath }
+    env: {
+      WORKSPACE_PATH: workspacePath,
+      ...(workspaceId ? { WORKSPACE_ID: workspaceId } : {})
+    }
   }
 
   // ── Control Actions ──

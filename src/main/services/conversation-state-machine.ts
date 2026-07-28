@@ -45,8 +45,8 @@ const VALID_TRANSITIONS: Record<
 }
 
 export class ConversationStateMachine extends EventEmitter {
-  private state: ConversationState = 'idle'
-  private conversationId: string | null = null
+  /** Per-conversation state — absent means 'idle'. */
+  private states = new Map<string, ConversationState>()
   private mainWindow: BrowserWindow | null = null
 
   constructor() {
@@ -61,14 +61,38 @@ export class ConversationStateMachine extends EventEmitter {
     this.mainWindow = win
   }
 
-  get currentState(): ConversationState {
-    return this.state
+  /** Get state for a specific conversation. Defaults to 'idle' if not tracked. */
+  getState(conversationId: string): ConversationState {
+    return this.states.get(conversationId) ?? 'idle'
   }
+
+  /**
+   * @deprecated Use getState(conversationId) instead.
+   * Returns the state of the first streaming conversation, or 'idle'.
+   * Kept for backward compatibility during migration.
+   */
+  get currentState(): ConversationState {
+    for (const state of this.states.values()) {
+      if (state !== 'idle') return state
+    }
+    return 'idle'
+  }
+
+  /**
+   * @deprecated Use activeStreamingIds() instead.
+   * Returns the first streaming conversation ID.
+   */
   get activeConversationId(): string | null {
-    return this.conversationId
+    for (const [id, state] of this.states) {
+      if (state !== 'idle') return id
+    }
+    return null
   }
 
   transition(event: ConversationTransition, conversationId?: string): boolean {
+    const convId = conversationId ?? this.activeConversationId ?? '__unknown__'
+    const currentState = this.getState(convId)
+
     // Idempotent transitions — if already idle, treat finalizing events as no-ops.
     // Prevents race conditions when multiple services finalize concurrently.
     const IDEMPOTENT_WHEN_IDLE: ConversationTransition[] = [
@@ -77,31 +101,36 @@ export class ConversationStateMachine extends EventEmitter {
       'cleanupComplete',
       'chatAgentComplete'
     ]
-    if (this.state === 'idle' && IDEMPOTENT_WHEN_IDLE.includes(event)) {
-      log.info(`[StateMachine] ${event} already idle — no-op`)
+    if (currentState === 'idle' && IDEMPOTENT_WHEN_IDLE.includes(event)) {
+      log.info(`[StateMachine] ${event} already idle for ${convId} — no-op`)
       return true
     }
 
-    const nextState = VALID_TRANSITIONS[this.state]?.[event]
+    const nextState = VALID_TRANSITIONS[currentState]?.[event]
     if (!nextState) {
       log.warn(
-        `[StateMachine] Invalid transition: ${this.state} + ${event} ` +
-          `(conversation=${this.conversationId})`
+        `[StateMachine] Invalid transition: ${currentState} + ${event} ` +
+          `(conversation=${convId})`
       )
       return false
     }
 
-    const prevState = this.state
-    this.state = nextState
-    if (conversationId) this.conversationId = conversationId
-    if (nextState === 'idle') this.conversationId = null
+    const prevState = currentState
+    if (nextState === 'idle') {
+      this.states.delete(convId)
+    } else {
+      this.states.set(convId, nextState)
+    }
 
-    log.info(`[StateMachine] ${prevState} → ${nextState} (event=${event})`)
+    log.info(`[StateMachine] ${prevState} → ${nextState} (event=${event} conversation=${convId})`)
+    // A8-FIX: Always include conversationId in the payload so Phase 3
+    // renderers can attribute idle transitions to a specific conversation.
+    // Previously sent null on idle transitions, losing attribution.
     const statePayload = {
       from: prevState,
       to: nextState,
       event,
-      conversationId: this.conversationId
+      conversationId: convId
     }
     this.emit('stateChange', statePayload)
 
@@ -116,33 +145,93 @@ export class ConversationStateMachine extends EventEmitter {
     return true
   }
 
-  isIdle(): boolean {
-    return this.state === 'idle'
-  }
-  isStreaming(): boolean {
-    return this.state === 'chat-agent-streaming'
-  }
-
-  /** Force reset to idle — emergency escape hatch */
-  forceReset(): void {
-    const prevState = this.state
-    log.warn(`[StateMachine] Force reset from ${prevState}`)
-    this.state = 'idle'
-    this.conversationId = null
-    const statePayload = {
-      from: prevState,
-      to: 'idle' as const,
-      event: 'forceReset',
-      conversationId: null
+  /** Check if a specific conversation is idle (not streaming). */
+  isIdle(conversationId?: string): boolean {
+    if (conversationId) {
+      return this.getState(conversationId) === 'idle'
     }
-    this.emit('stateChange', statePayload)
+    // Global idle — no conversations are streaming
+    return this.states.size === 0
+  }
 
-    // Forward force reset to renderer
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      try {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
-      } catch {
-        // Window destroyed between check and send — harmless
+  /** Check if a specific conversation is streaming. */
+  isStreaming(conversationId?: string): boolean {
+    if (conversationId) {
+      return this.getState(conversationId) === 'chat-agent-streaming'
+    }
+    // Global — any conversation is streaming
+    for (const state of this.states.values()) {
+      if (state === 'chat-agent-streaming') return true
+    }
+    return false
+  }
+
+  /** Get all conversation IDs currently in a streaming state. */
+  activeStreamingIds(): string[] {
+    const ids: string[] = []
+    for (const [id, state] of this.states) {
+      if (state === 'chat-agent-streaming') ids.push(id)
+    }
+    return ids
+  }
+
+  /**
+   * Force reset a specific conversation to idle — emergency escape hatch.
+   * If no conversationId provided, resets ALL conversations (backward compat).
+   */
+  forceReset(conversationId?: string): void {
+    if (conversationId) {
+      const prevState = this.getState(conversationId)
+      log.warn(`[StateMachine] Force reset conversation=${conversationId} from ${prevState}`)
+      this.states.delete(conversationId)
+
+      // F1(3)-FIX: Skip emission when prevState is already idle.
+      // The supersede path in lifecycleRegistry.begin() calls abort() on the
+      // stale entry, which triggers forceReset(convId). If the SM was already
+      // idle for that conversation, emitting idle→idle with the conversationId
+      // causes the renderer to remove the conversation from streamingConversationIds
+      // — dropping the sidebar spinner for the stream that is just starting.
+      if (prevState === 'idle') {
+        return
+      }
+
+      // A8-FIX: Include conversationId so renderer knows which conversation
+      // went idle. Previously sent null, losing attribution.
+      const statePayload = {
+        from: prevState,
+        to: 'idle' as const,
+        event: 'forceReset',
+        conversationId
+      }
+      this.emit('stateChange', statePayload)
+
+      // Forward force reset to renderer
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        try {
+          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+        } catch {
+          // Window destroyed between check and send — harmless
+        }
+      }
+    } else {
+      // Global force reset — clear all states
+      const prevIds = [...this.states.keys()]
+      log.warn(`[StateMachine] Force reset ALL (${prevIds.length} conversations)`)
+      this.states.clear()
+      const statePayload = {
+        from: 'unknown' as const,
+        to: 'idle' as const,
+        event: 'forceReset',
+        conversationId: null
+      }
+      this.emit('stateChange', statePayload)
+
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        try {
+          this.mainWindow.webContents.send(IPC_CHANNELS.CHAT_STATE_CHANGE, statePayload)
+        } catch {
+          // Window destroyed between check and send — harmless
+        }
       }
     }
   }

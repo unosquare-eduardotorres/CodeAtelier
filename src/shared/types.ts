@@ -10,18 +10,12 @@ export type PromptVerbosity = 'full' | 'lean'
 
 /**
  * Which agent role is driving an AgentSessionService.
- * - 'da-vinci' — the default Specialist (home-screen concierge, plan-only,
- *   app-level help).
- * - 'project-specialist' — workspace-bound Specialist tailored to the repo.
- *
- * Introduced for the Project Specialist refactor (see
- * docs/architecture/project-specialist-refactor.md). Layer 2 (migration 69)
- * rewrote persisted values from `'generalist'` to `'da-vinci'` so the DB and
- * the type line up.
+ * - 'specialist' — the unified chat agent (formerly 'da-vinci' + 'project-specialist').
+ *   Uses DEFAULT_ARCHITECT_PROMPT when no specialist row exists, otherwise uses the
+ *   LLM-tailored prompt from the specialist builder.
  */
 export type AgentRole =
-  | 'da-vinci'
-  | 'project-specialist'
+  | 'specialist'
   | 'audit'
   | 'grill'
   | 'mpa-planner'
@@ -41,7 +35,7 @@ export type AgentRole =
 export type CommunicationTone = 'default' | 'calm' | 'optimistic' | 'brutal' | 'caveman'
 
 /** Tracks which phase of the conversation lifecycle is active */
-export type ConversationPhase = 'da-vinci-responding' | 'specialist-executing'
+export type ConversationPhase = 'specialist-responding' | 'specialist-executing'
 
 export interface UserProfile {
   id: string
@@ -52,7 +46,7 @@ export interface UserProfile {
 }
 
 export interface CoreAgentAlias {
-  agentRole: 'da-vinci'
+  agentRole: 'specialist'
   alias: string | null
   avatarKey: string | null
   updatedAt: string
@@ -60,7 +54,7 @@ export interface CoreAgentAlias {
 
 export interface CoreAgentPrompt {
   id: string
-  agentRole: 'da-vinci'
+  agentRole: 'specialist'
   mode: 'plan' | 'build' | 'danger'
   promptText: string
   defaultPromptText: string
@@ -101,7 +95,7 @@ export interface Conversation {
   branchName?: string
   /** User-defined sort order for sidebar reordering */
   sortOrder?: number
-  /** Specialist ID used as generalist persona (null = Da Vinci default) */
+  /** Specialist ID used as persona overlay (null = default specialist) */
   personaSpecialistId?: string | null
   /** LLM provider locked at conversation creation time */
   llmProvider: LLMProvider
@@ -117,6 +111,8 @@ export interface Conversation {
   handoffContext?: string | null
   /** Frozen model configuration snapshot — NULL for legacy conversations (live resolution) */
   modelConfigSnapshot?: ConversationModelSnapshot | null
+  /** Audit run ID when this conversation was created from the Health page */
+  sourceAuditRunId?: string | null
 }
 
 /**
@@ -181,7 +177,7 @@ export interface ContextUsage {
 export interface Message {
   id: string
   conversationId: string
-  role: 'user' | 'specialist' | 'da-vinci'
+  role: 'user' | 'specialist'
   agentId?: string
   contentMd: string
   attachmentsJson: string
@@ -189,6 +185,8 @@ export interface Message {
   toolActivities?: ToolActivity[]
   /** For turn bubbles: references the parent message ID that this bubble belongs to */
   parentMessageId?: string
+  /** Which plan card action the user clicked: 'build' | 'refine' | 'save_as_idea' | 'council' */
+  planAction?: string
 }
 
 export interface AgentStatus {
@@ -208,19 +206,19 @@ export interface AgentStatus {
   /**
    * Live SDK context window consumption (from query.getContextUsage().totalTokens).
    * This reflects the actual context size the model sees, unlike tokenUsage which is
-   * a cumulative billing total. Only populated for the generalist when SDK is active.
+   * a cumulative billing total. Only populated for the chat agent when SDK is active.
    */
   contextTokens?: number
   // Complexity scoring — populated when running as a specialist
   model?: ModelTier
   complexityTier?: ComplexityTier
-  // Active MCP tool servers — populated by generalist to indicate which intelligence tools are enabled
+  // Active MCP tool servers — populated by the chat agent to indicate which intelligence tools are enabled
   activeMcpTools?: string[]
 }
 
 // ── Multi-Workspace Permission Types ──
 
-export type PermissionType = 'elicitation' | 'askQuestion' | 'mpaApproval'
+export type PermissionType = 'elicitation' | 'askQuestion' | 'mpaApproval' | 'toolPermission'
 
 export interface PendingPermission {
   id: string
@@ -241,14 +239,20 @@ export interface PermissionResponse {
   workspaceId: string
   type: PermissionType
   response: 'approve' | 'deny' | { answer: string } | { approved: boolean; feedback?: string }
+  /** Original payload — included for toolPermission to carry requestId back to IPC handler. */
+  payload?: unknown
 }
 
 export interface CompletionNotification {
   workspaceId: string
   workspaceName: string
-  service: 'chat' | 'grill' | 'audit' | 'mpa'
-  status: 'completed' | 'failed'
+  service: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprint' | 'council'
+  status: 'completed' | 'failed' | 'needs_input'
   summary: string
+  /** Target page for click-to-navigate from OS notification */
+  targetPage?: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprints' | 'council'
+  /** Entity ID for deep navigation (blueprintId, sessionId, etc.) */
+  entityId?: string
 }
 
 // ── Tool Activity ──
@@ -403,6 +407,11 @@ export interface AppPreferences {
   updateGithubOwner: string
   updateGithubRepo: string
   context7ApiKey?: string
+  notificationsEnabled: boolean
+  /** Max concurrent build tasks within a Blueprint wave (1 = sequential, clamped 1–6). */
+  parallelBuildAgents: number
+  /** Drop semantic-search + code-analysis MCP servers from build tasks (saves 2 processes per task). Default: false (full MCP). */
+  leanBuildMcp: boolean
 }
 
 // ── Workspace Deploy Models ──
@@ -522,12 +531,9 @@ export type ModelTier = ComplexityScore['model']
 
 /** Actions that consume a Claude model — each can be independently configured */
 export type ModelAction =
-  | 'da-vinci'
-  | 'da-vinci:plan'
-  | 'da-vinci:build'
-  | 'project-specialist'
-  | 'project-specialist:plan'
-  | 'project-specialist:build'
+  | 'specialist'
+  | 'specialist:plan'
+  | 'specialist:build'
   | 'specialist:simple'
   | 'specialist:moderate'
   | 'specialist:complex'
@@ -548,6 +554,10 @@ export type ModelAction =
   | 'blueprint:build'
   | 'blueprint:verify'
   | 'prompt:optimize'
+  // ── Background one-shot actions ──
+  | 'commit-message'
+  | 'pr-description'
+  | 'condense'
 
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
@@ -805,7 +815,7 @@ export interface PlanDetectedEvent {
   afterPlan: string
 }
 
-// ── Generalist Intent System ──
+// ── Intent System ──
 
 /**
  * Tracks which control-actions MCP tools fired during the current turn.
@@ -827,7 +837,7 @@ export interface ControlToolState {
  * (5 string-based emit() calls, 3 detect*() methods, 3 MCP callbacks) into
  * a single typed output. Each variant maps to one UI action.
  *
- * Emitted by both Da Vinci (default specialist) and Project Specialist
+ * Emitted by specialist
  * adapters via AgentSessionService.
  */
 export type AgentIntent =
@@ -923,7 +933,7 @@ export type MemoryFactTier = 0 | 1 | 2 | 3
 export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
 
 /** How the fact was originally captured. */
-export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill'
+export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill' | 'bootstrap'
 
 export interface MemoryFact {
   id: string
@@ -939,12 +949,16 @@ export interface MemoryFact {
   lastConfirmedAt: string | null
   status: MemoryFactStatus
   supersededBy: string | null // id of the fact that superseded this one
+  mergedInto: string | null // id of canonical fact after cluster merge
+  volatile: boolean // version/count facts: always UPDATE-in-place, never promoted past T1
   sourceType: MemorySourceType
   sourceRef: string | null // conversation id / commit sha / doc path
   embeddingPending: boolean
   lastAccessedAt: string | null
   createdAt: string
   updatedAt: string
+  /** Count of non-auto_dedup confirmations (real evidence). Populated by UI-facing queries only. */
+  evidenceCount?: number
 }
 
 /** Resolution status for a contradiction between two facts. */
@@ -959,6 +973,21 @@ export interface MemoryContradiction {
   createdAt: string
   resolvedAt: string | null
 }
+
+/** How a confirmation was earned. */
+export type ConfirmationSourceType = 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap'
+
+/** Individual confirmation event (replaces bare counter for evidence-based promotion). */
+export interface MemoryConfirmation {
+  id: string
+  factId: string
+  sourceType: ConfirmationSourceType
+  weight: number // auto_dedup = 0.0, human/tool/extraction = 1.0
+  createdAt: string
+}
+
+/** Classifier action for the Mem0-style write path. */
+export type MemoryClassifierAction = 'ADD' | 'UPDATE' | 'NOOP' | 'SUPERSEDE'
 
 /** Doc-watcher gate: tracks content hashes to avoid re-extracting unchanged docs. */
 export interface MemoryDocState {
@@ -1175,7 +1204,6 @@ export interface SubscriptionCheckResult {
   claudeCli: { installed: boolean; version: string | null; error: string | null }
   claudeAuth: { authenticated: boolean; accountEmail: string | null; error: string | null }
   claudeMax: { active: boolean; plan: string | null; error: string | null }
-  codexCli: { installed: boolean; version: string | null; error: string | null }
   sdkHealth?: {
     sdkVersion: string | null
     modelsAvailable: string[]
@@ -1191,14 +1219,14 @@ export interface AutoConfigureResult {
 
 // ── Embedding Provider ──
 
-/** Which embedding backend is active. oMLX is the only supported backend. */
-export type EmbeddingBackend = 'omlx'
+/** Which embedding backend is active. Routes through localEmbeddingProvider facade. */
+export type EmbeddingBackend = 'omlx' | 'ollama'
 
-/** Status of the oMLX embedding backend */
+/** Status of the embedding backend (oMLX or Ollama) */
 export interface EmbeddingModelStatus {
-  /** oMLX is running and an embedding model is loaded + responding */
+  /** Embedding provider is initialized and ready to embed */
   ready: boolean
-  backend: 'omlx'
+  backend: EmbeddingBackend
   /** oMLX server is reachable */
   omlxRunning: boolean
   /** oMLX is installed on this machine (even if not running) */
@@ -1211,6 +1239,11 @@ export interface EmbeddingModelStatus {
   omlxAllModels?: OmlxModelDetail[]
   /** False when admin API was unreachable (auth/timeout) — models inferred from /v1/models */
   omlxAdminApiAvailable: boolean
+  // ── Ollama fields (populated when backend === 'ollama') ──
+  /** Whether Ollama server is reachable */
+  ollamaRunning?: boolean
+  /** Selected embedding model in Ollama */
+  ollamaEmbeddingModel?: string | null
 }
 
 // ── Ollama ──
@@ -1360,10 +1393,12 @@ export type LocalLLMStrategy = 'default' | 'native'
 
 /**
  * Executor backend — which runtime drives AI interactions.
- * - 'cli' — Interactive Claude CLI (stream-json mode) — subscription billing
- * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk)
+ * Fully derived from the resolved LLM provider — not user-configurable.
  *
- * Stored in workspace settings_json.executorBackend. Default: 'cli'.
+ * Rule: provider === 'claude' → 'cli'; everything else → 'opencode'.
+ *
+ * - 'cli'     — Claude CLI (stream-json mode) — subscription billing
+ * - 'opencode' — OpenCode multi-provider runtime (@opencode-ai/sdk)
  */
 export type ExecutorBackend = 'cli' | 'opencode'
 
@@ -1374,6 +1409,7 @@ export type ExecutorBackend = 'cli' | 'opencode'
  */
 export interface WorkspaceSettings {
   // ── Executor / Provider ──
+  /** @deprecated Executor is now derived from llmProvider. Kept for tolerant reading of old settings_json. */
   executorBackend?: ExecutorBackend
   llmProvider?: LLMProvider
   costPreference?: CostPreference
@@ -1402,12 +1438,13 @@ export interface WorkspaceSettings {
   memoryEnabled?: boolean
   localMcpActive?: boolean
   gitAutoBranch?: boolean
-  specialistSwapAccepted?: boolean
   /** Show Ollama provider option in Settings (default false) */
   showOllamaProvider?: boolean
 
   // ── Local LLM ──
   descriptionModel?: string
+  /** Ollama model used for embedding (semantic search). e.g. 'bge-m3', 'nomic-embed-text' */
+  ollamaEmbeddingModel?: string
 
   // ── OpenCode ──
   openCodeProvider?: string
@@ -1840,12 +1877,43 @@ export interface PlanRecord {
   riskCount: number
   createdAt: string
   updatedAt: string
+  previousPlanId: string | null
+}
+
+/** A single entry in a plan's status timeline. */
+export interface PlanStatusHistoryEntry {
+  id: string
+  planId: string
+  fromStatus: PlanStatus | null
+  toStatus: PlanStatus
+  changedAt: string
+  actor: string // 'user' | 'system'
 }
 
 export interface PlanFilters {
   status?: PlanStatus | PlanStatus[]
   source?: PlanSource
   search?: string
+}
+
+/** Phase progress event — emitted during plan build execution */
+export interface PhaseProgressEvent {
+  planId: string | null
+  phaseId: number
+  phaseTitle: string
+  status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
+  totalPhases: number
+  message?: string
+}
+
+/** Persisted phase progress entry (stored as JSON in plans.phase_progress_json) */
+export interface PhaseProgress {
+  phaseId: number
+  status: string
+  startedAt: string | null
+  completedAt: string | null
+  /** Files the agent has touched within this phase (populated via tool activity inference) */
+  touchedFiles?: string[]
 }
 
 // ── E2E Testing Types ──────────────────────────────────────────────────────

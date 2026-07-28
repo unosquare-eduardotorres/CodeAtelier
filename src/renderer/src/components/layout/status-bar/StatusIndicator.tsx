@@ -15,6 +15,8 @@ export interface StatusIndicatorProps {
   title: string
   onClick: () => void
   badge?: string | number | null
+  onBadgeClick?: () => void
+  badgeClickable?: boolean
 }
 
 // ── Color tables ─────────────────────────────────────────────────────────────
@@ -40,7 +42,9 @@ export function StatusIndicator({
   activeColor = 'danger',
   title,
   onClick,
-  badge
+  badge,
+  onBadgeClick,
+  badgeClickable
 }: StatusIndicatorProps): React.JSX.Element | null {
   if (state === 'hidden') return null
 
@@ -56,7 +60,22 @@ export function StatusIndicator({
       >
         <Icon size={11} className={state === 'active' ? 'animate-pulse' : undefined} />
         {label && <span className="font-medium">{label}</span>}
-        {badge != null && <span className="font-mono text-[10px]">{badge}</span>}
+        {badge != null &&
+          (badgeClickable && onBadgeClick ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onBadgeClick()
+              }}
+              className="font-mono text-[10px] bg-surface-overlay rounded-full px-1.5 min-w-[18px] text-center hover:bg-surface-float transition-colors"
+              title={`${badge} background blueprint(s) — click to view`}
+            >
+              {badge}
+            </button>
+          ) : (
+            <span className="font-mono text-[10px]">{badge}</span>
+          ))}
       </button>
     </div>
   )

@@ -18,7 +18,7 @@ export function auditSegmentToMessage(
   return {
     id: `audit-msg-${index ?? counter++}`,
     conversationId: 'audit-session',
-    role: 'da-vinci',
+    role: 'specialist',
     contentMd: content,
     attachmentsJson: '[]',
     createdAt: new Date().toISOString(),

@@ -3,7 +3,7 @@
  *
  * Verifies the notification system (3 components, 319 LOC total):
  *   - NotificationStack — manages the toast stack
- *   - PermissionToast — permission requests from background sessions
+ *   - PermissionApprovalModal — permission requests from background sessions
  *   - CompletionToast — success/failure feedback
  *
  * Uses CDP fixture (Electron 41+ compatible).
@@ -36,18 +36,18 @@ test.describe('Notifications & Toasts', () => {
     const hasStack = await stack.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!hasStack) { test.skip(); return }
 
-    const toasts = stack.locator('[data-testid="permission-toast"], [data-testid="completion-toast"]')
+    const toasts = stack.locator('[data-testid="permission-approval-modal"], [data-testid="completion-toast"]')
     expect(await toasts.count()).toBeGreaterThan(0)
   })
 
-  test('permission toast shows accept button', async ({ electronPage: page }) => {
+  test('permission modal shows accept button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
-    const permissionToast = page.locator('[data-testid="permission-toast"]')
-    if (!(await permissionToast.first().isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    const permissionModal = page.locator('[data-testid="permission-approval-modal"]')
+    if (!(await permissionModal.first().isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
 
-    const text = await permissionToast.first().textContent()
+    const text = await permissionModal.first().textContent()
     expect(text?.length).toBeGreaterThan(0)
 
     const acceptBtn = page.locator('[data-testid="permission-accept-btn"]').first()
@@ -78,7 +78,7 @@ test.describe('Notifications & Toasts', () => {
     const stack = page.locator('[data-testid="notification-stack"]')
     if (!(await stack.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
 
-    const toasts = stack.locator('[data-testid="permission-toast"], [data-testid="completion-toast"]')
+    const toasts = stack.locator('[data-testid="permission-approval-modal"], [data-testid="completion-toast"]')
     if ((await toasts.count()) < 2) { test.skip(); return }
 
     const box1 = await toasts.nth(0).boundingBox()
@@ -92,7 +92,7 @@ test.describe('Notifications & Toasts', () => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) { test.skip(); return }
 
-    const toasts = page.locator('[data-testid="permission-toast"], [data-testid="completion-toast"]')
+    const toasts = page.locator('[data-testid="permission-approval-modal"], [data-testid="completion-toast"]')
     const count = await toasts.count()
     if (count === 0) { test.skip(); return }
 

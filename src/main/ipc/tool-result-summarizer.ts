@@ -54,6 +54,8 @@ function checkToolUseError(content: string): ToolResultSummary | undefined {
     return { result: 'String not found — re-read needed', resultDetail: capDetail(inner) }
   if (/permission denied|EACCES|operation not permitted/i.test(inner))
     return { result: 'Permission denied', resultDetail: capDetail(inner) }
+  if (/could not be parsed as JSON|InputValidationError/i.test(inner))
+    return { result: 'Malformed input — will retry', resultDetail: capDetail(inner) }
 
   const oneLine = inner.split('\n')[0]?.trim() ?? 'Tool error'
   const shortResult = oneLine.length > 80 ? `Error: ${oneLine.slice(0, 77)}…` : `Error: ${oneLine}`

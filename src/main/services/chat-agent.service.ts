@@ -5,9 +5,9 @@
  * run concurrently. Switching workspaces in the UI is now a view swap only —
  * background sessions continue executing.
  *
- * The adapter-resolution logic picks between DaVinciRoleAdapter (the default
- * concierge) and ProjectSpecialistRoleAdapter (workspace-specific AI) based on
- * the workspace's specialist build_status and the user's swap acceptance.
+ * Every workspace uses ProjectSpecialistRoleAdapter. When a specialist row
+ * exists with build_status='ready', the adapter uses the tailored prompt;
+ * otherwise it falls back to DEFAULT_ARCHITECT_PROMPT.
  *
  * All existing consumers (chat-stream.service.ts, agent.ipc.ts, etc.) continue
  * working through backward-compatible accessors that delegate to the active
@@ -18,12 +18,10 @@ import { EventEmitter } from 'node:events'
 import type { AgentRole, AgentStatus, ConversationMode, ImageAttachment } from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { AgentSessionService } from './agent-session.service'
-import { DaVinciRoleAdapter } from './role-adapters/da-vinci.adapter'
 import { ProjectSpecialistRoleAdapter } from './role-adapters/project-specialist.adapter'
 import type { AgentRoleAdapter } from './agent-session.types'
 import type { CacheEfficiencyReport } from './agent-token-tracker'
 import { workspaceRepository } from '../db/repositories'
-import { getDatabase } from '../db/index'
 import { modelConfigService } from './model-config.service'
 import { memoryDocWatcherService } from './memory-doc-watcher.service'
 
@@ -35,6 +33,7 @@ const FORWARDED_EVENTS = [
   'intent',
   'plan',
   'askQuestion',
+  'permissionRequest',
   'promptSuggestion',
   'compactNeeded',
   'elicitation',
@@ -58,14 +57,9 @@ export class ChatAgentService extends EventEmitter {
   /** Currently active (visible in UI) workspace. */
   private _activeWorkspaceId: string | null = null
 
-  /** The DaVinciRoleAdapter is always alive for home / persona lookups. */
-  private readonly daVinciAdapter: DaVinciRoleAdapter
-
   constructor() {
     super()
     this.setMaxListeners(100)
-
-    this.daVinciAdapter = new DaVinciRoleAdapter()
 
     // ELICIT-ROUTES-ACTIVE-01: Route elicitationResponse to the correct workspace
     // session when a workspaceId is provided, falling back to the active session.
@@ -280,40 +274,14 @@ export class ChatAgentService extends EventEmitter {
   // ── Adapter Resolution ────────────────────────────────────────────
 
   /**
-   * Pick the right adapter for the given workspace path.
-   * Returns the workspace's ProjectSpecialistRoleAdapter when a specialist
-   * row exists AND its build_status is 'ready'. Otherwise falls back to the
-   * shared DaVinciRoleAdapter.
+   * Always returns a ProjectSpecialistRoleAdapter. When a specialist row
+   * exists with build_status='ready', the adapter uses the tailored prompt;
+   * otherwise it falls back to DEFAULT_ARCHITECT_PROMPT.
    */
   private resolveAdapter(workspacePath: string): AgentRoleAdapter {
-    try {
-      const workspace = workspaceRepository.findByPath(workspacePath)
-      if (!workspace) {
-        // SVC-02: Log workspace path for debugging — silent fallback is hard to trace
-        this.log.warn(`[adapter-swap] Workspace not found for path=${workspacePath}, using DaVinci`)
-        return new DaVinciRoleAdapter()
-      }
-
-      const settings = workspaceRepository.getSettings(workspace.id)
-      if (!settings.specialistSwapAccepted) {
-        // User has not accepted the swap yet → keep DaVinci.
-        return new DaVinciRoleAdapter()
-      }
-
-      const db = getDatabase()
-      const row = db
-        .prepare(`SELECT id, build_status FROM specialists WHERE workspace_id = ?`)
-        .get(workspace.id) as { id: string; build_status: string } | undefined
-      if (row?.build_status === 'ready') {
-        this.log.info(
-          `[adapter-swap] Using ProjectSpecialistRoleAdapter (user-accepted) for workspace=${workspace.id}`
-        )
-        return new ProjectSpecialistRoleAdapter({ workspaceId: workspace.id })
-      }
-    } catch (err) {
-      this.log.warn('[adapter-swap] resolveAdapter failed, falling back to DaVinci:', err)
-    }
-    return new DaVinciRoleAdapter()
+    const workspace = workspaceRepository.findByPath(workspacePath)
+    const workspaceId = workspace?.id ?? workspacePath
+    return new ProjectSpecialistRoleAdapter({ workspaceId })
   }
 
   // ── Active Session Helper ─────────────────────────────────────────
@@ -328,8 +296,8 @@ export class ChatAgentService extends EventEmitter {
     return this.sessions.get(this._activeWorkspaceId)
   }
 
-  private getActiveAdapter(): AgentRoleAdapter {
-    return this.getActiveEntry()?.adapter ?? this.daVinciAdapter
+  private getActiveAdapter(): AgentRoleAdapter | undefined {
+    return this.getActiveEntry()?.adapter
   }
 
   /**
@@ -383,39 +351,13 @@ export class ChatAgentService extends EventEmitter {
 
     if (mode === session.getMode()) return
     const adapter = this.getActiveAdapter()
-    if (adapter instanceof DaVinciRoleAdapter) {
-      adapter.setPendingModeSwitch(session.getMode(), mode)
-    }
+    adapter?.setPendingModeSwitch?.(session.getMode(), mode)
     return session.switchMode(mode)
   }
 
-  async switchPersona(personaSpecialistId: string | null, conversationId: string): Promise<void> {
-    const adapter = this.getActiveAdapter()
-    const session = this.getActiveSession()
-    if (!session) return
-
-    // Persona is a Generalist-only concept; if the Project Specialist is active,
-    // persona switches are ignored (warning logged).
-    // SHARED-ADAPTER-01: Use instanceof — adapter is per-workspace, not a singleton.
-    if (!(adapter instanceof DaVinciRoleAdapter)) {
-      this.log.warn('[persona-switch] Ignored — Project Specialist is active for this workspace')
-      return
-    }
-    if (personaSpecialistId === adapter.getPersona().id) return
-    if (!session.getWorkspacePath()) return
-
-    this.log.info(
-      `[PIPELINE:persona-switch] ${adapter.getPersona().id ?? 'Da Vinci'} → ${personaSpecialistId ?? 'Da Vinci'}`
-    )
-
-    adapter.setPersona(personaSpecialistId)
-
-    if (session.isRunning()) {
-      adapter.setPendingCompaction(
-        conversationId,
-        'Summarize the conversation so far — a persona change is about to happen.'
-      )
-    }
+  /** @deprecated Persona system removed — no-op. */
+  async switchPersona(_personaSpecialistId: string | null, _conversationId: string): Promise<void> {
+    this.log.warn('[persona-switch] Persona system removed — no-op')
   }
 
   async injectContext(context: string, conversationId: string): Promise<void> {
@@ -425,11 +367,9 @@ export class ChatAgentService extends EventEmitter {
       return
     }
     const adapter = this.getActiveAdapter()
-    // Only the Generalist adapter caches pending context; the Project Specialist
-    // writes a simpler prompt and doesn't need the lazy-inject mechanism.
-    if (!(adapter instanceof DaVinciRoleAdapter)) return
+    if (!adapter?.addPendingContext) return
 
-    const existingSize = adapter.getPendingContextSize(conversationId)
+    const existingSize = adapter.getPendingContextSize?.(conversationId) ?? 0
     adapter.addPendingContext(conversationId, context)
     if (existingSize > 0) {
       this.log.info(
@@ -467,9 +407,7 @@ export class ChatAgentService extends EventEmitter {
     this.log.info(`Starting native SDK compaction (nuance=${extractNuance})`)
 
     const adapter = this.getActiveAdapter()
-    // Pending compaction prefix is only wired on the Generalist adapter; for
-    // the Project Specialist we simply delegate to the session's compact.
-    if (adapter instanceof DaVinciRoleAdapter) {
+    if (adapter?.setPendingCompaction) {
       if (extractNuance) {
         adapter.setPendingCompaction(
           conversationId,
@@ -494,8 +432,8 @@ export class ChatAgentService extends EventEmitter {
     const session = this.getActiveSession()
     if (!session) {
       return {
-        agentId: this.daVinciAdapter.agentId,
-        agentType: 'da-vinci',
+        agentId: 'specialist',
+        agentType: 'specialist',
         status: 'idle',
         elapsedMs: 0,
         tokenUsage: 0,
@@ -522,6 +460,13 @@ export class ChatAgentService extends EventEmitter {
    */
   respondToAskUserForWorkspace(workspaceId: string, requestId: string, response: string): void {
     this.sessions.get(workspaceId)?.session.respondToAskUser(requestId, response)
+  }
+
+  /**
+   * Route respondToPermission to a specific workspace (for cross-workspace permission flow).
+   */
+  respondToPermissionForWorkspace(workspaceId: string, requestId: string, approved: boolean): void {
+    this.sessions.get(workspaceId)?.session.respondToPermission(requestId, approved)
   }
 
   getWorkspacePath(): string | null {
@@ -563,10 +508,7 @@ export class ChatAgentService extends EventEmitter {
    * Safe to call on abort — the conversation remains resumable.
    */
   clearConversationPendingState(conversationId: string): void {
-    const adapter = this.getActiveAdapter()
-    if (adapter instanceof DaVinciRoleAdapter) {
-      adapter.clearConversation(conversationId)
-    }
+    this.getActiveAdapter()?.clearConversation?.(conversationId)
   }
 
   /** Which executor backend is active for the current workspace (cli | local-direct | unknown). */
@@ -577,38 +519,22 @@ export class ChatAgentService extends EventEmitter {
 
   /** Which role is currently driving the session. */
   getActiveRole(): AgentRole {
-    return this.getActiveAdapter().role
+    return this.getActiveAdapter()?.role ?? 'specialist'
   }
 
-  /** The agent_id of the currently active adapter (DA_VINCI_AGENT_ID or workspace-specialist-<wsId>). */
+  /** The agent_id of the currently active adapter. */
   getActiveAgentId(): string {
-    return this.getActiveAdapter().agentId
+    return this.getActiveAdapter()?.agentId ?? 'specialist'
   }
 
-  /** The DB role tag (`'da-vinci' | 'specialist'`) for whichever adapter is active. */
-  getActiveMessageRole(): 'da-vinci' | 'specialist' {
-    return this.getActiveAdapter().role === 'project-specialist' ? 'specialist' : 'da-vinci'
+  /** The DB role tag for the active adapter. Always 'specialist'. */
+  getActiveMessageRole(): 'specialist' {
+    return 'specialist'
   }
 
-  /**
-   * Returns persona overlay info for the current Da Vinci adapter, or null when
-   * no persona is active (Da Vinci default) or when a Project Specialist
-   * adapter is driving (the project specialist *is* the active identity, not a
-   * persona overlay — callers should treat that as `getActiveMessageRole()`).
-   *
-   * Used by the chat-stream service to drive the renderer's thinking-indicator
-   * avatar so it matches the saved bubble's identity from the very first chunk.
-   */
+  /** @deprecated Persona system removed — always returns null. */
   getActivePersona(): { id: string; agentId: string; alias: string | null } | null {
-    const adapter = this.getActiveAdapter()
-    if (!(adapter instanceof DaVinciRoleAdapter)) return null
-    const persona = adapter.getPersona()
-    if (!persona.id) return null
-    return {
-      id: persona.id,
-      agentId: persona.data?.agentId ?? persona.id,
-      alias: persona.data?.alias ?? persona.data?.displayName ?? null
-    }
+    return null
   }
 }
 

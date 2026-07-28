@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
-import { processToolChunk, isExpectedPlanModeBlock } from '../tool-chunk-processor'
+import { processToolChunk, isExpectedPlanModeBlock, isExpectedToolUnavailable, isAgentToolMistake } from '../tool-chunk-processor'
 import type { StreamChunk } from '../../services/agent-base.service'
 
 const BASE_OPTIONS = { agentType: 'test' } as const
@@ -284,9 +284,9 @@ describe('processToolChunk — plan-mode Write block suppression', () => {
       toolId: 'plan-blk-1',
       content: '<tool_use_error>: No such tool available: Write</tool_use_error>'
     }
-    // No formatTagsToSkip here: if reportToolError were called it would attempt
-    // app.getVersion() and throw in the test env. isExpectedPlanModeBlock must
-    // short-circuit the reporter, so this must NOT throw.
+    // No formatTagsToSkip here — isExpectedPlanModeBlock must prevent reportToolError
+    // from firing. Correctness is verified by the isExpectedPlanModeBlock unit tests
+    // above; this integration test confirms the wiring through processToolChunk.
     const result = processToolChunk(chunk, { agentType: 'specialist', mode: 'plan' })
     assert.ok(result)
     assert.equal(result.toolActivity.status, 'error')
@@ -306,6 +306,69 @@ describe('processToolChunk — plan-mode Write block suppression', () => {
       mode: 'plan',
       formatTagsToSkip: ['Bash']
     })
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+})
+
+// ── Layer 4: conditional MCP tool "No such tool" is NOT reported as a bug ──
+
+describe('isExpectedToolUnavailable', () => {
+  const noSuchTool = '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
+
+  test('true for memory_search when tool unavailable', () => {
+    assert.equal(isExpectedToolUnavailable('mcp__memory__memory_search', noSuchTool), true)
+  })
+
+  test('true for memory_record when tool unavailable', () => {
+    assert.equal(
+      isExpectedToolUnavailable('mcp__memory__memory_record', '<tool_use_error>No such tool available: mcp__memory__memory_record</tool_use_error>'),
+      true
+    )
+  })
+
+  test('true for memory_flag when tool unavailable', () => {
+    assert.equal(
+      isExpectedToolUnavailable('mcp__memory__memory_flag', '<tool_use_error>No such tool available: mcp__memory__memory_flag</tool_use_error>'),
+      true
+    )
+  })
+
+  test('false for a non-conditional tool (Read)', () => {
+    assert.equal(
+      isExpectedToolUnavailable('Read', '<tool_use_error>No such tool available: Read</tool_use_error>'),
+      false
+    )
+  })
+
+  test('false for a genuine memory tool error (not "No such tool")', () => {
+    assert.equal(
+      isExpectedToolUnavailable('mcp__memory__memory_search', '<tool_use_error>Database connection failed</tool_use_error>'),
+      false
+    )
+  })
+
+  test('false when toolName is undefined', () => {
+    assert.equal(isExpectedToolUnavailable(undefined, noSuchTool), false)
+  })
+
+  test('false when content is undefined', () => {
+    assert.equal(isExpectedToolUnavailable('mcp__memory__memory_search', undefined), false)
+  })
+})
+
+describe('processToolChunk — conditional MCP tool suppression', () => {
+  test('memory_search "No such tool" does not call reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'mcp__memory__memory_search',
+      toolId: 'cond-mcp-1',
+      content: '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
+    }
+    // isExpectedToolUnavailable must prevent reportToolError from firing.
+    // Correctness is verified by the isExpectedToolUnavailable unit tests above;
+    // this integration test confirms the wiring through processToolChunk.
+    const result = processToolChunk(chunk, { agentType: 'specialist' })
     assert.ok(result)
     assert.equal(result.toolActivity.status, 'error')
   })
@@ -357,6 +420,40 @@ describe('processToolChunk — options', () => {
     assert.ok(result)
     // The summarizer should strip the workspace path prefix
     assert.ok(result.toolActivity.input)
+  })
+})
+
+// ── Agent tool mistake filter ──
+
+describe('isAgentToolMistake', () => {
+  test('Edit with multiple matches is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>Found 2 matches of the string to replace, but replace_all is false.</tool_use_error>'
+    ))
+  })
+
+  test('Write before Read is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>'
+    ))
+  })
+
+  test('Edit identical strings is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>No changes to make: old_string and new_string are exactly the same.</tool_use_error>'
+    ))
+  })
+
+  test('Grep non-existent path is agent mistake', () => {
+    assert.ok(isAgentToolMistake(
+      '<tool_use_error>Path does not exist: /some/file.ts.</tool_use_error>'
+    ))
+  })
+
+  test('real errors are NOT agent mistakes', () => {
+    assert.ok(!isAgentToolMistake('<tool_use_error>EACCES: permission denied</tool_use_error>'))
+    assert.ok(!isAgentToolMistake(undefined))
+    assert.ok(!isAgentToolMistake(''))
   })
 })
 

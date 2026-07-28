@@ -3,7 +3,7 @@
  *
  * Verifies that:
  * 1. Blueprint adapters (supportsEmitPlanRecovery = false) skip recovery
- * 2. Da Vinci adapter (supportsEmitPlanRecovery = true) allows recovery
+ * 2. Chat adapter (supportsEmitPlanRecovery = true) allows recovery
  * 3. The timeout watchdog in attemptPlanToolRecovery aborts after 2 minutes
  *    of inactivity (tested with a short timeout override)
  */
@@ -32,7 +32,7 @@ function shouldAttemptPlanRecovery(params: {
 }
 
 describe('Plan-Tool-Recovery Gating', () => {
-  test('Da Vinci adapter (supportsEmitPlanRecovery=true) allows recovery when all conditions met', () => {
+  test('Chat adapter (supportsEmitPlanRecovery=true) allows recovery when all conditions met', () => {
     const result = shouldAttemptPlanRecovery({
       supportsEmitPlanRecovery: true,
       planModeToolBlock: true,
@@ -40,7 +40,7 @@ describe('Plan-Tool-Recovery Gating', () => {
       controlToolStatePlan: false,
       timedOut: false
     })
-    assert.equal(result, true, 'Recovery should be attempted for Da Vinci')
+    assert.equal(result, true, 'Recovery should be attempted for chat adapter')
   })
 
   test('Blueprint adapter (supportsEmitPlanRecovery=false) skips recovery even when all other conditions met', () => {

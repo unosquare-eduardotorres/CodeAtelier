@@ -20,7 +20,7 @@ if (!env) {
     test('record() round-trips a single entry', () => {
       const entry = usageLogRepository.record({
         feature: 'chat',
-        agentType: 'da-vinci',
+        agentType: 'specialist',
         model: 'claude-sonnet-4-6',
         workspaceId: wsId,
         conversationId: 'conv-1',

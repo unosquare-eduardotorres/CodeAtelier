@@ -60,13 +60,13 @@ test.describe('AISubscriptionsSection', () => {
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
 
-    // Should have check rows for Claude CLI, Claude Auth, Claude Max, Codex CLI
+    // Should have check rows for Claude CLI, Claude Auth, Claude Max
     const checkRows = section.locator('[data-testid="ai-check-row"]')
     const rowCount = await checkRows.count()
-    expect(rowCount).toBe(4)
+    expect(rowCount).toBe(3)
 
     // Each row should have a label
-    const labels = ['Claude CLI', 'Claude Auth', 'Claude Max', 'Codex CLI']
+    const labels = ['Claude CLI', 'Claude Auth', 'Claude Max']
     for (const label of labels) {
       const row = section.locator(`text=${label}`)
       await expect(row).toBeVisible()

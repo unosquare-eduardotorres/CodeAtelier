@@ -5,6 +5,7 @@ import type { AgentStatus } from '../../shared/types'
 import { agentIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
+import { notificationService } from '../services/notification.service'
 
 const log = agentIpcLogger
 
@@ -91,15 +92,16 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
         /* non-fatal */
       }
 
-      safeWindowSend(mainWindow, IPC_CHANNELS.COMPLETION_NOTIFICATION, {
+      notificationService.dispatch({
         workspaceId,
         workspaceName,
         service: 'chat',
-        status: status.status,
+        status: status.status as 'completed' | 'failed',
         summary:
           status.status === 'completed'
             ? 'Chat session completed'
-            : `Chat session failed: ${status.currentTask ?? 'unknown error'}`
+            : `Chat session failed: ${status.currentTask ?? 'unknown error'}`,
+        targetPage: 'chat'
       })
     }
   })

@@ -12,7 +12,7 @@ interface SpecialistState {
   error: string | null
 
   loadSpecialists: () => Promise<void>
-  createSpecialist: (data: CreateSpecialistInput) => Promise<void>
+  createSpecialist: (data: CreateSpecialistInput) => Promise<Specialist>
   updateSpecialist: (id: string, data: UpdateSpecialistInput) => Promise<void>
   deleteSpecialist: (id: string) => Promise<{ success: boolean; error?: string }>
   assignSkill: (specialistId: string, skillId: string) => Promise<void>
@@ -36,10 +36,11 @@ export const useSpecialistStore = create<SpecialistState>((set, get) => ({
     }
   },
 
-  createSpecialist: async (data: CreateSpecialistInput) => {
+  createSpecialist: async (data: CreateSpecialistInput): Promise<Specialist> => {
     try {
       const specialist = await window.api.createSpecialist(data)
       set((state) => ({ specialists: [...state.specialists, specialist], error: null }))
+      return specialist
     } catch (error) {
       rendererLog.error('Failed to create specialist:', error)
       set({ error: (error as Error).message })

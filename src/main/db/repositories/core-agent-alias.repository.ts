@@ -2,7 +2,7 @@ import { BaseRepository } from '../base-repository'
 import type { CoreAgentAlias } from '../../../shared/types'
 
 interface CoreAgentAliasRow {
-  agent_role: 'da-vinci'
+  agent_role: 'specialist'
   alias: string | null
   avatar_key: string | null
   updated_at: string
@@ -29,7 +29,7 @@ export class CoreAgentAliasRepository extends BaseRepository<CoreAgentAliasRow, 
     return rows.map(mapRow)
   }
 
-  upsert(agentRole: 'da-vinci', alias: string | null, avatarKey: string | null): CoreAgentAlias {
+  upsert(agentRole: 'specialist', alias: string | null, avatarKey: string | null): CoreAgentAlias {
     const db = this.db()
     const row = db
       .prepare(

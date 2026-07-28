@@ -9,17 +9,17 @@ import { chatAgentLogger } from '../logger'
 
 const log = chatAgentLogger
 
-/** Regex to detect grill-summary blocks emitted by the generalist. */
+/** Regex to detect grill-summary blocks emitted by the agent. */
 const GRILL_SUMMARY_REGEX = /```grill-summary\n([\s\S]*?)```/
 
-/** Regex to detect grill-question blocks emitted by the generalist. */
+/** Regex to detect grill-question blocks emitted by the agent. */
 const GRILL_QUESTION_REGEX = /```grill-question\n([\s\S]*?)```/g
 
 /** Regex to detect grill-evaluation blocks (new structured format with score + questions). */
 const GRILL_EVAL_REGEX = /```grill-evaluation\n([\s\S]*?)```/g
 
 /**
- * Stateless intent detector — extracts the generalist's intent from control tool state.
+ * Stateless intent detector — extracts intents from control tool state.
  *
  * MCP tools are the single source of truth for all action-type intents (plan, askUser).
  * Regex detection for these intents has been eliminated — no dual-path, no races.
@@ -29,7 +29,7 @@ export class IntentDetector {
   /**
    * Detect all intents from the completed response.
    *
-   * Returns an array because the generalist can produce multiple intents in one turn
+   * Returns an array because the agent can produce multiple intents in one turn
    * (e.g., grill questions + a plan). The caller should process them in order.
    */
   detectAll(

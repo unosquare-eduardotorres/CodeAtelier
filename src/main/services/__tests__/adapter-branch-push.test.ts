@@ -158,13 +158,6 @@ describe('Additional service module verification', () => {
     assert.ok(exports.length >= 1, `has exports: ${exports.join(', ')}`)
   })
 
-  test('da-vinci-prompt-assembler module imports clean', async () => {
-    const mod = await import('../da-vinci-prompt-assembler')
-    assert.ok(mod, 'module imported')
-    const exports = Object.keys(mod)
-    assert.ok(exports.length >= 1, `has exports: ${exports.join(', ')}`)
-  })
-
   test('conversation-state-machine module imports', async () => {
     const mod = await import('../conversation-state-machine')
     assert.ok(mod, 'module imported')

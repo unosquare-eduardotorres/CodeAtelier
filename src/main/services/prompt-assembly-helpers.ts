@@ -1,8 +1,6 @@
 /**
- * Stateless prompt-assembly helpers shared by DaVinciRoleAdapter and
- * ProjectSpecialistRoleAdapter. Both roles want the same MCP-guidance blocks
- * and the same conditional user-turn prefix — only their identity-prompt
- * source differs.
+ * Stateless prompt-assembly helpers shared by ProjectSpecialistRoleAdapter.
+ * These provide MCP-guidance blocks and conditional user-turn prefixes.
  *
  * These helpers do not touch DB or filesystem directly (memory/CLAUDE.md
  * layering lives in PromptBuilder). They only operate on the values passed in.
@@ -196,7 +194,7 @@ export function buildConditionalPrefix(opts: {
 
 /**
  * Pattern 8: Build the `<mode-context>` block injected per-message.
- * Shared by DaVinciPromptAssembler and ProjectSpecialistRoleAdapter.
+ * Shared by ProjectSpecialistRoleAdapter.
  */
 export function buildModeContextPrefix(mode: ConversationMode, model?: string): string {
   const verbosity = resolvePromptVerbosity(model ?? '')

@@ -12,7 +12,7 @@
  * - Heading-based splits still fire when a heading arrives after 200+ chars.
  */
 
-import { SentenceBuffer } from '@renderer/utils/sentence-buffer'
+import { SentenceBuffer } from './sentence-buffer'
 import type { ToolActivity } from '../../../shared/types'
 
 // ── Public types ──────────────────────────────────────────────────────────

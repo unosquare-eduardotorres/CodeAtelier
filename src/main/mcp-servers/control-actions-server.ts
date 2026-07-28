@@ -2,7 +2,7 @@
 /**
  * Control Actions MCP Server — externalized for CLI interactive mode.
  *
- * Exposes two tools: emit_plan, ask_user.
+ * Exposes four tools: emit_plan, ask_user, permission_prompt, emit_phase_progress.
  * Communicates events back to the Electron main process via a Unix domain
  * socket (IPC bridge). The main process creates the socket server before
  * spawning the Claude CLI; this server connects to it on startup.
@@ -51,11 +51,17 @@ function connectIpc(): void {
       // The bridge is gone — no response can ever arrive. Resolve any blocked
       // ask_user promises so the turn unwinds cleanly instead of hanging forever.
       askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
+      permissionRegistry.resolveAll(
+        JSON.stringify({ behavior: 'deny', message: SOCKET_CLOSED_MESSAGE })
+      )
     })
     ipcSocket.on('close', () => {
       ipcSocket = null
       // Same teardown on a clean close (e.g. Stop killed the CLI + this child).
       askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
+      permissionRegistry.resolveAll(
+        JSON.stringify({ behavior: 'deny', message: SOCKET_CLOSED_MESSAGE })
+      )
     })
   } catch (err) {
     console.error(`[control-actions-server] Failed to connect to IPC: ${(err as Error).message}`)
@@ -81,6 +87,15 @@ function emitEvent(type: string, payload: unknown, requestId?: string): void {
  * A socket close/error resolves every pending request via resolveAll().
  */
 const askUserRegistry = createAskUserRegistry()
+
+/**
+ * Registry of in-flight permission_prompt requests awaiting user approval/denial.
+ * Same pattern as askUserRegistry — timeout-deny after 120s, socket-close resolves all.
+ */
+const permissionRegistry = createAskUserRegistry()
+
+/** Timeout for permission prompts — denies automatically if user doesn't respond. */
+const PERMISSION_TIMEOUT_MS = 120_000
 
 const SOCKET_CLOSED_MESSAGE =
   'Connection to the app closed before you answered — ask again or proceed.'
@@ -114,6 +129,16 @@ function setupResponseListener(): void {
         const event = JSON.parse(line)
         if (event.type === 'askUserResponse' && event.requestId) {
           askUserRegistry.resolve(event.requestId, event.payload?.response ?? 'User acknowledged')
+        }
+        if (event.type === 'permissionResponse' && event.requestId) {
+          const approved = (event.payload as Record<string, unknown>)?.approved === true
+          const result = approved
+            ? JSON.stringify({
+                behavior: 'allow',
+                updatedInput: (event.payload as Record<string, unknown>)?.input
+              })
+            : JSON.stringify({ behavior: 'deny', message: 'User denied the permission request.' })
+          permissionRegistry.resolve(event.requestId, result)
         }
       } catch {
         console.error(`[control-actions-server] Malformed response: ${line.slice(0, 120)}`)
@@ -281,13 +306,111 @@ server.tool(
 
 // emit_memory removed — memory tools now live on the dedicated memory MCP server
 
+// emit_phase_progress tool — reports plan execution progress phase-by-phase.
+// The UI renders a live progress tracker showing which phases are done.
+const phaseProgressSchema = z.object({
+  planTitle: z.string().describe('Title of the plan being executed'),
+  phaseId: z.number().describe('Phase ID from the structured plan'),
+  phaseTitle: z.string().describe('Phase title'),
+  status: z
+    .enum(['started', 'in_progress', 'completed', 'failed', 'skipped'])
+    .describe('Current phase status'),
+  totalPhases: z.number().describe('Total number of phases in the plan'),
+  message: z.string().optional().describe('Brief note about progress or outcome')
+})
+
+server.tool(
+  'emit_phase_progress',
+  'Report progress on plan execution. Call this when starting, completing, or failing a plan phase during build mode. ' +
+    'The UI renders a live progress tracker showing which phases are done.',
+  phaseProgressSchema.shape,
+  async (args) => {
+    const progress = phaseProgressSchema.parse(args)
+    emitEvent('phaseProgress', progress)
+    return {
+      content: [
+        { type: 'text' as const, text: `Phase "${progress.phaseTitle}" status: ${progress.status}` }
+      ]
+    }
+  }
+)
+
+// permission_prompt tool — implements the Claude CLI --permission-prompt-tool contract.
+// When Claude needs permission for a tool call, it invokes this tool instead of
+// auto-denying. We surface the request in the Electron UI toast and block until
+// the user approves/denies (or a 120s timeout fires).
+server.tool(
+  'permission_prompt',
+  'Request user permission before executing a tool. ' +
+    'Returns {"behavior":"allow","updatedInput":...} or {"behavior":"deny","message":...}.',
+  {
+    tool_name: z.string().describe('Name of the tool requesting permission'),
+    input: z.record(z.string(), z.unknown()).describe('The tool input that needs approval'),
+    tool_use_id: z.string().optional().describe('Tool use ID for correlation')
+  },
+  async (args) => {
+    const { tool_name, input, tool_use_id } = args
+    const requestId = crypto.randomUUID()
+
+    // Build a human-readable summary of what the tool wants to do
+    const inputSummary = Object.entries(input)
+      .slice(0, 3)
+      .map(([k, v]) => {
+        const val = typeof v === 'string' ? v : JSON.stringify(v)
+        return `${k}: ${val.length > 80 ? val.slice(0, 77) + '…' : val}`
+      })
+      .join(', ')
+
+    // Send permission request to Electron UI via IPC bridge
+    const responsePromise = new Promise<string>((resolve) => {
+      permissionRegistry.register(requestId, resolve)
+
+      emitEvent(
+        'permission',
+        {
+          requestId,
+          toolName: tool_name,
+          toolUseId: tool_use_id,
+          inputSummary,
+          input
+        },
+        requestId
+      )
+    })
+
+    // Race against timeout — auto-deny if user doesn't respond in 120s
+    const timeoutPromise = new Promise<string>((resolve) => {
+      setTimeout(() => {
+        // If the promise is still pending, resolve it via the registry
+        const resolved = permissionRegistry.resolve(
+          requestId,
+          JSON.stringify({ behavior: 'deny', message: 'No user response — denied by timeout.' })
+        )
+        if (!resolved) {
+          // Already resolved by user response — this is a no-op
+          return
+        }
+        resolve(
+          JSON.stringify({ behavior: 'deny', message: 'No user response — denied by timeout.' })
+        )
+      }, PERMISSION_TIMEOUT_MS)
+    })
+
+    const resultJson = await Promise.race([responsePromise, timeoutPromise])
+
+    return {
+      content: [{ type: 'text' as const, text: resultJson }]
+    }
+  }
+)
+
 // ── Bootstrap ──
 
 async function main(): Promise<void> {
   connectIpc()
   setupResponseListener()
 
-  console.error('[control-actions-server] Tools registered: emit_plan, ask_user')
+  console.error('[control-actions-server] Tools registered: emit_plan, ask_user, permission_prompt')
 
   const transport = new StdioServerTransport()
   await server.connect(transport)

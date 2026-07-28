@@ -2,7 +2,7 @@
  * OpenCode Agent Writer — generates .opencode/agents/*.md files.
  *
  * #6: OpenCode supports custom agent definitions that let us map our
- * DaVinci and Project Specialist roles to native OpenCode agents with:
+ * Specialist role to native OpenCode agents with:
  *   - Per-agent model overrides
  *   - Role-specific system prompts
  *   - Permission configs matching our plan/build mode
@@ -29,9 +29,9 @@ export interface OpenCodeAgentOptions {
   workspacePath: string
   /** Provider config for model resolution */
   provider: OpenCodeProviderConfig
-  /** DaVinci system prompt (from the adapter's prompt assembler) */
+  /** Specialist system prompt (from the adapter's prompt assembler) */
   davinciSystemPrompt?: string
-  /** Project Specialist system prompt (from the specialist adapter) */
+  /** Named specialist system prompt (from the specialist adapter) */
   specialistSystemPrompt?: string
   /** Specialist display name (e.g. "React Expert" / "Django Architect") */
   specialistName?: string
@@ -48,7 +48,7 @@ export class OpenCodeAgentWriter {
    * Generate both agent definition files and custom commands for the workspace.
    *
    * Creates:
-   *   - .opencode/agents/davinci.md — default expert partner
+   *   - .opencode/agents/davinci.md — default specialist agent
    *   - .opencode/agents/project-specialist.md — LLM-tailored specialist (if available)
    *   - .opencode/commands/*.md — custom slash commands for Code Atelier workflows
    */
@@ -58,7 +58,7 @@ export class OpenCodeAgentWriter {
       mkdirSync(agentDir, { recursive: true })
     }
 
-    // Always write DaVinci
+    // Always write the default specialist agent
     this.writeDaVinciAgent(agentDir, opts)
 
     // Write specialist if available
@@ -97,7 +97,7 @@ export class OpenCodeAgentWriter {
 
   private writeDaVinciAgent(agentDir: string, opts: OpenCodeAgentOptions): void {
     const model = `${opts.provider.providerId}/${opts.provider.modelId}`
-    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 50 : 30)
+    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 200 : 50)
     const steps = opts.mode === 'build' ? maxTurns : Math.min(maxTurns, 30)
 
     // ENH-2: Build per-agent permission block matching our plan/build mode
@@ -174,7 +174,7 @@ position. They are NOT duplicated here to avoid token waste.
   private writeSpecialistAgent(agentDir: string, opts: OpenCodeAgentOptions): void {
     const model = `${opts.provider.providerId}/${opts.provider.modelId}`
     const name = opts.specialistName ?? 'Project Specialist'
-    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 50 : 30)
+    const maxTurns = opts.maxTurns ?? (opts.mode === 'build' ? 200 : 50)
     const steps = opts.mode === 'build' ? maxTurns : Math.min(maxTurns, 30)
 
     // ENH-2: Per-agent permission block
@@ -460,7 +460,7 @@ Check for:
 - Test coverage
 - Code clarity and maintainability
 
-Use CodeGraph tools (find_callers, find_references) to understand impact.
+Use CodeGraph tools (mcp__code-graph__find_callers, mcp__code-graph__find_references) to understand impact.
 @$1
 `,
       'utf-8'

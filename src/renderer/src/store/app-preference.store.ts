@@ -15,7 +15,10 @@ const defaultPreferences: AppPreferences = {
   updateDrivePath: '',
   updateGithubOwner: '',
   updateGithubRepo: '',
-  context7ApiKey: ''
+  context7ApiKey: '',
+  notificationsEnabled: true,
+  parallelBuildAgents: 3,
+  leanBuildMcp: false
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -28,7 +31,10 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   updateDrivePath: 'update_drive_path',
   updateGithubOwner: 'update_github_owner',
   updateGithubRepo: 'update_github_repo',
-  context7ApiKey: 'context7_api_key'
+  context7ApiKey: 'context7_api_key',
+  notificationsEnabled: 'notifications_enabled',
+  parallelBuildAgents: 'parallel_build_agents',
+  leanBuildMcp: 'lean_build_mcp'
 }
 
 interface AppPreferenceState {
@@ -39,7 +45,7 @@ interface AppPreferenceState {
   error: string | null
 
   loadPreferences: () => Promise<void>
-  setPreference: (key: AppPreferenceKey, value: boolean | string) => Promise<void>
+  setPreference: (key: AppPreferenceKey, value: boolean | string | number) => Promise<void>
   reset: () => void
 }
 
@@ -76,7 +82,7 @@ export const useAppPreferenceStore = create<AppPreferenceState>((set) => ({
     }
   },
 
-  setPreference: async (key: AppPreferenceKey, value: boolean | string) => {
+  setPreference: async (key: AppPreferenceKey, value: boolean | string | number) => {
     const previous = useAppPreferenceStore.getState().preferences
     set((state) => ({
       preferences: {
@@ -134,6 +140,15 @@ export const useChatBubbleSize = (): ChatBubbleSize =>
 
 export const useAppTheme = (): AppTheme =>
   useAppPreferenceStore((state) => state.preferences.appTheme)
+
+export const useNotificationsEnabled = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.notificationsEnabled)
+
+export const useParallelBuildAgents = (): number =>
+  useAppPreferenceStore((state) => state.preferences.parallelBuildAgents)
+
+export const useLeanBuildMcp = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.leanBuildMcp)
 
 export const useAppPreferenceActions = (): Pick<
   AppPreferenceState,

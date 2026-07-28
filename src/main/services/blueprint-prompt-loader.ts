@@ -170,7 +170,7 @@ export function formatArtifacts(
     const bullets = entries.map((e) => `- ${e}`).join('\n')
     const omitted = allDiscoveryEntries.length - entries.length
     const suffix = capped
-      ? `\n\n_(${omitted} older discoveries omitted — use memory_search to retrieve)_`
+      ? `\n\n_(${omitted} older discoveries omitted — use mcp__memory__memory_search to retrieve)_`
       : ''
     rendered.push(`### Discoveries (consolidated)\n${bullets}${suffix}`)
   }
@@ -185,7 +185,7 @@ export function formatArtifacts(
     if (total + entry.length > budgetChars && budgeted.length > 0) {
       const remaining = filtered.length - i
       budgeted.push(
-        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or memory_search for full content)_`
+        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or mcp__memory__memory_search for full content)_`
       )
       break
     }
@@ -271,6 +271,42 @@ export function buildConstitutionEditorPrompt(
   return prompt
 }
 
+// ── Retry Context Formatter ──
+
+function formatRetryContext(ctx: NonNullable<PhaseContext['retryContext']>): string {
+  const lines = [
+    `\n<retry_context>`,
+    `## ⚠️ This is Retry Attempt #${ctx.attempt}`,
+    '',
+    `The previous attempt of this ${ctx.previousPhase} phase FAILED.`,
+    `**Error:** ${ctx.previousError}`,
+    ''
+  ]
+
+  if (ctx.filesModified.length > 0) {
+    lines.push(`**Files modified before failure:** ${ctx.filesModified.join(', ')}`)
+    lines.push('⚠️ These files may be in an inconsistent state — re-read them before making further changes.')
+    lines.push('')
+  }
+  if (ctx.filesCreated.length > 0) {
+    lines.push(`**Files created before failure:** ${ctx.filesCreated.join(', ')}`)
+    lines.push('')
+  }
+  if (ctx.totalTasks > 0) {
+    lines.push(`**Progress:** ${ctx.tasksCompleted}/${ctx.totalTasks} tasks completed before failure`)
+    lines.push('')
+  }
+
+  lines.push(
+    'The partial output from the previous attempt is included in <previous_artifacts>.',
+    'Build on what was already accomplished — do NOT start from scratch.',
+    'Re-read any modified files to verify their current state before continuing.',
+    '</retry_context>'
+  )
+
+  return lines.join('\n')
+}
+
 // ── Variable Replacement ──
 
 function replaceVariables(
@@ -308,6 +344,13 @@ function replaceVariables(
         '{{WORKSPACE_DOCS}}',
         context.workspaceDocs || '(No workspace documentation found — use Read to check for CLAUDE.md, README.md, package.json)'
       )
+      // Retry context (populated only on retry — guides the agent to build on prior work)
+      .replace(
+        '{{RETRY_CONTEXT}}',
+        context.retryContext
+          ? formatRetryContext(context.retryContext)
+          : ''
+      )
   )
 }
 
@@ -332,6 +375,8 @@ function buildFallbackPrompt(phase: BlueprintPhaseType): string {
 <previous_artifacts>
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
+
+{{RETRY_CONTEXT}}
 
 ## Instructions
 

@@ -20,6 +20,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+{{RETRY_CONTEXT}}
+
 ## Your Task
 
 Analyze the specification (from the Specify phase artifacts) for gaps, ambiguities, and missing information. Present findings as structured JSON. Ask the user targeted questions to resolve gaps.

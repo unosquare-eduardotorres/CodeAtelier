@@ -13,8 +13,8 @@ import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.
 import {
   DEFAULT_PROMPTS,
   TONE_STYLE_DIRECTIVES,
-  buildDaVinciIdentityPrompt,
-  buildDaVinciIdentityPromptLean,
+  buildSpecialistIdentityPrompt,
+  buildSpecialistIdentityPromptLean,
   UNIFIED_MODE_SECTION
 } from './default-prompts'
 import { resolvePromptVerbosity } from '../../shared/constants'
@@ -23,10 +23,10 @@ import { sanitizePromptInput } from './sanitize-prompt-input'
 
 // ── Prompt Builder Types ──
 
-type PromptRole = 'da-vinci'
+type PromptRole = 'specialist'
 
 interface PromptBuildOptions {
-  /** Which agent role is this prompt for (currently always 'da-vinci') */
+  /** Which agent role is this prompt for (always 'specialist') */
   role: PromptRole
   /** Conversation mode (plan or build) */
   mode: ConversationMode
@@ -61,7 +61,7 @@ export interface GeneralistConditionalSections {
 const log = promptBuilderLogger
 
 /**
- * Centralized prompt assembly for the DaVinci generalist.
+ * Centralized prompt assembly for the default specialist.
  *
  * Assembles: optional persona overlay (when impersonating a specialist) + base role prompt
  * + CLAUDE.md project context + auto memory context.
@@ -136,7 +136,7 @@ export class PromptBuilder {
   }
 
   /**
-   * Build a complete system prompt for the DaVinci generalist role.
+   * Build a complete system prompt for the default specialist role.
    * Composes prompt from layers (persona overlay, role, project context, memory).
    */
   build(options: PromptBuildOptions): string {
@@ -177,7 +177,7 @@ export class PromptBuilder {
 
   /**
    * Layer 0: Persona specialist identity + skills.
-   * Injected BEFORE the DaVinci role prompt so the LLM sees itself as the specialist first.
+   * Injected BEFORE the specialist role prompt so the LLM sees itself as the specialist first.
    */
   private appendPersonaLayer(
     layers: string[],
@@ -260,17 +260,17 @@ export class PromptBuilder {
       return dbPrompt.promptText
     }
     // Fallback to defaults — build identity prompt with tone baked in
-    if (role === 'da-vinci') {
+    if (role === 'specialist') {
       const verbosity = resolvePromptVerbosity(model ?? '')
       const identity =
         verbosity === 'lean'
-          ? buildDaVinciIdentityPromptLean(tone)
-          : buildDaVinciIdentityPrompt(tone)
+          ? buildSpecialistIdentityPromptLean(tone)
+          : buildSpecialistIdentityPrompt(tone)
       // Lean mode: skip UNIFIED_MODE_SECTION since per-message <mode-context>
       // block already provides detailed mode instructions every turn.
       // Saves ~80 tokens from the system prompt.
       //
-      // CONTRACT: Lean mode REQUIRES the caller (DaVinciPromptAssembler.buildEffectiveMessage)
+      // CONTRACT: Lean mode REQUIRES the caller (ProjectSpecialistRoleAdapter.buildEffectiveMessage)
       // to inject a <mode-context> block in every user message. Without it, the model
       // has NO mode instructions. If adding a new lean-mode caller, ensure it also
       // injects MODE_CONTEXT_SECTIONS_LEAN per message.

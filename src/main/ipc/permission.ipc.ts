@@ -27,8 +27,10 @@ export function registerPermissionIpc(): void {
       const workspaceId = requireString(args, 'workspaceId', ch)
       const type = requireString(args, 'type', ch)
 
-      if (!['elicitation', 'askQuestion', 'mpaApproval'].includes(type)) {
-        throw new Error(`${ch}: type must be one of: elicitation, askQuestion, mpaApproval`)
+      if (!['elicitation', 'askQuestion', 'mpaApproval', 'toolPermission'].includes(type)) {
+        throw new Error(
+          `${ch}: type must be one of: elicitation, askQuestion, mpaApproval, toolPermission`
+        )
       }
 
       const response = args.response
@@ -79,6 +81,22 @@ export function registerPermissionIpc(): void {
             mpaOrchestrationService.respondToGate(runId, resp.approved, resp.feedback)
           } else {
             permLog.warn(`[permission] MPA approval response has no runId`)
+          }
+          break
+        }
+
+        case 'toolPermission': {
+          // Route tool permission response — approve/deny from toast UI
+          const approved = response === 'approve'
+          // Extract requestId from the payload (stashed when the toast was created)
+          const payload = (args as Record<string, unknown>).payload as
+            | { requestId?: string }
+            | undefined
+          const requestId = payload?.requestId
+          if (requestId) {
+            chatAgentService.respondToPermissionForWorkspace(workspaceId, requestId, approved)
+          } else {
+            permLog.warn(`[permission] toolPermission response missing requestId`)
           }
           break
         }

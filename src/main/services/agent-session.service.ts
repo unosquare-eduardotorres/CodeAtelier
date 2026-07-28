@@ -1,12 +1,11 @@
 /**
  * AgentSessionService — generic long-lived AI session runtime.
  *
- * Supports two executor backends:
- *   - 'cli'  — Claude Max (stream-json mode) — subscription billing
- *   - 'opencode' — OpenCode multi-provider runtime (local LLMs)
+ * Supports two executor backends (derived from LLM provider, not user-configurable):
+ *   - 'cli'      — Claude CLI (stream-json mode) — used when provider === 'claude'
+ *   - 'opencode'  — OpenCode multi-provider runtime — used for all other providers
  *
- * The executor backend is selected via workspace settings (executorBackend).
- * Default: 'cli'.
+ * Rule: provider === 'claude' → 'cli'; everything else → 'opencode'.
  *
  * Phase 1 of the Project Specialist refactor (see
  * docs/architecture/project-specialist-refactor.md). Extracted from
@@ -15,9 +14,8 @@
  *   - generic session/stream/compaction/recovery lifecycle (THIS FILE)
  *   - role-specific prompt/MCP/intent logic (AgentRoleAdapter)
  *
- * The Generalist's public behavior is preserved by plugging in
- * DaVinciRoleAdapter. The same service will later drive Project
- * Specialists via ProjectSpecialistRoleAdapter.
+ * Chat agent behavior is delivered by ProjectSpecialistRoleAdapter.
+ * The same service drives all specialist roles.
  */
 
 import type {
@@ -44,7 +42,8 @@ import type { ContextWindowTier } from './context-management'
 import { auditContextBudget, estimateToolCount } from './context-budget-auditor'
 import { authProvider } from './auth-provider'
 import { vectorSearchService } from './vector-search.service'
-import { conversationRepository, workspaceRepository } from '../db/repositories'
+import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
+import { planRepository } from '../db/repositories/plan.repository'
 import { modelConfigService } from './model-config.service'
 import { eventLoggerService } from './event-logger.service'
 import type { ControlActionCallbacks } from './control-actions.tool'
@@ -68,12 +67,20 @@ import { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
 import { ensureOpencodePathInEnv, getOpencodePath, resolveOpencodePath } from '../../shared/opencode-cli-path'
+import { resolveOpenCodeProviderFromSnapshot } from './snapshot-model-resolver'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
   AgentRoleAdapter,
   AgentSessionEventName,
   AdapterMcpResult
 } from './agent-session.types'
+
+/**
+ * Outcome of the last session.send() — set by handleStreamError terminal paths.
+ * 'ok' = normal completion; non-'ok' values record why the session ended abnormally.
+ * Used by blueprint executeTask/startVerifyPhase to detect absorbed errors.
+ */
+export type SendOutcome = 'ok' | 'overload' | 'turn_limit_exhausted' | 'context_overflow' | 'error' | 'aborted'
 
 /** Internal loop-state book-keeping for executeStream. */
 interface StreamLoopState {
@@ -164,7 +171,7 @@ export class AgentSessionService extends AgentBaseService {
   // The real thresholds are resolved dynamically based on the model's effective context
   // window (200K for Opus/Haiku, 1M for Sonnet) — see resolveCompactionThresholds().
   // These statics serve as the fallback initialization; 60%/75% of 200K (the most
-  // common default since Da Vinci plan mode uses Opus).
+  // common default since specialist plan mode uses Opus).
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
@@ -182,7 +189,7 @@ export class AgentSessionService extends AgentBaseService {
   private currentMode: ConversationMode = 'plan'
   private costPreference: CostPreference = 'balanced'
   private llmProvider: LLMProvider = 'claude'
-  /** Active executor backend — resolved from workspace settings on start(). Default: 'cli'. */
+  /** Active executor backend — derived from llmProvider on start(). Default: 'cli'. */
   private executorBackend: ExecutorBackend = 'cli'
 
   /** Maps conversationId → SDK session_id for resume. */
@@ -232,6 +239,8 @@ export class AgentSessionService extends AgentBaseService {
 
   /** Auto-continue on max_turns: how many times we've resumed so far this message. */
   maxTurnsContinuations = 0
+  /** Outcome of the last send() — set by handleStreamError, reset in resetForNewMessage. */
+  lastSendOutcome: SendOutcome = 'ok'
   /** Stashed executeStream options for replay on max_turns auto-continue. */
   lastStreamOpts: ExecuteStreamOptions | null = null
 
@@ -250,8 +259,12 @@ export class AgentSessionService extends AgentBaseService {
     askUser: false
   }
 
-  constructor(private readonly adapter: AgentRoleAdapter) {
+  /** G1: Per-session instance ID for MCP config file isolation (parallel build tasks). */
+  readonly instanceId: string | undefined
+
+  constructor(private readonly adapter: AgentRoleAdapter, instanceId?: string) {
     super()
+    this.instanceId = instanceId
     this.streamProcessor = new AgentStreamProcessor(this)
     this.recoveryManager = new AgentRecoveryManager(this)
     this.executorFactory = new AgentExecutorFactory(this)
@@ -289,6 +302,11 @@ export class AgentSessionService extends AgentBaseService {
 
   getStreamedContent(): string {
     return this.accumulatedText
+  }
+
+  /** Return the outcome of the most recent send() call. */
+  getLastSendOutcome(): SendOutcome {
+    return this.lastSendOutcome
   }
 
   isRunning(): boolean {
@@ -370,6 +388,19 @@ export class AgentSessionService extends AgentBaseService {
     }
   }
 
+  /**
+   * Send a user's response to a pending permission_prompt request.
+   * Called by the IPC handler when the renderer approves/denies a tool permission.
+   * Routes through the IPC bridge to the control-actions MCP server.
+   */
+  respondToPermission(requestId: string, approved: boolean): void {
+    if (this.ipcBridge) {
+      this.ipcBridge.sendPermissionResponse(requestId, approved)
+    } else {
+      this.log.warn(`[respondToPermission] No IPC bridge available for requestId=${requestId}`)
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────
 
   async start(
@@ -435,12 +466,15 @@ export class AgentSessionService extends AgentBaseService {
       const settings = workspace ? workspaceRepository.getSettings(workspace.id) : {}
       this.costPreference = settings.costPreference || 'balanced'
       this.llmProvider = settings.llmProvider || 'claude'
-      // Resolve executor backend.
-      // Local LLM → always OpenCode. Claude → CLI (default).
-      if (this.llmProvider === 'local-llm') {
-        this.executorBackend = 'opencode'
-      } else {
-        this.executorBackend = settings.executorBackend || 'cli'
+      // Derive executor backend from provider: claude → CLI, everything else → OpenCode.
+      // No longer reads settings.executorBackend (was user-configurable, now derived).
+      const storedBackend = settings.executorBackend as string | undefined
+      this.executorBackend = this.llmProvider === 'claude' ? 'cli' : 'opencode'
+      if (storedBackend && storedBackend !== this.executorBackend) {
+        this.log.info(
+          `[start] Ignoring stored executorBackend='${storedBackend}' — ` +
+          `derived from provider='${this.llmProvider}' → '${this.executorBackend}'`
+        )
       }
       this.log.info(
         `[start] executorBackend=${this.executorBackend} llmProvider=${this.llmProvider} costPreference=${this.costPreference}`
@@ -575,6 +609,29 @@ export class AgentSessionService extends AgentBaseService {
       })
     }
 
+    // CLI context injection: when there's no session to resume and
+    // the conversation has prior history, inject a condensed context
+    // so the model doesn't cold-start with a greeting.
+    // Uses a fixed 4K-token budget (not %-based) since Claude's
+    // context window is large enough that this is negligible.
+    if (conversationProvider !== 'local-llm' && !sessionId) {
+      try {
+        const cliContext = localContextReconstructor.buildContextFromHistory({
+          conversationId,
+          maxTokenBudget: 4000,
+          tier: 'large'
+        })
+        if (cliContext) {
+          enrichedMessage = `## Session Context\n${cliContext}\n\n## Current Request\n${enrichedMessage}`
+          this.log.info(
+            `[CLI:context-injected] conversationId=${conversationId} len=${cliContext.length}`
+          )
+        }
+      } catch {
+        /* non-fatal — proceed without context */
+      }
+    }
+
     // Per-turn memory injection: prepend relevant facts
     try {
       if (this.workspaceId) {
@@ -611,14 +668,13 @@ export class AgentSessionService extends AgentBaseService {
       contextTier
     })
 
-    // Start IPC bridge for CLI/OpenCode backends — the control-actions MCP server
-    // sends plan/askUser/memory events through a Unix domain socket.
-    if (this.executorBackend === 'cli' || this.executorBackend === 'opencode') {
-      try {
-        await this.ensureIpcBridge(conversationId)
-      } catch (err) {
-        this.log.error('[send] IPC bridge failed — control-actions in log-only mode:', err)
-      }
+    // Start IPC bridge — the control-actions MCP server sends plan/askUser/memory
+    // events through a Unix domain socket.  (ExecutorBackend is exhaustively
+    // 'cli' | 'opencode', so the guard was always-true — removed per M3.)
+    try {
+      await this.ensureIpcBridge(conversationId)
+    } catch (err) {
+      this.log.error('[send] IPC bridge failed — control-actions in log-only mode:', err)
     }
 
     // S9: Pre-flight context budget audit for local LLMs — catch "system prompt ate
@@ -697,7 +753,7 @@ export class AgentSessionService extends AgentBaseService {
 
       // Clean up CLI MCP config
       if (this.workspacePath) {
-        this.mcpConfigWriter.dispose(this.workspacePath)
+        this.mcpConfigWriter.dispose(this.workspacePath, this.instanceId)
       }
 
       // Stop OpenCode server
@@ -707,6 +763,7 @@ export class AgentSessionService extends AgentBaseService {
           openCodeConfigWriter.dispose(this.workspacePath)
         }
       }
+
       // Stop IPC bridge
       if (this.ipcBridge) {
         await this.ipcBridge.stop()
@@ -801,14 +858,11 @@ export class AgentSessionService extends AgentBaseService {
       )
       try {
         if (this.workspacePath) {
-          // Read per-conversation provider to avoid workspace-default cross-contamination
-          const switchConv = this.currentConversationId
-            ? conversationRepository.findById(this.currentConversationId)
-            : null
-          const switchProvider = (switchConv?.llmProvider as LLMProvider) ?? this.llmProvider
-          const providerConfig = this.resolveOpenCodeProviderConfig(switchProvider)
+          // Provider config now reads from conversation snapshot (no workspace-default bleed)
+          const providerConfig = this.resolveOpenCodeProviderConfig()
           const featureFlags = this.resolveWorkspaceMcpFlags()
-          const isLocal = switchProvider === 'local-llm'
+          // Derive isLocal from the snapshot-resolved providerId
+          const isLocal = providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
           openCodeConfigWriter.writeConfig({
             workspacePath: this.workspacePath,
             workspaceId: this.workspaceId,
@@ -966,7 +1020,7 @@ export class AgentSessionService extends AgentBaseService {
 
     return {
       agentId: this.adapter.agentId,
-      agentType: this.adapter.role === 'da-vinci' ? 'da-vinci' : 'specialist',
+      agentType: 'specialist',
       status: this.currentStatus,
       elapsedMs: isActive && this.messageStartedAt ? Date.now() - this.messageStartedAt : 0,
       tokenUsage: this.tokenUsage,
@@ -1008,6 +1062,7 @@ export class AgentSessionService extends AgentBaseService {
     this.circuitBreaker.reset()
     this.toolActivityAccumulator.reset()
     this.maxTurnsContinuations = 0
+    this.lastSendOutcome = 'ok'
     // SES-04: Don't null-out lastStreamOpts here — executeStream sets it at the
     // start of each stream, and the recovery manager reads it on error. The send
     // lock ensures no concurrent access within the same conversation.
@@ -1016,19 +1071,94 @@ export class AgentSessionService extends AgentBaseService {
     this.emit('statusUpdate', this.getStatus())
   }
 
+  /** Matches the same format validated by CLIExecutor.buildCLIArgs before passing --resume. */
+  private static readonly SESSION_ID_FORMAT = /^[a-zA-Z0-9_-]{8,}$/
+
+  /** Sessions older than 7 days are unlikely to be resumable on the server. */
+  private static readonly SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
   private resolveSession(conversationId: string): string | undefined {
     let sessionId = this.sessionMap.get(conversationId)
+    const fromMemory = !!sessionId
     if (!sessionId) {
       try {
         sessionId = conversationRepository.getSessionId(conversationId)
         if (sessionId) {
-          this.sessionMap.set(conversationId, sessionId)
-          this.log.info('Session loaded from DB:', sessionId)
+          // Don't cache in sessionMap — cross-restart check below will reject it.
+          // The stream processor will set the NEW session ID after the first turn.
+          this.log.info('Session found in DB (previous app lifecycle):', sessionId)
         }
       } catch (err) {
         this.log.error('Failed to load session:', err)
       }
     }
+
+    // Validate format — a corrupt or truncated session ID would cause the
+    // CLI to silently skip --resume while our context injection is also
+    // skipped (because sessionId is truthy). Treat invalid IDs as absent.
+    if (sessionId && !AgentSessionService.SESSION_ID_FORMAT.test(sessionId)) {
+      this.log.warn(
+        `[resolveSession] Invalid session ID format for ${conversationId} — clearing: "${sessionId.slice(0, 30)}"`
+      )
+      this.sessionMap.delete(conversationId)
+      try {
+        conversationRepository.updateSessionId(conversationId, '')
+      } catch { /* non-fatal */ }
+      return undefined
+    }
+
+    // Cross-restart guard: if the session was loaded from the database
+    // (not already in the in-memory map), the CLI process that created it
+    // no longer exists. Resuming with --resume would inherit orphaned
+    // background shell commands that trigger "No completion record" errors.
+    // Start fresh — context reconstruction (S12) at line ~618 provides
+    // 4K-token continuity from stored messages + plan state.
+    if (sessionId && !fromMemory) {
+      this.log.info(
+        `[resolveSession] Session ${sessionId} for ${conversationId} loaded from DB — ` +
+        `previous CLI process is gone. Starting fresh to avoid orphaned background tasks.`
+      )
+      try {
+        conversationRepository.updateSessionId(conversationId, '')
+      } catch { /* non-fatal */ }
+      return undefined
+    }
+
+    // Staleness check — sessions older than 7 days are unlikely to still exist
+    // on Anthropic's servers. Treat them as absent to avoid a wasted --resume
+    // attempt that would fail with "No conversation found with session ID".
+    if (sessionId) {
+      try {
+        const lastMsgTime = messageRepository.getLastMessageTimestamp(conversationId)
+        if (lastMsgTime) {
+          const parsedTime = new Date(lastMsgTime).getTime()
+          if (Number.isNaN(parsedTime)) {
+            this.log.warn(
+              `[resolveSession] Malformed created_at for ${conversationId} — skipping staleness check: "${lastMsgTime.slice(0, 30)}"`
+            )
+          } else {
+            const ageMs = Date.now() - parsedTime
+            if (ageMs > AgentSessionService.SESSION_MAX_AGE_MS) {
+              this.log.info(
+                `[resolveSession] Session for ${conversationId} is ${Math.round(ageMs / 86400000)}d old — treating as stale`
+              )
+              this.sessionMap.delete(conversationId)
+              try {
+                conversationRepository.updateSessionId(conversationId, '')
+                // Clear stale summary — a 7d-old summary likely references
+                // files/APIs that no longer exist. Better to cold-start from
+                // recent messages than inject outdated context.
+                conversationRepository.updateSummary(conversationId, '')
+              } catch { /* non-fatal */ }
+              return undefined
+            }
+          }
+        }
+      } catch {
+        /* non-fatal — if we can't check age, proceed with the session ID */
+      }
+    }
+
     return sessionId
   }
 
@@ -1117,11 +1247,13 @@ export class AgentSessionService extends AgentBaseService {
 
   // ── Stream helpers ─────────────────────────────────────────────────
 
-  /** Resolve the executor backend for a given LLM provider override. */
+  /**
+   * Derive the executor backend from the conversation-level LLM provider.
+   * Rule: provider === 'claude' → 'cli'; everything else → 'opencode'.
+   */
   private resolveExecutorBackend(llmProvider: LLMProvider | undefined): ExecutorBackend {
-    if (llmProvider === 'local-llm') return 'opencode'
-    if (llmProvider === 'claude') return 'cli'
-    return this.executorBackend
+    const provider = llmProvider ?? this.llmProvider
+    return provider === 'claude' ? 'cli' : 'opencode'
   }
 
   /**
@@ -1221,8 +1353,7 @@ export class AgentSessionService extends AgentBaseService {
             systemPrompt,
             isBuildMode,
             abortController,
-            mcpResult,
-            llmProvider
+            mcpResult
           })
           break
         }
@@ -1399,14 +1530,13 @@ export class AgentSessionService extends AgentBaseService {
     isBuildMode: boolean
     abortController: AbortController
     mcpResult: AdapterMcpResult
-    llmProvider?: LLMProvider
   }): AsyncGenerator<StreamChunk> {
     const { prompt, images, isBuildMode, abortController } = params
 
-    // Resolve provider config from workspace settings (shared helper)
+    // Resolve provider config from conversation snapshot (snapshot-first, no workspace bleed)
     let providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     try {
-      providerConfig = this.resolveOpenCodeProviderConfig(params.llmProvider)
+      providerConfig = this.resolveOpenCodeProviderConfig()
     } catch {
       /* non-fatal — use defaults */
       providerConfig = {
@@ -1418,7 +1548,7 @@ export class AgentSessionService extends AgentBaseService {
     }
 
     // Generate opencode.json config + agent definitions
-    await this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt, llmProvider: params.llmProvider })
+    await this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt })
 
     // Start OpenCode server if not running
     if (!openCodeExecutor.isRunning()) {
@@ -1436,7 +1566,7 @@ export class AgentSessionService extends AgentBaseService {
 
         await openCodeExecutor.start(this.workspacePath!, {
           configPath: this._openCodeConfigPath,
-          isLocal: (params.llmProvider ?? this.llmProvider) === 'local-llm'
+          isLocal: providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
         })
       } catch (error) {
         const err = error as Error
@@ -1522,6 +1652,7 @@ export class AgentSessionService extends AgentBaseService {
       }
     }
   }
+
 
   /**
    * Extract prompt content from either a string or AsyncIterable<AgentPromptInput>.
@@ -1620,14 +1751,13 @@ export class AgentSessionService extends AgentBaseService {
   private async writeOpenCodeConfigFiles(params: {
     providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
     systemPrompt: string
-    llmProvider?: LLMProvider
   }): Promise<void> {
     try {
       const featureFlags = this.resolveWorkspaceMcpFlags()
       const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
 
       // Resolve context tier for tier-aware config (compaction, timeouts)
-      const isLocal = (params.llmProvider ?? this.llmProvider) === 'local-llm'
+      const isLocal = params.providerConfig.providerId === 'ollama' || params.providerConfig.providerId === 'omlx'
       let contextTier: ContextWindowTier | undefined
       let contextWindowConfident = false
       if (isLocal) {
@@ -1651,7 +1781,7 @@ export class AgentSessionService extends AgentBaseService {
 
       this._openCodeConfigPath = configPath
 
-      // #6: Generate OpenCode agent definitions (DaVinci + Specialist)
+      // #6: Generate OpenCode agent definitions (specialist + OpenCode agents)
       try {
         openCodeAgentWriter.writeAgents({
           workspacePath: this.workspacePath!,
@@ -1784,6 +1914,91 @@ export class AgentSessionService extends AgentBaseService {
       )
     })
 
+    // phaseProgress bridge listener — surfaces plan execution phase transitions in the UI
+    bridge.on('phaseProgress', (payload: unknown) => {
+      const progress = payload as {
+        planTitle: string
+        phaseId: number
+        phaseTitle: string
+        status: string
+        totalPhases: number
+        message?: string
+      }
+
+      // Resolve planId from the plan registry for this conversation
+      let planId: string | null = null
+      try {
+        const plan = planRepository.findActiveByConversationId(
+          this.currentConversationId ?? ''
+        )
+        if (plan) planId = plan.id
+      } catch { /* non-critical */ }
+
+      // Persist phase progress to DB (non-critical)
+      if (planId) {
+        // When a phase completes, extract its file list from the structured plan
+        // to persist as touchedFiles (all files are considered touched when phase is done)
+        let touchedFiles: string[] | undefined
+        if (progress.status === 'completed') {
+          try {
+            const plan = planRepository.findActiveByConversationId(
+              this.currentConversationId ?? ''
+            )
+            const phaseData = plan?.structuredPlan?.phases?.find(
+              (p) => p.id === progress.phaseId
+            )
+            if (phaseData?.files && phaseData.files.length > 0) {
+              touchedFiles = phaseData.files.map((f) => f.file)
+            }
+          } catch { /* non-critical */ }
+        }
+
+        try {
+          planRepository.updatePhaseProgress(
+            planId, progress.phaseId, progress.status, undefined, touchedFiles
+          )
+        } catch { /* non-critical */ }
+
+        // Auto-detect plan completion: if all phases are done, mark plan completed
+        if (progress.status === 'completed') {
+          try {
+            const allProgress = planRepository.getPhaseProgress(planId)
+            const allCompleted = allProgress.length >= progress.totalPhases &&
+              allProgress.every((p) => p.status === 'completed' || p.status === 'skipped')
+            if (allCompleted) {
+              planRepository.markCompleted(planId)
+              this.log.info(`[ipc-bridge] Plan ${planId} auto-completed — all phases done`)
+            }
+          } catch { /* non-critical */ }
+        }
+      }
+
+      // Emit as a StreamChunk so it flows through the standard chunk pipeline
+      // (chunk-router → IPC → renderer)
+      this.emit('chunk', {
+        type: 'phase_progress',
+        phaseProgress: {
+          planId,
+          phaseId: progress.phaseId,
+          phaseTitle: progress.phaseTitle,
+          status: progress.status,
+          totalPhases: progress.totalPhases,
+          message: progress.message
+        }
+      } as StreamChunk)
+      this.log.info(
+        `[ipc-bridge] phaseProgress event received for ${this.currentConversationId} phase=${progress.phaseId} status=${progress.status}`
+      )
+    })
+
+    // permission_prompt bridge listener — surfaces tool permission requests in the UI
+    bridge.on('permission', (payload: unknown, requestId?: string) => {
+      this.emit('permissionRequest', { ...(payload as Record<string, unknown>), requestId })
+      this.log.info(
+        `[ipc-bridge] permission event received for ${this.currentConversationId} requestId=${requestId}`
+      )
+    })
+
     // memory bridge listener removed — memory tools now on dedicated memory MCP server
 
     const socketPath = bridge.getSocketPath()
@@ -1864,45 +2079,33 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   /**
-   * Resolve OpenCode provider configuration from workspace settings.
-   * Shared by switchMode() and executeOpenCodeStream() to eliminate duplication.
+   * Resolve OpenCode provider configuration — snapshot-first.
+   *
+   * Reads provider identity (providerId + modelId) from the conversation's frozen
+   * snapshot to prevent config bleed between chats. Infrastructure settings
+   * (baseUrl, apiKey) always come from live workspace settings.
+   *
+   * Falls back to live workspace settings when no snapshot exists (legacy chats).
    */
-  private resolveOpenCodeProviderConfig(llmProvider?: LLMProvider): {
+  private resolveOpenCodeProviderConfig(_llmProvider?: LLMProvider): {
     providerId: string
     modelId: string
     baseUrl: string | undefined
     apiKey: string | undefined
   } {
-    let config = {
-      providerId: 'anthropic',
-      modelId: 'claude-sonnet-4-6',
-      baseUrl: undefined as string | undefined,
-      apiKey: undefined as string | undefined
-    }
-
-    if (this.workspaceId) {
-      const settings = workspaceRepository.getSettings(this.workspaceId)
-      if (settings.openCodeProvider) {
-        config = {
-          providerId: settings.openCodeProvider ?? 'anthropic',
-          modelId: settings.openCodeModel ?? 'claude-sonnet-4-6',
-          baseUrl: settings.openCodeBaseUrl,
-          apiKey: settings.openCodeApiKey
-        }
-      }
-
-      // Auto-detect: if llmProvider is 'local-llm', configure from workspace backend (Ollama or oMLX)
-      if ((llmProvider ?? this.llmProvider) === 'local-llm') {
-        const openCodeConfig = modelConfigService.getOpenCodeConfig(this.workspacePath!)
-        config = {
-          providerId: openCodeConfig.openCodeProvider,
-          modelId: openCodeConfig.openCodeModel,
-          baseUrl: openCodeConfig.openCodeBaseUrl,
-          apiKey: openCodeConfig.openCodeApiKey
-        }
+    if (!this.workspacePath) {
+      return {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+        baseUrl: undefined,
+        apiKey: undefined
       }
     }
 
-    return config
+    return resolveOpenCodeProviderFromSnapshot(
+      this.currentConversationId,
+      this.workspacePath,
+      this.currentMode !== 'plan'
+    )
   }
 }

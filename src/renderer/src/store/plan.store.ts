@@ -9,7 +9,7 @@
 
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import type { PlanRecord, PlanStatus } from '../../../shared/types'
+import type { PlanRecord, PlanStatus, PlanStatusHistoryEntry } from '../../../shared/types'
 
 // ── Store interface ─────────────────────────────────────────────────────
 
@@ -21,6 +21,14 @@ interface PlanState {
   statusFilter: PlanStatusFilter
   searchQuery: string
 
+  // Detail view state
+  selectedPlanId: string | null
+  selectedPlan: PlanRecord | null
+  statusHistory: PlanStatusHistoryEntry[]
+  isLoadingDetail: boolean
+  previousPlan: PlanRecord | null
+  supersedingPlan: PlanRecord | null
+
   // Actions
   loadPlans: (workspaceId: string) => Promise<void>
   setStatusFilter: (filter: PlanStatusFilter) => void
@@ -28,6 +36,8 @@ interface PlanState {
   updateStatus: (planId: string, status: PlanStatus) => Promise<void>
   deletePlan: (planId: string) => Promise<void>
   importPlan: (planId: string, workspaceId: string) => Promise<{ conversationId: string }>
+  selectPlan: (planId: string) => Promise<void>
+  clearSelectedPlan: () => void
   reset: () => void
 }
 
@@ -54,11 +64,17 @@ function matchesSearch(plan: PlanRecord, query: string): boolean {
 
 // ── Store ───────────────────────────────────────────────────────────────
 
-export const usePlanStore = create<PlanState>((set, _get) => ({
+export const usePlanStore = create<PlanState>((set, get) => ({
   plans: [],
   isLoading: false,
   statusFilter: 'all',
   searchQuery: '',
+  selectedPlanId: null,
+  selectedPlan: null,
+  statusHistory: [],
+  isLoadingDetail: false,
+  previousPlan: null,
+  supersedingPlan: null,
 
   loadPlans: async (workspaceId) => {
     set({ isLoading: true })
@@ -82,12 +98,20 @@ export const usePlanStore = create<PlanState>((set, _get) => ({
   updateStatus: async (planId, status) => {
     try {
       await window.api.planUpdateStatus({ planId, status })
-      // Optimistic update
+      // Optimistic update for the list
       set((s) => ({
         plans: s.plans.map((p) =>
           p.id === planId ? { ...p, status, updatedAt: new Date().toISOString() } : p
         )
       }))
+      // Refresh detail view if this plan is currently selected
+      if (get().selectedPlanId === planId) {
+        const [plan, history] = await Promise.all([
+          window.api.planGetById({ planId }),
+          window.api.planGetStatusHistory({ planId })
+        ])
+        set({ selectedPlan: plan, statusHistory: history })
+      }
     } catch (error) {
       rendererLog.error('Failed to update plan status:', error)
     }
@@ -120,7 +144,48 @@ export const usePlanStore = create<PlanState>((set, _get) => ({
     return result
   },
 
-  reset: () => set({ plans: [], isLoading: false, statusFilter: 'all', searchQuery: '' })
+  selectPlan: async (planId) => {
+    set({ selectedPlanId: planId, isLoadingDetail: true })
+    try {
+      const [plan, history] = await Promise.all([
+        window.api.planGetById({ planId }),
+        window.api.planGetStatusHistory({ planId })
+      ])
+      set({
+        selectedPlan: plan,
+        statusHistory: history,
+        isLoadingDetail: false
+      })
+    } catch (error) {
+      rendererLog.error('Failed to load plan detail:', error)
+      set({ isLoadingDetail: false })
+    }
+  },
+
+  clearSelectedPlan: () => {
+    set({
+      selectedPlanId: null,
+      selectedPlan: null,
+      statusHistory: [],
+      isLoadingDetail: false,
+      previousPlan: null,
+      supersedingPlan: null
+    })
+  },
+
+  reset: () =>
+    set({
+      plans: [],
+      isLoading: false,
+      statusFilter: 'all',
+      searchQuery: '',
+      selectedPlanId: null,
+      selectedPlan: null,
+      statusHistory: [],
+      isLoadingDetail: false,
+      previousPlan: null,
+      supersedingPlan: null
+    })
 }))
 
 // ── Selector: filtered plans ─────────────────────────────────────────────

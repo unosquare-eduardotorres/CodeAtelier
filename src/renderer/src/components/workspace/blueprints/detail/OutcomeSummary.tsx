@@ -44,20 +44,25 @@ function StatChip({
 }
 
 export function OutcomeSummary({ stats }: OutcomeSummaryProps): JSX.Element {
+  const humanAcknowledged = stats.verifyStatus === 'human_needed' && stats.humanReviewAcknowledged
+
   const verifyIcon =
     stats.verifyStatus === 'passed' ? CheckCircle2 :
+    humanAcknowledged ? CheckCircle2 :
     stats.verifyStatus === 'human_needed' ? AlertTriangle :
     stats.verifyStatus === 'gaps_found' ? XCircle :
     CheckCircle2
 
   const verifyColor =
     stats.verifyStatus === 'passed' ? 'text-success' :
+    humanAcknowledged ? 'text-success' :
     stats.verifyStatus === 'human_needed' ? 'text-accent' :
     stats.verifyStatus === 'gaps_found' ? 'text-danger' :
     'text-text-secondary'
 
   const verifyLabel =
     stats.verifyStatus === 'passed' ? 'Passed ✓' :
+    humanAcknowledged ? 'Human Verified ✓' :
     stats.verifyStatus === 'human_needed' ? 'Human Review' :
     stats.verifyStatus === 'gaps_found' ? 'Gaps Found' :
     stats.verifyStatus ?? 'N/A'

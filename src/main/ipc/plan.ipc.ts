@@ -65,6 +65,34 @@ export function registerPlanIpc(): void {
     return { deleted }
   })
 
+  // ── plan:getStatusHistory — Fetch plan status timeline ──
+  ipcMain.handle(
+    IPC_CHANNELS.PLAN_GET_STATUS_HISTORY,
+    (event, args: { planId: string }) => {
+      validateSender(event)
+      return planRepository.getStatusHistory(args.planId)
+    }
+  )
+
+  // ── plan:getPhaseProgress — Retrieve phase progress for a conversation's active plan ──
+  ipcMain.handle(
+    IPC_CHANNELS.PLAN_GET_PHASE_PROGRESS,
+    (event, args: { conversationId: string }) => {
+      validateSender(event)
+      const plan = planRepository.findActiveByConversationId(args.conversationId)
+      if (!plan) return null
+      return {
+        planId: plan.id,
+        planTitle: plan.title,
+        phases: plan.structuredPlan.phases?.map((p) => ({
+          id: p.id,
+          title: p.title
+        })) ?? [],
+        progress: planRepository.getPhaseProgress(plan.id)
+      }
+    }
+  )
+
   // ── plan:import — Create new conversation pre-loaded with plan content ──
   ipcMain.handle(
     IPC_CHANNELS.PLAN_IMPORT,

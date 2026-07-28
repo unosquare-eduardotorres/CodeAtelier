@@ -17,7 +17,7 @@ export function blueprintAgentToMessage(
   return {
     id: `blueprint-msg-${index ?? counter++}`,
     conversationId: 'blueprint-session',
-    role: 'da-vinci',
+    role: 'specialist',
     contentMd: content,
     attachmentsJson: '[]',
     createdAt: new Date(timestamp ?? Date.now()).toISOString(),

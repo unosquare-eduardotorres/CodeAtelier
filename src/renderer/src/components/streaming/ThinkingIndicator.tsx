@@ -2,7 +2,7 @@
  * ThinkingIndicator — shared "agent is working" bubble used by every streaming
  * surface (Chat, Grill, Greenfield Grill, Council).
  *
- * Renders: avatar + name, animated typing dots, an italic status label, an
+ * Renders: avatar + name, a pulsing status label, an
  * optional ToolActivityBlock, and an optional hook-execution indicator.
  *
  * Identity (name / avatar / accent) is fully prop-driven so each surface can
@@ -11,6 +11,7 @@
  */
 
 import { Avatar } from '@renderer/components/common'
+import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import ToolActivityBlock from '@renderer/components/chat/ToolActivityBlock'
 import HookActivityIndicator from '@renderer/components/chat/HookActivityIndicator'
 import type { ToolActivity } from '../../../../shared/types'
@@ -24,7 +25,7 @@ export interface ThinkingIndicatorIdentity {
 interface ThinkingIndicatorProps {
   identity: ThinkingIndicatorIdentity
   toolActivities: ToolActivity[]
-  /** Italic status line shown under the dots. */
+  /** Pulsing italic status label (e.g. "Building…", "Let me take a look…"). */
   label?: string
   /** Render the hook-execution indicator (chat only). */
   showHookIndicator?: boolean
@@ -36,10 +37,11 @@ export default function ThinkingIndicator({
   label = 'Let me take a look…',
   showHookIndicator = false
 }: ThinkingIndicatorProps): React.JSX.Element {
+  const avatarSize = useChatAvatarSize()
   return (
     <div className="flex gap-3 flex-row">
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey={identity.avatarKey} size="xl" accentColor={identity.accentColor} />
+        <Avatar avatarKey={identity.avatarKey} size={avatarSize} accentColor={identity.accentColor} />
       </div>
       <div className="flex flex-col max-w-[92%] items-start">
         <div className="flex flex-col mb-1 px-1 items-start">
@@ -48,12 +50,7 @@ export default function ThinkingIndicator({
           </span>
         </div>
         <div className="flex flex-col gap-2 px-5 py-4 rounded-xl bg-surface-overlay border border-border-subtle shadow-sm">
-          <div className="flex items-center gap-1.5 py-0.5 px-1">
-            <span className="typing-dot" style={{ animationDelay: '0ms' }} />
-            <span className="typing-dot" style={{ animationDelay: '150ms' }} />
-            <span className="typing-dot" style={{ animationDelay: '300ms' }} />
-          </div>
-          <p className="text-sm text-text-muted italic">{label}</p>
+          <p className="text-sm text-text-muted italic animate-thinking-pulse">{label}</p>
           {toolActivities.length > 0 && (
             <div className="mt-2">
               <ToolActivityBlock activities={toolActivities} defaultExpanded />

@@ -309,10 +309,11 @@ export function stripBlueprintBlocks(text: string): string {
   let cleaned = text
 
   // 1. Standard fenced blocks (3+ backticks on open and close)
-  cleaned = cleaned.replace(/`{3,}\s*blueprint-[\w-]+\s*\n[\s\S]*?`{3,}/g, '')
+  //    Covers: blueprint-*, council-verdict, grill-evaluation, goal-verify-*
+  cleaned = cleaned.replace(/`{3,}\s*(?:blueprint-[\w-]+|council-verdict|grill-evaluation|goal-verify-[\w-]+)\s*\n[\s\S]*?`{3,}/g, '')
 
   // 2. Partial fenced blocks (opening fence present, no closing fence yet — mid-stream)
-  cleaned = cleaned.replace(/`{3,}\s*blueprint-[\w-]+[\s\S]*$/g, '')
+  cleaned = cleaned.replace(/`{3,}\s*(?:blueprint-[\w-]+|council-verdict|grill-evaluation|goal-verify-[\w-]+)[\s\S]*$/g, '')
 
   return cleaned.replace(/\n{3,}/g, '\n\n').trim()
 }

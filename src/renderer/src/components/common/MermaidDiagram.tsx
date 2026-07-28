@@ -101,6 +101,7 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
       startOnLoad: false,
       theme: 'base',
       securityLevel: 'loose', // 'strict' blocks gitGraph and some other diagram types
+      suppressErrorRendering: true, // we handle errors ourselves; prevents mermaid from inserting error SVGs into document.body
       fontFamily: "'Inter', 'JetBrains Mono', sans-serif",
       themeVariables: buildMermaidThemeVars(isLight),
       flowchart: {
@@ -125,6 +126,28 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
   })
 
   return mermaidReady
+}
+
+/**
+ * Fix common LLM mistake: @{ icon syntax wrapped inside shape brackets.
+ * e.g. A["@{ icon: ... }"] → A@{ icon: ... }
+ *      B[("@{ icon: ... }")] → B@{ icon: ... }
+ * Only triggers when the label contains @{ with icon: — very unlikely in normal labels.
+ */
+function fixIconSyntax(definition: string): string {
+  // Match: NodeId + optional shape brackets wrapping @{ ... icon: ... }
+  // Captures: (nodeId)(opening brackets)(@{ ... })(closing brackets)(optional :::class)
+  return definition.replace(
+    /^(\s*\w+)\s*\[?\(?\s*"?@\{\s*(icon:\s*[^}]+)\s*\}"?\s*\)?\]?(:::(\w+))?/gm,
+    (_match, indent: string, props: string, _classGroup: string, className: string) => {
+      const line = `${indent}@{ ${props.trim()} }`
+      // :::class doesn't work with @{ } — convert to class keyword
+      if (className) {
+        return `${line}\n  class ${indent.trim()} ${className}`
+      }
+      return line
+    }
+  )
 }
 
 let renderCounter = 0
@@ -185,8 +208,10 @@ export default function MermaidDiagram({
 
     const diagramId = id ?? `mermaid-r-${++renderCounter}`
 
+    const sanitized = fixIconSyntax(definition.trim())
+
     getMermaid(theme)
-      .then((mermaid) => mermaid.render(diagramId, definition.trim()))
+      .then((mermaid) => mermaid.render(diagramId, sanitized))
       .then(({ svg: renderedSvg }) => {
         if (!cancelled) {
           setSvg(renderedSvg)
@@ -200,6 +225,11 @@ export default function MermaidDiagram({
         }
       })
       .catch((err) => {
+        // Safety net: remove mermaid's temporary render container if it wasn't cleaned up.
+        // Mermaid creates <div id="d${id}"> in document.body during render.
+        const tempEl = document.getElementById(`d${diagramId}`)
+        tempEl?.remove()
+
         if (!cancelled) {
           setError((err as Error).message)
           setLoading(false)
@@ -208,6 +238,9 @@ export default function MermaidDiagram({
 
     return (): void => {
       cancelled = true
+      // Clean up any orphaned mermaid render containers on unmount/re-render
+      const tempEl = document.getElementById(`d${diagramId}`)
+      tempEl?.remove()
     }
   }, [definition, id, theme, fitToView])
 

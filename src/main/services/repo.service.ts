@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, resolve, relative } from 'node:path'
 import simpleGit from 'simple-git'
 import type { RepoInfo } from '../../shared/types'
+import { COMMIT_ATTRIBUTION } from '../../shared/constants'
 import log from 'electron-log'
 
 const logger = log.scope('Repo')
@@ -56,6 +57,12 @@ export function assertWithinRepo(repoPath: string, filePath: string): string {
     throw new Error(`Path traversal denied: ${filePath}`)
   }
   return absoluteFile
+}
+
+/** Append the Code Atelier attribution trailer to a commit message. */
+function appendAttribution(message: string): string {
+  if (message.includes(COMMIT_ATTRIBUTION)) return message
+  return `${message}\n\n${COMMIT_ATTRIBUTION}`
 }
 
 function detectLanguage(filePath: string): string {
@@ -291,8 +298,9 @@ export class RepoService {
     filePaths.forEach((fp) => assertWithinRepo(repoPath, fp))
 
     const git = simpleGit(repoPath)
+    const fullMessage = appendAttribution(message)
     await git.add(filePaths)
-    const result = await git.commit(message, filePaths)
+    const result = await git.commit(fullMessage, filePaths)
     logger.info(`Committed ${filePaths.length} files: ${result.commit}`)
     return { commitHash: result.commit }
   }

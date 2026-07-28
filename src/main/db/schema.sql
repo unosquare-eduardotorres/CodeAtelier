@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   claude_session_id TEXT,
   persona_specialist_id TEXT DEFAULT NULL REFERENCES specialists(id) ON DELETE SET NULL,
   llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
-  effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high'))
+  effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high')),
+  source_audit_run_id TEXT DEFAULT NULL
 );
 
 -- Messages: individual chat messages
@@ -202,7 +203,7 @@ CREATE TABLE IF NOT EXISTS user_profile (
 -- Core agent aliases: personality overrides for generalist & coordinator
 CREATE TABLE IF NOT EXISTS core_agent_aliases (
   -- Both values accepted — see note on messages.role above.
-  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('da-vinci', 'generalist')),
+  agent_role TEXT PRIMARY KEY CHECK (agent_role IN ('specialist', 'da-vinci', 'generalist')),
   alias TEXT DEFAULT NULL,
   avatar_key TEXT DEFAULT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -211,7 +212,7 @@ CREATE TABLE IF NOT EXISTS core_agent_aliases (
 -- Core agent prompts: editable system prompts for generalist
 CREATE TABLE IF NOT EXISTS core_agent_prompts (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-  agent_role TEXT NOT NULL CHECK (agent_role IN ('da-vinci', 'generalist')),
+  agent_role TEXT NOT NULL CHECK (agent_role IN ('specialist', 'da-vinci', 'generalist')),
   mode TEXT NOT NULL CHECK (mode IN ('plan', 'build', 'danger')),
   prompt_text TEXT NOT NULL,
   default_prompt_text TEXT NOT NULL,

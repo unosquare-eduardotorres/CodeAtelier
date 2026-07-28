@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+{{RETRY_CONTEXT}}
+
 ## Your Task
 
 Perform a comprehensive cross-artifact analysis of the blueprint's spec, plan,
@@ -57,9 +59,9 @@ Check for: missing coverage, over-scoping beyond spec, long dependency chains, p
 
 Success criteria measurable? Task descriptions specific enough for autonomous execution? File paths realistic? Wave count reasonable (2-6)?
 
-### 7. Code Quality Baseline (MANDATORY)
+### 7. Code Quality Baseline (MANDATORY — best-effort)
 
-Before BUILD begins, establish a quality baseline using code-analysis tools:
+Before BUILD begins, establish a quality baseline using code-analysis tools. If a tool is unavailable or returns an error, note it as "tool unavailable — baseline not established" and continue. Do NOT skip the section entirely — record which baselines you could and couldn't establish.
 
 | Check | Tool | Purpose |
 |-------|------|---------|
@@ -68,6 +70,8 @@ Before BUILD begins, establish a quality baseline using code-analysis tools:
 | Existing code smells | `mcp__code-analysis__find_code_smells` | Baseline so new smells aren't blamed on BUILD |
 | Technical debt | `mcp__code-analysis__audit_scan` | Document existing debt in affected areas |
 | Dead code | `mcp__code-graph__find_dead_code` | Identify orphaned code that plan should clean up |
+
+If tools are unavailable, use `Grep` and `Read` to manually spot-check complexity in files touched by the plan.
 
 Record baseline findings in the review report so VERIFY can compare post-build.
 
@@ -158,4 +162,4 @@ Before your completion block, emit a `blueprint-discoveries` block: a JSON array
 
 **Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly.
 
-Use Read only on files identified by code intelligence. Do NOT use `Write`, `Edit`, `Bash`, or any tool not listed above.
+Use Read only on files identified by code intelligence. If a code-graph/semantic-search/code-analysis/memory tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it. Do NOT use `Write`, `Edit`, `Bash`, or any tool not listed above.
