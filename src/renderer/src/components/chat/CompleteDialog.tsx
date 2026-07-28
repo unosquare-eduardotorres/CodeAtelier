@@ -49,6 +49,7 @@ interface DialogInitState {
   generationError: string | null
   error: string | null
   setError: (v: string | null) => void
+  fileChangesLoaded: boolean
   insights: ConversationInsights | null
   insightsLoading: boolean
   inputRef: React.RefObject<HTMLInputElement | null>
@@ -70,6 +71,7 @@ function useCompleteDialogInit(
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationError, setGenerationError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [fileChangesLoaded, setFileChangesLoaded] = useState(false)
   const [insights, setInsights] = useState<ConversationInsights | null>(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -93,6 +95,7 @@ function useCompleteDialogInit(
     setError(null)
     setIsSubmitting(false)
     setGenerationError(null)
+    setFileChangesLoaded(false)
     userEditedRef.current = false
 
     // Focus the input after a short delay to ensure the dialog is rendered
@@ -105,6 +108,7 @@ function useCompleteDialogInit(
         if (cancelled) return
         const typed = changes as Array<{ filePath: string; changeType: string }>
         setFileChanges(typed)
+        setFileChangesLoaded(true)
         const lines = typed.map((fc) => `- ${fc.changeType}: ${fc.filePath}`)
         setPrDescription(lines.length > 0 ? `Changes:\n${lines.join('\n')}` : '')
       })
@@ -112,6 +116,7 @@ function useCompleteDialogInit(
         if (cancelled) return
         console.warn('[CompleteDialog] Non-fatal: file changes load failed:', err)
         setFileChanges([])
+        setFileChangesLoaded(true)
         setPrDescription('')
       })
 
@@ -175,6 +180,7 @@ function useCompleteDialogInit(
     generationError,
     error,
     setError,
+    fileChangesLoaded,
     insights,
     insightsLoading,
     inputRef,
@@ -191,6 +197,7 @@ interface CompleteDialogProps {
   conversationTitle: string
   conversationId: string
   onConfirm: (branchName: string, commitMessage: string, description: string) => Promise<void>
+  onClose: () => Promise<void>
   onCancel: () => void
 }
 
@@ -199,6 +206,7 @@ export default function CompleteDialog({
   conversationTitle,
   conversationId,
   onConfirm,
+  onClose,
   onCancel
 }: CompleteDialogProps): React.JSX.Element | null {
   const { repoInfo, githubStatus } = useWorkspaceStore()
@@ -216,6 +224,7 @@ export default function CompleteDialog({
     generationError,
     error,
     setError,
+    fileChangesLoaded,
     insights,
     insightsLoading,
     inputRef,
@@ -223,6 +232,19 @@ export default function CompleteDialog({
   } = useCompleteDialogInit(isOpen, conversationTitle, conversationId, onCancel)
 
   if (!isOpen) return null
+
+  const noChanges = fileChangesLoaded && fileChanges.length === 0
+
+  const handleClose = async (): Promise<void> => {
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      await onClose()
+    } catch (e) {
+      setError((e as Error).message)
+      setIsSubmitting(false)
+    }
+  }
 
   const handleConfirm = async (): Promise<void> => {
     if (!commitMessage.trim() || !branchName.trim()) return
@@ -260,73 +282,76 @@ export default function CompleteDialog({
           </div>
         </div>
 
-        {/* Branch name input */}
-        <div className="mb-4">
-          <label htmlFor="branch-name" className="block text-sm font-medium text-text-body mb-1.5">
-            Branch name
-          </label>
-          <input
-            ref={inputRef}
-            id="branch-name"
-            data-testid="complete-dialog-branch"
-            type="text"
-            value={branchName}
-            onChange={(e) => setBranchName(e.target.value)}
-            disabled={isSubmitting}
-            className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
-            placeholder="chat/my-feature"
-          />
-        </div>
-
-        {/* Commit message input */}
-        <div className="mb-4">
-          <label
-            htmlFor="commit-message"
-            className="block text-sm font-medium text-text-body mb-1.5"
-          >
-            Commit message
-          </label>
-          <input
-            id="commit-message"
-            data-testid="complete-dialog-commit"
-            type="text"
-            value={commitMessage}
-            onChange={(e) => setCommitMessage(e.target.value)}
-            disabled={isSubmitting}
-            className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
-            placeholder="feat: describe your changes..."
-          />
-        </div>
-
-        {/* PR Description */}
-        <div className="mb-4">
-          <label
-            htmlFor="pr-description"
-            className="block text-sm font-medium text-text-body mb-1.5"
-          >
-            PR Description
-          </label>
-          <div className="relative">
-            <textarea
-              id="pr-description"
-              value={prDescription}
-              onChange={(e) => {
-                userEditedRef.current = true
-                setPrDescription(e.target.value)
-              }}
+        {/* Branch/commit/description inputs — dimmed when no changes */}
+        <div className={noChanges ? 'opacity-40 pointer-events-none' : ''}>
+          {/* Branch name input */}
+          <div className="mb-4">
+            <label htmlFor="branch-name" className="block text-sm font-medium text-text-body mb-1.5">
+              Branch name
+            </label>
+            <input
+              ref={inputRef}
+              id="branch-name"
+              data-testid="complete-dialog-branch"
+              type="text"
+              value={branchName}
+              onChange={(e) => setBranchName(e.target.value)}
               disabled={isSubmitting}
-              rows={6}
-              className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
-              placeholder="Describe the changes in this PR..."
+              className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+              placeholder="chat/my-feature"
             />
-            {isGenerating && (
-              <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-surface-overlay/90 rounded text-xs text-text-secondary">
-                <Loader2 size={12} className="animate-spin text-primary-text" />
-                Generating...
-              </div>
-            )}
           </div>
-          {generationError && <p className="text-xs text-warning mt-1">{generationError}</p>}
+
+          {/* Commit message input */}
+          <div className="mb-4">
+            <label
+              htmlFor="commit-message"
+              className="block text-sm font-medium text-text-body mb-1.5"
+            >
+              Commit message
+            </label>
+            <input
+              id="commit-message"
+              data-testid="complete-dialog-commit"
+              type="text"
+              value={commitMessage}
+              onChange={(e) => setCommitMessage(e.target.value)}
+              disabled={isSubmitting}
+              className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+              placeholder="feat: describe your changes..."
+            />
+          </div>
+
+          {/* PR Description */}
+          <div className="mb-4">
+            <label
+              htmlFor="pr-description"
+              className="block text-sm font-medium text-text-body mb-1.5"
+            >
+              PR Description
+            </label>
+            <div className="relative">
+              <textarea
+                id="pr-description"
+                value={prDescription}
+                onChange={(e) => {
+                  userEditedRef.current = true
+                  setPrDescription(e.target.value)
+                }}
+                disabled={isSubmitting}
+                rows={6}
+                className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm placeholder-text-muted resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+                placeholder="Describe the changes in this PR..."
+              />
+              {isGenerating && (
+                <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-surface-overlay/90 rounded text-xs text-text-secondary">
+                  <Loader2 size={12} className="animate-spin text-primary-text" />
+                  Generating...
+                </div>
+              )}
+            </div>
+            {generationError && <p className="text-xs text-warning mt-1">{generationError}</p>}
+          </div>
         </div>
 
         {/* Session Insights */}
@@ -356,11 +381,17 @@ export default function CompleteDialog({
           </div>
         )}
 
-        {fileChanges.length === 0 && !isGenerating && (
-          <div className="mb-4 p-3 bg-warning-muted border border-warning/20 rounded-lg">
-            <div className="flex items-center gap-2 text-warning text-sm">
-              <AlertTriangle size={14} />
-              <span>No file changes tracked for this conversation yet.</span>
+        {noChanges && (
+          <div className="mb-4 p-3 bg-info-muted border border-info/20 rounded-lg">
+            <div className="flex items-start gap-2 text-info text-sm">
+              <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-medium">No uncommitted changes found</p>
+                <p className="text-text-secondary mt-0.5">
+                  Changes may have been committed in another session.
+                  You can close this conversation to clean up.
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -384,20 +415,37 @@ export default function CompleteDialog({
           >
             Cancel
           </button>
-          <button
-            onClick={handleConfirm}
-            disabled={isSubmitting || !commitMessage.trim() || !branchName.trim()}
-            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success bg-success hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                Completing...
-              </>
-            ) : (
-              buttonLabel
-            )}
-          </button>
+          {noChanges ? (
+            <button
+              onClick={handleClose}
+              disabled={isSubmitting}
+              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-warning bg-warning hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Closing...
+                </>
+              ) : (
+                'Close Conversation'
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleConfirm}
+              disabled={isSubmitting || !commitMessage.trim() || !branchName.trim()}
+              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success bg-success hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Completing...
+                </>
+              ) : (
+                buttonLabel
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>
