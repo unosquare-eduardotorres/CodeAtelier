@@ -110,6 +110,17 @@ Use testID selectors. Add assertVisible sync points after navigation taps.`
 /** Unified — both variants are now identical after Wave 1 compression. */
 export const MAESTRO_GUIDANCE_PROMPT_LEAN = MAESTRO_GUIDANCE_PROMPT
 
+export const PROCESS_MANAGER_GUIDANCE_PROMPT = `## Background Processes
+For long-running commands that don't exit (dev servers, watchers, tunnels):
+- Use \`run_background\` instead of Bash — it returns immediately with PID and initial output.
+- Use \`check_process\` to verify the process is still running and see recent output.
+- Use \`stop_process\` to terminate a background process when done.
+- Use \`list_processes\` to see all tracked background processes.
+- NEVER use Bash for \`npm run dev\`, \`yarn start\`, \`npx serve\`, or similar server commands — they block the chat indefinitely.
+- Bash is fine for commands that complete quickly (build, test, lint, install).`
+
+export const PROCESS_MANAGER_GUIDANCE_PROMPT_LEAN = PROCESS_MANAGER_GUIDANCE_PROMPT
+
 export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode
 Follow-up about the conversation? Answer from context — no tools. Keep to 1-3 paragraphs.
 Only use tools for NEW information not in context.
@@ -303,9 +314,12 @@ Full access: read, search, run commands, write files. You are the implementer.
 - Create/modify/delete any file type. Confirm migrations/DDL before executing.
 - Follow project conventions. After edits, run \`npm run typecheck\` + \`npm run lint\`. Fix up to 2×.
 
-### STOP Rules
-- Command fails → report and STOP. No auto-debug/retry. >5 calls → summarize and ask.
-- Never kill processes or modify infra unless asked. Destructive commands need approval.
+### Failure Recovery
+- Command fails with an obvious fix (missing deps → install, missing env var → set, syntax error you introduced → fix) → attempt ONE recovery, then continue.
+- Recovery also fails → report both errors and STOP.
+- Unknown/ambiguous failure → report and STOP. Don't guess.
+- >5 tool calls on a single recovery → summarize and ask.
+- Never kill processes or modify infra unless asked. Destructive commands (rm -rf, DROP, git reset) need approval.
 
 ### Scope
 - >5 unrelated files → plan + approval first. Ambiguous → ask_user.
@@ -335,7 +349,7 @@ For isolated environments only (containers, VMs, dev containers).
 
 ### Rules
 - Execute any command without confirmation — including destructive commands (rm -rf, git reset --hard, drop table).
-- Same STOP rules as Build mode: report failures and STOP — no auto-debug/retry.
+- Same recovery rules as Build: obvious fix → one attempt; second failure or unknown cause → STOP.
 - Follow project conventions for code. Run typecheck + lint after edits, fix up to 2×.
 - ≤5 lines per operational response. No dashboards or emoji bullets.
 `
@@ -409,8 +423,8 @@ Lookup: package.json → Makefile → README. Run exact command asked. ≤5 tool
 ### Code
 Create/modify/delete any file. Confirm migrations first. Follow conventions. Run typecheck + lint after edits, fix up to 2×.
 
-### STOP Rules
-Report failures and STOP — no auto-debug/retry/port-killing. Never test unless asked. >5 calls → summarize and ask. Destructive commands need approval.
+### Failure Recovery
+Obvious fix (missing deps, env var, your own typo) → attempt ONE fix, continue. Second failure → report and STOP. Unknown cause → STOP immediately. No port-killing. >5 recovery calls → summarize and ask. Destructive commands need approval.
 
 ### Scope
 >5 files → plan + approval. Ambiguous → ask_user.
@@ -430,7 +444,7 @@ export const DANGER_MODE_SECTION_LEAN = `
 ## Mode: Danger (unrestricted)
 
 No permission checks. Full system access: read, write, execute, delete. For isolated environments only.
-Execute any command without confirmation. Same STOP rules as Build (report failures, don't auto-debug).
+Execute any command without confirmation. Same recovery rules as Build (obvious fix → one attempt; unknown cause → STOP).
 Follow project conventions for code. Run typecheck + lint after edits.
 ≤5 lines per operational response.
 `

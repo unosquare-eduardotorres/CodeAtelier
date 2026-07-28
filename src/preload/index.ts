@@ -2468,6 +2468,10 @@ const api = {
       isSimple: boolean
       payload: unknown
       receivedAt: number
+      toolName?: string
+      toolInput?: Record<string, unknown>
+      conversationTitle?: string
+      mode?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2481,6 +2485,10 @@ const api = {
         isSimple: boolean
         payload: unknown
         receivedAt: number
+        toolName?: string
+        toolInput?: Record<string, unknown>
+        conversationTitle?: string
+        mode?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.PERMISSION_REQUEST, handler)

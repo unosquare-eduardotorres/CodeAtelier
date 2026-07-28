@@ -1875,6 +1875,12 @@ export const MCP_TOOLS = {
     MEMORY_SEARCH: mcpTool('memory', 'memory_search', 'Memory · memory_search'),
     MEMORY_RECORD: mcpTool('memory', 'memory_record', 'Memory · memory_record'),
     MEMORY_FLAG: mcpTool('memory', 'memory_flag', 'Memory · memory_flag')
+  }),
+  PROCESS_MANAGER: mcpServer('process-manager', {
+    RUN_BACKGROUND: mcpTool('process-manager', 'run_background', 'Process · run_background'),
+    CHECK_PROCESS: mcpTool('process-manager', 'check_process', 'Process · check_process'),
+    STOP_PROCESS: mcpTool('process-manager', 'stop_process', 'Process · stop_process'),
+    LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes')
   })
 } as const
 

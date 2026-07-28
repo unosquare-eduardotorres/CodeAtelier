@@ -9,9 +9,9 @@
  * Expanded: full phase list with status icons.
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { CheckCircle2, Circle, ChevronDown, FileCode, Zap } from 'lucide-react'
-import { usePlanExecutionStore } from '@renderer/store/plan-execution.store'
+import { usePlanExecutionStore, type PlanExecution } from '@renderer/store/plan-execution.store'
 import { PHASE_STATUS_ICON, statusDotColor } from './plan-status-icons'
 
 interface PlanProgressBarProps {
@@ -21,7 +21,11 @@ interface PlanProgressBarProps {
 export default function PlanProgressBar({
   conversationId
 }: PlanProgressBarProps): React.JSX.Element | null {
-  const execution = usePlanExecutionStore((s) => s.executions[conversationId])
+  const selectExecution = useCallback(
+    (s: { executions: Record<string, PlanExecution> }) => s.executions[conversationId],
+    [conversationId]
+  )
+  const execution = usePlanExecutionStore(selectExecution)
   const [expanded, setExpanded] = useState(false)
   const [autoClosed, setAutoClosed] = useState(false)
   const [hasAutoExpanded, setHasAutoExpanded] = useState(false)

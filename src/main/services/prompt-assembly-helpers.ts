@@ -17,6 +17,7 @@ import {
   LIBRARY_DOCS_GUIDANCE_PROMPT,
   MAESTRO_GUIDANCE_PROMPT,
   MEMORY_PROTOCOL_PROMPT,
+  PROCESS_MANAGER_GUIDANCE_PROMPT,
   REPOMAP_GUIDANCE_PROMPT,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT,
   // Guidance blocks that still differ between full/lean
@@ -51,6 +52,8 @@ export interface PromptFeatureFlags {
   externalMcpActive?: Record<string, boolean>
   /** Whether code-analysis tools are mounted (default true). Set false for small-tier local LLMs. */
   codeAnalysisEnabled?: boolean
+  /** Whether process-manager tools are available (false in plan mode). */
+  processManagerEnabled?: boolean
 }
 
 // ── Data-driven guidance configuration ──
@@ -80,7 +83,8 @@ const GUIDANCE_SECTIONS: GuidanceSection[] = [
   { marker: '## Library Doc', flag: (f) => f.codeAnalysisEnabled !== false, prompt: LIBRARY_DOCS_GUIDANCE_PROMPT },
   { marker: '## Maestro', flag: (f) => !!f.externalMcpActive?.['maestro'], prompt: MAESTRO_GUIDANCE_PROMPT },
   // ESLint: only entry where lean differs (full includes "Warnings OK; errors are NOT")
-  { marker: '## ESLint', flag: () => true, prompt: ESLINT_GUIDANCE_PROMPT, leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN }
+  { marker: '## ESLint', flag: () => true, prompt: ESLINT_GUIDANCE_PROMPT, leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN },
+  { marker: '## Background Processes', flag: (f) => f.processManagerEnabled !== false, prompt: PROCESS_MANAGER_GUIDANCE_PROMPT }
 ]
 
 /**

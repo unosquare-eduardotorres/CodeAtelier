@@ -232,6 +232,14 @@ export interface PendingPermission {
   receivedAt: number
   /** True after toast timeout — indicates permission should show as sidebar badge instead */
   badgeFallback?: boolean
+  /** Tool name extracted for structured display (e.g., "Bash", "Read", "Write") */
+  toolName?: string
+  /** Full structured tool input for detailed rendering */
+  toolInput?: Record<string, unknown>
+  /** Conversation title for context (e.g., "Implement auth system") */
+  conversationTitle?: string
+  /** Conversation mode for context badge */
+  mode?: ConversationMode
 }
 
 export interface PermissionResponse {

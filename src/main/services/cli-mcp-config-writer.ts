@@ -235,6 +235,13 @@ export class CliMcpConfigWriter {
       env: codeAnalysisEnv
     }
 
+    // ── Process Manager ──
+    servers['process-manager'] = {
+      command: 'node',
+      args: [join(serverBasePath, 'process-manager-server.js')],
+      env: { WORKSPACE_PATH: workspacePath }
+    }
+
     // ── Control Actions ──
     const controlEnv: Record<string, string> = {
       WORKSPACE_PATH: workspacePath,

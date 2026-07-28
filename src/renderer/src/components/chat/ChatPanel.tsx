@@ -125,7 +125,10 @@ function ChatPanelBanners({
 }: {
   activeTab: ChatTab
   workspaceId?: string
-  rateLimitState: { utilization?: number; status: 'allowed' | 'allowed_warning' | 'rejected' } | null
+  rateLimitState: {
+    utilization?: number
+    status: 'allowed' | 'allowed_warning' | 'rejected'
+  } | null
   apiRetry: { attempt: number; maxRetries: number; errorStatus?: number | null } | null
   sessionRecovery: { phase: SessionRecoveryPhase; message: string } | null
   budgetCapBanner: { message: string; canContinue: boolean } | null
@@ -135,7 +138,11 @@ function ChatPanelBanners({
   switchToBlockingChat: () => void
   stopBlockingChat: () => void
   dismissBlockedBy: () => void
-  turnLimitReached: { continuable: boolean; continuationsUsed: number; continuationsMax: number } | null
+  turnLimitReached: {
+    continuable: boolean
+    continuationsUsed: number
+    continuationsMax: number
+  } | null
   continuePastTurnLimit: () => void
   dismissTurnLimit: () => void
   streamStalledConversationId: string | null
@@ -166,10 +173,7 @@ function ChatPanelBanners({
         />
       )}
       {activeTab === 'chat' && sessionRecovery && (
-        <SessionRecoveryBanner
-          phase={sessionRecovery.phase}
-          message={sessionRecovery.message}
-        />
+        <SessionRecoveryBanner phase={sessionRecovery.phase} message={sessionRecovery.message} />
       )}
       {activeTab === 'chat' && budgetCapBanner && (
         <BudgetCapBanner
@@ -198,27 +202,29 @@ function ChatPanelBanners({
       )}
       {/* STALL-DETECT-01: Warning banner when no real content received for 3 minutes */}
       {/* STALL-DETECT-06: Per-conversation guard — only show if THIS conversation is stalled */}
-      {activeTab === 'chat' && streamStalledConversationId === activeConversationId && isStreaming && (
-        <div
-          data-testid="stream-stall-banner"
-          className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-amber-300 animate-in fade-in slide-in-from-top-2 duration-300"
-        >
-          <AlertTriangle size={16} className="flex-shrink-0" />
-          <div className="flex flex-1 flex-col gap-0.5">
-            <span className="text-sm font-medium">Stream may be stuck</span>
-            <span className="text-xs opacity-70">
-              No activity for 3 minutes — the agent may be stalled. Try clicking Stop.
-            </span>
-          </div>
-          <button
-            onClick={dismissStallBanner}
-            className="flex-shrink-0 rounded p-1 text-amber-400/60 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
-            aria-label="Dismiss stall warning"
+      {activeTab === 'chat' &&
+        streamStalledConversationId === activeConversationId &&
+        isStreaming && (
+          <div
+            data-testid="stream-stall-banner"
+            className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-amber-300 animate-in fade-in slide-in-from-top-2 duration-300"
           >
-            <X size={14} />
-          </button>
-        </div>
-      )}
+            <AlertTriangle size={16} className="flex-shrink-0" />
+            <div className="flex flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">Stream may be stuck</span>
+              <span className="text-xs opacity-70">
+                No activity for 3 minutes — the agent may be stalled. Try clicking Stop.
+              </span>
+            </div>
+            <button
+              onClick={dismissStallBanner}
+              className="flex-shrink-0 rounded p-1 text-amber-400/60 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              aria-label="Dismiss stall warning"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
     </>
   )
 }
@@ -299,7 +305,9 @@ function useChatPanelLocalEffects({
     if (conversationId) void loadContextUsage(conversationId)
     if (!isStreaming && conversationId) {
       const timer = setTimeout(() => void loadContextUsage(conversationId), 2000)
-      return (): void => { clearTimeout(timer) }
+      return (): void => {
+        clearTimeout(timer)
+      }
     }
     return undefined
   }, [conversationId, isStreaming, loadContextUsage])
@@ -494,7 +502,10 @@ export default function ChatPanel({
   return (
     <>
       {generateModal}
-      <div className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0">
+      <div
+        data-testid="chat-panel"
+        className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0"
+      >
         {/* Header — tabs left, persona right */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
           <div className="flex items-center gap-1" role="tablist" aria-label="Chat panel tabs">
@@ -519,7 +530,9 @@ export default function ChatPanel({
                 onRoutingUpdated={(updated) => {
                   useChatStore.setState((state) => ({
                     activeConversation:
-                      state.activeConversation?.id === updated.id ? updated : state.activeConversation,
+                      state.activeConversation?.id === updated.id
+                        ? updated
+                        : state.activeConversation,
                     conversations: state.conversations.map((c) =>
                       c.id === updated.id ? updated : c
                     )
@@ -630,8 +643,12 @@ export default function ChatPanel({
               />
             )}
 
-            {activeConversation && <PlanProgressBar key={activeConversation.id} conversationId={activeConversation.id} />}
-            {activeConversation && <TodoTaskBar key={activeConversation.id} conversationId={activeConversation.id} />}
+            {activeConversation && (
+              <PlanProgressBar key={activeConversation.id} conversationId={activeConversation.id} />
+            )}
+            {activeConversation && (
+              <TodoTaskBar key={activeConversation.id} conversationId={activeConversation.id} />
+            )}
 
             <div className="flex-shrink-0 px-6 pb-4 pt-2">
               <AttachmentDropzone

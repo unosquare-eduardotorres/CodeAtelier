@@ -1565,6 +1565,10 @@ interface Api {
       isSimple: boolean
       payload: unknown
       receivedAt: number
+      toolName?: string
+      toolInput?: Record<string, unknown>
+      conversationTitle?: string
+      mode?: string
     }) => void
   ) => () => void
   respondToPermission: (args: {

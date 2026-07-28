@@ -928,6 +928,99 @@ if (loaded) {
       }
     })
   })
+
+  // ── switchMode after restart (mode desync fix) ─────────────────────
+
+  describe('AgentSessionService — switchMode mode-desync fix', () => {
+    test('switchMode_applies_when_no_conversationId_after_restart', async () => {
+      // Regression: after app restart, currentConversationId is null.
+      // switchMode used to `return` silently, leaving currentMode as 'plan'
+      // even though the UI conversation was in Build mode.
+      const switchCalls: string[] = []
+      const adapter = createMockAdapter({
+        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+      })
+      const session = new AgentSessionService(adapter as any)
+
+      // Simulate post-restart state: started with default 'plan', no conversationId
+      ;(session as any).workspacePath = '/tmp/test-ws'
+      ;(session as any).currentMode = 'plan'
+      ;(session as any).currentConversationId = null
+
+      assert.equal(session.getMode(), 'plan', 'precondition: mode starts as plan')
+
+      await session.switchMode('build')
+
+      assert.equal(
+        session.getMode(),
+        'build',
+        'switchMode must apply when currentConversationId is null (was silently dropped)'
+      )
+      assert.equal(
+        switchCalls.length,
+        1,
+        'adapter.onConversationSwitch should have been called'
+      )
+    })
+
+    test('switchMode_noop_when_already_in_target_mode', async () => {
+      const switchCalls: string[] = []
+      const adapter = createMockAdapter({
+        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+      })
+      const session = new AgentSessionService(adapter as any)
+      ;(session as any).workspacePath = '/tmp/test-ws'
+      ;(session as any).currentMode = 'build'
+      ;(session as any).currentConversationId = null
+
+      await session.switchMode('build')
+
+      assert.equal(session.getMode(), 'build', 'mode unchanged')
+      assert.equal(switchCalls.length, 0, 'should not call _doSwitchMode for same mode')
+    })
+
+    test('switchMode_uses_send_lock_when_conversationId_present', async () => {
+      // When a conversationId IS set, switchMode should still serialize through
+      // the send-lock path (MODE-SWITCH-NOLOCK-01).
+      const switchCalls: string[] = []
+      const adapter = createMockAdapter({
+        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+      })
+      const session = new AgentSessionService(adapter as any)
+      ;(session as any).workspacePath = '/tmp/test-ws'
+      ;(session as any).currentMode = 'plan'
+      ;(session as any).currentConversationId = 'conv-active'
+
+      await session.switchMode('build')
+
+      assert.equal(session.getMode(), 'build', 'mode should switch via lock path')
+      assert.equal(switchCalls.length, 1, 'adapter notified')
+      assert.equal(switchCalls[0], 'conv-active', 'should pass conversationId to adapter')
+      // Send lock should have been created for the conversationId
+      assert.ok(
+        (session as any).sendLocks.has('conv-active'),
+        'send lock should be keyed to the conversationId'
+      )
+    })
+
+    test('switchMode_applies_danger_mode_after_restart', async () => {
+      const adapter = createMockAdapter({
+        onConversationSwitch: () => {}
+      })
+      const session = new AgentSessionService(adapter as any)
+      ;(session as any).workspacePath = '/tmp/test-ws'
+      ;(session as any).currentMode = 'plan'
+      ;(session as any).currentConversationId = null
+
+      await session.switchMode('danger')
+
+      assert.equal(
+        session.getMode(),
+        'danger',
+        'danger mode should apply even without conversationId'
+      )
+    })
+  })
 } else {
   describe('AgentSessionService Body Deep Tests (skipped — module load failed)', () => {
     test('skipped', () => {}, { skipReason: 'module not loaded' })

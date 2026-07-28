@@ -85,6 +85,7 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
 
   // ── Virtualizer + auto-scroll (extracted hooks) ──
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const { virtualizer, measureElement } = useMessageVirtualizer(messages.length, scrollRef)
 
   // Listen for prompt suggestions from SDK
@@ -124,13 +125,17 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     return undefined
   }, [isStreaming, messages.length])
 
+  const isEmpty = messages.length === 0 && !isStreaming
+
   const { isAtBottom, scrollToBottom } = useAutoScroll(
     scrollRef,
+    contentRef,
     activeConversationId,
     messages.length,
     streamingContent,
     allStreamingTools.length,
-    virtualizer
+    virtualizer,
+    isEmpty
   )
 
   if (messages.length === 0 && !isStreaming) {
@@ -158,73 +163,83 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   return (
     <div data-testid="message-list" className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
       <FloatingRobots />
-      <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full">
-        {/* Audit provenance banner (when conversation originated from Health audit) */}
-        {sourceAuditRunId && (
-          <AuditProvenanceBanner
-            auditRunId={sourceAuditRunId}
-            onViewAudit={() => {
-              // Navigate to health page — handled by app layout
-              window.dispatchEvent(new CustomEvent('navigate-to-health'))
+      <div
+        ref={scrollRef}
+        data-testid="message-scroll"
+        className="relative z-10 flex-1 overflow-y-auto px-6 py-4 h-full"
+      >
+        {/* Outer content wrapper observed by ResizeObserver — covers banner + list + footer
+            so that height changes from any sibling (prompt suggestions, thinking indicator,
+            audit banner) trigger a re-pin / button update. */}
+        <div ref={contentRef}>
+          {/* Audit provenance banner (when conversation originated from Health audit) */}
+          {sourceAuditRunId && (
+            <AuditProvenanceBanner
+              auditRunId={sourceAuditRunId}
+              onViewAudit={() => {
+                // Navigate to health page — handled by app layout
+                window.dispatchEvent(new CustomEvent('navigate-to-health'))
+              }}
+            />
+          )}
+          {/* Virtualized message list */}
+          <div
+            style={{
+              height: virtualizer.getTotalSize(),
+              width: '100%',
+              position: 'relative'
             }}
-          />
-        )}
-        {/* Virtualized message list */}
-        <div
-          style={{
-            height: virtualizer.getTotalSize(),
-            width: '100%',
-            position: 'relative'
-          }}
-        >
-          {/* eslint-disable-next-line react-hooks/refs -- virtualItems is from @tanstack/react-virtual, designed for render */}
-          {virtualItems.map((virtualRow) => {
-            const msg = messages[virtualRow.index]
-            return (
-              <div
-                key={msg.id}
-                ref={measureElement}
-                data-index={virtualRow.index}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${virtualRow.start}px)`
-                }}
-              >
+          >
+            {/* eslint-disable-next-line react-hooks/refs -- virtualItems is from @tanstack/react-virtual, designed for render */}
+            {virtualItems.map((virtualRow) => {
+              const msg = messages[virtualRow.index]
+              return (
                 <div
-                  className={`pb-4 ${
-                    virtualRow.index === messages.length - 1 && justCompletedRef.current
-                      ? 'animate-message-reveal'
-                      : ''
-                  }`}
+                  key={msg.id}
+                  ref={measureElement}
+                  data-index={virtualRow.index}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`
+                  }}
                 >
-                  <MessageBubble
-                    message={msg}
-                    toolActivities={msg.toolActivities}
-                    searchHighlight={searchQuery}
-                    actions={bubbleActions}
-                  />
+                  <div
+                    className={`pb-4 ${
+                      virtualRow.index === messages.length - 1 && justCompletedRef.current
+                        ? 'animate-message-reveal'
+                        : ''
+                    }`}
+                  >
+                    <MessageBubble
+                      message={msg}
+                      toolActivities={msg.toolActivities}
+                      searchHighlight={searchQuery}
+                      actions={bubbleActions}
+                    />
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
 
-        {/* Non-virtualized footer items */}
-        <MessageListFooter
-          promptSuggestion={promptSuggestion}
-          onDismissPromptSuggestion={() => setPromptSuggestion(null)}
-          showIdeaPopover={showIdeaPopover}
-          ideaPopoverData={ideaPopoverData}
-          onCloseIdeaPopover={() => {
-            setShowIdeaPopover(false)
-            setIdeaPopoverData(null)
-          }}
-          thinkingIdentity={thinkingIdentity}
-          allStreamingTools={allStreamingTools}
-        />
+          {/* Non-virtualized footer items */}
+          <MessageListFooter
+            promptSuggestion={promptSuggestion}
+            onDismissPromptSuggestion={() => setPromptSuggestion(null)}
+            showIdeaPopover={showIdeaPopover}
+            ideaPopoverData={ideaPopoverData}
+            onCloseIdeaPopover={() => {
+              setShowIdeaPopover(false)
+              setIdeaPopoverData(null)
+            }}
+            thinkingIdentity={thinkingIdentity}
+            allStreamingTools={allStreamingTools}
+          />
+        </div>
+        {/* end contentRef wrapper */}
       </div>
       <ScrollToBottomButton visible={!isAtBottom} onClick={scrollToBottom} />
     </div>

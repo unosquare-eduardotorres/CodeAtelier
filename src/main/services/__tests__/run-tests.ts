@@ -362,6 +362,8 @@ const TEST_FILES: string[] = [
   './executor-derivation.test',
   // ─── Local embedding provider facade (oMLX/Ollama routing) ───
   './local-embedding-provider.test',
+  // ─── Process Manager MCP server (ring buffer, tool registry, mode gating) ───
+  './process-manager.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

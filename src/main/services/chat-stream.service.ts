@@ -381,16 +381,33 @@ export class ChatStreamService {
     // use the toast flow because they need explicit approve/deny, not free-text.
     const onPermissionRequestWs = (
       workspaceId: string,
-      data: { toolName?: string; inputSummary?: string; requestId?: string }
+      data: { toolName?: string; inputSummary?: string; requestId?: string; input?: Record<string, unknown> }
     ): void => {
       try {
         const router = getSessionEventRouter()
         const toolName = data.toolName ?? 'Unknown tool'
+
+        // Resolve conversation context for the permission modal
+        const session = chatAgentService.getSessionForWorkspace(workspaceId)
+        const conversationId = session?.getCurrentConversationId()
+        let conversationTitle: string | undefined
+        if (conversationId) {
+          try {
+            const conv = conversationRepository.findById(conversationId)
+            conversationTitle = conv?.title
+          } catch { /* non-critical */ }
+        }
+        const mode = session?.getMode()
+
         router.sendPermissionRequest({
           id: `perm-${data.requestId ?? Date.now()}`,
           workspaceId,
           workspaceName: this.resolveWorkspaceName(workspaceId),
           type: 'toolPermission',
+          toolName,
+          toolInput: data.input,
+          conversationTitle,
+          mode,
           summary: `Agent wants to use ${toolName}${data.inputSummary ? `: ${data.inputSummary}` : ''}`,
           isSimple: true,
           payload: data,

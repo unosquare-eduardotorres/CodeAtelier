@@ -7,11 +7,13 @@ import type { Virtualizer } from '@tanstack/react-virtual'
  */
 export function useAutoScroll(
   scrollRef: React.RefObject<HTMLDivElement | null>,
+  contentRef: React.RefObject<HTMLDivElement | null>,
   activeConversationId: string | null,
   messagesLength: number,
   streamingContent: string,
   streamingToolsLength: number,
-  virtualizer: Virtualizer<HTMLDivElement, Element>
+  virtualizer: Virtualizer<HTMLDivElement, Element>,
+  isEmpty: boolean
 ): {
   isAtBottom: boolean
   scrollToBottom: () => void
@@ -19,6 +21,7 @@ export function useAutoScroll(
   const shouldAutoScroll = useRef(true)
   const isUserScrolling = useRef(false)
   const lastScrollTop = useRef(0)
+  const programmaticUntil = useRef(0)
   const [isAtBottom, setIsAtBottom] = useState(true)
 
   // Force scroll to bottom when switching conversations
@@ -27,13 +30,49 @@ export function useAutoScroll(
     shouldAutoScroll.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional state reset on conversation switch
     setIsAtBottom(true)
+
+    // Use virtualizer.scrollToIndex() first — this is measurement-aware and
+    // correctly handles items with estimated-but-not-yet-measured heights.
+    // Direct scrollTop assignment races with virtualizer measurement and can
+    // show only the bottom portion of the last message.
+    if (messagesLength > 0) {
+      virtualizer.scrollToIndex(messagesLength - 1, { align: 'end' })
+    }
+
+    // Safety net: after virtualizer and DOM settle, ensure we're at true bottom
     requestAnimationFrame(() => {
-      if (scrollRef.current) {
-        lastScrollTop.current = scrollRef.current.scrollHeight
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          programmaticUntil.current = performance.now() + 100
+          lastScrollTop.current = scrollRef.current.scrollHeight
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        }
+      })
+    })
+  }, [activeConversationId, messagesLength, virtualizer])
+
+  // Content height changes (row measurement, images) fire NO scroll events.
+  // Re-pin to bottom while auto-scroll is engaged; otherwise keep isAtBottom
+  // honest so the scroll-to-bottom button appears.
+  useEffect(() => {
+    const content = contentRef.current
+    const container = scrollRef.current
+    if (!content || !container) return
+    const ro = new ResizeObserver(() => {
+      const el = scrollRef.current
+      if (!el) return
+      if (shouldAutoScroll.current) {
+        programmaticUntil.current = performance.now() + 100
+        el.scrollTop = el.scrollHeight
+        lastScrollTop.current = el.scrollTop
+      } else {
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+        setIsAtBottom(nearBottom)
       }
     })
-  }, [activeConversationId])
+    ro.observe(content)
+    return () => ro.disconnect()
+  }, [activeConversationId, isEmpty])
 
   // Handle scroll events to determine if user is at bottom
   useEffect(() => {
@@ -61,11 +100,15 @@ export function useAutoScroll(
 
       setIsAtBottom(nearBottom)
 
-      isUserScrolling.current = true
-      clearTimeout(scrollTimeout)
-      scrollTimeout = setTimeout(() => {
-        isUserScrolling.current = false
-      }, 250) // Longer debounce to let virtualizer settle
+      // Don't let our own programmatic scrolls trip the isUserScrolling debounce,
+      // which would block the streaming auto-scroll effect.
+      if (performance.now() >= programmaticUntil.current) {
+        isUserScrolling.current = true
+        clearTimeout(scrollTimeout)
+        scrollTimeout = setTimeout(() => {
+          isUserScrolling.current = false
+        }, 250) // Longer debounce to let virtualizer settle
+      }
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
@@ -73,11 +116,12 @@ export function useAutoScroll(
       container.removeEventListener('scroll', handleScroll)
       clearTimeout(scrollTimeout)
     }
-  }, [])
+  }, [isEmpty])
 
   // Auto-scroll to bottom when new messages arrive or streaming content updates
   useEffect(() => {
     if (shouldAutoScroll.current && scrollRef.current && !isUserScrolling.current) {
+      programmaticUntil.current = performance.now() + 100
       requestAnimationFrame(() => {
         if (shouldAutoScroll.current && scrollRef.current) {
           scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -96,6 +140,7 @@ export function useAutoScroll(
     }
 
     // Step 2: After virtualizer updates, scroll to true bottom
+    programmaticUntil.current = performance.now() + 100
     requestAnimationFrame(() => {
       if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight

@@ -321,6 +321,10 @@ function buildLocalProviderMcpConfig(opts: {
   // Code analysis: skip for 'small' tier (saves ~3 tool schemas)
   const codeAnalysisEnabled = tier !== 'small' && isLocalMcpEnabled('code-analysis', localActive)
 
+  // Process manager: skip for 'small' tier and plan mode (read-only)
+  const processManagerEnabled =
+    tier !== 'small' && mode !== 'plan' && isLocalMcpEnabled('process-manager', localActive)
+
   // Build allowed tools list — tier-gated subset for code-graph
   const conditionalTools = [
     // Code graph: small tier → 6 essential tools; medium/large → full 13
@@ -333,6 +337,8 @@ function buildLocalProviderMcpConfig(opts: {
     ...(semanticSearchEnabled_ ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES : []),
     // Code analysis (tier-gated above)
     ...(codeAnalysisEnabled ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES : []),
+    // Process manager (tier-gated + mode-gated above)
+    ...(processManagerEnabled ? MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES : []),
     // Control actions — always on
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
@@ -476,6 +482,10 @@ function buildClaudeProviderMcpConfig(opts: {
     // Code analysis (per-chat gated)
     ...(isLocalMcpEnabled('code-analysis', localActive)
       ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
+      : []),
+    // Process manager — build/danger mode only (not plan)
+    ...(mode !== 'plan' && isLocalMcpEnabled('process-manager', localActive)
+      ? MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES
       : []),
     // Control actions — always on (plan + ask + phase progress)
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,

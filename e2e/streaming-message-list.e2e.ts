@@ -75,22 +75,21 @@ test.describe('Streaming & Message List', () => {
     const messageCount = await messages.count()
 
     if (messageCount > 3) {
-      // If we have messages, scroll up manually
-      const chatPanel = page.locator('[data-testid="chat-panel"]')
-      const hasChatPanel = await chatPanel.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (hasChatPanel) {
-        await chatPanel.evaluate((el) => {
-          el.scrollTop = 0
-        })
-        await page.waitForTimeout(500)
+      // Scroll the actual overflow container to the top
+      const scrollContainer = page.locator('[data-testid="message-scroll"]')
+      await expect(scrollContainer).toBeVisible({ timeout: 3_000 })
+      await scrollContainer.evaluate((el) => {
+        el.scrollTop = 0
+      })
+      await page.waitForTimeout(500)
 
-        // ScrollToBottom button might appear
-        const hasScrollBtn = await scrollToBottom.isVisible({ timeout: 3_000 }).catch(() => false)
-        if (hasScrollBtn) {
-          await scrollToBottom.click()
-          await page.waitForTimeout(500)
-        }
-      }
+      // Scroll-to-bottom button must appear when scrolled away from bottom
+      await expect(scrollToBottom).toBeVisible({ timeout: 3_000 })
+
+      // Click it and verify it disappears (we're back at bottom)
+      await scrollToBottom.click()
+      await page.waitForTimeout(500)
+      await expect(scrollToBottom).toBeHidden({ timeout: 3_000 })
     }
 
     // Message input should still be accessible

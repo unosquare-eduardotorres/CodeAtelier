@@ -813,7 +813,14 @@ export class AgentSessionService extends AgentBaseService {
     // MODE-SWITCH-NOLOCK-01: Serialize after the current send (if any) to prevent
     // mid-stream permission changes and MCP cache invalidation.
     const conversationId = this.currentConversationId
-    if (!conversationId) return
+    if (!conversationId) {
+      // Fresh session (e.g. after app restart) — no send in flight, no lock to
+      // serialize against. Apply directly so the first send doesn't run with the
+      // stale default 'plan' mode. (Was a silent return — dropped the deferred
+      // mode switch from chat-stream.dispatchToAgent and left Build-mode chats
+      // streaming with a Plan-mode system prompt.)
+      return this._doSwitchMode(mode)
+    }
     const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
     const thisLock = prevLock.then(
       () => this._doSwitchMode(mode),
