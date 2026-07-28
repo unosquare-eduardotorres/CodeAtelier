@@ -87,7 +87,7 @@
     "react": "^19.2.1",
     "react-diff-viewer-continued": "^4.4.0",
     "react-dom": "^19.2.1",
-    "react-dropzone": "^15.0.0",
+    "react-dropzone": "^19.1.1",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.1",
     "react-simple-code-editor": "^0.14.1",
