@@ -25,6 +25,7 @@ import McpPill from './McpPill'
 import EffortPill from './EffortPill'
 import TodoTaskBar from './TodoTaskBar'
 import PlanProgressBar from './PlanProgressBar'
+import TaskExecutionBar from './TaskExecutionBar'
 import {
   StackDriftBanner,
   BuildProgressInline,
@@ -645,6 +646,9 @@ export default function ChatPanel({
 
             {activeConversation && (
               <PlanProgressBar key={activeConversation.id} conversationId={activeConversation.id} />
+            )}
+            {activeConversation && (
+              <TaskExecutionBar key={`tasks-${activeConversation.id}`} conversationId={activeConversation.id} />
             )}
             {activeConversation && (
               <TodoTaskBar key={activeConversation.id} conversationId={activeConversation.id} />

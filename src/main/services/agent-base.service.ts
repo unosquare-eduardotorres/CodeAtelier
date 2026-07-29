@@ -117,6 +117,11 @@ export interface StreamChunk {
     status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
     totalPhases: number
     message?: string
+    // ── Task-level tracking ──
+    taskId?: string
+    taskTitle?: string
+    taskStatus?: 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
+    totalTasks?: number
   }
   /** Turn limit reached — emitted when all auto-continuations are exhausted */
   turnLimit?: {

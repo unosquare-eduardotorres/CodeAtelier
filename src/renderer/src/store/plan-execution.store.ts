@@ -10,6 +10,18 @@
 
 import { create } from 'zustand'
 
+export type TaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
+
+export interface TaskProgress {
+  taskId: string
+  title: string
+  status: TaskStatus
+  startedAt?: number
+  completedAt?: number
+  /** Files this task operates on (from plan's phase.files) */
+  files?: string[]
+}
+
 export interface PhaseStatus {
   phaseId: number
   phaseTitle: string
@@ -19,6 +31,8 @@ export interface PhaseStatus {
   message?: string
   /** Files the agent has touched within this phase (populated via tool activity inference) */
   touchedFiles: string[]
+  /** Tasks within this phase — populated from StructuredPlan phases or agent task-level events */
+  tasks: TaskProgress[]
 }
 
 export interface PlanExecution {
@@ -42,7 +56,11 @@ interface PlanExecutionState {
     plan: {
       planId: string | null
       title: string
-      phases: Array<{ id: number; title: string }>
+      phases: Array<{
+        id: number
+        title: string
+        tasks?: Array<{ taskId: string; title: string; files?: string[] }>
+      }>
       phaseFiles?: Record<number, string[]>
     }
   ) => void
@@ -64,6 +82,17 @@ interface PlanExecutionState {
 
   /** Mark a specific file as touched within its phase (from write/edit tool activity) */
   markFileTouched: (conversationId: string, filePath: string) => void
+
+  /** Update a task within a phase */
+  updateTask: (
+    conversationId: string,
+    update: {
+      phaseId: number
+      taskId: string
+      title: string
+      status: TaskStatus
+    }
+  ) => void
 
   /** Clear execution state */
   clearExecution: (conversationId: string) => void
@@ -89,7 +118,13 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
             phaseId: p.id,
             phaseTitle: p.title,
             status: 'pending' as const,
-            touchedFiles: []
+            touchedFiles: [],
+            tasks: (p.tasks ?? []).map((t) => ({
+              taskId: t.taskId,
+              title: t.title,
+              status: 'pending' as const,
+              files: t.files
+            }))
           })),
           phaseFiles: plan.phaseFiles,
           conversationId,
@@ -112,6 +147,14 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
           update.status === 'completed' && allPhaseFiles.length > 0
             ? allPhaseFiles
             : p.touchedFiles
+        // When phase completes, auto-complete any pending/running tasks within it
+        const tasks = update.status === 'completed'
+          ? p.tasks.map(t =>
+              t.status === 'pending' || t.status === 'running'
+                ? { ...t, status: 'complete' as const, completedAt: Date.now() }
+                : t
+            )
+          : p.tasks
         return {
           ...p,
           status: update.status,
@@ -121,7 +164,8 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
             update.status === 'completed' || update.status === 'failed'
               ? Date.now()
               : p.completedAt,
-          touchedFiles
+          touchedFiles,
+          tasks
         }
       })
 
@@ -134,7 +178,8 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
             phaseTitle: update.phaseTitle,
             status: update.status,
             startedAt: Date.now(),
-            touchedFiles: []
+            touchedFiles: [],
+            tasks: []
           }
         ]
       }
@@ -185,6 +230,61 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         return { ...p, status, startedAt, touchedFiles }
       })
       return { executions: { ...state.executions, [conversationId]: { ...exec, phases } } }
+    })
+  },
+
+  updateTask: (conversationId, update) => {
+    set((state) => {
+      const exec = state.executions[conversationId]
+      if (!exec) return state
+
+      const phases = exec.phases.map((p) => {
+        if (p.phaseId !== update.phaseId) return p
+
+        let tasks = p.tasks
+        const idx = tasks.findIndex((t) => t.taskId === update.taskId)
+        if (idx >= 0) {
+          // Update existing task
+          tasks = tasks.map((t) =>
+            t.taskId === update.taskId
+              ? {
+                  ...t,
+                  title: update.title,
+                  status: update.status,
+                  startedAt: update.status === 'running' ? (t.startedAt ?? Date.now()) : t.startedAt,
+                  completedAt:
+                    update.status === 'complete' || update.status === 'failed'
+                      ? Date.now()
+                      : t.completedAt
+                }
+              : t
+          )
+        } else {
+          // Append new task
+          tasks = [
+            ...tasks,
+            {
+              taskId: update.taskId,
+              title: update.title,
+              status: update.status,
+              startedAt: update.status === 'running' ? Date.now() : undefined,
+              completedAt:
+                update.status === 'complete' || update.status === 'failed'
+                  ? Date.now()
+                  : undefined
+            }
+          ]
+        }
+
+        return { ...p, tasks }
+      })
+
+      return {
+        executions: {
+          ...state.executions,
+          [conversationId]: { ...exec, phases }
+        }
+      }
     })
   },
 

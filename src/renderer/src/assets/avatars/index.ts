@@ -6,7 +6,6 @@
 import type { AppTheme, UserAvatarVariant } from '../../../../shared/types'
 
 // ── Code Atelier set ──
-import caUser from './code-atelier/user.png'
 import caUser1 from './code-atelier/user-1.png'
 import caUser2 from './code-atelier/user-2.png'
 import caUser3 from './code-atelier/user-3.png'
@@ -14,13 +13,8 @@ import caDaVinci from './code-atelier/da-vinci.png'
 import caAuditor from './code-atelier/atelier-auditor.png'
 import caGrillme from './code-atelier/grillme.png'
 import caMain from './code-atelier/mannequin-main.png'
-import ca2 from './code-atelier/mannequin-2.png'
-import ca3 from './code-atelier/mannequin-3.png'
-import ca4 from './code-atelier/mannequin-4.png'
-import ca5 from './code-atelier/mannequin-5.png'
 
 // ── Glass set ──
-import glUser from './glass/user.png'
 import glUser1 from './glass/user-1.png'
 import glUser2 from './glass/user-2.png'
 import glUser3 from './glass/user-3.png'
@@ -28,13 +22,8 @@ import glDaVinci from './glass/da-vinci.png'
 import glAuditor from './glass/atelier-auditor.png'
 import glGrillme from './glass/grillme.png'
 import glMain from './glass/mannequin-main.png'
-import gl2 from './glass/mannequin-2.png'
-import gl3 from './glass/mannequin-3.png'
-import gl4 from './glass/mannequin-4.png'
-import gl5 from './glass/mannequin-5.png'
 
 // ── Porcelain set ──
-import pcUser from './porcelain/user.png'
 import pcUser1 from './porcelain/user-1.png'
 import pcUser2 from './porcelain/user-2.png'
 import pcUser3 from './porcelain/user-3.png'
@@ -42,13 +31,8 @@ import pcDaVinci from './porcelain/da-vinci.png'
 import pcAuditor from './porcelain/atelier-auditor.png'
 import pcGrillme from './porcelain/grillme.png'
 import pcMain from './porcelain/mannequin-main.png'
-import pc2 from './porcelain/mannequin-2.png'
-import pc3 from './porcelain/mannequin-3.png'
-import pc4 from './porcelain/mannequin-4.png'
-import pc5 from './porcelain/mannequin-5.png'
 
 export type AvatarKey =
-  | 'user'
   | 'user-1'
   | 'user-2'
   | 'user-3'
@@ -63,7 +47,6 @@ export type AvatarKey =
 
 const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
   'code-atelier': {
-    user: caUser,
     'user-1': caUser1,
     'user-2': caUser2,
     'user-3': caUser3,
@@ -71,13 +54,12 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'atelier-auditor': caAuditor,
     grillme: caGrillme,
     'mannequin-main': caMain,
-    'mannequin-2': ca2,
-    'mannequin-3': ca3,
-    'mannequin-4': ca4,
-    'mannequin-5': ca5
+    'mannequin-2': caMain,
+    'mannequin-3': caMain,
+    'mannequin-4': caMain,
+    'mannequin-5': caMain
   },
   glass: {
-    user: glUser,
     'user-1': glUser1,
     'user-2': glUser2,
     'user-3': glUser3,
@@ -85,13 +67,12 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'atelier-auditor': glAuditor,
     grillme: glGrillme,
     'mannequin-main': glMain,
-    'mannequin-2': gl2,
-    'mannequin-3': gl3,
-    'mannequin-4': gl4,
-    'mannequin-5': gl5
+    'mannequin-2': glMain,
+    'mannequin-3': glMain,
+    'mannequin-4': glMain,
+    'mannequin-5': glMain
   },
   porcelain: {
-    user: pcUser,
     'user-1': pcUser1,
     'user-2': pcUser2,
     'user-3': pcUser3,
@@ -99,14 +80,13 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'atelier-auditor': pcAuditor,
     grillme: pcGrillme,
     'mannequin-main': pcMain,
-    'mannequin-2': pc2,
-    'mannequin-3': pc3,
-    'mannequin-4': pc4,
-    'mannequin-5': pc5
+    'mannequin-2': pcMain,
+    'mannequin-3': pcMain,
+    'mannequin-4': pcMain,
+    'mannequin-5': pcMain
   },
   // Developer theme reuses Code Atelier avatars (neutral palette works well)
   developer: {
-    user: caUser,
     'user-1': caUser1,
     'user-2': caUser2,
     'user-3': caUser3,
@@ -114,10 +94,10 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'atelier-auditor': caAuditor,
     grillme: caGrillme,
     'mannequin-main': caMain,
-    'mannequin-2': ca2,
-    'mannequin-3': ca3,
-    'mannequin-4': ca4,
-    'mannequin-5': ca5
+    'mannequin-2': caMain,
+    'mannequin-3': caMain,
+    'mannequin-4': caMain,
+    'mannequin-5': caMain
   }
 }
 

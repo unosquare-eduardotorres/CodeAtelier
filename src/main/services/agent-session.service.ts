@@ -1930,6 +1930,10 @@ export class AgentSessionService extends AgentBaseService {
         status: string
         totalPhases: number
         message?: string
+        taskId?: string
+        taskTitle?: string
+        taskStatus?: string
+        totalTasks?: number
       }
 
       // Resolve planId from the plan registry for this conversation
@@ -1960,9 +1964,14 @@ export class AgentSessionService extends AgentBaseService {
           } catch { /* non-critical */ }
         }
 
+        // Build optional task update for persistence
+        const taskUpdate = progress.taskId && progress.taskStatus
+          ? { taskId: progress.taskId, title: progress.taskTitle ?? progress.taskId, status: progress.taskStatus }
+          : undefined
+
         try {
           planRepository.updatePhaseProgress(
-            planId, progress.phaseId, progress.status, undefined, touchedFiles
+            planId, progress.phaseId, progress.status, undefined, touchedFiles, taskUpdate
           )
         } catch { /* non-critical */ }
 
@@ -1990,7 +1999,11 @@ export class AgentSessionService extends AgentBaseService {
           phaseTitle: progress.phaseTitle,
           status: progress.status,
           totalPhases: progress.totalPhases,
-          message: progress.message
+          message: progress.message,
+          taskId: progress.taskId,
+          taskTitle: progress.taskTitle,
+          taskStatus: progress.taskStatus,
+          totalTasks: progress.totalTasks
         }
       } as StreamChunk)
       this.log.info(

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAppTheme, useUserAvatarVariant } from '@renderer/store'
 import { getAvatarImage, resolveUserAvatarKey, type AvatarKey } from '@renderer/assets/avatars'
 import { rendererLog } from '@renderer/utils/logger'
@@ -91,20 +91,17 @@ export default function Avatar({
   const src = getAvatarImage(resolvedKey as AvatarKey, theme)
   const [isPlaceholder, setIsPlaceholder] = useState(false)
 
+  // Reset placeholder detection when the avatar source changes
+  useEffect(() => {
+    setIsPlaceholder(false)
+  }, [resolvedKey, theme])
+
   const handleLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
     // Detect 68-byte placeholder PNGs — they decode to tiny dimensions
     if (e.currentTarget.naturalWidth <= 4) {
       setIsPlaceholder(true)
     }
   }, [])
-
-  const baseStyle: React.CSSProperties = {
-    width: px,
-    height: px,
-    minWidth: px,
-    minHeight: px,
-    ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
-  }
 
   // Render initials circle for unknown keys or detected placeholders
   if (!src || isPlaceholder) {
@@ -113,11 +110,16 @@ export default function Avatar({
     }
     const colorClass = getInitialsColor(avatarKey)
     const sizeClass = INITIALS_SIZE_MAP[size]
+    const initialsStyle: React.CSSProperties = {
+      width: px,
+      height: px,
+      ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
+    }
     return (
       <div className="relative inline-flex" style={{ width: px, height: px, minWidth: px, minHeight: px }}>
         <div
           className={`inline-flex items-center justify-center rounded-full ${colorClass} ${className}`}
-          style={baseStyle}
+          style={initialsStyle}
           aria-hidden="true"
         >
           <span className={`${sizeClass} font-semibold text-white select-none`}>

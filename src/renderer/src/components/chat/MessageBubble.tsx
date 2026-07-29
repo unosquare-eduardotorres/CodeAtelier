@@ -489,7 +489,15 @@ function MessageBubbleInner({
       startExecution(message.conversationId, {
         planId: null,
         title: structuredPlan.title,
-        phases: structuredPlan.phases.map((p) => ({ id: p.id, title: p.title })),
+        phases: structuredPlan.phases.map((p) => ({
+          id: p.id,
+          title: p.title,
+          tasks: p.files?.map((f, i) => ({
+            taskId: `${p.id}-${i}`,
+            title: f.change || f.file,
+            files: [f.file]
+          })) ?? []
+        })),
         phaseFiles: Object.fromEntries(
           structuredPlan.phases.map((p) => [p.id, (p.files ?? []).map((f) => f.file)])
         )

@@ -182,7 +182,7 @@ const FLOATING_ITEMS: FloatingItem[] = [
   {
     id: 'av-knight',
     type: 'avatar',
-    avatarKey: 'mannequin-2',
+    avatarKey: 'da-vinci',
     top: '60%',
     left: '55%',
     size: 28,
@@ -198,7 +198,7 @@ const FLOATING_ITEMS: FloatingItem[] = [
   {
     id: 'av-astronomer',
     type: 'avatar',
-    avatarKey: 'mannequin-3',
+    avatarKey: 'atelier-auditor',
     top: '42%',
     left: '22%',
     size: 30,
@@ -214,7 +214,7 @@ const FLOATING_ITEMS: FloatingItem[] = [
   {
     id: 'av-navigator',
     type: 'avatar',
-    avatarKey: 'mannequin-4',
+    avatarKey: 'grillme',
     top: '75%',
     left: '40%',
     size: 28,

@@ -452,6 +452,32 @@ describe('chunk-router › handlePhaseProgress', () => {
     } as unknown as StreamChunk)
     assert.equal(send.callCount, 1)
   })
+
+  test('phaseProgress with task-level fields → passes them through', () => {
+    const { window, send } = mockWindow()
+    const progress = {
+      planId: 'plan-456',
+      phaseId: 2,
+      phaseTitle: 'Auth endpoints',
+      status: 'in_progress' as const,
+      totalPhases: 4,
+      taskId: '2-1',
+      taskTitle: 'Add login endpoint',
+      taskStatus: 'running' as const,
+      totalTasks: 3
+    }
+    routeChunk(ctx('c-task-progress', window), {
+      type: 'phase_progress',
+      phaseProgress: progress
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
+    const payload = send.lastCall?.[1] as Record<string, unknown>
+    const pp = payload.phaseProgress as typeof progress
+    assert.equal(pp.taskId, '2-1')
+    assert.equal(pp.taskTitle, 'Add login endpoint')
+    assert.equal(pp.taskStatus, 'running')
+    assert.equal(pp.totalTasks, 3)
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

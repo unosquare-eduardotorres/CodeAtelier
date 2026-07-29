@@ -247,7 +247,7 @@ function handleMessageChunk(
     processTodoUpdate(data.conversationId, data.todoUpdate)
   }
   if (data.phaseProgress) {
-    const { updatePhase } = usePlanExecutionStore.getState()
+    const { updatePhase, updateTask } = usePlanExecutionStore.getState()
     updatePhase(data.conversationId, {
       phaseId: data.phaseProgress.phaseId,
       phaseTitle: data.phaseProgress.phaseTitle,
@@ -255,6 +255,16 @@ function handleMessageChunk(
       totalPhases: data.phaseProgress.totalPhases,
       message: data.phaseProgress.message
     })
+
+    // Task-level tracking: if the agent reported task-level fields, update the task within the phase
+    if (data.phaseProgress.taskId && data.phaseProgress.taskStatus) {
+      updateTask(data.conversationId, {
+        phaseId: data.phaseProgress.phaseId,
+        taskId: data.phaseProgress.taskId,
+        title: data.phaseProgress.taskTitle ?? data.phaseProgress.taskId,
+        status: data.phaseProgress.taskStatus
+      })
+    }
   }
 
   // GAP-R5-2: Buffer background chunks BEFORE the null guard so they aren't

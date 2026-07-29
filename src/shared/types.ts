@@ -1917,6 +1917,11 @@ export interface PhaseProgressEvent {
   status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
   totalPhases: number
   message?: string
+  // ── Task-level tracking (optional) ──
+  taskId?: string
+  taskTitle?: string
+  taskStatus?: 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
+  totalTasks?: number
 }
 
 /** Persisted phase progress entry (stored as JSON in plans.phase_progress_json) */
@@ -1927,6 +1932,12 @@ export interface PhaseProgress {
   completedAt: string | null
   /** Files the agent has touched within this phase (populated via tool activity inference) */
   touchedFiles?: string[]
+  /** Task-level progress within this phase */
+  tasks?: Array<{
+    taskId: string
+    title: string
+    status: string
+  }>
 }
 
 // ── E2E Testing Types ──────────────────────────────────────────────────────

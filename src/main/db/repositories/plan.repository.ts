@@ -375,7 +375,8 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     phaseId: number,
     status: string,
     completedAt?: string,
-    touchedFiles?: string[]
+    touchedFiles?: string[],
+    taskUpdate?: { taskId: string; title: string; status: string }
   ): void {
     const row = this.db()
       .prepare('SELECT phase_progress_json FROM plans WHERE id = ?')
@@ -395,6 +396,17 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
         const merged = [...new Set([...current, ...touchedFiles])]
         existing.touchedFiles = merged
       }
+      // Merge task update
+      if (taskUpdate) {
+        const tasks = existing.tasks ?? []
+        const taskIdx = tasks.findIndex((t) => t.taskId === taskUpdate.taskId)
+        if (taskIdx >= 0) {
+          tasks[taskIdx] = { ...tasks[taskIdx], ...taskUpdate }
+        } else {
+          tasks.push(taskUpdate)
+        }
+        existing.tasks = tasks
+      }
     } else {
       progress.push({
         phaseId,
@@ -404,7 +416,8 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
           status === 'completed' || status === 'failed'
             ? (completedAt ?? new Date().toISOString())
             : null,
-        touchedFiles: touchedFiles ?? []
+        touchedFiles: touchedFiles ?? [],
+        tasks: taskUpdate ? [taskUpdate] : undefined
       })
     }
 

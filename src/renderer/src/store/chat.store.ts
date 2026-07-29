@@ -607,7 +607,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const phaseData = await window.api.getPhaseProgress({ conversationId: id })
       if (phaseData && phaseData.progress.length > 0) {
-        const { startExecution, updatePhase, markFileTouched } = usePlanExecutionStore.getState()
+        const { startExecution, updatePhase, updateTask, markFileTouched } = usePlanExecutionStore.getState()
         startExecution(id, {
           planId: phaseData.planId,
           title: phaseData.planTitle,
@@ -624,6 +624,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (p.touchedFiles && p.touchedFiles.length > 0) {
             for (const file of p.touchedFiles) {
               markFileTouched(id, file)
+            }
+          }
+          // Hydrate task progress from persisted data
+          if (p.tasks && p.tasks.length > 0) {
+            for (const t of p.tasks) {
+              updateTask(id, {
+                phaseId: p.phaseId,
+                taskId: t.taskId,
+                title: t.title,
+                status: t.status as 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
+              })
             }
           }
         }

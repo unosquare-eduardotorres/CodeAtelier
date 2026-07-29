@@ -316,13 +316,22 @@ const phaseProgressSchema = z.object({
     .enum(['started', 'in_progress', 'completed', 'failed', 'skipped'])
     .describe('Current phase status'),
   totalPhases: z.number().describe('Total number of phases in the plan'),
-  message: z.string().optional().describe('Brief note about progress or outcome')
+  message: z.string().optional().describe('Brief note about progress or outcome'),
+  // ── Task-level tracking (optional, backward-compatible) ──
+  taskId: z.string().optional().describe('Task ID within the phase (for task-level tracking)'),
+  taskTitle: z.string().optional().describe('Task title (e.g., "Add login endpoint")'),
+  taskStatus: z
+    .enum(['pending', 'running', 'complete', 'failed', 'skipped'])
+    .optional()
+    .describe('Status of the specific task within this phase'),
+  totalTasks: z.number().optional().describe('Total number of tasks in this phase')
 })
 
 server.tool(
   'emit_phase_progress',
   'Report progress on plan execution. Call this when starting, completing, or failing a plan phase during build mode. ' +
-    'The UI renders a live progress tracker showing which phases are done.',
+    'The UI renders a live progress tracker showing which phases and tasks are done. ' +
+    'Include taskId/taskTitle/taskStatus to report individual task progress within a phase.',
   phaseProgressSchema.shape,
   async (args) => {
     const progress = phaseProgressSchema.parse(args)

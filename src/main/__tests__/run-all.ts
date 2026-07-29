@@ -366,6 +366,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/chat-agent-executor-deep.test',
   '../services/__tests__/memory-ipc-workspace-ipc-deep.test',
   '../services/__tests__/mcp-servers-pure.test',
+  // ─── Task execution tracking (task-level visibility in chat panel) ───
+  '../services/__tests__/task-execution-tracking.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

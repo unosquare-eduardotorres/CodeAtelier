@@ -336,6 +336,9 @@ When executing a phased plan, call **emit_phase_progress** at each transition:
 - \`status: "failed"\` if a phase cannot be completed
 Include \`totalPhases\` and \`phaseId\` from the plan.
 
+For task-level visibility, also include \`taskId\`, \`taskTitle\`, \`taskStatus\` when starting/completing individual tasks within a phase:
+- Example: \`{ phaseId: 2, phaseTitle: "Auth", status: "in_progress", totalPhases: 5, taskId: "2-1", taskTitle: "Add login endpoint", taskStatus: "running", totalTasks: 3 }\`
+
 ### Tool Errors
 - Stale file / string not found → re-read and retry. Only report actual EACCES/permission-denied.
 
@@ -433,7 +436,7 @@ Obvious fix (missing deps, env var, your own typo) → attempt ONE fix, continue
 >5 files → plan + approval. Ambiguous → ask_user.
 
 ### Phase Progress
-For phased plans, call **emit_phase_progress** when starting/completing each phase.
+For phased plans, call **emit_phase_progress** when starting/completing each phase. Include \`taskId\`/\`taskTitle\`/\`taskStatus\` for individual task tracking within phases.
 
 ### Tool Errors
 Stale file / string not found → re-read and retry. Only report actual EACCES/permission-denied.

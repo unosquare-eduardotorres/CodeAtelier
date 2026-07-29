@@ -1026,7 +1026,7 @@ interface Api {
     planId: string
     planTitle: string
     phases: Array<{ id: number; title: string }>
-    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[] }>
+    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[]; tasks?: Array<{ taskId: string; title: string; status: string }> }>
   } | null>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
