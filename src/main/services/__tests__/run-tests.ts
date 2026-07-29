@@ -364,6 +364,18 @@ const TEST_FILES: string[] = [
   './local-embedding-provider.test',
   // ─── Process Manager MCP server (ring buffer, tool registry, mode gating) ───
   './process-manager.test',
+  // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
+  './validate-args-pure.test',
+  './stream-helper-deep.test',
+  './audit-handoff-service.test',
+  './context-handoff-agent-sync.test',
+  './chunk-router-metrics-deep.test',
+  './preprocessing-repo-mappers.test',
+  './chat-agent-executor-deep.test',
+  './memory-ipc-workspace-ipc-deep.test',
+  './mcp-servers-pure.test',
+  // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
+  './mermaid-sanitizers.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

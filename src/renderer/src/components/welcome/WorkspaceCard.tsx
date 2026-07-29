@@ -95,7 +95,9 @@ export default function WorkspaceCard({
     <div
       role="button"
       tabIndex={0}
-      onClick={() => onOpen(workspace.id)}
+      onClick={() => {
+        onOpen(workspace.id)
+      }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()

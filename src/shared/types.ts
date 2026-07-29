@@ -384,6 +384,9 @@ export interface SpecialistTokenEstimate {
 
 export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
 
+/** User avatar variant — selectable in App Settings > Profile */
+export type UserAvatarVariant = '1' | '2' | '3'
+
 /** Visual theme for the entire application */
 export type AppTheme = 'code-atelier' | 'glass' | 'porcelain' | 'developer'
 
@@ -420,6 +423,8 @@ export interface AppPreferences {
   parallelBuildAgents: number
   /** Drop semantic-search + code-analysis MCP servers from build tasks (saves 2 processes per task). Default: false (full MCP). */
   leanBuildMcp: boolean
+  /** User's chosen avatar variant (1=Hooded Artisan, 2=Scholar, 3=Inventor). Default: '1'. */
+  userAvatarVariant: UserAvatarVariant
 }
 
 // ── Workspace Deploy Models ──

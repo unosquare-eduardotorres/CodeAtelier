@@ -178,22 +178,43 @@ class PromptOptimizerService {
         responseText = t
       } else {
         // Warm session path — persistent interactive CLI process
-        backgroundCliSession.setSystemPrompt(META_PROMPT)
-        backgroundCliSession.setModel(model)
-        const { text: t, usage } = await backgroundCliSession.run({
-          userMessage: wrappedPrompt,
-          timeoutMs: 15_000
-        })
-        responseText = t
+        try {
+          backgroundCliSession.setSystemPrompt(META_PROMPT)
+          backgroundCliSession.setModel(model)
+          const { text: t, usage } = await backgroundCliSession.run({
+            userMessage: wrappedPrompt,
+            timeoutMs: 15_000
+          })
+          responseText = t
 
-        // Record usage (previously handled inside runOneShotClaude)
-        usageTrackerService.recordUsage({
-          feature: 'prompt_optimize',
-          model,
-          workspaceId,
-          conversationId: params.conversationId,
-          tokens: usage
-        })
+          // Record usage (previously handled inside runOneShotClaude)
+          usageTrackerService.recordUsage({
+            feature: 'prompt_optimize',
+            model,
+            workspaceId,
+            conversationId: params.conversationId,
+            tokens: usage
+          })
+        } catch (warmErr) {
+          optimizerLog.warn('[optimize] Warm session failed, falling back to one-shot:',
+            (warmErr as Error).message)
+          // Fallback: fresh one-shot `claude -p` call
+          const { text: t } = await runOneShotClaude({
+            feature: 'prompt_optimize',
+            model,
+            workspaceId,
+            conversationId: params.conversationId,
+            args: [
+              '-p', wrappedPrompt,
+              '--model', model,
+              '--system-prompt', META_PROMPT,
+              '--permission-mode', 'plan',
+              '--max-turns', '1'
+            ],
+            cli: { timeout: 15_000 }
+          })
+          responseText = t
+        }
       }
 
       return this.parseResponse(responseText, text)

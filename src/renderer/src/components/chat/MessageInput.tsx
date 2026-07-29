@@ -161,6 +161,13 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
     [completeConversation]
   )
 
+  const handleCompleteClose = useCallback(async () => {
+    if (activeConversation?.id) {
+      await closeConversation(activeConversation.id)
+    }
+    setShowCompleteDialog(false)
+  }, [activeConversation, closeConversation])
+
   const handleCloseConfirm = useCallback(async () => {
     if (activeConversation) {
       await closeConversation(activeConversation.id!)
@@ -184,6 +191,7 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
     conversationTitle: activeConversation?.title ?? 'Untitled',
     dialogConversationId: activeConversation?.id ?? '',
     handleCompleteConfirm,
+    handleCompleteClose,
     handleCompleteCancel: useCallback(() => setShowCompleteDialog(false), []),
     handleCloseConfirm,
     handleCloseCancel: useCallback(() => setShowCloseConfirm(false), []),
@@ -434,7 +442,8 @@ export default function MessageInput({
     }
   }
 
-  const isDisabled = isStreaming || !activeConversation || isInitializing
+  const isSending = useChatStore((s) => s.isSending)
+  const isDisabled = isStreaming || isSending || !activeConversation || isInitializing
 
   return (
     <>
@@ -542,6 +551,7 @@ export default function MessageInput({
         conversationTitle={dialogs.conversationTitle}
         conversationId={dialogs.dialogConversationId}
         onCompleteConfirm={dialogs.handleCompleteConfirm}
+        onCompleteClose={dialogs.handleCompleteClose}
         onCompleteCancel={dialogs.handleCompleteCancel}
         showCloseConfirm={dialogs.showCloseConfirm}
         onCloseConfirm={dialogs.handleCloseConfirm}

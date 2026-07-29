@@ -75,5 +75,18 @@ if (!env) {
       assert.equal(prefs.chatBubbleSize, 'md')
       assert.equal(prefs.appTheme, 'monokai')
     })
+
+    // ── userAvatarVariant ──
+
+    test('getAppPreferences() defaults userAvatarVariant to "1"', () => {
+      const prefs = appPreferenceRepository.getAppPreferences()
+      assert.equal(prefs.userAvatarVariant, '1')
+    })
+
+    test('getAppPreferences() reflects set userAvatarVariant', () => {
+      appPreferenceRepository.set('user_avatar_variant', '3')
+      const prefs = appPreferenceRepository.getAppPreferences()
+      assert.equal(prefs.userAvatarVariant, '3')
+    })
   })
 }

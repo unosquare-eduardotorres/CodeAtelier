@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type MutableRefObject } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -49,6 +49,12 @@ interface MessageBubbleProps {
   actions?: MessageBubbleActions
   /** Override the auto-resolved identity (name, avatar, color). Used by Grill. */
   identityOverride?: MessageIdentity
+  /** True when this message contains the most recent plan in the conversation.
+   *  Older plan messages render a collapsed "superseded" card instead of the full plan. */
+  isLatestPlan?: boolean
+  /** Shared ref tracking which superseded plan cards the user has expanded.
+   *  Lives in MessageList so state persists across virtualizer unmount/remount. */
+  supersededExpandedIds?: MutableRefObject<Set<string>>
 }
 
 function formatTime(dateStr: string): string {
@@ -227,6 +233,10 @@ interface BubbleContentBodyProps {
   onSaveAsIdea?: () => void
   onCouncilReview?: () => void
   planActionTaken?: string
+  /** Whether this message's plan card is the latest (non-superseded) plan */
+  isLatestPlan?: boolean
+  /** Shared ref for superseded card expand state — see MessageBubbleProps */
+  supersededExpandedIds?: MutableRefObject<Set<string>>
 }
 
 function BubbleContentBody({
@@ -240,7 +250,9 @@ function BubbleContentBody({
   onRefine,
   onSaveAsIdea,
   onCouncilReview,
-  planActionTaken
+  planActionTaken,
+  isLatestPlan,
+  supersededExpandedIds
 }: BubbleContentBodyProps): React.JSX.Element | null {
   const {
     imageAttachments,
@@ -265,6 +277,9 @@ function BubbleContentBody({
         onCouncilReview={planContent ? onCouncilReview : undefined}
         planActionTaken={planActionTaken}
         conversationId={message.conversationId}
+        isLatestPlan={isLatestPlan}
+        supersededExpandedIds={supersededExpandedIds}
+        messageId={message.id}
       />
     )
   }
@@ -425,7 +440,9 @@ function MessageBubbleInner({
   isStreaming,
   toolActivities,
   actions,
-  identityOverride
+  identityOverride,
+  isLatestPlan,
+  supersededExpandedIds
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
@@ -558,6 +575,8 @@ function MessageBubbleInner({
           onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
           onCouncilReview={planContent ? handleCouncilReview : undefined}
           planActionTaken={message.planAction}
+          isLatestPlan={isLatestPlan}
+          supersededExpandedIds={supersededExpandedIds}
         />
 
         <BubbleFooterActions

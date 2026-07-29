@@ -510,7 +510,7 @@ app.whenReady().then(() => {
     app.dock.setIcon(icon)
   }
 
-  // ── macOS Tray Icon (Code Atelier diamond sigil) ──
+  // ── macOS Tray Icon (CA monogram) ──
   if (process.platform === 'darwin') {
     const trayIconPath = join(__dirname, '../../resources/trayTemplate@2x.png')
     const trayIcon = nativeImage.createFromPath(trayIconPath)

@@ -11,6 +11,7 @@ import AuditProvenanceBanner from './AuditProvenanceBanner'
 import { useAutoScroll } from './useAutoScroll'
 import { useMessageVirtualizer } from './useMessageVirtualizer'
 import { useThinkingIdentity } from './useThinkingIdentity'
+import { PLAN_BLOCK_RE, BUILD_SUMMARY_RE } from './plan-detection'
 
 interface MessageListProps {
   searchQuery?: string
@@ -52,6 +53,19 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     [activeConversationId, updateMode, sendMessage]
   )
 
+  // ── Latest plan message detection ──
+  // Scan messages in reverse to find the most recent plan message.
+  // Only this message renders a full TaskPlanCard; older plan messages render collapsed.
+  const latestPlanMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.role !== 'user' && msg.contentMd && PLAN_BLOCK_RE.test(msg.contentMd) && !BUILD_SUMMARY_RE.test(msg.contentMd)) {
+        return msg.id
+      }
+    }
+    return null
+  }, [messages])
+
   const bubbleActions: MessageBubbleActions = useMemo(
     () => ({
       updateMode,
@@ -87,6 +101,55 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const { virtualizer, measureElement } = useMessageVirtualizer(messages.length, scrollRef)
+
+  // Track which superseded plan cards the user has manually expanded.
+  // Lives as a ref in MessageList so expansion state survives virtualizer
+  // unmount/remount cycles when the user scrolls away and back.
+  const supersededExpandedIds = useRef<Set<string>>(new Set())
+
+  // ── Scroll position preservation on plan supersession ──
+  // When latestPlanMessageId changes, an old plan card collapses from ~400px to ~50px.
+  // If the user is mid-scroll above the collapsing card, the viewport jumps upward.
+  // We snapshot scrollHeight before the change and compensate afterward.
+  const prevLatestPlanRef = useRef(latestPlanMessageId)
+  const scrollSnapshotRef = useRef<{ scrollTop: number; scrollHeight: number } | null>(null)
+
+  // Snapshot scroll position BEFORE React commits the DOM update for the new latestPlanMessageId
+  if (prevLatestPlanRef.current !== latestPlanMessageId && prevLatestPlanRef.current !== null) {
+    if (scrollRef.current) {
+      scrollSnapshotRef.current = {
+        scrollTop: scrollRef.current.scrollTop,
+        scrollHeight: scrollRef.current.scrollHeight
+      }
+    }
+  }
+
+  // After DOM update: compute the height delta and compensate scrollTop
+  useEffect(() => {
+    if (prevLatestPlanRef.current !== latestPlanMessageId) {
+      const snapshot = scrollSnapshotRef.current
+      prevLatestPlanRef.current = latestPlanMessageId
+      scrollSnapshotRef.current = null
+
+      if (snapshot && scrollRef.current) {
+        // Wait one frame for the virtualizer to re-measure after the collapse
+        requestAnimationFrame(() => {
+          if (!scrollRef.current) return
+          const newScrollHeight = scrollRef.current.scrollHeight
+          const delta = snapshot.scrollHeight - newScrollHeight
+          if (delta > 0 && snapshot.scrollTop > 0) {
+            // Only compensate when the user is NOT at the bottom — if they're
+            // pinned to bottom, auto-scroll will keep them there.
+            const wasAtBottom =
+              snapshot.scrollHeight - snapshot.scrollTop - scrollRef.current.clientHeight < 150
+            if (!wasAtBottom) {
+              scrollRef.current.scrollTop = Math.max(0, snapshot.scrollTop - delta)
+            }
+          }
+        })
+      }
+    }
+  }, [latestPlanMessageId])
 
   // Listen for prompt suggestions from SDK
   useEffect(() => {
@@ -218,6 +281,8 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                       toolActivities={msg.toolActivities}
                       searchHighlight={searchQuery}
                       actions={bubbleActions}
+                      isLatestPlan={msg.id === latestPlanMessageId}
+                      supersededExpandedIds={supersededExpandedIds}
                     />
                   </div>
                 </div>

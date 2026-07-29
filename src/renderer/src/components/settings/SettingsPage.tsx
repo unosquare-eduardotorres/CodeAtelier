@@ -7,6 +7,7 @@ import SpecialistWarningPreferencesSection from './SpecialistWarningSection'
 import SpecialistOrder from './SpecialistOrder'
 import UpdateSettingsSection from './UpdateSettingsSection'
 import NotificationSection from './NotificationSection'
+import ProfileSection from './ProfileSection'
 
 interface SettingsPageProps {
   onBack: () => void
@@ -40,6 +41,9 @@ export default function SettingsPage({ onBack }: SettingsPageProps): React.JSX.E
                 Workspace Settings.
               </p>
             </div>
+
+            {/* Profile — avatar + display name */}
+            <ProfileSection />
 
             {/* AI Subscriptions section */}
             <AISubscriptionsSection />

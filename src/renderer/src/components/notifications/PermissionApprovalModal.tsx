@@ -133,10 +133,6 @@ export default function PermissionApprovalModal({
   const conversationTitle = permission.conversationTitle
   const mode = permission.mode
 
-  // For tool permissions with structured input, check for a description field
-  const toolDescription =
-    toolInput && typeof toolInput.description === 'string' ? toolInput.description : undefined
-
   // Whether we can show structured tool input (vs. falling back to summary)
   const hasStructuredInput = permission.type === 'toolPermission' && toolName && toolInput
 

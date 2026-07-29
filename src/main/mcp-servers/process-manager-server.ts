@@ -1,20 +1,35 @@
 #!/usr/bin/env node
 /**
- * Process Manager MCP Server — fire-and-forget for long-running commands.
+ * Process Manager MCP Server — resilient background process management.
  *
  * Exposes four tools: run_background, check_process, stop_process, list_processes.
  * Designed for dev servers, watchers, and tunnels that never exit.
  *
+ * **Key design:** Processes are spawned `detached` with log-file stdio so they
+ * survive MCP server restarts.  A JSON manifest persists PIDs to disk; on startup
+ * the server re-discovers still-running processes and reconnects to their logs.
+ *
  * Environment variables:
  *   WORKSPACE_PATH — Absolute workspace path (default cwd)
- *
- * Cleanup: all tracked child processes are killed on exit/SIGTERM/SIGINT.
- * Processes use `detached: false` so they share the MCP server's process group.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { spawn, type ChildProcess } from 'node:child_process'
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  openSync,
+  closeSync,
+  unlinkSync,
+  statSync,
+  appendFileSync,
+  renameSync,
+  readdirSync
+} from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
@@ -26,6 +41,25 @@ const RING_BUFFER_MAX_LINES = 200
 const MAX_LINE_LENGTH = 500
 const INITIAL_OUTPUT_WAIT_MS = 2000
 const SIGTERM_GRACE_MS = 3000
+const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
+const LOG_TRUNCATE_KEEP_BYTES = 1024 * 1024 // keep last 1 MB on truncation
+
+// ── State Directory ──
+
+const STATE_DIR = join(WORKSPACE_PATH, '.pm-state')
+const MANIFEST_PATH = join(STATE_DIR, 'manifest.json')
+const LOGS_DIR = join(STATE_DIR, 'logs')
+
+// ── Manifest Types ──
+
+interface ProcessManifestEntry {
+  pid: number
+  label: string
+  command: string
+  cwd: string
+  startedAt: number
+  logFile: string // filename relative to LOGS_DIR
+}
 
 // ── Ring Buffer ──
 
@@ -71,53 +105,248 @@ export class RingBuffer {
 
 export interface TrackedProcess {
   pid: number
-  child: ChildProcess
+  child: ChildProcess | null // null for reconnected processes
   label: string
   command: string
+  cwd: string
   startedAt: number
+  logFile: string // filename in LOGS_DIR
   output: RingBuffer
   exitCode: number | null
   exited: boolean
+  reconnected: boolean // true if rediscovered on startup
 }
 
 const trackedProcesses = new Map<number, TrackedProcess>()
 
-// ── Cleanup ──
+// ── State Directory & Manifest Helpers ──
 
-let cleaningUp = false
+let gitignorePatched = false
 
-function cleanupAll(): void {
-  if (cleaningUp) return
-  cleaningUp = true
+function ensureStateDir(): void {
+  mkdirSync(LOGS_DIR, { recursive: true })
 
-  for (const [, proc] of trackedProcesses) {
+  // Auto-append .pm-state/ to .gitignore if it exists and doesn't already contain it
+  if (!gitignorePatched) {
     try {
-      proc.child.kill('SIGTERM')
+      const gitignorePath = join(WORKSPACE_PATH, '.gitignore')
+      if (existsSync(gitignorePath)) {
+        const content = readFileSync(gitignorePath, 'utf-8')
+        if (content.includes('.pm-state')) {
+          gitignorePatched = true // already there
+        } else {
+          appendFileSync(gitignorePath, '\n# Process manager state (auto-generated)\n.pm-state/\n')
+          gitignorePatched = true
+        }
+      } else {
+        gitignorePatched = true // no .gitignore — nothing to patch
+      }
     } catch {
-      /* already dead */
+      /* non-critical */
+    }
+  }
+}
+
+function readManifest(): ProcessManifestEntry[] {
+  try {
+    if (!existsSync(MANIFEST_PATH)) return []
+    return JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'))
+  } catch {
+    return []
+  }
+}
+
+function writeManifest(): void {
+  try {
+    ensureStateDir()
+    const entries: ProcessManifestEntry[] = [...trackedProcesses.values()]
+      .filter((p) => !p.exited)
+      .map((p) => ({
+        pid: p.pid,
+        label: p.label,
+        command: p.command,
+        cwd: p.cwd,
+        startedAt: p.startedAt,
+        logFile: p.logFile
+      }))
+    writeFileSync(MANIFEST_PATH, JSON.stringify(entries, null, 2))
+  } catch {
+    /* non-critical — manifest write failure shouldn't crash the server */
+  }
+}
+
+// ── Log Hygiene ──
+
+function truncateLogIfNeeded(logPath: string): void {
+  try {
+    const stats = statSync(logPath)
+    if (stats.size > MAX_LOG_SIZE_BYTES) {
+      const content = readFileSync(logPath, 'utf-8')
+      const truncated = content.slice(-LOG_TRUNCATE_KEEP_BYTES)
+      writeFileSync(logPath, truncated)
+    }
+  } catch {
+    /* ignore — file may not exist or be locked */
+  }
+}
+
+function deleteLogFile(logFile: string): void {
+  try {
+    const logPath = join(LOGS_DIR, logFile)
+    if (existsSync(logPath)) {
+      unlinkSync(logPath)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function refreshOutputFromLog(tracked: TrackedProcess): void {
+  if (!tracked.logFile) return
+  try {
+    const logPath = join(LOGS_DIR, tracked.logFile)
+    if (existsSync(logPath)) {
+      truncateLogIfNeeded(logPath)
+      const content = readFileSync(logPath, 'utf-8')
+      const lines = content.split('\n').filter(Boolean).slice(-RING_BUFFER_MAX_LINES)
+      tracked.output = new RingBuffer(RING_BUFFER_MAX_LINES)
+      for (const line of lines) tracked.output.push(line)
+    }
+  } catch {
+    /* log read failed */
+  }
+}
+
+// ── PID Ownership Validation ──
+
+function validatePidOwnership(pid: number, expectedCommand: string): boolean {
+  try {
+    const { execSync } = require('node:child_process')
+    const comm = execSync(`ps -o comm= -p ${pid}`, {
+      encoding: 'utf-8',
+      timeout: 2000
+    }).trim()
+    // Check if the process executable name appears in the original command.
+    // e.g., command "npm run dev" → shell spawns "node" → comm is "node"
+    // We check both directions: comm in command, or command contains comm's basename.
+    const commBase = comm.split('/').pop() ?? comm
+    return (
+      expectedCommand.includes(commBase) ||
+      commBase === 'sh' ||
+      commBase === 'bash' ||
+      commBase === 'zsh'
+    )
+  } catch {
+    return false // ps failed — treat as PID reuse (conservative)
+  }
+}
+
+// ── Startup Reconnection ──
+
+function reconnectFromManifest(): void {
+  const entries = readManifest()
+  let reconnected = 0
+
+  for (const entry of entries) {
+    // Check if process is still alive
+    let alive = false
+    try {
+      process.kill(entry.pid, 0) // signal 0 = liveness check
+      alive = true
+    } catch {
+      /* dead */
+    }
+
+    if (alive) {
+      // Validate this is actually our process (not PID reuse)
+      if (!validatePidOwnership(entry.pid, entry.command)) {
+        console.error(`[process-manager] PID ${entry.pid} reused by another process — discarding "${entry.label}"`)
+        deleteLogFile(entry.logFile)
+        continue // skip reconnection
+      }
+
+      const output = new RingBuffer(RING_BUFFER_MAX_LINES)
+
+      // Load recent output from log file
+      try {
+        const logPath = join(LOGS_DIR, entry.logFile)
+        if (existsSync(logPath)) {
+          const content = readFileSync(logPath, 'utf-8')
+          const lines = content
+            .split('\n')
+            .filter(Boolean)
+            .slice(-RING_BUFFER_MAX_LINES)
+          for (const line of lines) {
+            output.push(line)
+          }
+        }
+      } catch {
+        /* log file may be gone */
+      }
+
+      trackedProcesses.set(entry.pid, {
+        pid: entry.pid,
+        child: null, // no ChildProcess handle for reconnected processes
+        label: entry.label,
+        command: entry.command,
+        cwd: entry.cwd,
+        startedAt: entry.startedAt,
+        logFile: entry.logFile,
+        output,
+        exitCode: null,
+        exited: false,
+        reconnected: true
+      })
+      reconnected++
+    } else {
+      // Dead process — clean up its log file
+      deleteLogFile(entry.logFile)
     }
   }
 
-  // Force kill after grace period
-  setTimeout(() => {
-    for (const [, proc] of trackedProcesses) {
-      try {
-        proc.child.kill('SIGKILL')
-      } catch {
-        /* already dead */
-      }
-    }
-    trackedProcesses.clear()
-  }, 2000)
+  // Rewrite manifest (removes dead entries)
+  writeManifest()
+
+  if (reconnected > 0) {
+    console.error(`[process-manager] Reconnected to ${reconnected} running process(es)`)
+  }
+
+  // Sweep orphan log files not referenced by any tracked process
+  sweepOrphanLogs()
 }
 
-process.on('exit', cleanupAll)
+function sweepOrphanLogs(): void {
+  try {
+    const logFiles = readdirSync(LOGS_DIR).filter((f) => f.endsWith('.log'))
+    const knownLogFiles = new Set([...trackedProcesses.values()].map((p) => p.logFile))
+    let swept = 0
+    for (const file of logFiles) {
+      if (!knownLogFiles.has(file)) {
+        deleteLogFile(file)
+        swept++
+      }
+    }
+    if (swept > 0) {
+      console.error(`[process-manager] Swept ${swept} orphan log file(s)`)
+    }
+  } catch {
+    /* non-critical */
+  }
+}
+
+// ── Exit Handler (persist manifest, do NOT kill children) ──
+
+function onExit(): void {
+  writeManifest()
+}
+
+process.on('exit', onExit)
 process.on('SIGTERM', () => {
-  cleanupAll()
+  onExit()
   process.exit(0)
 })
 process.on('SIGINT', () => {
-  cleanupAll()
+  onExit()
   process.exit(0)
 })
 
@@ -132,7 +361,7 @@ const server = new McpServer({
 
 server.tool(
   'run_background',
-  'Spawn a command in the background and return immediately. Use instead of Bash for dev servers, watchers, and commands that don\'t exit.',
+  'Spawn a command in the background and return immediately. Use instead of Bash for dev servers, watchers, and commands that don\'t exit. Processes survive across sessions.',
   {
     command: z.string().describe('Shell command to run (e.g., "npm run dev")'),
     cwd: z.string().optional().describe('Working directory (defaults to workspace root)'),
@@ -160,14 +389,26 @@ server.tool(
     const workingDir = cwd ?? WORKSPACE_PATH
     const processLabel = label ?? command.slice(0, 60)
 
+    ensureStateDir()
+
+    // Create log file for process output (survives parent exit)
+    const logFileName = `${Date.now()}-pending.log`
+    const logPath = join(LOGS_DIR, logFileName)
+    const logFd = openSync(logPath, 'a')
+
     const child = spawn(command, {
       shell: true,
       cwd: workingDir,
-      detached: false,
-      stdio: ['ignore', 'pipe', 'pipe']
+      detached: true, // own process group — survives MCP server exit
+      stdio: ['ignore', logFd, logFd] // stdout+stderr → log file
     })
 
+    // Close the fd in the parent — the child inherited it
+    closeSync(logFd)
+
     if (!child.pid) {
+      // Clean up the empty log file
+      deleteLogFile(logFileName)
       return {
         content: [
           {
@@ -178,42 +419,66 @@ server.tool(
       }
     }
 
+    // Rename log file to include the actual PID
+    const finalLogFileName = `${Date.now()}-${child.pid}.log`
+    const finalLogPath = join(LOGS_DIR, finalLogFileName)
+    try {
+      renameSync(logPath, finalLogPath)
+    } catch {
+      /* rename failed — use original name */
+    }
+    const actualLogFile = existsSync(finalLogPath) ? finalLogFileName : logFileName
+
+    // Let the parent not wait for the child
+    child.unref()
+
     const output = new RingBuffer(RING_BUFFER_MAX_LINES)
     const tracked: TrackedProcess = {
       pid: child.pid,
       child,
       label: processLabel,
       command,
+      cwd: workingDir,
       startedAt: Date.now(),
+      logFile: actualLogFile,
       output,
       exitCode: null,
-      exited: false
+      exited: false,
+      reconnected: false
     }
 
     trackedProcesses.set(child.pid, tracked)
 
-    // Capture stdout/stderr into ring buffer
-    child.stdout?.on('data', (data: Buffer) => {
-      output.pushMultiline(data.toString())
-    })
-    child.stderr?.on('data', (data: Buffer) => {
-      output.pushMultiline(data.toString())
-    })
-
     child.on('exit', (code) => {
       tracked.exitCode = code
       tracked.exited = true
+      writeManifest()
     })
 
     child.on('error', (err) => {
       output.push(`[process error] ${err.message}`)
       tracked.exited = true
+      writeManifest()
     })
+
+    // Persist to manifest immediately
+    writeManifest()
 
     // Wait briefly for initial output (catches immediate errors like EADDRINUSE)
     await new Promise((resolve) => setTimeout(resolve, INITIAL_OUTPUT_WAIT_MS))
 
-    const initialOutput = output.getAll().join('\n')
+    // Read initial output from log file
+    refreshOutputFromLog(tracked)
+    const initialOutput = tracked.output.getAll().join('\n')
+
+    // Refresh liveness — process may have exited during the wait
+    if (!tracked.exited) {
+      try {
+        process.kill(child.pid, 0)
+      } catch {
+        tracked.exited = true
+      }
+    }
 
     return {
       content: [
@@ -236,7 +501,7 @@ server.tool(
 
 server.tool(
   'check_process',
-  'Check if a background process is still running and get its recent output.',
+  'Check if a background process is still running and get its recent output (from log files — works across sessions).',
   {
     pid: z.number().describe('Process ID to check')
   },
@@ -263,8 +528,12 @@ server.tool(
       } catch {
         alive = false
         tracked.exited = true
+        writeManifest()
       }
     }
+
+    // Refresh output from log file (works for both spawned and reconnected processes)
+    refreshOutputFromLog(tracked)
 
     return {
       content: [
@@ -277,6 +546,7 @@ server.tool(
             alive,
             exitCode: tracked.exitCode,
             uptimeMs: Date.now() - tracked.startedAt,
+            reconnected: tracked.reconnected,
             recentOutput: tracked.output.getRecent(50).join('\n')
           })
         }
@@ -310,6 +580,8 @@ server.tool(
 
     if (tracked.exited) {
       trackedProcesses.delete(pid)
+      deleteLogFile(tracked.logFile)
+      writeManifest()
       return {
         content: [
           {
@@ -325,38 +597,71 @@ server.tool(
       }
     }
 
-    // SIGTERM → wait → SIGKILL escalation
-    try {
-      tracked.child.kill('SIGTERM')
-    } catch {
-      /* already dead */
-    }
-
-    // Wait for graceful shutdown
-    const exitedGracefully = await new Promise<boolean>((resolve) => {
-      const timeout = setTimeout(() => resolve(false), SIGTERM_GRACE_MS)
-      tracked.child.on('exit', () => {
-        clearTimeout(timeout)
-        resolve(true)
-      })
-      // Already exited during the wait
-      if (tracked.exited) {
-        clearTimeout(timeout)
-        resolve(true)
-      }
-    })
-
-    if (!exitedGracefully) {
+    // Kill the entire process group (negative PID) so shell children are also terminated.
+    // detached: true makes the child the process group leader, so PGID == PID.
+    if (tracked.reconnected || !tracked.child) {
+      // Reconnected processes — no ChildProcess handle, use process.kill() directly
       try {
-        tracked.child.kill('SIGKILL')
+        process.kill(-pid, 'SIGTERM')
       } catch {
-        /* already dead */
+        /* group may not exist */
       }
-      // Brief wait for SIGKILL to take effect
+
+      // Wait for graceful shutdown
+      await new Promise((resolve) => setTimeout(resolve, SIGTERM_GRACE_MS))
+
+      // Check if still alive, escalate to SIGKILL
+      try {
+        process.kill(-pid, 0)
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          /* already dead */
+        }
+      } catch {
+        /* dead */
+      }
+
       await new Promise((resolve) => setTimeout(resolve, 200))
+    } else {
+      // Spawned processes — use process group kill for the child's PID
+      try {
+        process.kill(-tracked.pid, 'SIGTERM')
+      } catch {
+        /* group may not exist */
+      }
+
+      // Wait for graceful shutdown
+      const exitedGracefully = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), SIGTERM_GRACE_MS)
+        tracked.child!.on('exit', () => {
+          clearTimeout(timeout)
+          resolve(true)
+        })
+        // Already exited during the wait
+        if (tracked.exited) {
+          clearTimeout(timeout)
+          resolve(true)
+        }
+      })
+
+      if (!exitedGracefully) {
+        try {
+          process.kill(-tracked.pid, 'SIGKILL')
+        } catch {
+          /* already dead */
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
     }
+
+    // Capture final output before deleting log
+    refreshOutputFromLog(tracked)
+    const finalOutput = tracked.output.getRecent(30).join('\n')
 
     trackedProcesses.delete(pid)
+    deleteLogFile(tracked.logFile)
+    writeManifest()
 
     return {
       content: [
@@ -366,7 +671,8 @@ server.tool(
             pid,
             stopped: true,
             exitCode: tracked.exitCode,
-            method: exitedGracefully ? 'SIGTERM' : 'SIGKILL'
+            method: tracked.reconnected ? 'process.kill' : 'child.kill',
+            finalOutput: finalOutput || '(no output captured)'
           })
         }
       ]
@@ -378,9 +684,12 @@ server.tool(
 
 server.tool(
   'list_processes',
-  'List all tracked background processes with their status.',
+  'List all tracked background processes with their status (includes processes from previous sessions).',
   {},
   async () => {
+    // Collect dead PIDs for auto-reap
+    const deadPids: number[] = []
+
     const processes = [...trackedProcesses.values()].map((p) => {
       // Refresh liveness
       let alive = !p.exited
@@ -393,15 +702,29 @@ server.tool(
         }
       }
 
+      if (!alive) deadPids.push(p.pid)
+
       return {
         pid: p.pid,
         label: p.label,
         command: p.command,
         alive,
         exitCode: p.exitCode,
-        uptimeMs: Date.now() - p.startedAt
+        uptimeMs: Date.now() - p.startedAt,
+        reconnected: p.reconnected
       }
     })
+
+    // Auto-reap dead processes — free up slots
+    for (const deadPid of deadPids) {
+      const dead = trackedProcesses.get(deadPid)
+      if (dead) {
+        deleteLogFile(dead.logFile)
+        trackedProcesses.delete(deadPid)
+      }
+    }
+
+    writeManifest()
 
     return {
       content: [
@@ -409,7 +732,9 @@ server.tool(
           type: 'text' as const,
           text: JSON.stringify({
             count: processes.length,
+            aliveCount: processes.filter((p) => p.alive).length,
             maxAllowed: MAX_TRACKED_PROCESSES,
+            reaped: deadPids.length,
             processes
           })
         }
@@ -421,6 +746,8 @@ server.tool(
 // ── Start ──
 
 async function main(): Promise<void> {
+  ensureStateDir()
+  reconnectFromManifest()
   const transport = new StdioServerTransport()
   await server.connect(transport)
   console.error('[process-manager-server] Started — workspace:', WORKSPACE_PATH)

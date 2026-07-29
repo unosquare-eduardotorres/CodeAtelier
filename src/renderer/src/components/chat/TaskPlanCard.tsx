@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react'
-import { ClipboardList } from 'lucide-react'
+import React, { useMemo, useState, type MutableRefObject } from 'react'
+import { ClipboardList, ChevronRight } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkStripStrayBackticks } from './remark-plugins'
@@ -144,6 +144,14 @@ interface TaskPlanCardProps {
   planActionTaken?: string
   /** Conversation ID for live phase status badges during build execution */
   conversationId?: string
+  /** When true, this plan has been superseded by a newer plan in the conversation.
+   *  Renders as a collapsed single-line card with click-to-expand. */
+  isSuperseded?: boolean
+  /** Shared ref for persisting expand state across virtualizer remounts.
+   *  Lives in MessageList so the set survives unmount/remount cycles. */
+  supersededExpandedIds?: MutableRefObject<Set<string>>
+  /** Message ID used as key in supersededExpandedIds */
+  messageId?: string
 }
 
 // ── Sub-components ──────────────────────────────────────────────────────────
@@ -271,7 +279,10 @@ export default function TaskPlanCard({
   onRefine,
   onCouncilReview,
   planActionTaken,
-  conversationId
+  conversationId,
+  isSuperseded,
+  supersededExpandedIds,
+  messageId
 }: TaskPlanCardProps): React.JSX.Element {
   const isInlinePlan = !!planContent
 
@@ -309,6 +320,104 @@ export default function TaskPlanCard({
 
   const [userClicked, setUserClicked] = useState(!!planActionTaken)
 
+  // Superseded expand state — read from shared ref (survives virtualizer remounts)
+  // with a local useState to trigger re-renders.
+  const [supersededExpanded, setSupersededExpandedLocal] = useState(
+    () => !!(messageId && supersededExpandedIds?.current?.has(messageId))
+  )
+  const setSupersededExpanded = (expanded: boolean): void => {
+    setSupersededExpandedLocal(expanded)
+    if (messageId && supersededExpandedIds?.current) {
+      if (expanded) {
+        supersededExpandedIds.current.add(messageId)
+      } else {
+        supersededExpandedIds.current.delete(messageId)
+      }
+    }
+  }
+
+  // ── Superseded plan card — collapsed single-line with animated expand/collapse ──
+  if (isSuperseded) {
+    const planTitle = structuredPlan?.title ?? summary ?? 'Implementation Plan'
+    const planTypeConfig = structuredPlan?.type ? PLAN_TYPE_CONFIG[structuredPlan.type] : null
+
+    // When collapsed, skip building sectionMap entirely (perf)
+    const expandedSectionMap = supersededExpanded
+      ? buildSectionMap({
+          structuredPlan,
+          visibleFilesChanged,
+          visibleFiles,
+          visibleRisks,
+          visibleDeferredItems,
+          visibleDiagrams,
+          visibleSections,
+          visibleRootCauses,
+          visibleVerification,
+          visiblePhases,
+          visibleDecisions,
+          isSimplePlan,
+          conversationId: undefined
+        })
+      : null
+
+    return (
+      <div
+        data-testid={supersededExpanded ? 'task-plan-card' : 'task-plan-card-superseded'}
+        className="my-3 rounded border border-border-subtle bg-surface-overlay/60 overflow-hidden"
+      >
+        {/* Always-visible summary row — click to toggle */}
+        <button
+          type="button"
+          onClick={() => setSupersededExpanded(!supersededExpanded)}
+          className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-raised/50 transition-colors group"
+        >
+          <span className="shrink-0 transition-transform duration-200" style={{ transform: supersededExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+            <ChevronRight size={14} className="text-text-muted" />
+          </span>
+          <div className="w-6 h-6 rounded flex items-center justify-center bg-surface-base">
+            <ClipboardList size={12} className="text-text-muted" />
+          </div>
+          <span className="text-sm text-text-secondary truncate flex-1">{planTitle}</span>
+          <div className="flex items-center gap-1.5">
+            {planTypeConfig && (
+              <span className={`text-[10px] px-2 py-0.5 rounded opacity-60 ${planTypeConfig.badgeClass}`}>
+                {planTypeConfig.emoji} {planTypeConfig.label}
+              </span>
+            )}
+            <span className="text-[10px] px-2 py-0.5 rounded bg-surface-base text-text-muted">
+              superseded
+            </span>
+          </div>
+        </button>
+
+        {/* Expandable body — uses CSS grid-rows for smooth height transition */}
+        <div
+          className="grid transition-[grid-template-rows] duration-200 ease-in-out"
+          style={{ gridTemplateRows: supersededExpanded ? '1fr' : '0fr' }}
+        >
+          <div className="overflow-hidden">
+            {supersededExpanded && expandedSectionMap && (
+              <>
+                <PlanHeader
+                  isInlinePlan={!!planContent}
+                  structuredPlan={structuredPlan}
+                  summary={summary}
+                  mode={mode}
+                />
+                <PlanBody
+                  isInlinePlan={!!planContent}
+                  structuredPlan={structuredPlan}
+                  planContent={planContent}
+                  sectionMap={expandedSectionMap}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const sectionMap = buildSectionMap({
     structuredPlan,
     visibleFilesChanged,
@@ -322,7 +431,9 @@ export default function TaskPlanCard({
     visiblePhases,
     visibleDecisions,
     isSimplePlan,
-    conversationId
+    // Superseded plans don't subscribe to live execution state —
+    // only the latest plan card shows execution badges to avoid N×1 duplication.
+    conversationId: isSuperseded ? undefined : conversationId
   })
 
   return (
@@ -342,14 +453,17 @@ export default function TaskPlanCard({
         planContent={planContent}
         sectionMap={sectionMap}
       />
-      <PlanActionButtons
-        hasUserChosen={userClicked}
-        onBuildNow={onBuildNow}
-        onSaveAsIdea={onSaveAsIdea}
-        onRefine={onRefine}
-        onCouncilReview={onCouncilReview}
-        onUserClicked={() => setUserClicked(true)}
-      />
+      {/* Superseded plans never show action buttons — only the latest plan is actionable */}
+      {!isSuperseded && (
+        <PlanActionButtons
+          hasUserChosen={userClicked}
+          onBuildNow={onBuildNow}
+          onSaveAsIdea={onSaveAsIdea}
+          onRefine={onRefine}
+          onCouncilReview={onCouncilReview}
+          onUserClicked={() => setUserClicked(true)}
+        />
+      )}
     </div>
   )
 }

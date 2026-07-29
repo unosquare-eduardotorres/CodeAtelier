@@ -730,91 +730,110 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingQuestionAction: null,
       pendingQuestionRequestId: null
     })
-    // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
-    internals.bumpGeneration()
 
-    // Auto-detect plan intent in build mode → switch to plan
-    if (activeConversation.mode === 'build' && detectPlanIntent(text)) {
-      await updateMode('plan')
-    }
-
-    const optimisticMessage = createOptimisticUserMessage(activeConversation.id, text, attachments)
-
-    set((state) => ({
-      // MULTI-CHAT-06: Remove stale optimistic message from a previous blocked-by attempt
-      // before appending the new one (edge case: blocking conv finishes naturally, user re-sends)
-      messages: [
-        ...state.messages.filter((m) => m.id !== state.blockedByBanner?.optimisticMessageId),
-        optimisticMessage
-      ],
-      isStreaming: true,
-      streamingContent: '',
-      streamingSegments: [],
-      toolActivities: [],
-      budgetCapBanner: null,
-      blockedByBanner: null,
-      turnLimitReached: null,
-      // activeRequestId is set AFTER the backend returns — see below.
-      activeRequestId: null,
-      // Track this conversation as streaming (for sidebar indicator when user switches away)
-      streamingConversationIds: new Set([...state.streamingConversationIds, activeConversation.id])
-    }))
-
-    // Reset segment accumulator for new message
-    internals.resetAccumulator()
-
-    // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
-    internals.resetSafetyTimer(activeConversation.id)
+    // SEND-SAFETY-TIMEOUT: Auto-reset isSending if it stays true for >30s
+    // (covers IPC hangs or missed resets from unexpected errors)
+    const isSendingTimeout = setTimeout(() => {
+      if (get().isSending) {
+        rendererLog.warn('[SEND-SAFETY] isSending stuck for 30s — force-resetting')
+        set({ isSending: false })
+      }
+    }, 30_000)
 
     try {
-      const result = await window.api.sendMessage({
-        conversationId: activeConversation.id,
-        text,
-        attachments
-      })
-      // Set the backend-generated requestId so chunk filtering works correctly
-      set({ activeRequestId: result.requestId })
-    } catch (error) {
-      rendererLog.error('Failed to send message:', error)
-      internals.clearSafetyTimer(activeConversation.id)
+      // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
+      internals.bumpGeneration()
 
-      const rawErrorMsg = error instanceof Error ? error.message : String(error)
-
-      // G2-FIX: Parse the F6 blockedBy tag and build a clean user-facing message.
-      // Extracted to parseBlockedByError (chat-action-utils.ts) for testability.
-      // @see chat-stream.service.ts acquireStreamLock — F6-FIX throws the tagged error.
-      const { errorMsg, blockedConvId, blockedConvTitle } = parseBlockedByError(
-        rawErrorMsg,
-        get().conversations
-      )
-
-      const { activeConversation: conv } = get()
-      if (conv) {
-        // MULTI-CHAT-04: When blocked by another chat, show an actionable banner
-        // with "Switch to it" and "Stop it" buttons instead of a plain error message.
-        if (blockedConvId) {
-          set((state) => ({
-            blockedByBanner: {
-              blockedConvId,
-              blockedConvTitle,
-              retryText: text,
-              retryAttachments: attachments,
-              // MULTI-CHAT-06: Track optimistic message for cleanup on dismiss/retry
-              optimisticMessageId: optimisticMessage.id
-            },
-            ...buildStreamingResetState(conv.id, state.streamingConversationIds)
-          }))
-        } else {
-          const errMessage = createErrorMessage(conv.id, errorMsg)
-          set((state) => ({
-            messages: [...state.messages, errMessage],
-            ...buildStreamingResetState(conv.id, state.streamingConversationIds)
-          }))
-        }
-      } else {
-        set(buildStreamingResetState(null, get().streamingConversationIds))
+      // Auto-detect plan intent in build mode → switch to plan
+      if (activeConversation.mode === 'build' && detectPlanIntent(text)) {
+        await updateMode('plan')
       }
+
+      const optimisticMessage = createOptimisticUserMessage(activeConversation.id, text, attachments)
+
+      set((state) => ({
+        // MULTI-CHAT-06: Remove stale optimistic message from a previous blocked-by attempt
+        // before appending the new one (edge case: blocking conv finishes naturally, user re-sends)
+        messages: [
+          ...state.messages.filter((m) => m.id !== state.blockedByBanner?.optimisticMessageId),
+          optimisticMessage
+        ],
+        isStreaming: true,
+        streamingContent: '',
+        streamingSegments: [],
+        toolActivities: [],
+        budgetCapBanner: null,
+        blockedByBanner: null,
+        turnLimitReached: null,
+        // activeRequestId is set AFTER the backend returns — see below.
+        activeRequestId: null,
+        // Track this conversation as streaming (for sidebar indicator when user switches away)
+        streamingConversationIds: new Set([...state.streamingConversationIds, activeConversation.id])
+      }))
+
+      // Reset segment accumulator for new message
+      internals.resetAccumulator()
+
+      // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
+      internals.resetSafetyTimer(activeConversation.id)
+
+      try {
+        const result = await window.api.sendMessage({
+          conversationId: activeConversation.id,
+          text,
+          attachments
+        })
+        // Set the backend-generated requestId so chunk filtering works correctly
+        set({ activeRequestId: result.requestId })
+      } catch (error) {
+        rendererLog.error('Failed to send message:', error)
+        internals.clearSafetyTimer(activeConversation.id)
+
+        const rawErrorMsg = error instanceof Error ? error.message : String(error)
+
+        // G2-FIX: Parse the F6 blockedBy tag and build a clean user-facing message.
+        // Extracted to parseBlockedByError (chat-action-utils.ts) for testability.
+        // @see chat-stream.service.ts acquireStreamLock — F6-FIX throws the tagged error.
+        const { errorMsg, blockedConvId, blockedConvTitle } = parseBlockedByError(
+          rawErrorMsg,
+          get().conversations
+        )
+
+        const { activeConversation: conv } = get()
+        if (conv) {
+          // MULTI-CHAT-04: When blocked by another chat, show an actionable banner
+          // with "Switch to it" and "Stop it" buttons instead of a plain error message.
+          if (blockedConvId) {
+            set((state) => ({
+              blockedByBanner: {
+                blockedConvId,
+                blockedConvTitle,
+                retryText: text,
+                retryAttachments: attachments,
+                // MULTI-CHAT-06: Track optimistic message for cleanup on dismiss/retry
+                optimisticMessageId: optimisticMessage.id
+              },
+              ...buildStreamingResetState(conv.id, state.streamingConversationIds)
+            }))
+          } else {
+            const errMessage = createErrorMessage(conv.id, errorMsg)
+            set((state) => ({
+              messages: [...state.messages, errMessage],
+              ...buildStreamingResetState(conv.id, state.streamingConversationIds)
+            }))
+          }
+        } else {
+          set(buildStreamingResetState(null, get().streamingConversationIds))
+        }
+      }
+    } catch (outerError) {
+      // Unexpected error before IPC call (e.g., updateMode IPC fails, resetSafetyTimer errors)
+      rendererLog.error('Failed to prepare message send:', outerError)
+      set((state) => ({
+        ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds)
+      }))
     } finally {
+      clearTimeout(isSendingTimeout)
       set({ isSending: false })
     }
   },

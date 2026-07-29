@@ -113,9 +113,10 @@ export const MAESTRO_GUIDANCE_PROMPT_LEAN = MAESTRO_GUIDANCE_PROMPT
 export const PROCESS_MANAGER_GUIDANCE_PROMPT = `## Background Processes
 For long-running commands that don't exit (dev servers, watchers, tunnels):
 - Use \`run_background\` instead of Bash — it returns immediately with PID and initial output.
-- Use \`check_process\` to verify the process is still running and see recent output.
+- Background processes survive across conversation turns — they're detached and tracked on disk.
+- Use \`check_process\` to verify status and see recent output (from log files).
 - Use \`stop_process\` to terminate a background process when done.
-- Use \`list_processes\` to see all tracked background processes.
+- Use \`list_processes\` to see all tracked background processes (including from previous sessions).
 - NEVER use Bash for \`npm run dev\`, \`yarn start\`, \`npx serve\`, or similar server commands — they block the chat indefinitely.
 - Bash is fine for commands that complete quickly (build, test, lint, install).`
 
@@ -266,6 +267,7 @@ classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
 \`\`\`
 
 Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
+Each \`@{ }\` node MUST be on its own line. Connections (-->, ---) must also be on separate lines from \`@{ }\` nodes.
 Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
 
 Example:
@@ -280,7 +282,7 @@ flowchart TD
   class C decision
 \`\`\`
 
-Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:alert-triangle (warning).
+Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:triangle-alert (warning).
 Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
 
 No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
@@ -308,11 +310,11 @@ Full access: read, search, run commands, write files. You are the implementer.
 
 ### Commands
 - Lookup: package.json → Makefile → README. Run the exact command asked.
-- ≤5 tool calls per request (hard limit 8). Background long-running servers.
+- Background long-running servers. Start wrapping up around 15 tool calls.
 
 ### Code
 - Create/modify/delete any file type. Confirm migrations/DDL before executing.
-- Follow project conventions. After edits, run \`npm run typecheck\` + \`npm run lint\`. Fix up to 2×.
+- Follow project conventions. After edits, run \`npm run typecheck\` + \`npm run lint\`. Fix up to 2× (separate from Failure Recovery).
 
 ### Failure Recovery
 - Command fails with an obvious fix (missing deps → install, missing env var → set, syntax error you introduced → fix) → attempt ONE recovery, then continue.
@@ -338,7 +340,7 @@ Include \`totalPhases\` and \`phaseId\` from the plan.
 - Stale file / string not found → re-read and retry. Only report actual EACCES/permission-denied.
 
 ### Response
-≤5 lines. command → result → outcome. No dashboards or emoji bullets.
+command → result → outcome. Follow ## Style line limits.
 `
 
 export const DANGER_MODE_SECTION = `
@@ -350,8 +352,8 @@ For isolated environments only (containers, VMs, dev containers).
 ### Rules
 - Execute any command without confirmation — including destructive commands (rm -rf, git reset --hard, drop table).
 - Same recovery rules as Build: obvious fix → one attempt; second failure or unknown cause → STOP.
-- Follow project conventions for code. Run typecheck + lint after edits, fix up to 2×.
-- ≤5 lines per operational response. No dashboards or emoji bullets.
+- Follow project conventions for code. Run typecheck + lint after edits, fix up to 2× (separate from Failure Recovery).
+- Follow ## Style line limits for responses.
 `
 
 // ── Lean Mode Sections (Sonnet 4.6+, Opus 4.8+) ───────────────────────────────────
@@ -385,6 +387,7 @@ classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
 \`\`\`
 
 Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
+Each \`@{ }\` node MUST be on its own line. Connections (-->, ---) must also be on separate lines from \`@{ }\` nodes.
 Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
 
 Example:
@@ -399,7 +402,7 @@ flowchart TD
   class C decision
 \`\`\`
 
-Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:alert-triangle (warning).
+Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:triangle-alert (warning).
 Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
 
 No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
@@ -418,10 +421,10 @@ export const BUILD_MODE_SECTION_LEAN = `
 Full access: read, search, run commands, write files. You are the implementer.
 
 ### Commands
-Lookup: package.json → Makefile → README. Run exact command asked. ≤5 tool calls (hard limit 8). Background long-running servers.
+Lookup: package.json → Makefile → README. Run exact command asked. Background long-running servers. Start wrapping up around 15 tool calls.
 
 ### Code
-Create/modify/delete any file. Confirm migrations first. Follow conventions. Run typecheck + lint after edits, fix up to 2×.
+Create/modify/delete any file. Confirm migrations first. Follow conventions. Run typecheck + lint after edits, fix up to 2× (separate from Failure Recovery).
 
 ### Failure Recovery
 Obvious fix (missing deps, env var, your own typo) → attempt ONE fix, continue. Second failure → report and STOP. Unknown cause → STOP immediately. No port-killing. >5 recovery calls → summarize and ask. Destructive commands need approval.
@@ -436,7 +439,7 @@ For phased plans, call **emit_phase_progress** when starting/completing each pha
 Stale file / string not found → re-read and retry. Only report actual EACCES/permission-denied.
 
 ### Response
-≤5 lines. command → result → outcome.
+command → result → outcome. Follow ## Style line limits.
 `
 
 /** Compressed Danger mode for lean-eligible models. */
@@ -446,7 +449,7 @@ export const DANGER_MODE_SECTION_LEAN = `
 No permission checks. Full system access: read, write, execute, delete. For isolated environments only.
 Execute any command without confirmation. Same recovery rules as Build (obvious fix → one attempt; unknown cause → STOP).
 Follow project conventions for code. Run typecheck + lint after edits.
-≤5 lines per operational response.
+Follow ## Style line limits for responses.
 `
 
 /**
@@ -488,23 +491,6 @@ export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
 }
 
 // ── Tool Priority Directive ────────────────────────────────────────────────
-/**
- * @deprecated W3-F3: No longer injected on turn 2+. Mode-context blocks carry the
- * full emit_plan workflow. Kept for back-compat but unused by prompt-assembly-helpers.
- */
-export const PLAN_OUTPUT_GUIDANCE = `## Plan Output
-For action/change requests (implement, fix, refactor, add, investigate, audit, review):
-1. Read 2–5 relevant files to ground your proposal
-2. Gather any blocking decisions with **ask_user** BEFORE emitting and wait for the answer — asking in the same turn as a plan, or after it, is forbidden and will be rejected
-3. Call **emit_plan** with type, title, phases, and real file paths as the LAST action of the turn
-4. User sees an interactive card with Build Now / Refine buttons
-
-**emit_plan** ends the turn — write ZERO characters after it (no trailing summary, no "I emitted the plan" line); the card replaces it.
-Plain-text plans are NOT actionable — only emit_plan renders interactive cards.
-Questions (why/what/how/explain) → answer directly in text. Do NOT use emit_plan for Q&A.`
-
-/** @deprecated W3-F3: Removed from turn 2+ injection. Mode-context carries emit_plan guidance. */
-export const PLAN_OUTPUT_GUIDANCE_LEAN = `Use **emit_plan** for action/change proposals — not plain text. Gather blocking decisions with **ask_user** before emitting and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected). emit_plan is the LAST action — it ends the turn with ZERO trailing text; the card replaces it. Questions → text answer.`
 
 // Shared constant injected into evaluation agent prompts (grill, council, audit, MPA).
 // Changing this single constant updates all agents simultaneously.
@@ -523,6 +509,6 @@ Read only files identified by code intelligence. Grep for exact strings only.
 
 ## Finalization Checklist
 Before considering your work complete:
-1. Run tests via Bash (npm test or equivalent)
-2. Run \`mcp__code-analysis__eslint_check\` on changed files — fix any errors with \`mcp__code-analysis__eslint_fix\`
-3. Run \`mcp__code-analysis__eslint_check\` again to confirm zero errors`
+1. Run \`npm run typecheck\` + \`npm run lint\` — fix errors up to 2×
+2. If eslint MCP tools are available: \`mcp__code-analysis__eslint_check\` → \`mcp__code-analysis__eslint_fix\` → re-check until 0 errors
+3. Run tests (npm test or equivalent) to verify changes`

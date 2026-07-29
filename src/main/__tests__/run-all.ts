@@ -356,6 +356,16 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/executor-derivation.test',
   // ─── Local embedding provider facade (oMLX/Ollama routing) ───
   '../services/__tests__/local-embedding-provider.test',
+  // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
+  '../services/__tests__/validate-args-pure.test',
+  '../services/__tests__/stream-helper-deep.test',
+  '../services/__tests__/audit-handoff-service.test',
+  '../services/__tests__/context-handoff-agent-sync.test',
+  '../services/__tests__/chunk-router-metrics-deep.test',
+  '../services/__tests__/preprocessing-repo-mappers.test',
+  '../services/__tests__/chat-agent-executor-deep.test',
+  '../services/__tests__/memory-ipc-workspace-ipc-deep.test',
+  '../services/__tests__/mcp-servers-pure.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { type MutableRefObject } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { PluggableList } from 'unified'
 import type { Components } from 'react-markdown'
@@ -100,6 +100,12 @@ export interface MessageCardRendererProps {
   planActionTaken?: string
   /** Conversation ID for live phase status badges */
   conversationId?: string
+  /** True when this is the most recent plan message — older plans render collapsed */
+  isLatestPlan?: boolean
+  /** Shared ref for persisting superseded card expand state across virtualizer remounts */
+  supersededExpandedIds?: MutableRefObject<Set<string>>
+  /** Message ID used as key for the supersededExpandedIds set */
+  messageId?: string
 }
 
 /**
@@ -119,7 +125,10 @@ export default function MessageCardRenderer({
   onSaveAsIdea,
   onCouncilReview,
   planActionTaken,
-  conversationId
+  conversationId,
+  isLatestPlan,
+  supersededExpandedIds,
+  messageId
 }: MessageCardRendererProps): React.JSX.Element | null {
   const {
     planContent,
@@ -191,6 +200,9 @@ export default function MessageCardRenderer({
           onCouncilReview={onCouncilReview}
           planActionTaken={planActionTaken}
           conversationId={conversationId}
+          isSuperseded={isLatestPlan === false}
+          supersededExpandedIds={supersededExpandedIds}
+          messageId={messageId}
         />
       </div>
     )
