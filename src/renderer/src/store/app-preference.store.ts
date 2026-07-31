@@ -19,7 +19,8 @@ const defaultPreferences: AppPreferences = {
   notificationsEnabled: true,
   parallelBuildAgents: 3,
   leanBuildMcp: false,
-  userAvatarVariant: '1' as UserAvatarVariant
+  userAvatarVariant: '1' as UserAvatarVariant,
+  maxStreamLifetimeMin: 30
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -36,7 +37,8 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   notificationsEnabled: 'notifications_enabled',
   parallelBuildAgents: 'parallel_build_agents',
   leanBuildMcp: 'lean_build_mcp',
-  userAvatarVariant: 'user_avatar_variant'
+  userAvatarVariant: 'user_avatar_variant',
+  maxStreamLifetimeMin: 'max_stream_lifetime_min'
 }
 
 interface AppPreferenceState {
@@ -151,6 +153,9 @@ export const useParallelBuildAgents = (): number =>
 
 export const useLeanBuildMcp = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.leanBuildMcp)
+
+export const useMaxStreamLifetimeMin = (): number =>
+  useAppPreferenceStore((state) => state.preferences.maxStreamLifetimeMin)
 
 export const useUserAvatarVariant = (): UserAvatarVariant =>
   useAppPreferenceStore((state) => state.preferences.userAvatarVariant)

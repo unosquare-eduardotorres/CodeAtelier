@@ -8,6 +8,8 @@ export class ToolTracker {
   private toolIdToName = new Map<string, string>()
   /** Stores summarized tool input for inclusion in tool_result chunks */
   private toolIdToInput = new Map<string, string>()
+  /** Stores RAW (unsummarized) JSON tool input — see StreamChunk.toolInputRaw */
+  private toolIdToRawInput = new Map<string, string>()
 
   /** Whether any content has been emitted this turn (text or tools) */
   hasPriorContent = false
@@ -48,10 +50,13 @@ export class ToolTracker {
   /**
    * Register a tool use mapping (id → name).
    */
-  register(toolId: string, toolName: string, inputSummary?: string): void {
+  register(toolId: string, toolName: string, inputSummary?: string, rawInputJson?: string): void {
     this.toolIdToName.set(toolId, toolName)
     if (inputSummary) {
       this.toolIdToInput.set(toolId, inputSummary)
+    }
+    if (rawInputJson) {
+      this.toolIdToRawInput.set(toolId, rawInputJson)
     }
   }
 
@@ -72,12 +77,21 @@ export class ToolTracker {
   }
 
   /**
+   * Resolve a tool use ID to its stored RAW (unsummarized) JSON input.
+   */
+  resolveRawInput(toolUseId: string | undefined): string | undefined {
+    if (!toolUseId) return undefined
+    return this.toolIdToRawInput.get(toolUseId)
+  }
+
+  /**
    * Remove a tool mapping after result processing (free memory for long sessions).
    */
   consume(toolUseId: string | undefined): void {
     if (toolUseId) {
       this.toolIdToName.delete(toolUseId)
       this.toolIdToInput.delete(toolUseId)
+      this.toolIdToRawInput.delete(toolUseId)
     }
   }
 

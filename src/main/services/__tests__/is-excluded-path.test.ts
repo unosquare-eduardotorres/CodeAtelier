@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { join, sep } from 'node:path'
 import { test, describe } from './test-harness'
-import { isExcludedPath, toPosixRel, matchesSkipPattern } from '../code-graph-exclusions'
+import { isExcludedPath, isExcludedDirName, toPosixRel, matchesSkipPattern } from '../code-graph-exclusions'
 import { parseIgnoreRules } from '../workspace-ignore'
 
 describe('isExcludedPath', () => {
@@ -100,6 +100,56 @@ describe('isExcludedPath', () => {
 
   test('excludes deeply nested excluded directory', () => {
     assert.equal(isExcludedPath('a/b/c/artifacts/d/e.ts'), true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Case-insensitive exclusion — Windows NTFS / macOS HFS+ compatibility.
+// A directory named "Packages" (capital P) must match the "packages" exclusion.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('isExcludedPath — case-insensitive matching', () => {
+  test('excludes PascalCase variants (Windows/NuGet)', () => {
+    assert.equal(isExcludedPath('Packages/Angularjs.1.8.2/angular.js'), true)
+    assert.equal(isExcludedPath('Bin/Debug/app.exe'), true)
+    assert.equal(isExcludedPath('OBJ/Release/net8.0/app.dll'), true)
+  })
+
+  test('excludes UPPER CASE directory names', () => {
+    assert.equal(isExcludedPath('BIN/output.dll'), true)
+    assert.equal(isExcludedPath('PACKAGES/lib/index.js'), true)
+    assert.equal(isExcludedPath('ARTIFACTS/build/app.js'), true)
+  })
+
+  test('excludes mixed-case with backslash (Windows paths)', () => {
+    assert.equal(isExcludedPath('MyProject\\Bin\\Debug\\app.dll'), true)
+    assert.equal(isExcludedPath('src\\OBJ\\Release\\output.dll'), true)
+  })
+})
+
+describe('isExcludedDirName — case-insensitive', () => {
+  test('matches lowercase', () => {
+    assert.equal(isExcludedDirName('packages'), true)
+    assert.equal(isExcludedDirName('bin'), true)
+    assert.equal(isExcludedDirName('obj'), true)
+  })
+
+  test('matches PascalCase', () => {
+    assert.equal(isExcludedDirName('Packages'), true)
+    assert.equal(isExcludedDirName('Bin'), true)
+    assert.equal(isExcludedDirName('TestResults'), true)
+    assert.equal(isExcludedDirName('BuildSystem'), true)
+  })
+
+  test('matches UPPER CASE', () => {
+    assert.equal(isExcludedDirName('PACKAGES'), true)
+    assert.equal(isExcludedDirName('BIN'), true)
+    assert.equal(isExcludedDirName('OBJ'), true)
+  })
+
+  test('does NOT match non-excluded dirs regardless of case', () => {
+    assert.equal(isExcludedDirName('src'), false)
+    assert.equal(isExcludedDirName('SRC'), false)
+    assert.equal(isExcludedDirName('lib'), false)
   })
 })
 

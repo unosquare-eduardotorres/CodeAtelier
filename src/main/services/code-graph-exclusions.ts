@@ -10,6 +10,26 @@
 import path from 'node:path'
 
 /**
+ * A Set wrapper whose has() check is case-insensitive.
+ *
+ * Required for Windows compatibility: NTFS/ReFS are case-insensitive,
+ * so a directory named "Packages" must match the exclusion "packages".
+ * macOS HFS+ is also case-insensitive by default.
+ */
+export class CaseInsensitiveSet {
+  private readonly lower: Set<string>
+  constructor(values: Iterable<string>) {
+    this.lower = new Set([...values].map((v) => v.toLowerCase()))
+  }
+  has(value: string): boolean {
+    return this.lower.has(value.toLowerCase())
+  }
+  [Symbol.iterator](): IterableIterator<string> {
+    return this.lower[Symbol.iterator]()
+  }
+}
+
+/**
  * Additional directories to exclude from indexing.
  * Supplements repomap-mcp's EXCLUDED_DIRS with platform-specific build
  * artifacts and vendored dependency trees that aren't reliably in .gitignore.
@@ -23,9 +43,12 @@ import path from 'node:path'
  * Deliberately NOT included: generic names like `lib`, `libs`, `docs`, `src`,
  * `test` — those are commonly first-party and excluding them would hide real
  * code. Use .atelierignore for workspace-specific cases.
+ *
+ * Case-insensitive: "Packages", "PACKAGES", "packages" all match.
  */
-export const ADDITIONAL_EXCLUDED_DIRS = new Set([
-  // .NET
+export const ADDITIONAL_EXCLUDED_DIRS = new CaseInsensitiveSet([
+  // .NET — NuGet often creates "Packages" (capital P) on disk;
+  // the CaseInsensitiveSet ensures all casing variants match.
   'bin',
   'obj',
   'packages',

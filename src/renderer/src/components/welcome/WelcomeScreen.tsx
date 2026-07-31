@@ -7,9 +7,7 @@ import FloatingIconField from './FloatingIconField'
 import WorkspaceCard from './WorkspaceCard'
 import CreateProjectDialog from './CreateProjectDialog'
 import { markUserInitiatedOpen } from '@renderer/components/transitions'
-
-const isMac = navigator.platform.toUpperCase().includes('MAC')
-const metaKey = isMac ? '⌘' : 'Ctrl+'
+import { modifierKey as metaKey } from '@renderer/utils/platform'
 
 const tips = [
   {

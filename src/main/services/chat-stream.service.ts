@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron'
-import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
+import { conversationRepository, messageRepository, workspaceRepository, appPreferenceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -187,11 +187,26 @@ export class ChatStreamService {
     }
   }
 
+  /**
+   * Resolve the conversation ID that is currently streaming.
+   *
+   * PHASE-2-READY: Uses the authoritative streamingLocks Set instead of the
+   * global chatAgentService.getCurrentConversationId() which returns the
+   * *active UI* conversation — not necessarily the *streaming* one.
+   * With MAX_CONCURRENT_STREAMS = 1, the Set has at most one entry.
+   * When Phase 2 multi-stream lands, events must carry conversationId in
+   * their payload and this helper should be removed.
+   */
+  private resolveStreamingConversationId(): string {
+    const [first] = this.streamingLocks
+    return first ?? chatAgentService.getCurrentConversationId() ?? ''
+  }
+
   private registerEventForwarders(): void {
     // compactNeeded is not an intent — keep as direct forwarder
     const onCompactNeeded = (data: CompactNeededMessage['compactNeeded']): void => {
       if (this.isDisposed) return
-      const convId = chatAgentService.getCurrentConversationId() || ''
+      const convId = this.resolveStreamingConversationId()
       this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
         createCompactNeeded({
@@ -214,7 +229,7 @@ export class ChatStreamService {
     }): void => {
       if (this.isDisposed) return
       this.safeWindowSend(IPC_CHANNELS.CHAT_ASK_QUESTION, {
-        conversationId: chatAgentService.getCurrentConversationId() || '',
+        conversationId: this.resolveStreamingConversationId(),
         questions: data.questions,
         action: data.action,
         requestId: data.requestId
@@ -227,7 +242,7 @@ export class ChatStreamService {
     const onElicitation = (data: ElicitationEvent): void => {
       if (this.isDisposed) return
       this.safeWindowSend(IPC_CHANNELS.ELICITATION_REQUEST, {
-        conversationId: chatAgentService.getCurrentConversationId() || '',
+        conversationId: this.resolveStreamingConversationId(),
         ...data
       })
     }
@@ -262,7 +277,7 @@ export class ChatStreamService {
     // via IntentRouter. Skips plan/askUser if they were already sent by MCP forwarders above.
     const onIntent = (intent: AgentIntent): void => {
       if (this.isDisposed) return
-      const conversationId = chatAgentService.getCurrentConversationId() || ''
+      const conversationId = this.resolveStreamingConversationId()
 
       // Skip types that were already forwarded by MCP legacy listeners
       // (plan, askUser are emitted both by MCP callbacks and post-stream detection,
@@ -289,7 +304,7 @@ export class ChatStreamService {
       // from propagating through EventEmitter.emit() and crashing the hook
       // execution pipeline.
       try {
-        const conversationId = chatAgentService.getCurrentConversationId() || ''
+        const conversationId = this.resolveStreamingConversationId()
         if (!conversationId) return
         const chunk: StreamChunk = {
           type: 'hook_lifecycle',
@@ -573,6 +588,15 @@ export class ChatStreamService {
         this.keepaliveTimers.delete(conversationId)
         return
       }
+
+      // KEEPALIVE-SAFETY-RESET: Reset backend safety timer on keepalive tick.
+      // The keepalive proves the lifecycle is alive and a tool may be running
+      // (e.g. a long bash command) — don't let the defense-in-depth 5-min timer
+      // kill a legitimate long-running operation. The executor's own
+      // TOOL_RESULT_TIMEOUT_MS (10 min) is the primary stall detector for
+      // blocked tools; this safety timer is the backstop after keepalive stops.
+      resetSafety()
+
       this.safeWindowSend(IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
         conversationId,
         requestId,
@@ -603,6 +627,21 @@ export class ChatStreamService {
           )
           completeStreamMetrics(conversationId, 'timeout')
           lifecycleRegistry.abort(conversationId, 'safety-timeout')
+
+          // SAFETY-COMPLETE-SIGNAL: Send a synthetic CHAT_MESSAGE_COMPLETE so the
+          // renderer's handleMessageComplete fires and cleans up streamingConversationIds,
+          // stashed state, and stall timers. Without this, the conversation can remain
+          // stuck in streamingConversationIds if handleStateChange's idle-guard
+          // (prevState === 'idle' → skip) prevents the forceReset cleanup path.
+          this.safeWindowSend(
+            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+            createCompleteMessage({
+              conversationId,
+              messageId: `timeout-${conversationId}`,
+              requestId
+            })
+          )
+
           rejectDone(new Error('Streaming timed out — safety recovery triggered'))
         }
       }, MAIN_PROCESS_SAFETY_TIMEOUT_MS)
@@ -617,9 +656,36 @@ export class ChatStreamService {
     startSafetyTimer()
     this.safetyTimerResets.set(conversationId, resetSafety)
 
+    // MAX-LIFETIME: Absolute hard cap — independent of activity. Prevents truly
+    // zombie streams where the executor hangs, lifecycle stays active, and
+    // keepalive resets the safety timer indefinitely. Configurable via
+    // maxStreamLifetimeMin preference (default 30, clamped 10–120).
+    const lifetimeMin = appPreferenceRepository.getAppPreferences().maxStreamLifetimeMin
+    const MAX_STREAM_LIFETIME_MS = lifetimeMin * 60 * 1000
+    const lifetimeTimer = setTimeout(() => {
+      if (!safetyCleared && this.streamingLocks.has(conversationId)) {
+        log.warn(
+          `[STREAM:max-lifetime] Stream exceeded ${lifetimeMin}-minute hard cap — force-aborting. ` +
+            `conversationId=${conversationId} requestId=${requestId}`
+        )
+        completeStreamMetrics(conversationId, 'max-lifetime')
+        lifecycleRegistry.abort(conversationId, 'max-lifetime')
+        this.safeWindowSend(
+          IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+          createCompleteMessage({
+            conversationId,
+            messageId: `max-lifetime-${conversationId}`,
+            requestId
+          })
+        )
+        rejectDone(new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`))
+      }
+    }, MAX_STREAM_LIFETIME_MS)
+
     lifecycle.onDispose(() => {
       safetyCleared = true
       clearTimeout(safetyTimer)
+      clearTimeout(lifetimeTimer)
       this.safetyTimerResets.delete(conversationId)
       const kt = this.keepaliveTimers.get(conversationId)
       if (kt) {

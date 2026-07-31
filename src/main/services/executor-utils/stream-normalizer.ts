@@ -219,16 +219,41 @@ export function* normalizeMessage(
         const hasInput = toolInput && Object.keys(toolInput).length > 0
 
         const inputSummary = hasInput ? summarizeToolInput(toolName, toolInput, cwd) : undefined
+        // Raw (unsummarized) JSON — inputSummary is a human-readable display
+        // string ("src/a.ts (1 lines)"), not parseable JSON, so it can't be
+        // used to recover structured fields like file_path downstream.
+        const rawInputJson = hasInput ? JSON.stringify(toolInput) : undefined
         if (toolId) {
-          tools.register(toolId, toolName, inputSummary)
+          tools.register(toolId, toolName, inputSummary, rawInputJson)
         }
 
         tools.hasPriorContent = true
+
+        // TodoWrite always ships the COMPLETE todo list on every call (not a
+        // delta) — surface it as an authoritative sync so the Todos tab (and
+        // DB) reconcile against the model's actual state instead of trying
+        // to reconstruct incremental add/complete/remove events from a tool
+        // whose contract doesn't provide them.
+        if (toolName === 'TodoWrite' && Array.isArray(toolInput?.todos)) {
+          const todos = (toolInput.todos as Array<Record<string, unknown>>)
+            .map((t, i) => ({
+              text: String(t.content ?? t.text ?? '').trim(),
+              completed: t.status === 'completed',
+              index: i
+            }))
+            .filter((t) => t.text.length > 0)
+          // Emit even when todos is empty — TodoWrite({ todos: [] }) is how
+          // the model clears the list. Filtering on length > 0 silently
+          // dropped clears, leaving stale rows in the UI and DB forever.
+          yield { type: 'todo_update', todoSync: todos }
+        }
+
         yield {
           type: 'tool_use',
           toolName,
           toolId,
-          toolInput: inputSummary
+          toolInput: inputSummary,
+          toolInputRaw: rawInputJson
         }
       }
     }
@@ -271,8 +296,9 @@ export function* normalizeMessage(
         if (block.type === 'tool_result') {
           const toolUseId = block.tool_use_id as string | undefined
           const toolName = tools.resolve(toolUseId)
-          // Retrieve stored input summary before consuming the tracker entry
+          // Retrieve stored input summary + raw JSON before consuming the tracker entry
           const storedInput = tools.resolveInput(toolUseId)
+          const storedRawInput = tools.resolveRawInput(toolUseId)
           tools.consume(toolUseId)
 
           let resultContent: string | undefined
@@ -290,6 +316,7 @@ export function* normalizeMessage(
             toolName,
             toolId: toolUseId,
             toolInput: storedInput,
+            toolInputRaw: storedRawInput,
             content: resultContent,
             // Propagate the is_error flag from the CLI's tool_result block
             // so downstream consumers (tool-chunk-processor) can detect denials.

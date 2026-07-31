@@ -45,7 +45,7 @@ import {
 } from './hooks'
 import { useBlueprintStatusBar } from './hooks/useBlueprintStatusBar'
 
-const isMac = navigator.platform.toUpperCase().includes('MAC')
+import { isMacPlatform as isMac } from '@renderer/utils/platform'
 
 // ── useAppLayoutEffects ───────────────────────────────────────────────
 

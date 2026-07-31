@@ -45,6 +45,7 @@ import type { SectionKey } from './task-plan/TaskPlanSections'
 import { BuildActionBar, usePlanMemos, buildSectionMap } from './task-plan'
 import type { StructuredPlan } from '../../../../shared/types'
 import { derivePlanTasks, derivePhaseFiles, renderTaskManifest } from '../../../../shared/plan-tasks'
+import { modifierKey } from '@renderer/utils/platform'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -333,6 +334,26 @@ function PlanTabContent({
 }): JSX.Element {
   const { sendMessage, updateMode, appendLocalMessage } = useChatActions()
 
+  // BUG-1-FIX: Guard BuildActionBar rendering on conversation mode + streaming state.
+  // During build, the model may emit a revised plan which resets latestPlanMsg,
+  // causing userClicked to flip false — re-showing "Build Now" mid-build.
+  const activeMode = useChatStore((s) => s.activeConversation?.mode)
+  const isCurrentlyStreaming = useChatStore((s) => s.isStreaming)
+
+  // BUG-HINT-BAR-FIX: Debounce the retry hint bar by 2 seconds.
+  // Between build phases, isStreaming is briefly false (50-200ms) while the
+  // agent transitions between tasks — causing the hint bar to flash.
+  // Only show the hint after the build has been truly idle for 2 seconds.
+  const [retryHintStable, setRetryHintStable] = useState(false)
+  useEffect(() => {
+    if (activeMode === 'build' && !isCurrentlyStreaming) {
+      const timer = setTimeout(() => setRetryHintStable(true), 2000)
+      return () => clearTimeout(timer)
+    }
+    setRetryHintStable(false)
+    return undefined
+  }, [activeMode, isCurrentlyStreaming])
+
   // Parse structured plan
   const structuredPlan = useMemo<StructuredPlan | null>(() => {
     if (!planContent) return null
@@ -414,6 +435,19 @@ function PlanTabContent({
         phases: derivePlanTasks(structuredPlan),
         phaseFiles: derivePhaseFiles(structuredPlan)
       })
+      // Backfill the DB-persisted plan ID (the plan row was written when
+      // emit_plan fired, before this button existed) — fire-and-forget so
+      // Build Now isn't blocked on an IPC round-trip. Without this, exec.planId
+      // stays null for the whole live session and memory extraction on
+      // completion can't tell this execution is DB-backed.
+      window.api
+        .getPhaseProgress({ conversationId })
+        .then((phaseData) => {
+          if (phaseData?.planId) {
+            usePlanExecutionStore.getState().setPlanId(conversationId, phaseData.planId)
+          }
+        })
+        .catch(() => {})
     }
 
     setUserClicked(true)
@@ -506,8 +540,8 @@ function PlanTabContent({
   }, [])
 
   const handleRegeneratePlan = useCallback((): void => {
-    const { isStreaming, isSending } = useChatStore.getState()
-    if (isStreaming || isSending) {
+    const { isStreaming, sendingConversationIds, activeConversation: conv } = useChatStore.getState()
+    if (isStreaming || sendingConversationIds.has(conv?.id ?? '')) {
       useToastStore.getState().addToast({
         type: 'info',
         message: 'Chat is busy — wait for the current response to finish'
@@ -622,7 +656,11 @@ function PlanTabContent({
       )}
 
       {/* Action bar — after content so sticky bottom-0 works correctly */}
-      {!userClicked && (
+      {/* BUG-1-FIX: Guard on mode + streaming. During build mode the model may
+         emit a new plan (emit_plan), which resets latestPlanMsg and causes
+         userClicked to become false — re-showing Build Now mid-build.
+         Only show when explicitly in plan mode AND not actively streaming. */}
+      {!userClicked && activeMode === 'plan' && !isCurrentlyStreaming && (
         <BuildActionBar
           onBuildNow={handleBuildNow}
           onRefine={handleRefine}
@@ -631,6 +669,22 @@ function PlanTabContent({
           onUserClicked={() => setUserClicked(true)}
           savedToPlans
         />
+      )}
+      {/* Hint bar when build finished/failed — guide user back to plan mode to retry.
+         BUG-HINT-BAR-FIX: Uses debounced `retryHintStable` to prevent 50-200ms flash
+         between build phases when isStreaming is briefly false.
+         BUG-PLATFORM-KEY-FIX: Uses platform-detected modifier key. */}
+      {retryHintStable && (
+        <div
+          data-testid="task-plan-retry-hint"
+          className="sticky bottom-0 flex items-center gap-2 px-5 py-2.5 border-t border-border-subtle bg-surface-overlay/90 backdrop-blur-sm text-xs text-text-secondary"
+        >
+          <span>Press</span>
+          <kbd className="px-1.5 py-0.5 rounded bg-surface-float border border-border-subtle font-mono text-[11px] text-text-muted">
+            {modifierKey}.
+          </kbd>
+          <span>to switch to Plan mode and retry the build</span>
+        </div>
       )}
     </div>
   )

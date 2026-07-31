@@ -11,6 +11,7 @@ import { codeGraphRankRepository } from '../db/repositories'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
 import type { CodeGraphIndexingState } from '../../shared/types'
 import {
+  CaseInsensitiveSet,
   isExcludedPath,
   isExcludedDirName,
   isMarkupFile,
@@ -20,8 +21,12 @@ import {
 } from './code-graph-exclusions'
 import { loadAllIgnorePatterns } from './workspace-ignore'
 
-/** Directories repomap-mcp prunes internally — mirrored so our walker matches. */
-const REPOMAP_EXCLUDED_DIRS = new Set([
+/**
+ * Directories repomap-mcp prunes internally — mirrored so our walker matches.
+ * Uses CaseInsensitiveSet so "Build", "Dist", "Vendor" etc. are excluded on
+ * case-insensitive filesystems (Windows NTFS, macOS HFS+).
+ */
+const REPOMAP_EXCLUDED_DIRS = new CaseInsensitiveSet([
   'node_modules', '__pycache__', 'venv', 'env', '.venv', '.env', 'dist', 'build',
   '.next', '.nuxt', 'target', 'vendor', '.bundle', 'coverage', '.nyc_output', '.tox', 'egg-info'
 ])

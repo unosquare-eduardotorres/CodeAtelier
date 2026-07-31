@@ -14,6 +14,7 @@ import { getDatabase } from '../db/index'
 import { validateSender } from './validate-sender'
 import type { LLMProvider, PlanFilters, PlanSource, PlanStatus } from '../../shared/types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
+import { derivePlanTasks, derivePhaseFiles } from '../../shared/plan-tasks'
 
 const planLog = log.scope('plan-ipc')
 
@@ -81,14 +82,16 @@ export function registerPlanIpc(): void {
       validateSender(event)
       const plan = planRepository.findActiveByConversationId(args.conversationId)
       if (!plan) return null
+      // Return the FULL derived task manifest (not just {id, title}) so
+      // rehydration restores the complete task denominator (e.g. "3/8"),
+      // not just whichever tasks happened to have recorded progress —
+      // otherwise a reload makes finished work look forgotten.
       return {
         planId: plan.id,
         planTitle: plan.title,
         planGoal: plan.structuredPlan.goal,
-        phases: plan.structuredPlan.phases?.map((p) => ({
-          id: p.id,
-          title: p.title
-        })) ?? [],
+        phases: derivePlanTasks(plan.structuredPlan),
+        phaseFiles: derivePhaseFiles(plan.structuredPlan),
         progress: planRepository.getPhaseProgress(plan.id)
       }
     }

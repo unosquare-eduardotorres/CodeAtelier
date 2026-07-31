@@ -103,8 +103,8 @@ export function useCouncilOutcomeActions(onNavigateToChat: () => void): OutcomeA
         onNavigateToChat()
 
         // Guard: don't send into an active stream
-        const { isStreaming, isSending } = useChatStore.getState()
-        if (isStreaming || isSending) {
+        const { isStreaming, sendingConversationIds, activeConversation: activeConv } = useChatStore.getState()
+        if (isStreaming || sendingConversationIds.has(activeConv?.id ?? '')) {
           useCouncilStore.getState().reset()
           useToastStore.getState().addToast({
             type: 'info',

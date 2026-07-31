@@ -102,6 +102,14 @@ interface PlanExecutionState {
     }
   ) => void
 
+  /**
+   * Patch in the DB-persisted plan ID once resolved. startExecution runs
+   * synchronously with planId: null (avoids blocking Build Now on an IPC
+   * round-trip) — this backfills it so downstream consumers (memory
+   * extraction on completion) can tell the execution is DB-backed.
+   */
+  setPlanId: (conversationId: string, planId: string) => void
+
   /** Mark execution as completed (read-only mode) without removing it */
   completeExecution: (conversationId: string) => void
 
@@ -169,11 +177,14 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
           update.status === 'completed' && allPhaseFiles.length > 0
             ? allPhaseFiles
             : p.touchedFiles
-        // When phase completes, auto-complete any pending/running tasks within it
+        // When phase completes, mark any tasks the model never reported on as
+        // 'skipped' — NOT 'complete'. Auto-completing them fabricates counts
+        // (e.g. "4/4 done" from a single phase-level event with zero task
+        // reports) and hides exactly the gap this tracking exists to surface.
         const tasks = update.status === 'completed'
           ? p.tasks.map(t =>
               t.status === 'pending' || t.status === 'running'
-                ? { ...t, status: 'complete' as const, completedAt: Date.now() }
+                ? { ...t, status: 'skipped' as const, completedAt: Date.now() }
                 : t
             )
           // When phase starts/progresses, auto-mark the first pending task as running
@@ -217,10 +228,17 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         ]
       }
 
+      // Never let a bad/degenerate report (e.g. totalPhases: 0 from a
+      // malformed emit_phase_progress call) clobber a denominator we already
+      // know is larger — it would render as "Phase 2/0" for the rest of the
+      // execution since nothing else corrects it after the fact.
+      const totalPhases =
+        update.totalPhases > 0 ? Math.max(update.totalPhases, exec.totalPhases) : exec.totalPhases
+
       return {
         executions: {
           ...state.executions,
-          [conversationId]: { ...exec, phases, totalPhases: update.totalPhases }
+          [conversationId]: { ...exec, phases, totalPhases }
         }
       }
     })
@@ -456,6 +474,16 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
       })
 
       return { executions: { ...state.executions, [conversationId]: { ...exec, phases } } }
+    })
+  },
+
+  setPlanId: (conversationId, planId) => {
+    set((state) => {
+      const exec = state.executions[conversationId]
+      if (!exec || exec.planId === planId) return state
+      return {
+        executions: { ...state.executions, [conversationId]: { ...exec, planId } }
+      }
     })
   },
 

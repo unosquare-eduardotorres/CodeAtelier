@@ -90,6 +90,30 @@ export class TodoRepository {
     }
   }
 
+  /**
+   * Replace the entire todo list for a conversation. Used for TodoWrite's
+   * full-snapshot contract (CLI backend) — each call carries the complete
+   * authoritative list, so a delete+reinsert reconcile is correct and avoids
+   * the duplicate-row accumulation that per-item saveTodo() would produce
+   * across separate CLI process spawns (one per turn).
+   */
+  syncTodos(
+    conversationId: string,
+    todos: Array<{ text: string; completed: boolean; index: number }>
+  ): void {
+    const run = db().transaction(() => {
+      db().prepare('DELETE FROM conversation_todos WHERE conversation_id = ?').run(conversationId)
+      const insert = db().prepare(
+        `INSERT INTO conversation_todos (conversation_id, text, completed, item_index)
+         VALUES (?, ?, ?, ?)`
+      )
+      for (const t of todos) {
+        insert.run(conversationId, t.text, t.completed ? 1 : 0, t.index)
+      }
+    })
+    run()
+  }
+
   findByConversation(conversationId: string): TodoItem[] {
     const rows = db()
       .prepare(

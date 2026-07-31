@@ -122,7 +122,7 @@ class FileWatcherService extends EventEmitter {
     // On Windows, fs.watch returns paths with native backslash separators,
     // so split('/') would produce one unsplit segment and never match IGNORED_DIRS.
     const parts = filename.split(/[/\\]/)
-    if (parts.some((p) => IGNORED_DIRS.has(p))) return
+    if (parts.some((p) => IGNORED_DIRS.has(p.toLowerCase()))) return
 
     const state = this.watchers.get(workspaceId)
     if (!state) return

@@ -409,6 +409,9 @@ export const IPC_CHANNELS = {
   // Stream Diagnostics — aggregated streaming health metrics
   STREAM_METRICS_GET: 'stream:metricsGet',
 
+  // IPC Backpressure — renderer ACK for adaptive batching
+  CHAT_CHUNK_ACK: 'chat:chunkAck',
+
   // SDK Elicitation (enriched — via elicitation.service)
   SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
   SDK_ELICITATION_RESPONSE: 'sdk:elicitationResponse',

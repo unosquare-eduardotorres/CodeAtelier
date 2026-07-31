@@ -335,8 +335,9 @@ class MemoryIngestionService {
     }
 
     for (const entry of entries) {
-      if (entry.startsWith('.') && IGNORE_DIRS.has(entry)) continue
-      if (IGNORE_DIRS.has(entry)) continue
+      const entryLower = entry.toLowerCase()
+      if (entry.startsWith('.') && IGNORE_DIRS.has(entryLower)) continue
+      if (IGNORE_DIRS.has(entryLower)) continue
 
       const fullPath = join(dirPath, entry)
       let stat

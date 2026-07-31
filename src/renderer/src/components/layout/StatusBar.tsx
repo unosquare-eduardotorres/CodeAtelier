@@ -22,7 +22,7 @@ import type { IndexingStateInfo } from './status-bar/status-indicator-helpers'
 import type { BlueprintStatusBarInfo } from './hooks/useBlueprintStatusBar'
 import { BlueprintDropdown } from './status-bar/BlueprintDropdown'
 
-const isMac = navigator.platform.toUpperCase().includes('MAC')
+import { isMacPlatform as isMac } from '@renderer/utils/platform'
 
 function AgentStatusDot({ status }: { status: string }): React.JSX.Element {
   const dotBase = 'w-2 h-2 rounded-full inline-block'

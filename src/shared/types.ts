@@ -429,6 +429,8 @@ export interface AppPreferences {
   leanBuildMcp: boolean
   /** User's chosen avatar variant (1=Hooded Artisan, 2=Scholar, 3=Inventor). Default: '1'. */
   userAvatarVariant: UserAvatarVariant
+  /** Absolute hard cap for stream lifetime in minutes (clamped 10–120). Default: 30. */
+  maxStreamLifetimeMin: number
 }
 
 // ── Workspace Deploy Models ──

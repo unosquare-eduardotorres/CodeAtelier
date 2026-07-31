@@ -440,7 +440,7 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     }
 
     this.db()
-      .prepare('UPDATE plans SET phase_progress_json = ?, updated_at = datetime("now") WHERE id = ?')
+      .prepare("UPDATE plans SET phase_progress_json = ?, updated_at = datetime('now') WHERE id = ?")
       .run(JSON.stringify(progress), planId)
   }
 

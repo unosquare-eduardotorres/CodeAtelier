@@ -20,7 +20,6 @@ import {
   createOptimisticUserMessage,
   createErrorMessage,
   parseBlockedByError,
-  captureStreamState,
   emptyStreamState
 } from './chat-action-utils'
 import type { PerConversationStreamState } from './chat-action-utils'
@@ -60,9 +59,9 @@ export interface ChatState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
-  /** SEND-RACE-01: Immediate mutex — prevents rapid double-clicks from bypassing the isStreaming check
-   *  (which relies on React re-render and suffers from stale closure capture). */
-  isSending: boolean
+  /** SEND-RACE-02: Per-conversation send mutex — replaces the global isSending boolean.
+   *  Tracks which conversations have an IPC send in-flight. Phase 2 ready. */
+  sendingConversationIds: Set<string>
   /** Conversations that are currently streaming (backend still processing) — enables per-conversation streaming indicators in sidebar */
   streamingConversationIds: Set<string>
   activeRequestId: string | null
@@ -132,6 +131,7 @@ export interface ChatState {
   stopGeneration: () => Promise<void>
   sendMessage: (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => Promise<void>
   appendStreamChunk: (
+    conversationId: string,
     chunk: string,
     role?: 'specialist',
     taskId?: string,
@@ -145,7 +145,7 @@ export interface ChatState {
     taskId?: string,
     specialist?: string
   ) => void
-  finalizeStream: (messageId: string, taskId?: string, requestId?: string) => void
+  finalizeStream: (conversationId: string, messageId: string, taskId?: string, requestId?: string) => void
   finalizeTurnBubble: (
     turnId: string,
     turnRole?: 'specialist',
@@ -262,6 +262,11 @@ export interface ChatState {
   reset: () => void
 }
 
+// SWITCH-GENERATION: Monotonic counter for selectConversation de-duplication.
+// Each call captures the current value; after every await, if it has changed
+// another selectConversation superseded this one → bail immediately.
+let switchGeneration = 0
+
 // Preserve Zustand state across HMR (dev only)
 const previousChatState = import.meta.hot?.data?.chatStoreState as Partial<ChatState> | undefined
 
@@ -274,7 +279,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingSpecialist: previousChatState?.streamingSpecialist ?? null,
   streamingTaskId: previousChatState?.streamingTaskId ?? null,
   isStreaming: previousChatState?.isStreaming ?? false,
-  isSending: false,
+  sendingConversationIds: new Set<string>(),
   streamingConversationIds: previousChatState?.streamingConversationIds ?? new Set<string>(),
   activeRequestId: previousChatState?.activeRequestId ?? null,
   streamingPhase: previousChatState?.streamingPhase ?? null,
@@ -308,6 +313,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   })(),
 
   loadConversations: async (workspaceId: string) => {
+    // GAP-A-FIX: Coordinate with selectConversation / createConversation via switchGeneration.
+    // Without this, a rapid workspace switch (A→B→A) or a selectConversation during
+    // the getConversations IPC can cause stale data to overwrite the current state,
+    // clobbering conversationStreams or showing the wrong conversation list.
+    const myGeneration = ++switchGeneration
     try {
       // Detect workspace switch — clear stale chat state from previous workspace.
       // Without this, activeConversation + messages from the old workspace leak
@@ -320,6 +330,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const conversations = await window.api.getConversations({ workspaceId })
+      // GAP-A-FIX: Bail if a selectConversation, createConversation, or another
+      // loadConversations superseded this one while we awaited the IPC round-trip.
+      if (switchGeneration !== myGeneration) return
       // Hydrate effort levels from persisted conversation state
       const hydratedEfforts: Record<string, ThinkingEffort> = {}
       for (const conv of conversations) {
@@ -352,6 +365,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     branchName?: string,
     autoBranch?: boolean
   ) => {
+    // BUG-A-FIX: Coordinate with selectConversation via switchGeneration.
+    // Without this, a rapid selectConversation during the async createConversation
+    // IPC causes a brief flash of the wrong conversation.
+    const myGeneration = ++switchGeneration
     const conversation = await window.api.createConversation({
       workspaceId,
       mode,
@@ -365,18 +382,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       branchName,
       autoBranch
     })
-    // GAP-R5-1: Stash streaming state of the current conversation before switching.
-    // Without this, creating a new conv while viewing a streaming one loses the
-    // previous conv's streaming content. Mirrors selectConversation's stash logic.
+    // BUG-A-FIX: Bail if a selectConversation (or another createConversation)
+    // superseded this one while we awaited the IPC round-trip.
+    if (switchGeneration !== myGeneration) return
+    // PER-CONV-ACCUM: No stash needed — per-conversation buffers are always warm.
+    // Just flush the previous conversation's accumulator so its buffer has the latest content.
     const prevConvId = get().activeConversation?.id
-    if (prevConvId && get().isStreaming) {
-      internals.flushAccumulator()
-      const snapshot = captureStreamState(get())
-      const newStreams = new Map(get().conversationStreams)
-      newStreams.set(prevConvId, snapshot)
-      set({ conversationStreams: newStreams })
+    if (prevConvId) {
+      internals.flushAccumulator(prevConvId)
     }
-    internals.resetAccumulator()
     set((state) => ({
       conversations: [conversation, ...state.conversations],
       activeConversation: conversation,
@@ -468,113 +482,99 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectConversation: async (id: string) => {
     const conversation = get().conversations.find((c) => c.id === id)
     if (!conversation) return
+
+    // SWITCH-GENERATION: Capture a monotonic counter so we can detect if a
+    // newer selectConversation call superseded this one after any await.
+    const myGeneration = ++switchGeneration
+
     // MSG-RELOAD-01: Bump generation so any in-flight DB reload from a previous
     // conversation is discarded instead of overwriting this conversation's messages.
     internals.bumpGeneration()
-    // MULTI-CHAT-06: Flush and discard the current accumulator so it doesn't
-    // bleed buffered text from the previous conversation into the target.
-    internals.flushAccumulator()
-
-    // MULTI-CHAT-06: Save the current conversation's streaming state BEFORE the
-    // async gap. captureStreamState reads from the store which flushAccumulator
-    // just populated. Doing this before resetAccumulator + getMessages prevents
-    // losing unflushed accumulator state during the async window.
+    // PER-CONV-ACCUM: No stash/restore needed — per-conversation buffers are always warm.
+    // Just flush the previous conversation's accumulator so its buffer has the latest content.
     const prevConvId = get().activeConversation?.id
-    if (prevConvId && prevConvId !== id && get().isStreaming) {
-      const snapshot = captureStreamState(get())
-      const newStreams = new Map(get().conversationStreams)
-      newStreams.set(prevConvId, snapshot)
-      set({ conversationStreams: newStreams })
+    if (prevConvId && prevConvId !== id) {
+      internals.flushAccumulator(prevConvId)
     }
-
-    internals.resetAccumulator()
 
     const messages = await window.api.getMessages({ conversationId: id })
 
-    // MULTI-CHAT-06: Check if we have a stashed streaming state for the target conversation.
-    const stashedState = get().conversationStreams.get(id)
-    const hasStashedStreaming = stashedState?.isStreaming ?? false
+    // SWITCH-GENERATION: Bail if another selectConversation landed while we awaited.
+    if (switchGeneration !== myGeneration) return
 
-    // MULTI-CHAT-06: Query backend for streaming state using the per-conversation
-    // streams array instead of the legacy single-stream fields.
-    let isConversationStillStreaming = hasStashedStreaming
-    let restoredRequestId: string | null = stashedState?.activeRequestId ?? null
+    // PER-CONV-ACCUM: Read from the always-warm per-conversation buffer
+    const buffer = get().conversationStreams.get(id)
+    const hasBufferedStreaming = buffer?.isStreaming ?? false
+
+    // Query backend for authoritative streaming state
+    let isConversationStillStreaming = hasBufferedStreaming
+    let restoredRequestId: string | null = buffer?.activeRequestId ?? null
     try {
       const backendState = await window.api.getStreamingState()
-      // Use per-conversation streams array for precise lookup
       const convStream = backendState.streams?.find((s) => s.conversationId === id)
-      // BUG-R7-1: Backend is authoritative when query succeeds — override in BOTH
-      // directions. The stash may be stale (safety timeout killed the stream but
-      // didn't clean the stash). Only fall back to stash when backend is unreachable.
+      // BUG-R7-1: Backend is authoritative when query succeeds
       isConversationStillStreaming = !!convStream
       if (convStream) {
         restoredRequestId = convStream.requestId
       }
     } catch {
-      // If backend query fails, use stashed state as fallback
+      // If backend query fails, use buffer state as fallback
     }
 
-    // MULTI-CHAT-06: Restore from stash if the conversation has buffered streaming state.
-    const restored = isConversationStillStreaming && stashedState
-      ? stashedState
+    // SWITCH-GENERATION: Bail if superseded during getStreamingState.
+    if (switchGeneration !== myGeneration) return
+
+    // PER-CONV-ACCUM: Project from always-warm buffer (or empty if no buffer)
+    const restored = isConversationStillStreaming && buffer
+      ? buffer
       : emptyStreamState()
+    // BUG-R8-1: Detect re-selection (selecting the already-active conversation)
+    const isReselection = get().activeConversation?.id === id
 
-    set((state) => {
-      // Clean up the stash for this conversation since we're restoring it
-      const newStreams = new Map(state.conversationStreams)
-      newStreams.delete(id)
-      // BUG-R8-1: Detect re-selection (selecting the already-active conversation)
-      const isReselection = state.activeConversation?.id === id
-
-      return {
-        activeConversation: conversation,
-        messages,
-        conversationStreams: newStreams,
-        // MULTI-CHAT-06: Restore streaming state from stash, or reset to empty
-        streamingContent: restored.streamingContent,
-        streamingSegments: restored.streamingSegments,
-        streamingRole: restored.streamingRole,
-        streamingSpecialist: restored.streamingSpecialist,
-        streamingTaskId: restored.streamingTaskId,
-        streamingPhase: restored.streamingPhase,
-        toolActivities: restored.toolActivities,
-        isStreaming: isConversationStillStreaming,
-        activeRequestId: isConversationStillStreaming ? restoredRequestId : null,
-        // Clear ephemeral UI state from previous conversation
-        compactSuggestion: null,
-        budgetCapBanner: null,
-        blockedByBanner: null,
-        turnLimitReached: null,
-        // STALL-DETECT-03: Clear stall banner from previous conversation on switch
-        streamStalledConversationId: null,
-        // BUG-R8-1: Only fall back to current store state when re-selecting the SAME
-        // conversation (state.pendingQuestions is still THIS conv's questions). For
-        // cross-conv switches, the stash is the only valid source — falling back to
-        // state leaks the previous conv's pending questions into the new conv.
-        pendingQuestions: isConversationStillStreaming
-          ? (restored.pendingQuestions ?? (isReselection ? state.pendingQuestions : null))
-          : null,
-        pendingQuestionAction: isConversationStillStreaming
-          ? (restored.pendingQuestionAction ?? (isReselection ? state.pendingQuestionAction : null))
-          : null,
-        pendingQuestionRequestId: isConversationStillStreaming
-          ? (restored.pendingQuestionRequestId ?? (isReselection ? state.pendingQuestionRequestId : null))
-          : null,
-        // Hydrate effort from persisted conversation state
-        effortLevels: conversation.effort
-          ? { ...state.effortLevels, [conversation.id]: conversation.effort }
-          : state.effortLevels,
-        // Restore state machine mirror based on backend
-        conversationState: isConversationStillStreaming
-          ? {
-              phase: 'specialist-responding' as ConversationPhase,
-              from: null,
-              event: null,
-              conversationId: id
-            }
-          : { phase: 'idle' as const, from: null, event: null, conversationId: null }
-      }
-    })
+    set((state) => ({
+      activeConversation: conversation,
+      messages,
+      // PER-CONV-ACCUM: Do NOT delete the buffer on switch-to — it stays warm.
+      // Chunks arriving during the async gap were written to the buffer, not lost.
+      // Project buffer → globals
+      streamingContent: isConversationStillStreaming ? restored.streamingContent : '',
+      streamingSegments: isConversationStillStreaming ? restored.streamingSegments : [],
+      streamingRole: restored.streamingRole,
+      streamingSpecialist: restored.streamingSpecialist,
+      streamingTaskId: restored.streamingTaskId,
+      streamingPhase: restored.streamingPhase,
+      toolActivities: isConversationStillStreaming ? restored.toolActivities : [],
+      isStreaming: isConversationStillStreaming,
+      activeRequestId: isConversationStillStreaming ? restoredRequestId : null,
+      // Clear ephemeral UI state from previous conversation
+      compactSuggestion: null,
+      budgetCapBanner: null,
+      blockedByBanner: null,
+      turnLimitReached: null,
+      streamStalledConversationId: null,
+      pendingQuestions: isConversationStillStreaming
+        ? (restored.pendingQuestions ?? (isReselection ? state.pendingQuestions : null))
+        : null,
+      pendingQuestionAction: isConversationStillStreaming
+        ? (restored.pendingQuestionAction ?? (isReselection ? state.pendingQuestionAction : null))
+        : null,
+      pendingQuestionRequestId: isConversationStillStreaming
+        ? (restored.pendingQuestionRequestId ?? (isReselection ? state.pendingQuestionRequestId : null))
+        : null,
+      // Hydrate effort from persisted conversation state
+      effortLevels: conversation.effort
+        ? { ...state.effortLevels, [conversation.id]: conversation.effort }
+        : state.effortLevels,
+      // Restore state machine mirror based on backend
+      conversationState: isConversationStillStreaming
+        ? {
+            phase: 'specialist-responding' as ConversationPhase,
+            from: null,
+            event: null,
+            conversationId: id
+          }
+        : { phase: 'idle' as const, from: null, event: null, conversationId: null }
+    }))
 
     // CLI mode sync is deferred — will happen automatically on next message send
     // No need to restart the CLI process just because the user switched conversations
@@ -583,6 +583,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (conversation.branchName) {
       try {
         const result = await window.api.switchBranch({ conversationId: id })
+        if (switchGeneration !== myGeneration) return
         if (result.switched) {
           // Refresh repoInfo so status bar shows the new branch
           const workspace = useWorkspaceStore.getState().activeWorkspace
@@ -595,9 +596,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
 
+    // SWITCH-GENERATION: Bail if superseded during branch switch
+    if (switchGeneration !== myGeneration) return
+
     // Load persisted todos for the selected conversation
     try {
       const persistedTodos = await window.api.getTodos({ conversationId: id })
+      if (switchGeneration !== myGeneration) return
       if (persistedTodos.length > 0) {
         const { todos } = useTodoStore.getState()
         // Only hydrate if the store doesn't already have todos for this conversation
@@ -617,16 +622,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     } catch { /* non-critical — todos are ephemeral fallback */ }
 
+    // SWITCH-GENERATION: Bail if superseded during todo load
+    if (switchGeneration !== myGeneration) return
+
     // Load persisted phase progress for the selected conversation
     try {
       const phaseData = await window.api.getPhaseProgress({ conversationId: id })
+      if (switchGeneration !== myGeneration) return
       if (phaseData && phaseData.progress.length > 0) {
         const { startExecution, updatePhase, updateTask, markFileTouched } = usePlanExecutionStore.getState()
         startExecution(id, {
           planId: phaseData.planId,
           title: phaseData.planTitle,
           planGoal: phaseData.planGoal,
-          phases: phaseData.phases
+          phases: phaseData.phases,
+          phaseFiles: phaseData.phaseFiles
         })
         for (const p of phaseData.progress) {
           updatePhase(id, {
@@ -669,8 +679,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stopGeneration: async () => {
-    // Flush any remaining buffered content before stopping
-    internals.flushAccumulator()
+    // Flush the active conversation's accumulator before stopping
+    const activeConvId = get().activeConversation?.id
+    internals.flushAccumulator(activeConvId)
 
     const {
       streamingContent,
@@ -688,6 +699,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       rendererLog.error('Failed to stop generation:', error)
     }
 
+    // GAP-B-FIX: Bail if the user switched conversations during the stopGeneration
+    // IPC round-trip. Without this, the "⏹ Stopped" message gets appended to the
+    // wrong conversation's message list (a phantom message that corrects on DB reload).
+    if (activeConversation?.id !== get().activeConversation?.id) return
+
+    // PER-CONV-ACCUM helper: clean up the conversation buffer alongside globals
+    const cleanupBuffer = (state: ChatState): { conversationStreams: Map<string, PerConversationStreamState> } => {
+      if (!activeConversation) return { conversationStreams: state.conversationStreams }
+      const streams = new Map(state.conversationStreams)
+      streams.delete(activeConversation.id)
+      return { conversationStreams: streams }
+    }
+
     // Preserve partial streaming content as a single merged message with a "stopped" suffix
     if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
       const { mergedContent, mergedTools } = mergeChatSegments(streamingSegments, streamingContent)
@@ -703,7 +727,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
         ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds),
-        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        ...cleanupBuffer(state),
         pendingQuestions: null,
         pendingQuestionAction: null,
         pendingQuestionRequestId: null
@@ -721,7 +745,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set((state) => ({
         messages: [...state.messages, stoppedMessage],
         ...buildStreamingResetState(activeConversation.id, state.streamingConversationIds),
-        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
+        ...cleanupBuffer(state),
         pendingQuestions: null,
         pendingQuestionAction: null,
         pendingQuestionRequestId: null
@@ -729,7 +753,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else {
       set({
         ...buildStreamingResetState(null, get().streamingConversationIds),
-        // STOP-ASKUSER-01: Clear orphaned pending questions so the card doesn't persist after stop
         pendingQuestions: null,
         pendingQuestionAction: null,
         pendingQuestionRequestId: null
@@ -741,30 +764,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (activeConversation) {
       internals.clearSafetyTimer(activeConversation.id)
     }
-    internals.resetAccumulator()
+    internals.resetAccumulator(activeConvId)
   },
 
   sendMessage: async (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => {
-    const { activeConversation, updateMode, isStreaming: alreadyStreaming, isSending } = get()
-    // SEND-RACE-01: Guard against rapid double-clicks. isSending is set synchronously
-    // before the async IPC call, so it can't be bypassed by stale React closures.
-    if (!activeConversation || alreadyStreaming || isSending) return
+    const { activeConversation, updateMode, isStreaming: alreadyStreaming, sendingConversationIds } = get()
+    // SEND-RACE-02: Per-conversation send guard. Prevents rapid double-clicks from
+    // bypassing the isStreaming check (stale React closure). Phase 2 ready:
+    // only blocks sends on the SAME conversation, not globally.
+    if (!activeConversation || alreadyStreaming || sendingConversationIds.has(activeConversation.id)) return
     set({
-      isSending: true,
+      sendingConversationIds: new Set([...sendingConversationIds, activeConversation.id]),
       // SEND-ASKUSER-01: Clear stale pending questions so the card doesn't persist alongside new stream
       pendingQuestions: null,
       pendingQuestionAction: null,
       pendingQuestionRequestId: null
     })
 
-    // SEND-SAFETY-TIMEOUT: Auto-reset isSending if it stays true for >30s
+    // SEND-SAFETY-TIMEOUT: Auto-reset sendingConversationIds if it stays set for >30s
     // (covers IPC hangs or missed resets from unexpected errors)
+    const convId = activeConversation.id
     const isSendingTimeout = setTimeout(() => {
-      if (get().isSending) {
-        rendererLog.warn('[SEND-SAFETY] isSending stuck for 30s — force-resetting')
-        set({ isSending: false })
+      if (get().sendingConversationIds.has(convId)) {
+        rendererLog.warn(`[SEND-SAFETY] sendingConversationIds stuck for 30s — force-removing ${convId.slice(0, 12)}`)
+        const updated = new Set(get().sendingConversationIds)
+        updated.delete(convId)
+        set({ sendingConversationIds: updated })
       }
     }, 30_000)
+
+    // GAP-C-FIX: Capture switchGeneration so we can detect if selectConversation
+    // fires during the async updateMode() gap below.
+    const myGeneration = switchGeneration
 
     try {
       // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
@@ -773,6 +804,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Auto-detect plan intent in build mode → switch to plan
       if (activeConversation.mode === 'build' && (detectPlanIntent(text) || detectComplexTask(text))) {
         await updateMode('plan')
+        // GAP-C-FIX: Bail if selectConversation (or createConversation) fired during
+        // updateMode. Without this, streamingConversationIds would contain the wrong
+        // conversation ID and the sidebar streaming badge would appear on the old conv.
+        if (switchGeneration !== myGeneration) return
       }
 
       const isHidden = options?.hidden === true
@@ -801,7 +836,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
 
       // Reset segment accumulator for new message
-      internals.resetAccumulator()
+      internals.resetAccumulator(activeConversation.id)
 
       // Safety: force-reset if streaming state gets stuck (e.g., process dies without emitting complete)
       internals.resetSafetyTimer(activeConversation.id)
@@ -866,18 +901,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
     } finally {
       clearTimeout(isSendingTimeout)
-      set({ isSending: false })
+      const remaining = new Set(get().sendingConversationIds)
+      remaining.delete(convId)
+      set({ sendingConversationIds: remaining })
     }
   },
 
   appendStreamChunk: (
+    conversationId: string,
     chunk: string,
     role?: 'specialist',
     taskId?: string,
     specialist?: string,
     requestId?: string
   ) => {
-    appendStreamChunkAction(get, set, chunk, role, taskId, specialist, requestId)
+    appendStreamChunkAction(get, set, conversationId, chunk, role, taskId, specialist, requestId)
   },
 
   handleKeepalive: (conversationId?: string) => {
@@ -889,32 +927,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   updateStreamingIdentity: (role, taskId?, specialist?) => {
-    set((state) => ({
-      streamingRole: role,
-      streamingSpecialist: specialist ?? state.streamingSpecialist,
-      streamingTaskId: taskId ?? state.streamingTaskId
-    }))
+    const convId = get().activeConversation?.id
+    set((state) => {
+      const update: Partial<ChatState> = {
+        streamingRole: role,
+        streamingSpecialist: specialist ?? state.streamingSpecialist,
+        streamingTaskId: taskId ?? state.streamingTaskId
+      }
+      // Also update the per-conversation buffer if it exists
+      if (convId) {
+        const streams = new Map(state.conversationStreams)
+        const existing = streams.get(convId)
+        if (existing) {
+          streams.set(convId, {
+            ...existing,
+            streamingRole: role,
+            streamingSpecialist: specialist ?? existing.streamingSpecialist,
+            streamingTaskId: taskId ?? existing.streamingTaskId
+          })
+          update.conversationStreams = streams
+        }
+      }
+      return update
+    })
   },
 
-  // Note: No conversationId passed to recordChunkActivity — defaults to activeConversation.id.
-  // This relies on the IPC routing guard at useAppIpcListeners.ts (bufferBackgroundChunk)
-  // to ensure only foreground tool activities reach these actions.
+  // PER-CONV-ACCUM: Tool activities are always for the active conversation.
+  // Background tool activities are routed directly through the per-conv accumulator
+  // in useAppIpcListeners.ts, never through these store actions.
   addToolActivity: (activity: ToolActivity) => {
-    internals.resetSafetyTimer()
-    internals.recordChunkActivity()  // STALL-DETECT-02: Tool activity is real activity
-    internals.getOrCreateAccumulator().handleToolActivity(activity)
+    const convId = get().activeConversation?.id
+    if (!convId) return // No active conversation — nothing to attach tool activity to
+    internals.resetSafetyTimer(convId)
+    internals.recordChunkActivity(convId)  // STALL-DETECT-02: Tool activity is real activity
+    internals.getOrCreateAccumulatorFor(convId).handleToolActivity(activity)
   },
 
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string; id?: string }) => {
-    internals.resetSafetyTimer()
-    internals.recordChunkActivity()  // STALL-DETECT-02: Tool activity is real activity
-    internals
-      .getOrCreateAccumulator()
+    const convId = get().activeConversation?.id
+    if (!convId) return // No active conversation — nothing to update
+    internals.resetSafetyTimer(convId)
+    internals.recordChunkActivity(convId)  // STALL-DETECT-02: Tool activity is real activity
+    internals.getOrCreateAccumulatorFor(convId)
       .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 
-  finalizeStream: (messageId: string, taskId?: string, requestId?: string) => {
-    finalizeStreamAction(get, set, messageId, taskId, requestId)
+  finalizeStream: (conversationId: string, messageId: string, taskId?: string, requestId?: string) => {
+    finalizeStreamAction(get, set, conversationId, messageId, taskId, requestId)
   },
 
   finalizeTurnBubble: (
@@ -932,8 +991,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setBudgetCapBanner: (data) => set({ budgetCapBanner: data }),
 
   continuePastBudgetCap: async () => {
-    const { budgetCapBanner, activeConversation, isStreaming, isSending } = get()
-    if (!budgetCapBanner || !activeConversation || isStreaming || isSending) return
+    const { budgetCapBanner, activeConversation, isStreaming, sendingConversationIds } = get()
+    if (!budgetCapBanner || !activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id)) return
     set({ budgetCapBanner: null })
     void get().sendMessage('Continue where you left off.', undefined, { hidden: true, skipOptimizer: true })
   },
@@ -959,6 +1018,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   stopBlockingChat: async () => {
     const { blockedByBanner, sendMessage } = get()
     if (!blockedByBanner) return
+    // GAP-E-FIX: Capture target conversation before async gaps
+    const targetConvId = get().activeConversation?.id
     const { blockedConvId, retryText, retryAttachments, retryOptions, optimisticMessageId } = blockedByBanner
     // MULTI-CHAT-06: Remove old optimistic message — sendMessage will create a fresh one on retry
     set((state) => ({
@@ -972,13 +1033,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await window.api.stopGeneration(blockedConvId)
       // Small delay for the backend to settle before retrying
       await new Promise((r) => setTimeout(r, 300))
+      // GAP-E-FIX: Bail if user switched conversations during stop+settle
+      if (targetConvId !== get().activeConversation?.id) return
       await sendMessage(retryText, retryAttachments, retryOptions)
     } catch (err) {
       rendererLog.error('Failed to stop blocking chat and retry:', err)
-      get().appendLocalMessage(
-        '⚠️ Failed to stop the other chat and retry. Please try again manually.',
-        { role: 'specialist' }
-      )
+      // GAP-E-FIX: Only show error if still on the target conversation
+      if (get().activeConversation?.id === targetConvId) {
+        get().appendLocalMessage(
+          '⚠️ Failed to stop the other chat and retry. Please try again manually.',
+          { role: 'specialist' }
+        )
+      }
     }
   },
 
@@ -996,8 +1062,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   continuePastTurnLimit: () => {
-    const { activeConversation, isStreaming, isSending } = get()
-    if (!activeConversation || isStreaming || isSending) return
+    const { activeConversation, isStreaming, sendingConversationIds } = get()
+    if (!activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id)) return
     set({ turnLimitReached: null })
     void get().sendMessage('Continue where you left off. Do not repeat completed work.', undefined, { hidden: true, skipOptimizer: true })
   },
@@ -1027,8 +1093,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       baseBranch
     })
 
-    // MULTI-CHAT-06: Clean up per-conversation timers and stashed streaming state
+    // PER-CONV-ACCUM: Clean up per-conversation accumulator, timers, and buffer
+    internals.resetAccumulator(activeConversation.id)
     internals.clearSafetyTimer(activeConversation.id)
+
+    // GAP-F-FIX: Check if user switched conversations during the git operation.
+    // Always remove the completed conv from the list and clean up its streams,
+    // but only null activeConversation/clear ephemeral state if still viewing it.
+    const stillOnCompletedConv = get().activeConversation?.id === activeConversation.id
 
     // Remove conversation from state (it's been deleted in DB)
     const newConversations = conversations.filter((c) => c.id !== activeConversation.id)
@@ -1038,10 +1110,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // MULTI-CHAT-06: Remove completed conversation from streaming tracking set
       const newStreamingIds = new Set(state.streamingConversationIds)
       newStreamingIds.delete(activeConversation.id)
-      return {
+
+      // Always clean up the completed conversation from lists
+      const baseUpdate = {
         conversations: newConversations,
         conversationStreams: streams,
-        streamingConversationIds: newStreamingIds,
+        streamingConversationIds: newStreamingIds
+      }
+
+      // GAP-F-FIX: Only clear active conversation state if user hasn't switched away
+      if (!stillOnCompletedConv) return baseUpdate
+
+      return {
+        ...baseUpdate,
         activeConversation: null,
         messages: [],
         streamingContent: '',
@@ -1080,7 +1161,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       rendererLog.error('Failed to close conversation on backend:', error)
       // Still remove from UI state even if backend cleanup fails
     }
-    // MULTI-CHAT-06: Clean up per-conversation timers and stashed streaming state
+    // PER-CONV-ACCUM: Clean up per-conversation accumulator, timers, and buffer
+    internals.resetAccumulator(id)
     internals.clearSafetyTimer(id)
     const { activeConversation, conversations } = get()
     const newConversations = conversations.filter((c) => c.id !== id)
@@ -1121,7 +1203,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               budgetCapBanner: null,
               blockedByBanner: null,
               turnLimitReached: null,
-              isSending: false,  // IMP-R9-1: Prevent locked input after close during send
+              sendingConversationIds: new Set<string>(),  // IMP-R9-1: Prevent locked input after close during send
               conversationState: { phase: 'idle' as const, from: null, event: null, conversationId: null }
             }
           : {})
@@ -1134,19 +1216,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Flush any accumulated streaming content into a committed message
     // BEFORE showing the question card. This preserves chronological ordering:
     // the agent's pre-question text appears before the user's answer.
-    // FLUSH-ORDER-01: Flush the accumulator BEFORE reading state — matches the
-    // pattern in finalizeStreamAction/finalizeTurnBubbleAction. Without this,
-    // unflushed SentenceBuffer content wouldn't be visible in the store yet.
-    internals.flushAccumulator()
+    // FLUSH-ORDER-01: Flush the active conversation's accumulator BEFORE reading state.
+    const activeConversation = get().activeConversation
+    internals.flushAccumulator(activeConversation?.id)
 
-    const {
-      streamingContent,
-      streamingSegments,
-      streamingRole,
-      streamingSpecialist,
-      activeConversation,
-      toolActivities
-    } = get()
+    // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
+    const buffer = activeConversation ? get().conversationStreams.get(activeConversation.id) : undefined
+    const streamingContent = buffer?.streamingContent ?? get().streamingContent
+    const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
+    const streamingRole = buffer?.streamingRole ?? get().streamingRole
+    const streamingSpecialist = buffer?.streamingSpecialist ?? get().streamingSpecialist
+    const toolActivities = buffer?.toolActivities ?? get().toolActivities
 
     if (
       activeConversation &&
@@ -1187,7 +1267,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }))
       }
 
-      internals.resetAccumulator()
+      internals.resetAccumulator(activeConversation?.id)
     }
 
     set({
@@ -1356,7 +1436,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSpecialist: null,
       streamingTaskId: null,
       isStreaming: false,
-      isSending: false,  // GAP-R8-1: Prevent locked input after workspace switch during send
+      sendingConversationIds: new Set<string>(),  // GAP-R8-1: Prevent locked input after workspace switch during send
       streamingConversationIds: new Set<string>(),
       conversationStreams: new Map(),
       activeRequestId: null,

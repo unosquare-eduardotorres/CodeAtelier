@@ -16,6 +16,7 @@ import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
 import { useHookLifecycleStore } from '@renderer/store/hook-lifecycle.store'
 import { usePlanExecutionStore } from '@renderer/store/plan-execution.store'
 import { streamingInternals } from '@renderer/store/chat-streaming.actions'
+import { ChunkConsumer } from './useChunkConsumer'
 
 // ─── Type Aliases ─────────────────────────────────────────
 
@@ -77,67 +78,6 @@ function bufferBackgroundAskUser(
   })
 }
 
-/**
- * MULTI-CHAT-06: Buffer a chunk for a background (non-active) conversation.
- * Appends text content and tool activity to the conversation's stashed state
- * so it's available when the user switches back.
- */
-function bufferBackgroundChunk(
-  data: Parameters<Parameters<Window['api']['onMessageChunk']>[0]>[0]
-): void {
-  const convId = data.conversationId
-  if (!convId) return
-
-  useChatStore.setState((state) => {
-    const streams = new Map(state.conversationStreams)
-    const existing = streams.get(convId) ?? {
-      streamingContent: '',
-      streamingSegments: [],
-      streamingRole: 'specialist' as const,
-      streamingSpecialist: null,
-      streamingTaskId: null,
-      streamingPhase: null,
-      activeRequestId: null,
-      isStreaming: true,
-      toolActivities: [],
-      pendingQuestions: null,
-      pendingQuestionAction: null,
-      pendingQuestionRequestId: null
-    }
-
-    // Append text chunk
-    const updatedContent = data.chunk
-      ? existing.streamingContent + data.chunk
-      : existing.streamingContent
-
-    // Update tool activity
-    let updatedTools = existing.toolActivities
-    if (data.toolActivity) {
-      const ta = data.toolActivity
-      const idx = updatedTools.findIndex((t) => t.id === ta.id)
-      if (idx >= 0) {
-        updatedTools = [...updatedTools]
-        updatedTools[idx] = { ...updatedTools[idx], ...ta }
-      } else {
-        updatedTools = [...updatedTools, ta as ToolActivity]
-      }
-    }
-
-    streams.set(convId, {
-      ...existing,
-      streamingContent: updatedContent,
-      streamingRole: (data.role as 'specialist') ?? existing.streamingRole,
-      streamingSpecialist: data.specialist ?? existing.streamingSpecialist,
-      streamingTaskId: data.taskId ?? existing.streamingTaskId,
-      activeRequestId: data.requestId ?? existing.activeRequestId,
-      isStreaming: true,
-      toolActivities: updatedTools
-    })
-
-    return { conversationStreams: streams }
-  })
-}
-
 /** Route a tool-activity chunk to the correct add/update action. */
 function processToolActivity(
   ta: {
@@ -186,6 +126,14 @@ function processTodoUpdate(
   }
 }
 
+/** Replace the full todo list for a conversation (TodoWrite snapshot, CLI backend). */
+function processTodoSync(
+  conversationId: string,
+  todoSync: Array<{ text: string; completed: boolean; index: number }>
+): void {
+  useTodoStore.getState().setTodos(conversationId, todoSync)
+}
+
 /** Push live context-usage metrics into the chat store. */
 function processContextUsageUpdate(
   conversationId: string,
@@ -227,8 +175,10 @@ function processContextUsageUpdate(
 // ─── Compound IPC Handlers ────────────────────────────────
 
 /** Process a single message chunk from the IPC stream. */
+type MessageChunkPayload = Parameters<Parameters<Window['api']['onMessageChunk']>[0]>[0]
+
 function handleMessageChunk(
-  data: Parameters<Parameters<Window['api']['onMessageChunk']>[0]>[0],
+  data: MessageChunkPayload,
   actions: ChatActions
 ): void {
   if (data.keepalive) {
@@ -238,14 +188,16 @@ function handleMessageChunk(
     return
   }
 
-  // CHUNK-LEAK-01: Always drop chunks when no active conversation (null guard
-  // was previously bypassed when activeConvId was null, leaking stale chunks).
   const activeConvId = useChatStore.getState().activeConversation?.id
+  const isActive = data.conversationId === activeConvId
 
-  // Phase progress and todo updates are conversation-scoped in separate stores,
-  // so they should be processed regardless of which conversation is active.
+  // Cross-store updates: conversation-scoped in separate stores,
+  // processed regardless of which conversation is active.
   if (data.todoUpdate) {
     processTodoUpdate(data.conversationId, data.todoUpdate)
+  }
+  if (data.todoSync) {
+    processTodoSync(data.conversationId, data.todoSync)
   }
   if (data.phaseProgress) {
     const { updatePhase, updateTask } = usePlanExecutionStore.getState()
@@ -257,7 +209,6 @@ function handleMessageChunk(
       message: data.phaseProgress.message
     })
 
-    // Task-level tracking: if the agent reported task-level fields, update the task within the phase
     if (data.phaseProgress.taskId && data.phaseProgress.taskStatus) {
       updateTask(data.conversationId, {
         phaseId: data.phaseProgress.phaseId,
@@ -268,18 +219,8 @@ function handleMessageChunk(
     }
   }
 
-  // GAP-R5-2: Buffer background chunks BEFORE the null guard so they aren't
-  // dropped during the brief transition window when activeConversation is null.
-  // MULTI-CHAT-06: Route chunks for background conversations to the stashed
-  // stream state instead of dropping them. This ensures accumulated content
-  // is preserved when the user switches back to a background conversation.
-  if (data.conversationId && data.conversationId !== activeConvId) {
-    bufferBackgroundChunk(data)
-    return
-  }
-  if (!activeConvId) return
-
-  if (data.turnBoundary && data.turnId) {
+  // PER-CONV-ACCUM: Turn boundaries only apply to the active conversation
+  if (isActive && data.turnBoundary && data.turnId) {
     actions.finalizeTurnBubble(
       data.turnId,
       data.role as 'specialist',
@@ -288,8 +229,11 @@ function handleMessageChunk(
     return
   }
 
+  // PER-CONV-ACCUM: ALL streaming chunks route through appendStreamChunk with
+  // explicit conversationId — no separate bufferBackgroundChunk path.
   if (data.chunk) {
     actions.appendStreamChunk(
+      data.conversationId,
       data.chunk,
       data.role as 'specialist',
       data.taskId,
@@ -297,7 +241,7 @@ function handleMessageChunk(
       data.requestId
     )
   }
-  if (!data.chunk && data.role) {
+  if (!data.chunk && data.role && isActive) {
     actions.updateStreamingIdentity(
       data.role as 'specialist',
       data.taskId,
@@ -305,22 +249,34 @@ function handleMessageChunk(
     )
   }
 
+  // PER-CONV-ACCUM: Tool activities for the active conversation go through the
+  // store actions (which route to the active accumulator and update globals).
+  // For background conversations, route directly through the per-conversation
+  // accumulator so tool progress isn't lost when the user switches back.
   if (data.toolActivity) {
-    processToolActivity(data.toolActivity, actions.addToolActivity, actions.updateToolActivity)
-    // File-based inference fallback for plan phase tracking
-    // The full ToolActivity includes filePath/operationType but the stream chunk type is narrow
-    const ta = data.toolActivity as Record<string, unknown>
-    const filePath = ta.filePath as string | undefined
-    const opType = ta.operationType as string | undefined
-    if (filePath) {
-      const { inferPhaseFromFile, markFileTouched } = usePlanExecutionStore.getState()
-      inferPhaseFromFile(data.conversationId, filePath)
-      // Only mark file as touched for write/edit operations (not reads)
-      if (opType === 'write' || opType === 'edit') {
-        markFileTouched(data.conversationId, filePath)
+    if (isActive) {
+      processToolActivity(data.toolActivity, actions.addToolActivity, actions.updateToolActivity)
+      const ta = data.toolActivity as Record<string, unknown>
+      const filePath = ta.filePath as string | undefined
+      const opType = ta.operationType as string | undefined
+      if (filePath) {
+        const { inferPhaseFromFile, markFileTouched } = usePlanExecutionStore.getState()
+        inferPhaseFromFile(data.conversationId, filePath)
+        if (opType === 'write' || opType === 'edit') {
+          markFileTouched(data.conversationId, filePath)
+        }
       }
+    } else {
+      // Background tool activity — route through per-conv accumulator directly
+      streamingInternals
+        .getOrCreateAccumulatorFor(data.conversationId)
+        .handleToolActivity(data.toolActivity as { id: string; toolName: string } & Record<string, unknown>)
+      streamingInternals.recordChunkActivity(data.conversationId)
     }
   }
+
+  // Non-streaming payloads still require active-conv guard
+  if (!isActive) return
 
   if (data.compactNeeded) {
     if (data.compactNeeded.level === 'compacted') {
@@ -346,8 +302,6 @@ function handleMessageChunk(
     })
   }
 
-  // todoUpdate and phaseProgress already processed above the background guard
-
   if (data.turnLimit) {
     useChatStore.setState({ turnLimitReached: data.turnLimit })
   }
@@ -370,30 +324,26 @@ function handleMessageComplete(
   }
 
   const activeConvId = useChatStore.getState().activeConversation?.id
-  // BUG-R6-1: Guard on data.conversationId, not activeConvId.
-  // When activeConvId is undefined (no active conv), the old three-way AND
-  // guard fell through to finalizeStream, leaking stash entries.
-  if (data.conversationId && data.conversationId !== activeConvId) {
-    // STALL-DETECT-06: Clear orphaned stall timer for the completed background conversation.
-    // Without this, the timer fires after completion and may flag a false stall.
+  const isActive = data.conversationId === activeConvId
+
+  // STALL-DETECT-06: Clear orphaned stall timer for the completed conversation.
+  if (!data.taskId) {
     streamingInternals.clearStallTimer(data.conversationId)
-    // MULTI-CHAT-06: Clean up the stashed stream state for background completion.
-    // The completed message is in the DB — remove the stash so the user sees
-    // fresh DB messages when switching back (not stale streaming state).
-    useChatStore.setState((state) => {
-      const streams = new Map(state.conversationStreams)
-      streams.delete(data.conversationId)
-      return { conversationStreams: streams }
-    })
+  }
+
+  // PER-CONV-ACCUM: finalizeStreamAction now handles both active and background
+  // conversations via the conversationId parameter. Background completions clean
+  // up the buffer; active completions also update globals and append messages.
+  if (!isActive && !data.taskId) {
     rendererLog.info(
       `[finalizeStream] Tracked completion for background conversation ${data.conversationId}`
     )
-    return
+  } else {
+    rendererLog.info(
+      `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
+    )
   }
-  rendererLog.info(
-    `[PIPELINE:renderer:message-complete] messageId=${data.messageId} taskId=${data.taskId ?? 'none'}`
-  )
-  finalizeStream(data.messageId, data.taskId, data.requestId)
+  finalizeStream(data.conversationId, data.messageId, data.taskId, data.requestId)
 
   // Transition completed plan executions to read-only mode after 30s
   const exec = usePlanExecutionStore.getState().executions[data.conversationId]
@@ -402,9 +352,13 @@ function handleMessageComplete(
       (p) => p.status === 'completed' || p.status === 'skipped' || p.status === 'failed'
     )
     if (allDone) {
-      // Extract memories from completed plan execution (fire-and-forget)
+      // Extract memories from completed plan execution (fire-and-forget).
+      // Gated on exec.planId — an execution with no DB-persisted plan means
+      // savePlan never ran for this turn (e.g. emit_plan fired without a
+      // resolvable workspace/conversation), so its phase/task data has no
+      // durable backing and would record unverifiable counts into memory.
       const workspace = useWorkspaceStore.getState().activeWorkspace
-      if (workspace?.id && workspace.repoPath) {
+      if (workspace?.id && workspace.repoPath && exec.planId) {
         const failedCount = exec.phases.filter(p => p.status === 'failed').length
         const overallStatus: 'completed' | 'partial' | 'failed' =
           failedCount === exec.phases.length ? 'failed'
@@ -448,21 +402,24 @@ function handleStateChange(
     // Clean up stall + safety timers for this conversation — prevents harmless-but-wasteful
     // setTimeouts firing after the backend has already transitioned to idle.
     streamingInternals.clearSafetyTimer(convId)
-    // MULTI-CHAT-06: Coalesce streaming set + stash cleanup into a single setState
-    // to avoid double render cycles. Also derives isStreaming from the updated set.
+    // PER-CONV-ACCUM: Remove from streaming tracking set and mark buffer as non-streaming,
+    // but do NOT delete the buffer — it stays warm for switch-back projection.
     useChatStore.setState((state) => {
       const hadStreaming = state.streamingConversationIds.has(convId)
-      const hadStreams = state.conversationStreams.has(convId)
-      if (!hadStreaming && !hadStreams) return state
+      if (!hadStreaming) return state
 
       const newStreamingIds = new Set(state.streamingConversationIds)
       newStreamingIds.delete(convId)
+
+      // Mark the buffer as non-streaming (keep content for switch-back)
       const streams = new Map(state.conversationStreams)
-      streams.delete(convId)
+      const existing = streams.get(convId)
+      if (existing) {
+        streams.set(convId, { ...existing, isStreaming: false })
+      }
 
       return {
         streamingConversationIds: newStreamingIds,
-        // BUG-R5-1: isStreaming reflects the ACTIVE conversation only.
         isStreaming: state.activeConversation?.id ? newStreamingIds.has(state.activeConversation.id) : false,
         conversationStreams: streams
       }
@@ -515,8 +472,14 @@ export function useAppIpcListeners(): void {
     loadWorkspaces()
     loadPreferences()
 
+    // IPC-BACKPRESSURE: Frame-aligned chunk consumer batches IPC messages
+    // and processes them once per animation frame (~16ms at 60fps).
+    // This prevents React render queue overload during fast streaming.
+    const consumer = new ChunkConsumer((batch) => {
+      for (const data of batch) handleMessageChunk(data as MessageChunkPayload, chatActions)
+    })
     const unsubChunk = window.api.onMessageChunk((data) =>
-      handleMessageChunk(data, chatActions)
+      consumer.push(data)
     )
     const unsubComplete = window.api.onMessageComplete((data) =>
       handleMessageComplete(data, chatActions.finalizeStream)
@@ -589,6 +552,7 @@ export function useAppIpcListeners(): void {
     )
 
     return () => {
+      consumer.destroy()
       unsubChunk()
       unsubComplete()
       unsubAskQuestion()

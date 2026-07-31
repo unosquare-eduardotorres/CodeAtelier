@@ -218,6 +218,7 @@ const TEST_FILES: string[] = [
   './shared-types-coverage.test',
   './blueprint-spec-helpers.test',
   './plan-registry-helpers.test',
+  './plan-tasks.test',
   './zero-coverage-services.test',
   // ─── Phase 15: Coverage Mega-Push — pure function tests ───
   './default-prompts-constants.test',

@@ -107,7 +107,8 @@ const COMPOSABLE_TOOLS = new Set(['Read', 'Grep', 'Glob'])
 
 function extractStructuredMeta(
   toolName: string | undefined,
-  toolInput: string | undefined
+  toolInput: string | undefined,
+  toolInputRaw?: string
 ): { filePath?: string; lineRange?: string; operationType: ToolOperationType } {
   const name = (toolName ?? '').toLowerCase()
 
@@ -127,11 +128,17 @@ function extractStructuredMeta(
                 ? 'codegraph'
                 : 'other'
 
-  if (!toolInput) return { operationType }
+  // Prefer toolInputRaw — actual JSON tool input. `toolInput` on the CLI
+  // backend is a human-readable display string ("src/a.ts (1 lines)"), not
+  // parseable JSON; JSON.parse on it always throws. toolInputRaw carries the
+  // real object (see StreamChunk.toolInputRaw). OpenCode's toolInput has
+  // historically already been raw JSON, so this falls back correctly there.
+  const rawSource = toolInputRaw ?? toolInput
+  if (!rawSource) return { operationType }
 
   let input: Record<string, unknown> = {}
   try {
-    input = JSON.parse(toolInput) as Record<string, unknown>
+    input = JSON.parse(rawSource) as Record<string, unknown>
   } catch {
     return { operationType }
   }
@@ -165,7 +172,7 @@ export function processToolChunk(
   if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return null
 
   if (chunk.type === 'tool_use') {
-    const meta = extractStructuredMeta(chunk.toolName, chunk.toolInput)
+    const meta = extractStructuredMeta(chunk.toolName, chunk.toolInput, chunk.toolInputRaw)
     return {
       type: 'tool_activity',
       toolActivity: {
@@ -237,7 +244,7 @@ export function processToolChunk(
     }
 
     // Extract structured metadata from the original tool input
-    const meta = extractStructuredMeta(chunk.toolName, chunk.toolInput)
+    const meta = extractStructuredMeta(chunk.toolName, chunk.toolInput, chunk.toolInputRaw)
 
     const toolActivity: ToolActivity = {
       id: generateToolId(chunk.toolId),

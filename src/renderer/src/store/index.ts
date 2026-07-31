@@ -27,6 +27,7 @@ export {
   useNotificationsEnabled,
   useParallelBuildAgents,
   useLeanBuildMcp,
+  useMaxStreamLifetimeMin,
   useUserAvatarVariant
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'

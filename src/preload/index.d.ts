@@ -496,6 +496,7 @@ interface Api {
         text: string
         index?: number
       }
+      todoSync?: Array<{ text: string; completed: boolean; index: number }>
       phaseProgress?: PhaseProgressEvent
       turnLimit?: {
         continuable: boolean
@@ -521,6 +522,8 @@ interface Api {
     }) => void
   ) => () => void
   respondToAskUser: (data: { requestId: string; response: string }) => Promise<void>
+  /** IPC-BACKPRESSURE: Send ACK to backend after processing a batch of chunks. */
+  chunkAck: (data: { processed: number; timestamp: number }) => void
   onTaskRetry: (
     callback: (data: {
       taskId: string
@@ -1086,7 +1089,12 @@ interface Api {
     planId: string
     planTitle: string
     planGoal?: string
-    phases: Array<{ id: number; title: string }>
+    phases: Array<{
+      id: number
+      title: string
+      tasks: Array<{ taskId: string; title: string; files: string[] }>
+    }>
+    phaseFiles: Record<number, string[]>
     progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[]; tasks?: Array<{ taskId: string; title: string; status: string }> }>
   } | null>
 

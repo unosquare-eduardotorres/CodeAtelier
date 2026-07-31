@@ -66,7 +66,8 @@ export class AppPreferenceRepository extends BaseRepository<
       userAvatarVariant: ((): UserAvatarVariant => {
         const raw = this.get('user_avatar_variant')
         return raw === '1' || raw === '2' || raw === '3' ? raw : '1'
-      })()
+      })(),
+      maxStreamLifetimeMin: this.getInt('max_stream_lifetime_min', 30, 10, 120)
     }
   }
 }

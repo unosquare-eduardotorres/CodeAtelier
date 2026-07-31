@@ -131,7 +131,7 @@ function walkDirectory(
     }
 
     if (isDir) {
-      if (SKIP_DIRS.has(name) || name.startsWith('.')) continue
+      if (SKIP_DIRS.has(name.toLowerCase()) || name.startsWith('.')) continue
       walkDirectory(rootPath, fullPath, depth + 1, callback)
     } else {
       const relPath = relative(rootPath, fullPath)
