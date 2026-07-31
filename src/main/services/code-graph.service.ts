@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { statSync, readFileSync } from 'node:fs'
+import { statSync, readFileSync, readdirSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -9,6 +10,94 @@ import { codeGraphEdgeRepository } from '../db/repositories'
 import { codeGraphRankRepository } from '../db/repositories'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
 import type { CodeGraphIndexingState } from '../../shared/types'
+import {
+  isExcludedPath,
+  isExcludedDirName,
+  isMarkupFile,
+  sizeCapForFile,
+  toPosixRel,
+  matchesSkipPattern
+} from './code-graph-exclusions'
+import { loadAllIgnorePatterns } from './workspace-ignore'
+
+/** Directories repomap-mcp prunes internally — mirrored so our walker matches. */
+const REPOMAP_EXCLUDED_DIRS = new Set([
+  'node_modules', '__pycache__', 'venv', 'env', '.venv', '.env', 'dist', 'build',
+  '.next', '.nuxt', 'target', 'vendor', '.bundle', 'coverage', '.nyc_output', '.tox', 'egg-info'
+])
+
+export interface DiscoveryResult {
+  files: string[]
+  prunedDirs: number
+  oversizeSkipped: number
+}
+
+/**
+ * Pruning file walker.
+ *
+ * Replaces `findSrcFiles(...).filter(...)`, which walked the ENTIRE tree —
+ * including vendored NUnit and generated-doc directories — and only then
+ * discarded the results. On a 280K-file tree that traversal alone was the
+ * bulk of the scan cost. Here an excluded directory is never descended into.
+ *
+ * Also enforces the per-file size caps, which previously did not exist.
+ */
+export function discoverSrcFiles(
+  workspacePath: string,
+  isSupportedFile: (f: string) => boolean
+): DiscoveryResult {
+  const ignorePatterns = loadAllIgnorePatterns(workspacePath)
+  const files: string[] = []
+  let prunedDirs = 0
+  let oversizeSkipped = 0
+
+  const walk = (dir: string): void => {
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name)
+      const relPath = toPosixRel(fullPath, workspacePath)
+
+      if (entry.name.startsWith('.')) continue
+
+      if (entry.isDirectory()) {
+        if (REPOMAP_EXCLUDED_DIRS.has(entry.name) || isExcludedDirName(entry.name)) {
+          prunedDirs++
+          continue
+        }
+        if (
+          ignorePatterns.length > 0 &&
+          (matchesSkipPattern(relPath, ignorePatterns) ||
+            matchesSkipPattern(`${relPath}/`, ignorePatterns))
+        ) {
+          prunedDirs++
+          continue
+        }
+        walk(fullPath)
+      } else if (entry.isFile()) {
+        if (!isSupportedFile(fullPath)) continue
+        if (ignorePatterns.length > 0 && matchesSkipPattern(relPath, ignorePatterns)) continue
+        try {
+          if (statSync(fullPath).size > sizeCapForFile(fullPath)) {
+            oversizeSkipped++
+            continue
+          }
+        } catch {
+          continue
+        }
+        files.push(fullPath)
+      }
+    }
+  }
+
+  walk(workspacePath)
+  return { files, prunedDirs, oversizeSkipped }
+}
 
 // ── Race-condition guard for tree-sitter initialization ──
 
@@ -130,6 +219,9 @@ export function sortAndFilterByRank(
     .sort((a, b) => b[1] - a[1])
 }
 
+// ADDITIONAL_EXCLUDED_DIRS and isExcludedPath imported from ./code-graph-exclusions
+// (extracted to a dependency-free module for testability)
+
 class CodeGraphService extends EventEmitter {
   private indexingStates = new Map<string, CodeGraphIndexingState>()
 
@@ -181,8 +273,6 @@ class CodeGraphService extends EventEmitter {
   async indexWorkspace(workspaceId: string, workspacePath: string): Promise<void> {
     const { getTags, initParser } =
       (await import('repomap-mcp/dist/tags.js')) as typeof import('repomap-mcp/dist/tags.js')
-    const { findSrcFiles } =
-      (await import('repomap-mcp/dist/file-discovery.js')) as typeof import('repomap-mcp/dist/file-discovery.js')
     const { isSupportedFile, filenameToLang } =
       (await import('repomap-mcp/dist/languages.js')) as typeof import('repomap-mcp/dist/languages.js')
 
@@ -201,8 +291,16 @@ class CodeGraphService extends EventEmitter {
     try {
       await safeInitParser(initParser)
 
-      // Phase 1: Discover files
-      const allFiles = findSrcFiles(workspacePath).filter(isSupportedFile)
+      // Phase 1: Discover files with a PRUNING walker.
+      // Excluded directories (bin, obj, packages, BuildSystem, Tools,
+      // ThirdParty, ...) plus .gitignore/.atelierignore rules are applied at
+      // the directory level, so vendored trees are never traversed at all.
+      const discovery = discoverSrcFiles(workspacePath, isSupportedFile)
+      const allFiles = discovery.files
+      log.info(
+        `[CodeGraph] Discovery: ${allFiles.length} files, ${discovery.prunedDirs} directories pruned, ` +
+          `${discovery.oversizeSkipped} oversize files skipped`
+      )
 
       // ── Health check: verify tree-sitter parsing works ──
       // getTagsRaw silently returns [] on failure. Test with a known file
@@ -210,7 +308,7 @@ class CodeGraphService extends EventEmitter {
       try {
         const testFile = allFiles[0]
         if (testFile) {
-          const testRelFname = testFile.replace(workspacePath + '/', '')
+          const testRelFname = toPosixRel(testFile, workspacePath)
           const testTags = await getTags(testFile, testRelFname, null, false)
           if (testTags.length === 0) {
             const lang = filenameToLang(testFile)
@@ -254,8 +352,9 @@ class CodeGraphService extends EventEmitter {
       const allTags: RepomapTag[] = []
       const fileMtimes = new Map<string, number>()
 
+      let markupDropped = 0
       for (const fname of allFiles) {
-        const relFname = fname.replace(workspacePath + '/', '')
+        const relFname = toPosixRel(fname, workspacePath)
         state.currentFile = relFname
 
         try {
@@ -270,7 +369,15 @@ class CodeGraphService extends EventEmitter {
           } else {
             // File changed or new — parse with Tree-sitter
             const tags = await this.getTagsWithDiagnostics(getTags, fname, relFname, filenameToLang)
-            allTags.push(...tags)
+            // Generated markup (NUnit HTML docs, doxygen output) parses to zero
+            // tags but still costs a node + mtime row per file. Drop it: it can
+            // never contribute an edge, only bloat.
+            if (tags.length === 0 && isMarkupFile(fname)) {
+              markupDropped++
+              fileMtimes.delete(relFname)
+            } else {
+              allTags.push(...tags)
+            }
           }
         } catch (error) {
           if (!this.diagnosticLogged) {
@@ -293,11 +400,20 @@ class CodeGraphService extends EventEmitter {
 
       codeGraphTagRepository.upsertTags(workspaceId, allTags, fileMtimes)
 
-      const allNodes = new Set(allFiles.map((f) => f.replace(workspacePath + '/', '')))
+      // Node set comes from the files we actually kept (POSIX-relative keys),
+      // NOT from the raw discovery list — dropped markup must not become a
+      // PageRank node it can never earn rank for.
+      const allNodes = new Set(fileMtimes.keys())
+      if (markupDropped > 0) {
+        log.info(`[CodeGraph] Dropped ${markupDropped} zero-tag markup file(s)`)
+      }
       const { totalEdges } = await this.buildAndPersistGraph(workspaceId, allTags, allNodes)
       state.totalEdges = totalEdges
 
       state.status = 'complete'
+      // A completed full rebuild clears any prior degradation.
+      state.degraded = false
+      state.degradedReason = undefined
       log.info(
         `[CodeGraph] Indexing complete: ${allFiles.length} files, ${allTags.length} tags, ${totalEdges} edges`
       )
@@ -329,28 +445,53 @@ class CodeGraphService extends EventEmitter {
     const nodes = allNodes ?? new Set(allTags.map((t) => t.relFname))
     const ranks = pagerank(nodes, edges)
 
-    // Persist edges and ranks
-    codeGraphEdgeRepository.upsertEdges(
+    // Persist edges and ranks.
+    // Use batched upsert to keep the UI responsive — inserts in chunks of 5K
+    // with setImmediate() yields between batches. For large repos (5.5M edges),
+    // a single synchronous transaction would freeze the main thread for seconds.
+    const mappedEdges = edges.map((e) => ({
       workspaceId,
-      edges.map((e) => ({
-        workspaceId,
-        sourceFile: e.from,
-        sourceSymbol: e.name,
-        targetFile: e.to,
-        targetSymbol: e.name,
-        edgeType: 'references' as const,
-        pageRank: ranks.get(e.to) ?? 0
-      }))
-    )
+      sourceFile: e.from,
+      sourceSymbol: e.name,
+      targetFile: e.to,
+      targetSymbol: e.name,
+      edgeType: 'references' as const,
+      pageRank: ranks.get(e.to) ?? 0
+    }))
+    await codeGraphEdgeRepository.upsertEdgesBatched(workspaceId, mappedEdges)
     codeGraphRankRepository.upsertRanks(workspaceId, ranks)
+
+    // Truncate the WAL after the largest write in the app. Without this the
+    // journal stays saturated at journal_size_limit (256 MB), which is exactly
+    // the 268 MB WAL observed during the freeze — checkpoint starvation under
+    // continuous batched writes.
+    try {
+      const { getDatabase } = await import('../db')
+      getDatabase().pragma('wal_checkpoint(TRUNCATE)')
+    } catch (err) {
+      log.warn(`[CodeGraph] WAL checkpoint after graph build failed: ${(err as Error).message}`)
+    }
 
     return { totalEdges: edges.length }
   }
 
   /**
+   * Large-workspace threshold: when a workspace has more than this many tags,
+   * skip the full graph rebuild on incremental file changes. The full rebuild
+   * (DELETE + INSERT all edges) is O(tags²) and blocks the main thread for
+   * seconds at 50K+ tags. Users can still trigger a full rebuild via "Re-index".
+   */
+  private static readonly LARGE_WORKSPACE_TAG_THRESHOLD = 50_000
+
+  /**
    * Incremental re-index: re-parse only specified files, then rebuild
    * the full edge graph + PageRank from ALL persisted tags.
    * ~100ms for a few files vs ~3-8s for full workspace.
+   *
+   * For large workspaces (>50K tags), skips the full graph rebuild to avoid
+   * multi-second main-thread freezes on every file save. The existing edge
+   * graph remains valid enough for queries; a full rebuild is deferred to
+   * the explicit "Re-index" button.
    */
   async reindexFiles(
     workspaceId: string,
@@ -368,6 +509,7 @@ class CodeGraphService extends EventEmitter {
     const fileMtimes = new Map<string, number>()
 
     for (const relPath of changedRelPaths) {
+      if (isExcludedPath(relPath)) continue
       const absPath = join(workspacePath, relPath)
       if (!isSupportedFile(absPath)) continue
       try {
@@ -391,7 +533,45 @@ class CodeGraphService extends EventEmitter {
       codeGraphTagRepository.upsertTags(workspaceId, newTags, fileMtimes)
     }
 
-    // 3. Rebuild full graph from ALL persisted tags
+    // 3. Check workspace size before full graph rebuild
+    const totalTags = codeGraphTagRepository.countByWorkspace(workspaceId)
+    if (totalTags > CodeGraphService.LARGE_WORKSPACE_TAG_THRESHOLD) {
+      // Large workspace: skip full graph rebuild on incremental changes.
+      // The DELETE + INSERT of millions of edges would freeze the main thread.
+      // Tags are up-to-date; edge graph uses the prior full index.
+      // User can trigger a full rebuild via the "Re-index" button.
+      log.warn(
+        `[CodeGraph] Large workspace (${totalTags} tags) — skipping full graph rebuild. ` +
+          `Use Re-index for a complete refresh.`
+      )
+      // Surface the degradation instead of failing silently. A frozen graph
+      // that still reports "healthy" is what made the last incident so hard
+      // to diagnose.
+      const degradedState: CodeGraphIndexingState = {
+        ...(this.indexingStates.get(workspaceId) ?? {
+          workspaceId,
+          status: 'complete',
+          totalFiles: 0,
+          processedFiles: 0,
+          totalTags,
+          totalEdges: 0,
+          currentFile: ''
+        }),
+        status: 'complete',
+        totalTags,
+        degraded: true,
+        degradedReason:
+          `Workspace has ${totalTags.toLocaleString()} tags (limit ` +
+          `${CodeGraphService.LARGE_WORKSPACE_TAG_THRESHOLD.toLocaleString()}). ` +
+          `The dependency graph is frozen at its last full build. ` +
+          `Add vendored/generated directories to .atelierignore, then Re-index.`
+      }
+      this.indexingStates.set(workspaceId, degradedState)
+      this.emitProgress(degradedState)
+      return
+    }
+
+    // Small/medium workspace: full rebuild is fast enough
     const allTags = codeGraphTagRepository.findAllByWorkspace(workspaceId)
     await this.buildAndPersistGraph(workspaceId, allTags)
 

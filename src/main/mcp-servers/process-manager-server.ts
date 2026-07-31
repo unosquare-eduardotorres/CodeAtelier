@@ -15,7 +15,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execSync, spawn, type ChildProcess } from 'node:child_process'
 import {
   mkdirSync,
   writeFileSync,
@@ -43,6 +43,74 @@ const INITIAL_OUTPUT_WAIT_MS = 2000
 const SIGTERM_GRACE_MS = 3000
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
 const LOG_TRUNCATE_KEEP_BYTES = 1024 * 1024 // keep last 1 MB on truncation
+
+/**
+ * Kill a process and its descendants cross-platform.
+ *
+ * Unix: sends a signal to the process group (negative PID) — works because
+ * children are spawned `detached: true` making them process group leaders.
+ *
+ * Windows: `process.kill(-pid)` throws ESRCH because negative PIDs are a
+ * Unix-only concept.  Instead we shell out to `taskkill /T` which kills the
+ * entire process tree rooted at `pid`.  See electron/electron#24520.
+ */
+function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void {
+  if (process.platform === 'win32') {
+    try {
+      const forceFlag = signal === 'SIGKILL' ? ' /F' : ''
+      execSync(`taskkill /PID ${pid} /T${forceFlag}`, { stdio: 'ignore' })
+    } catch {
+      /* process may already be dead */
+    }
+  } else {
+    try {
+      process.kill(-pid, signal)
+    } catch {
+      /* group may not exist */
+    }
+  }
+}
+
+/**
+ * Check whether a process is still alive cross-platform.
+ *
+ * Unix: `process.kill(pid, 0)` — signal 0 tests existence without sending a signal.
+ * We use positive PID here (not group) since we just want to check the leader.
+ *
+ * Windows: `tasklist` with a PID filter — exits 0 if the process exists.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    if (process.platform === 'win32') {
+      execSync(`tasklist /FI "PID eq ${pid}" /NH`, { stdio: 'ignore' })
+      return true
+    }
+    process.kill(-pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ── Command Allowlist ──
+// Only commands whose first token matches this list (or ends with one of these
+// after a path separator) are permitted.  This limits the blast radius of the
+// `run_background` tool which executes commands with `shell: true`.
+//
+// THREAT MODEL: The allowlist prevents direct shell/network tool execution
+// (curl, wget, sh, bash, powershell, rm, etc.) but does NOT prevent
+// argument-level injection within allowed commands (e.g., `node -e "..."`
+// or `npm run "$(malicious)"`).  This is intentional — the MCP trust
+// boundary is the AI agent itself, and blocking argument injection would
+// break legitimate use cases (npm scripts with arguments, node -e for
+// quick tests, etc.).  The allowlist exists to prevent accidental execution
+// of system-level tools by a misguided LLM, not to sandbox arbitrary code.
+const ALLOWED_COMMAND_PREFIXES = [
+  'npm', 'npx', 'yarn', 'pnpm', 'node', 'python', 'python3',
+  'go', 'cargo', 'make', 'gradle', 'mvn', 'dotnet', 'ruby',
+  'docker', 'docker-compose', 'supabase', 'firebase',
+  'bun', 'deno', 'tsx', 'ts-node', 'jest', 'vitest', 'playwright'
+]
 
 // ── State Directory ──
 
@@ -221,7 +289,6 @@ function refreshOutputFromLog(tracked: TrackedProcess): void {
 
 function validatePidOwnership(pid: number, expectedCommand: string): boolean {
   try {
-    const { execSync } = require('node:child_process')
     const comm = execSync(`ps -o comm= -p ${pid}`, {
       encoding: 'utf-8',
       timeout: 2000
@@ -368,6 +435,25 @@ server.tool(
     label: z.string().optional().describe('Human label for tracking (e.g., "Vite dev server")')
   },
   async ({ command, cwd, label }) => {
+    // Enforce command allowlist — mitigates shell injection surface
+    const firstToken = command.trim().split(/\s+/)[0]
+    if (
+      !ALLOWED_COMMAND_PREFIXES.some(
+        (p) => firstToken === p || firstToken.endsWith(`/${p}`)
+      )
+    ) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              error: `Command "${firstToken}" is not in the allowed command list. Allowed prefixes: ${ALLOWED_COMMAND_PREFIXES.join(', ')}`
+            })
+          }
+        ]
+      }
+    }
+
     // Enforce max concurrent processes
     const aliveCount = [...trackedProcesses.values()].filter((p) => !p.exited).length
     if (aliveCount >= MAX_TRACKED_PROCESSES) {
@@ -600,36 +686,21 @@ server.tool(
     // Kill the entire process group (negative PID) so shell children are also terminated.
     // detached: true makes the child the process group leader, so PGID == PID.
     if (tracked.reconnected || !tracked.child) {
-      // Reconnected processes — no ChildProcess handle, use process.kill() directly
-      try {
-        process.kill(-pid, 'SIGTERM')
-      } catch {
-        /* group may not exist */
-      }
+      // Reconnected processes — no ChildProcess handle, kill process tree directly
+      killProcessTree(pid, 'SIGTERM')
 
       // Wait for graceful shutdown
       await new Promise((resolve) => setTimeout(resolve, SIGTERM_GRACE_MS))
 
       // Check if still alive, escalate to SIGKILL
-      try {
-        process.kill(-pid, 0)
-        try {
-          process.kill(-pid, 'SIGKILL')
-        } catch {
-          /* already dead */
-        }
-      } catch {
-        /* dead */
+      if (isProcessAlive(pid)) {
+        killProcessTree(pid, 'SIGKILL')
       }
 
       await new Promise((resolve) => setTimeout(resolve, 200))
     } else {
-      // Spawned processes — use process group kill for the child's PID
-      try {
-        process.kill(-tracked.pid, 'SIGTERM')
-      } catch {
-        /* group may not exist */
-      }
+      // Spawned processes — kill the entire process tree rooted at child's PID
+      killProcessTree(tracked.pid, 'SIGTERM')
 
       // Wait for graceful shutdown
       const exitedGracefully = await new Promise<boolean>((resolve) => {
@@ -646,11 +717,7 @@ server.tool(
       })
 
       if (!exitedGracefully) {
-        try {
-          process.kill(-tracked.pid, 'SIGKILL')
-        } catch {
-          /* already dead */
-        }
+        killProcessTree(tracked.pid, 'SIGKILL')
         await new Promise((resolve) => setTimeout(resolve, 200))
       }
     }

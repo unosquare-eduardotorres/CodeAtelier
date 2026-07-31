@@ -120,6 +120,17 @@ export default function NotificationStack({
 
   const handlePermissionDismiss = useCallback(
     (permission: PendingPermission) => {
+      // Always send explicit deny on dismiss — prevents the control-actions
+      // server from waiting for a response that never comes (stale chat bug).
+      window.api
+        .respondToPermission({
+          permissionId: permission.id,
+          workspaceId: permission.workspaceId,
+          type: permission.type,
+          response: 'deny',
+          ...(permission.type === 'toolPermission' ? { payload: permission.payload } : {})
+        })
+        .catch(console.error)
       removePermission(permission.id)
     },
     [removePermission]

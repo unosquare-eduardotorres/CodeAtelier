@@ -1,6 +1,5 @@
 import { useRef, useEffect } from 'react'
 import type { TransitionPhase, AnimationType } from './useTransitionState'
-import { GlassPanelsAnimation } from './GlassPanelsAnimation'
 import { GoldParticleAnimation } from './GoldParticleAnimation'
 
 interface WorkspaceTransitionProps {
@@ -19,7 +18,7 @@ export function WorkspaceTransition({
   onAnimationError,
 }: WorkspaceTransitionProps): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
-  const animationRef = useRef<GlassPanelsAnimation | GoldParticleAnimation | null>(null)
+  const animationRef = useRef<GoldParticleAnimation | null>(null)
 
   // Mount/unmount Three.js animation
   useEffect(() => {
@@ -27,13 +26,7 @@ export function WorkspaceTransition({
 
     const container = containerRef.current
 
-    if (animationType === 'glass') {
-      animationRef.current = new GlassPanelsAnimation({
-        container,
-        onComplete: onAnimationComplete,
-        onError: onAnimationError,
-      })
-    } else if (animationType === 'particle') {
+    if (animationType === 'particle') {
       animationRef.current = new GoldParticleAnimation({
         container,
         workspaceName: workspaceName ?? 'Workspace',

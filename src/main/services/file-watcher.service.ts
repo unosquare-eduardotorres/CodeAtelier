@@ -2,6 +2,7 @@ import { watch } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
+import { ATELIERIGNORE_FILENAME, invalidateIgnoreCache } from './workspace-ignore'
 
 const DEBOUNCE_MS = 3000
 
@@ -71,6 +72,18 @@ class FileWatcherService extends EventEmitter {
     try {
       const watcher = watch(workspacePath, { recursive: true }, (_eventType, filename) => {
         if (!filename) return
+        // Editing .atelierignore changes what is indexable — drop the cached
+        // rules immediately so the next re-index honors the new exclusions
+        // without requiring an app restart.
+        const normalized = filename.replace(/\\/g, '/')
+        if (
+          normalized === ATELIERIGNORE_FILENAME ||
+          normalized.endsWith(`/${ATELIERIGNORE_FILENAME}`)
+        ) {
+          invalidateIgnoreCache(workspacePath)
+          log.info('[FileWatcher] .atelierignore changed — exclusion cache invalidated')
+          return
+        }
         this.handleFileEvent(workspaceId, filename)
       })
 
@@ -105,7 +118,10 @@ class FileWatcherService extends EventEmitter {
 
   private handleFileEvent(workspaceId: string, filename: string): void {
     // Skip ignored directories
-    const parts = filename.split('/')
+    // Split on both forward and backslash separators for Windows compatibility.
+    // On Windows, fs.watch returns paths with native backslash separators,
+    // so split('/') would produce one unsplit segment and never match IGNORED_DIRS.
+    const parts = filename.split(/[/\\]/)
     if (parts.some((p) => IGNORED_DIRS.has(p))) return
 
     const state = this.watchers.get(workspaceId)
@@ -138,6 +154,25 @@ class FileWatcherService extends EventEmitter {
   /** Stop all watchers — called on app quit */
   stopAll(): void {
     for (const id of [...this.watchers.keys()]) this.stop(id)
+  }
+
+  /**
+   * Snapshot currently-active watchers (workspaceId + settings).
+   * Used by power management to capture state before stopAll(),
+   * so watchers can be recreated after wake.
+   */
+  getActiveWatchers(): {
+    workspaceId: string
+    workspacePath: string
+    codeGraphEnabled: boolean
+    semanticSearchEnabled: boolean
+  }[] {
+    return [...this.watchers.entries()].map(([id, state]) => ({
+      workspaceId: id,
+      workspacePath: state.workspacePath,
+      codeGraphEnabled: state.codeGraphEnabled,
+      semanticSearchEnabled: state.semanticSearchEnabled
+    }))
   }
 }
 

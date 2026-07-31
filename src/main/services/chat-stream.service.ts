@@ -1364,7 +1364,7 @@ export class ChatStreamService {
     conversationId: string,
     text: string,
     attachments?: string[],
-    opts?: { optimizePrompt?: boolean }
+    opts?: { optimizePrompt?: boolean; hidden?: boolean }
   ): Promise<StreamHandle> {
     // Stage 1: Acquire lock + lifecycle
     const { requestId, signal, lifecycle, resolveDone, rejectDone, done } =
@@ -1398,7 +1398,7 @@ export class ChatStreamService {
 
     // Stage 6: Save original user message + run prompt optimization
     const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
-    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson)
+    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson, { hidden: opts?.hidden })
     log.info('User message saved to DB')
 
     // Stage 6.5: Prompt Optimization (chat plan/build only — skipped for programmatic callers)

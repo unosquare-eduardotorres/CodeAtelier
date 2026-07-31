@@ -58,7 +58,10 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
 
   /**
    * Bulk upsert graph edges for a workspace.
-   * Clears existing edges first, then inserts new ones.
+   * Clears existing edges first, then inserts new ones in a single transaction.
+   *
+   * For large edge sets, prefer `upsertEdgesBatched()` which breaks the work
+   * into chunks with event-loop yielding to keep the UI responsive.
    */
   upsertEdges(workspaceId: string, edges: CodeGraphEdge[]): void {
     const db = this.db()
@@ -87,6 +90,63 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
     })
 
     transaction()
+  }
+
+  /**
+   * Batched upsert with event-loop yielding between chunks.
+   * Prevents multi-second main-thread freezes for large workspaces
+   * (e.g. 5.5M edges). DELETE runs in one fast statement, then INSERTs
+   * are chunked into transactions of BATCH_SIZE rows with setImmediate()
+   * yields between each batch to let the event loop pump the Windows
+   * message queue and keep the UI responsive.
+   */
+  async upsertEdgesBatched(workspaceId: string, edges: CodeGraphEdge[]): Promise<void> {
+    const BATCH_SIZE = 5000
+    const db = this.db()
+
+    const deleteStmt = db.prepare('DELETE FROM code_graph_edges WHERE workspace_id = ?')
+    const insertStmt = db.prepare(`
+      INSERT INTO code_graph_edges
+        (workspace_id, source_file, source_symbol, target_file, target_symbol, edge_type, page_rank)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    for (let i = 0; i < edges.length; i += BATCH_SIZE) {
+      const batch = edges.slice(i, Math.min(i + BATCH_SIZE, edges.length))
+      const txn = db.transaction(() => {
+        // DELETE runs inside the first batch's transaction so that if the
+        // process crashes mid-batch, we either keep the old edges (rolled
+        // back) or have at least the first batch committed. Without this,
+        // a crash after a standalone DELETE leaves zero edges.
+        if (i === 0) {
+          deleteStmt.run(workspaceId)
+        }
+        for (const edge of batch) {
+          insertStmt.run(
+            workspaceId,
+            edge.sourceFile,
+            edge.sourceSymbol,
+            edge.targetFile,
+            edge.targetSymbol,
+            edge.edgeType,
+            edge.pageRank ?? 0
+          )
+        }
+      })
+      txn()
+
+      // Yield to the event loop between batches so the UI stays responsive.
+      // setImmediate fires after I/O events, giving the message pump a chance.
+      if (i + BATCH_SIZE < edges.length) {
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+    }
+
+    // Handle edge case: no edges to insert (empty graph).
+    // Still need to clear old edges.
+    if (edges.length === 0) {
+      deleteStmt.run(workspaceId)
+    }
   }
 
   /**

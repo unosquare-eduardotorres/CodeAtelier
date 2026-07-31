@@ -71,7 +71,7 @@ export function useInputHistory({
         // re-renders on every streaming chunk)
         const userMessages = useChatStore
           .getState()
-          .messages.filter((m) => m.role === 'user' && m.contentMd.trim())
+          .messages.filter((m) => m.role === 'user' && !m.hidden && m.contentMd.trim())
 
         if (userMessages.length === 0) return false
 
@@ -122,7 +122,7 @@ export function useInputHistory({
         } else {
           const userMessages = useChatStore
             .getState()
-            .messages.filter((m) => m.role === 'user' && m.contentMd.trim())
+            .messages.filter((m) => m.role === 'user' && !m.hidden && m.contentMd.trim())
           const targetIndex = userMessages.length - 1 - historyIndexRef.current
           setText(userMessages[targetIndex].contentMd)
         }

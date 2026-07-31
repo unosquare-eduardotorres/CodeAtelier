@@ -33,6 +33,7 @@ interface ConversationRow {
   handoff_context: string | null
   model_config_json: string | null
   source_audit_run_id: string | null
+  source_branch: string | null
 }
 
 function parseMcpOverrides(json: string | null): Record<string, boolean> | undefined {
@@ -68,7 +69,8 @@ function mapRow(row: ConversationRow): Conversation {
     modelConfigSnapshot: row.model_config_json
       ? safeParseJSON<ConversationModelSnapshot | null>(row.model_config_json, null)
       : null,
-    sourceAuditRunId: row.source_audit_run_id ?? null
+    sourceAuditRunId: row.source_audit_run_id ?? null,
+    sourceBranch: row.source_branch ?? undefined
   }
 }
 
@@ -165,8 +167,19 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     return row?.claude_session_id ?? undefined
   }
 
+  getWorkspaceId(id: string): string | undefined {
+    const row = this.db()
+      .prepare('SELECT workspace_id FROM conversations WHERE id = ?')
+      .get(id) as { workspace_id: string } | undefined
+    return row?.workspace_id
+  }
+
   updateBranchName(id: string, branchName: string): void {
     this.db().prepare('UPDATE conversations SET branch_name = ? WHERE id = ?').run(branchName, id)
+  }
+
+  updateSourceBranch(id: string, sourceBranch: string): void {
+    this.db().prepare('UPDATE conversations SET source_branch = ? WHERE id = ?').run(sourceBranch, id)
   }
 
   updatePrInfo(id: string, prUrl: string, prNumber: number, branchName: string): void {

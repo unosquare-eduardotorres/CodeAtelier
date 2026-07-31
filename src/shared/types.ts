@@ -3,7 +3,7 @@ export type ConversationMode = 'plan' | 'build' | 'danger'
 export type ConversationType = 'chat' | 'blueprint'
 
 /** Thinking effort level — controls reasoning depth (thinking budget + temperature) */
-export type ThinkingEffort = 'low' | 'medium' | 'high'
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** Prompt verbosity level — controls how much guardrailing the system prompt includes */
 export type PromptVerbosity = 'full' | 'lean'
@@ -93,6 +93,8 @@ export interface Conversation {
   prUrl?: string
   /** Git branch name created during /complete */
   branchName?: string
+  /** Git branch the conversation was started from (for PR base branch default) */
+  sourceBranch?: string
   /** User-defined sort order for sidebar reordering */
   sortOrder?: number
   /** Specialist ID used as persona overlay (null = default specialist) */
@@ -187,6 +189,8 @@ export interface Message {
   parentMessageId?: string
   /** Which plan card action the user clicked: 'build' | 'refine' | 'save_as_idea' | 'council' */
   planAction?: string
+  /** Hidden messages are persisted for context but not shown in the chat UI (auto-send messages). */
+  hidden?: boolean
 }
 
 export interface AgentStatus {
@@ -783,6 +787,11 @@ export interface StructuredPlan {
   title: string
   summary: string
 
+  /** Clear, measurable completion condition — what "done" looks like.
+   *  Used by Claude CLI's /goal command (Haiku stop-hook evaluator)
+   *  to enforce autonomous execution until the condition is met. */
+  goal?: string
+
   // ── Diagnostic fields (bugs / investigations) ──
   problemSummary?: string
   rootCause?: string
@@ -1024,6 +1033,7 @@ export interface MemoryCaptureSettings {
   commitCapture: boolean
   docCapture: boolean
   captureBlueprints: boolean
+  capturePlans: boolean
   captureGrill: boolean
   captureDocumentsOnAttach: boolean
   watcherGlobs: string[]
@@ -1313,6 +1323,15 @@ export interface CodeGraphIndexingState {
   totalEdges: number
   currentFile: string
   error?: string
+  /**
+   * True when a guard rail silently reduced index quality (e.g. the workspace
+   * exceeded LARGE_WORKSPACE_TAG_THRESHOLD and the full graph rebuild was
+   * skipped). Previously this degradation was invisible, so the graph froze at
+   * 0 edges with no signal to the user.
+   */
+  degraded?: boolean
+  /** Human-readable explanation shown in the UI when degraded is true. */
+  degradedReason?: string
 }
 
 // ── Semantic Search / Indexing ──
@@ -1890,6 +1909,7 @@ export interface PlanRecord {
   riskCount: number
   createdAt: string
   updatedAt: string
+  completedAt: string | null
   previousPlanId: string | null
 }
 

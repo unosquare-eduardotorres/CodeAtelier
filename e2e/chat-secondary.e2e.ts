@@ -6,7 +6,7 @@
  *   - BuildSummaryCard with file counts and success/failure status
  *   - DiagnosticsPanel showing LSP errors with file/line references
  *   - InsightsSummary showing messages/tokens/cost/duration stats
- *   - TodoTaskBar rendering checklist with complete/incomplete items
+ *   - Todo items rendering in execution panel with complete/incomplete items
  *   - IdeaPopover saving a message as a workspace idea
  *   - MessageListFooter showing follow-up prompt suggestions
  *   - ImagePreviewThumbnail with lightbox click
@@ -168,9 +168,9 @@ test.describe('Chat Secondary Interactions', () => {
     expect(hasStats).toBeTruthy()
   })
 
-  // ── TodoTaskBar ──
+  // ── Todos tab in execution panel ──
 
-  test('TodoTaskBar renders checklist with complete/incomplete items', async ({
+  test('Todos tab renders checklist in execution panel', async ({
     electronPage: page
   }) => {
     const chat = await ensureWorkspaceOpen(page)
@@ -181,32 +181,39 @@ test.describe('Chat Secondary Interactions', () => {
       return
     }
 
-    const taskBar = page.locator('[data-testid="todo-task-bar"]')
-    const hasTaskBar = await taskBar.isVisible({ timeout: 5_000 }).catch(() => false)
+    // Open the execution panel via the badge toggle
+    const toggleBtn = page.locator('[data-testid="task-summary-badge-toggle"]')
+    const hasToggle = await toggleBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasTaskBar) {
-      // No todo items in current conversation
+    if (!hasToggle) {
+      // No tasks/todos badge visible
       test.skip()
       return
     }
 
-    // Should show progress count (e.g., "3/5")
-    const headerText = await taskBar.textContent()
-    expect(headerText).toMatch(/\d+\/\d+/)
+    await toggleBtn.click()
+    await page.waitForTimeout(500)
 
-    // Click to expand the task list
-    const expandBtn = taskBar.locator('button').first()
-    await expandBtn.click()
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+    const hasPanel = await panel.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
+
+    // Click the Todos tab
+    const todosTab = panel.locator('[data-testid="chat-execution-tab-todos"]')
+    await todosTab.click()
     await page.waitForTimeout(300)
 
-    // Should show individual task items
-    const taskItems = taskBar.locator('[class*="py-1"], li')
-    const itemCount = await taskItems.count()
-    expect(itemCount).toBeGreaterThan(0)
+    // Look for todo items or the empty state
+    const todoItems = panel.locator('[class*="text-text-body"], [class*="text-text-muted"]')
+    const emptyState = panel.getByText('No todos')
+    const hasItems = (await todoItems.count()) > 0
+    const hasEmpty = await emptyState.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    // Collapse again
-    await expandBtn.click()
-    await page.waitForTimeout(300)
+    // Either todo items or empty state should be visible
+    expect(hasItems || hasEmpty).toBeTruthy()
   })
 
   // ── IdeaPopover ──

@@ -154,8 +154,8 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   }, [stopGeneration])
 
   const handleCompleteConfirm = useCallback(
-    async (branchName: string, commitMessage: string, description: string) => {
-      await completeConversation(branchName, commitMessage, description)
+    async (branchName: string, commitMessage: string, description: string, baseBranch?: string) => {
+      await completeConversation(branchName, commitMessage, description, baseBranch)
       setShowCompleteDialog(false)
     },
     [completeConversation]

@@ -67,6 +67,9 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
   /** Strategy B: Pending compaction per conversation */
   private pendingCompaction: Map<string, string> = new Map()
 
+  // ── Goal State (per-conversation, consumed on next send) ────────
+  private pendingGoals = new Map<string, { goal: string; mode: 'advisory' | 'enforce' }>()
+
   constructor(params: { workspaceId: string; agentId?: string }) {
     super()
     this.workspaceId = params.workspaceId
@@ -261,6 +264,7 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
     this.pendingModeSwitch = null
     this.pendingContextInjection.clear()
     this.pendingCompaction.clear()
+    this.pendingGoals.clear()
   }
 
   /** Refresh the cached specialist row from the DB. */
@@ -318,6 +322,42 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
 
   getMode(): ConversationMode {
     return 'plan'
+  }
+
+  // ── Goal Condition Methods ──
+
+  /**
+   * Queue a /goal condition for the next send on this conversation.
+   * Consumed (auto-cleared) by consumeGoalForConversation() during _doSend().
+   */
+  setGoalCondition(conversationId: string, goal: string, mode: 'advisory' | 'enforce' = 'enforce'): void {
+    this.pendingGoals.set(conversationId, { goal, mode })
+  }
+
+  /**
+   * Read and consume the pending goal for a conversation.
+   * Returns null if no goal was queued. One-shot: clears after read.
+   */
+  consumeGoalForConversation(conversationId: string): { goal: string; mode: 'advisory' | 'enforce' } | null {
+    const pending = this.pendingGoals.get(conversationId)
+    if (pending) {
+      this.pendingGoals.delete(conversationId)
+      return pending
+    }
+    return null
+  }
+
+  /**
+   * Duck-type compat: getGoalCondition() returns null for ProjectSpecialist.
+   * Chat goals are consumed via consumeGoalForConversation() in _doSend,
+   * NOT via this method. Blueprint/MPA adapters use getGoalCondition() directly.
+   */
+  getGoalCondition(): string | null {
+    return null
+  }
+
+  getGoalMode(): 'advisory' | 'enforce' {
+    return 'advisory'
   }
 
   // ── Pending State Management ──
@@ -378,6 +418,7 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
   clearConversation(conversationId: string): void {
     this.pendingContextInjection.delete(conversationId)
     this.pendingCompaction.delete(conversationId)
+    this.pendingGoals.delete(conversationId)
   }
 
   // ── Private Helpers ──

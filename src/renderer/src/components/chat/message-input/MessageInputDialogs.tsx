@@ -16,7 +16,8 @@ interface MessageInputDialogsProps {
   onCompleteConfirm: (
     branchName: string,
     commitMessage: string,
-    description: string
+    description: string,
+    baseBranch?: string
   ) => Promise<void>
   onCompleteClose: () => Promise<void>
   onCompleteCancel: () => void

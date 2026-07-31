@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { Search, X, Bot, ClipboardList, Hammer, Skull, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Search, X, Bot, ClipboardList, Hammer, Skull, AlertTriangle, Layers } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -23,9 +23,10 @@ import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
-import TodoTaskBar from './TodoTaskBar'
-import PlanProgressBar from './PlanProgressBar'
-import TaskExecutionBar from './TaskExecutionBar'
+import ContextUsageIndicator from './ContextUsageIndicator'
+import TaskSummaryBadge from './TaskSummaryBadge'
+import ChatExecutionPanel from './ChatExecutionPanel'
+import { usePlanExecutionStore, type PlanExecution } from '@renderer/store/plan-execution.store'
 import {
   StackDriftBanner,
   BuildProgressInline,
@@ -78,6 +79,48 @@ const MODE_CYCLE: Record<ConversationMode, ConversationMode> = {
   plan: 'build',
   build: 'danger',
   danger: 'plan'
+}
+
+// ── PanelToggleButton ────────────────────────────────────────────────────
+
+function PanelToggleButton({
+  panelOpen,
+  onToggle,
+  tasksDone,
+  taskTotal,
+  hasContent
+}: {
+  panelOpen: boolean
+  onToggle: () => void
+  tasksDone: number
+  taskTotal: number
+  hasContent: boolean
+}): React.JSX.Element | null {
+  // Only show when there's plan/task/todo content
+  if (!hasContent) return null
+
+  return (
+    <button
+      type="button"
+      data-testid="chat-panel-toggle"
+      aria-expanded={panelOpen}
+      aria-label={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
+      onClick={onToggle}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+        panelOpen
+          ? 'bg-accent/15 text-accent border-accent/30'
+          : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
+      }`}
+      title={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
+    >
+      <Layers size={14} />
+      {taskTotal > 0 && (
+        <span className="text-[10px] font-mono bg-surface-inset px-1 py-0.5 rounded">
+          {tasksDone}/{taskTotal}
+        </span>
+      )}
+    </button>
+  )
 }
 
 // ── ModeCyclePill ────────────────────────────────────────────────────────
@@ -341,7 +384,8 @@ function EmptyConversationState({
     mode: ConversationMode
     communicationTone?: import('../../../../shared/types').CommunicationTone | null
     attachments?: string[]
-    useIsolatedBranch?: boolean
+    branchName?: string
+    autoBranch?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
     sourceAuditRunId?: string
@@ -389,6 +433,80 @@ export default function ChatPanel({
   const [showSearch, setShowSearch] = useState(false)
   const [activeTab, setActiveTab] = useState<ChatTab>('chat')
   const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Execution panel state (persisted to localStorage) ──
+  const [panelOpen, setPanelOpen] = useState(() => {
+    const saved = localStorage.getItem('chat-panel-open')
+    return saved === 'true'
+  })
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const saved = localStorage.getItem('chat-panel-width')
+    return saved ? Math.min(800, Math.max(280, parseInt(saved, 10))) : 360
+  })
+
+  useEffect(() => {
+    localStorage.setItem('chat-panel-open', String(panelOpen))
+  }, [panelOpen])
+
+  // ── Auto-open panel when first plan arrives ──
+  const latestPlan = usePlanExecutionStore(
+    useCallback(
+      (s: { latestPlanContent: Record<string, string> }) =>
+        activeConversation ? s.latestPlanContent[activeConversation.id] ?? null : null,
+      [activeConversation?.id]
+    )
+  )
+  const prevLatestPlanRef = useRef(latestPlan)
+  const [autoOpenedForPlan, setAutoOpenedForPlan] = useState(false)
+
+  // ── Header panel toggle data ──
+  const headerExecution = usePlanExecutionStore(
+    useCallback(
+      (s: { executions: Record<string, PlanExecution> }) =>
+        activeConversation ? s.executions[activeConversation.id] : undefined,
+      [activeConversation?.id]
+    )
+  )
+  const headerAllTasks = headerExecution?.phases.flatMap((p) => p.tasks) ?? []
+  const headerTasksDone = headerAllTasks.filter(
+    (t) => t.status === 'complete' || t.status === 'skipped'
+  ).length
+  const headerTaskTotal = headerAllTasks.length
+  const headerHasContent = !!latestPlan || headerTaskTotal > 0
+
+  // Reset plan tracking on conversation switch to prevent false auto-opens
+  useEffect(() => {
+    prevLatestPlanRef.current = latestPlan
+  }, [activeConversation?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset autoOpenedForPlan on conversation change (separate from ref reset to avoid setState-in-effect lint)
+  const prevConvIdRef = useRef(activeConversation?.id)
+  if (prevConvIdRef.current !== activeConversation?.id) {
+    prevConvIdRef.current = activeConversation?.id
+    if (autoOpenedForPlan) setAutoOpenedForPlan(false)
+  }
+
+  useEffect(() => {
+    // Auto-open panel when plan content appears for the first time
+    if (latestPlan && !prevLatestPlanRef.current && !panelOpen) {
+      setPanelOpen(true)
+      setAutoOpenedForPlan(true)
+    }
+    prevLatestPlanRef.current = latestPlan
+  }, [latestPlan]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Narrow viewport guard ──
+  useEffect(() => {
+    if (!panelOpen) return
+    const check = (): void => {
+      if (window.innerWidth - panelWidth < 360) {
+        setPanelOpen(false)
+      }
+    }
+    window.addEventListener('resize', check)
+    check() // initial check
+    return () => window.removeEventListener('resize', check)
+  }, [panelOpen, panelWidth])
 
   // ── Extracted hooks ──
   const { projectSpecialist, generateModalOpen, handleDismissGenerate } = useChatPanelEffects()
@@ -439,7 +557,8 @@ export default function ChatPanel({
     mode: ConversationMode
     communicationTone?: import('../../../../shared/types').CommunicationTone | null
     attachments?: string[]
-    useIsolatedBranch?: boolean
+    branchName?: string
+    autoBranch?: boolean
     llmProvider?: string
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
@@ -455,14 +574,11 @@ export default function ChatPanel({
       data.routingOverrides,
       data.mcpOverrides,
       data.communicationTone,
-      data.sourceAuditRunId
+      data.sourceAuditRunId,
+      data.branchName,
+      data.autoBranch
     )
     onNewChatDismiss?.()
-    if (data.useIsolatedBranch) {
-      console.info(
-        '[NewConversationModal] Isolated branch requested — worktree integration pending'
-      )
-    }
     // Send when there is a description OR attachments — an image-only creation
     // (title + pasted screenshot, no text) must not silently drop the image.
     const body = data.description?.trim() ?? ''
@@ -497,7 +613,7 @@ export default function ChatPanel({
 
   // Filter messages for search
   const filteredMessages = searchQuery
-    ? messages.filter((m) => m.contentMd.toLowerCase().includes(searchQuery.toLowerCase()))
+    ? messages.filter((m) => !m.hidden && m.contentMd.toLowerCase().includes(searchQuery.toLowerCase()))
     : []
 
   return (
@@ -523,6 +639,9 @@ export default function ChatPanel({
           </div>
           {activeTab === 'chat' && (
             <div className="flex items-center gap-2">
+              {activeConversation && (
+                <ContextUsageIndicator conversationId={activeConversation.id} />
+              )}
               <ModelConfigPopover
                 snapshot={activeConversation?.modelConfigSnapshot ?? null}
                 providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
@@ -541,6 +660,13 @@ export default function ChatPanel({
                 }}
               />
               <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
+              <PanelToggleButton
+                panelOpen={panelOpen}
+                onToggle={() => { setPanelOpen(!panelOpen); setAutoOpenedForPlan(false) }}
+                tasksDone={headerTasksDone}
+                taskTotal={headerTaskTotal}
+                hasContent={headerHasContent}
+              />
             </div>
           )}
         </div>
@@ -604,68 +730,92 @@ export default function ChatPanel({
 
             <RepoWarningBanner onNavigateToSettings={onNavigateToSettings} />
 
-            {agentStatus === 'starting' ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
-                <div className="relative mb-6">
-                  <div className="w-16 h-16 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
-                  <div className="w-16 h-16 rounded-full bg-primary-muted border border-primary/40 flex items-center justify-center relative">
-                    <Bot size={28} className="text-primary-text animate-pulse" />
+            <div
+              className="flex-1 flex min-h-0"
+              style={
+                panelOpen
+                  ? { display: 'grid', gridTemplateColumns: `minmax(0,1fr) ${panelWidth}px` }
+                  : undefined
+              }
+            >
+              {/* Column 1: Chat */}
+              <div className="flex-1 flex flex-col min-h-0 min-w-0">
+                {agentStatus === 'starting' ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
+                    <div className="relative mb-6">
+                      <div className="w-16 h-16 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
+                      <div className="w-16 h-16 rounded-full bg-primary-muted border border-primary/40 flex items-center justify-center relative">
+                        <Bot size={28} className="text-primary-text animate-pulse" />
+                      </div>
+                    </div>
+                    <h3 className="text-lg font-medium text-text-primary mb-2">
+                      Initializing AI Agent...
+                    </h3>
+                    <p className="text-sm text-text-secondary max-w-sm">
+                      Setting up the workspace context and initializing the AI agent. This may take a
+                      few seconds.
+                    </p>
+                    <div className="mt-4 flex items-center gap-2">
+                      <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
+                      <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
+                      <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
+                    </div>
                   </div>
-                </div>
-                <h3 className="text-lg font-medium text-text-primary mb-2">
-                  Initializing AI Agent...
-                </h3>
-                <p className="text-sm text-text-secondary max-w-sm">
-                  Setting up the workspace context and initializing the AI agent. This may take a
-                  few seconds.
-                </p>
-                <div className="mt-4 flex items-center gap-2">
-                  <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
-                  <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
-                  <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
+                ) : (
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <MessageList searchQuery={searchQuery} />
+                  </div>
+                )}
+
+                {/* Floating pill bar — mode pill + MCP pills overlaid above input */}
+                {activeConversation && (
+                  <FloatingPillBar
+                    conversation={activeConversation}
+                    isStreaming={isStreaming}
+                    effortLevel={effortLevels[activeConversation.id] ?? ('medium' as const)}
+                    mcpIntegrations={availableMcpIntegrations}
+                    onCycleMode={() => updateMode(MODE_CYCLE[activeConversation.mode])}
+                    onSetEffort={(effort) => setEffort(activeConversation.id, effort)}
+                    onMcpToggle={handleMcpToggle}
+                  />
+                )}
+
+                {activeConversation && (
+                  <TaskSummaryBadge
+                    conversationId={activeConversation.id}
+                    panelOpen={panelOpen}
+                    onTogglePanel={() => { setPanelOpen(!panelOpen); setAutoOpenedForPlan(false) }}
+                  />
+                )}
+
+                <div className="flex-shrink-0 px-6 pb-4 pt-2">
+                  <AttachmentDropzone
+                    attachments={attachments}
+                    onAttachmentsChange={setAttachments}
+                    conversationId={activeConversation.id}
+                  >
+                    <MessageInput
+                      attachments={attachments}
+                      onClearAttachments={() => setAttachments([])}
+                      onStartGrillMe={onStartGrillMe}
+                    />
+                  </AttachmentDropzone>
                 </div>
               </div>
-            ) : (
-              <div className="flex-1 flex flex-col min-h-0">
-                <MessageList searchQuery={searchQuery} />
-              </div>
-            )}
 
-            {/* Floating pill bar — mode pill + MCP pills overlaid above input */}
-            {activeConversation && (
-              <FloatingPillBar
-                conversation={activeConversation}
-                isStreaming={isStreaming}
-                effortLevel={effortLevels[activeConversation.id] ?? ('medium' as const)}
-                mcpIntegrations={availableMcpIntegrations}
-                onCycleMode={() => updateMode(MODE_CYCLE[activeConversation.mode])}
-                onSetEffort={(effort) => setEffort(activeConversation.id, effort)}
-                onMcpToggle={handleMcpToggle}
-              />
-            )}
-
-            {activeConversation && (
-              <PlanProgressBar key={activeConversation.id} conversationId={activeConversation.id} />
-            )}
-            {activeConversation && (
-              <TaskExecutionBar key={`tasks-${activeConversation.id}`} conversationId={activeConversation.id} />
-            )}
-            {activeConversation && (
-              <TodoTaskBar key={activeConversation.id} conversationId={activeConversation.id} />
-            )}
-
-            <div className="flex-shrink-0 px-6 pb-4 pt-2">
-              <AttachmentDropzone
-                attachments={attachments}
-                onAttachmentsChange={setAttachments}
-                conversationId={activeConversation.id}
-              >
-                <MessageInput
-                  attachments={attachments}
-                  onClearAttachments={() => setAttachments([])}
-                  onStartGrillMe={onStartGrillMe}
+              {/* Column 2: Execution Panel (collapsible) */}
+              {panelOpen && activeConversation && (
+                <ChatExecutionPanel
+                  key={activeConversation.id}
+                  conversationId={activeConversation.id}
+                  initialTab={autoOpenedForPlan ? 'plan' : undefined}
+                  onClose={() => { setPanelOpen(false); setAutoOpenedForPlan(false) }}
+                  onResize={(width) => {
+                    setPanelWidth(width)
+                    localStorage.setItem('chat-panel-width', String(width))
+                  }}
                 />
-              </AttachmentDropzone>
+              )}
             </div>
           </>
         )}

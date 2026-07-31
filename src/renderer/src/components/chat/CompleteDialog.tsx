@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { GitBranch, FileText, Loader2, AlertTriangle } from 'lucide-react'
-import { useWorkspaceStore } from '@renderer/store'
+import { useChatStore, useWorkspaceStore } from '@renderer/store'
 import InsightsSummary, { type ConversationInsights } from './InsightsSummary'
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -38,6 +38,10 @@ function getRepoConfigLabels(
 interface DialogInitState {
   branchName: string
   setBranchName: (v: string) => void
+  baseBranch: string
+  setBaseBranch: (v: string) => void
+  branches: { local: string[]; remote: string[]; current: string } | null
+  branchesLoading: boolean
   commitMessage: string
   setCommitMessage: (v: string) => void
   prDescription: string
@@ -62,6 +66,9 @@ function useCompleteDialogInit(
   onCancel: () => void
 ): DialogInitState & { userEditedRef: React.MutableRefObject<boolean> } {
   const [branchName, setBranchName] = useState('')
+  const [baseBranch, setBaseBranch] = useState('')
+  const [branches, setBranches] = useState<{ local: string[]; remote: string[]; current: string } | null>(null)
+  const [branchesLoading, setBranchesLoading] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [prDescription, setPrDescription] = useState('')
   const [fileChanges, setFileChanges] = useState<Array<{ filePath: string; changeType: string }>>(
@@ -81,14 +88,50 @@ function useCompleteDialogInit(
     if (!isOpen) return
     let cancelled = false
 
-    // Pre-fill branch name from chat title
-    const slug = conversationTitle
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 50)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setBranchName(`chat/${slug}-${conversationId.slice(0, 8)}`)
+    // Pre-fill branch name: prefer existing conversation branch, else generate
+    const activeConv = useChatStore.getState().activeConversation
+    if (activeConv?.branchName) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBranchName(activeConv.branchName)
+    } else {
+      const slug = conversationTitle
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 50)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBranchName(`chat/${slug}-${conversationId.slice(0, 8)}`)
+    }
+
+    // Pre-fill base branch: stored source branch > current branch from repoInfo
+    const { repoInfo, activeWorkspace } = useWorkspaceStore.getState()
+    const sourceBranch = activeConv?.sourceBranch
+    setBaseBranch(sourceBranch || repoInfo?.currentBranch || 'main')
+
+    // Load available branches for the dropdown
+    if (activeWorkspace?.id) {
+      setBranchesLoading(true)
+      window.api
+        .listBranches({ workspaceId: activeWorkspace.id })
+        .then((result) => {
+          if (cancelled) return
+          setBranches(result)
+          setBranchesLoading(false)
+          // If source branch is set but doesn't exist in results, fall back to current
+          if (
+            sourceBranch &&
+            !result.local.includes(sourceBranch) &&
+            !result.remote.includes(sourceBranch)
+          ) {
+            setBaseBranch(result.current || 'main')
+          }
+        })
+        .catch((err) => {
+          if (cancelled) return
+          console.warn('[CompleteDialog] Branch list load failed:', err)
+          setBranchesLoading(false)
+        })
+    }
 
     // Pre-fill commit message
     setCommitMessage(conversationTitle)
@@ -169,6 +212,10 @@ function useCompleteDialogInit(
   return {
     branchName,
     setBranchName,
+    baseBranch,
+    setBaseBranch,
+    branches,
+    branchesLoading,
     commitMessage,
     setCommitMessage,
     prDescription,
@@ -196,7 +243,7 @@ interface CompleteDialogProps {
   isOpen: boolean
   conversationTitle: string
   conversationId: string
-  onConfirm: (branchName: string, commitMessage: string, description: string) => Promise<void>
+  onConfirm: (branchName: string, commitMessage: string, description: string, baseBranch?: string) => Promise<void>
   onClose: () => Promise<void>
   onCancel: () => void
 }
@@ -213,6 +260,10 @@ export default function CompleteDialog({
   const {
     branchName,
     setBranchName,
+    baseBranch,
+    setBaseBranch,
+    branches,
+    branchesLoading,
     commitMessage,
     setCommitMessage,
     prDescription,
@@ -251,7 +302,7 @@ export default function CompleteDialog({
     setIsSubmitting(true)
     setError(null)
     try {
-      await onConfirm(branchName.trim(), commitMessage.trim(), prDescription.trim())
+      await onConfirm(branchName.trim(), commitMessage.trim(), prDescription.trim(), baseBranch.trim() || undefined)
     } catch (e) {
       setError((e as Error).message)
       setIsSubmitting(false)
@@ -300,6 +351,40 @@ export default function CompleteDialog({
               className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
               placeholder="chat/my-feature"
             />
+          </div>
+
+          {/* Target branch (base for PR) */}
+          <div className="mb-4">
+            <label htmlFor="base-branch" className="block text-sm font-medium text-text-body mb-1.5">
+              Target branch
+              <span className="text-xs text-text-muted font-normal ml-1">(merge into)</span>
+            </label>
+            <div className="relative">
+              <input
+                id="base-branch"
+                data-testid="complete-dialog-base-branch"
+                type="text"
+                list={`branch-options-${conversationId}`}
+                value={baseBranch}
+                onChange={(e) => setBaseBranch(e.target.value)}
+                disabled={isSubmitting}
+                className="w-full px-3 py-2 bg-surface-base border border-border-default rounded-lg text-text-body text-sm font-mono placeholder-text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50"
+                placeholder="main"
+              />
+              {branchesLoading && (
+                <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-text-muted" />
+              )}
+            </div>
+            {branches && (
+              <datalist id={`branch-options-${conversationId}`}>
+                {branches.local
+                  .filter(b => b !== branchName)
+                  .map(b => <option key={`local:${b}`} value={b} />)}
+                {branches.remote
+                  .filter(b => !branches.local.includes(b))
+                  .map(b => <option key={`remote:${b}`} value={b} />)}
+              </datalist>
+            )}
           </div>
 
           {/* Commit message input */}

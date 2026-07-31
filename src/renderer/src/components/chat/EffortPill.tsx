@@ -1,4 +1,4 @@
-import { Zap, Settings, Brain } from 'lucide-react'
+import { Zap, Settings, Brain, Flame, Rocket } from 'lucide-react'
 import type { ThinkingEffort } from '../../../../shared/types'
 
 const EFFORT_CONFIG = {
@@ -20,10 +20,22 @@ const EFFORT_CONFIG = {
     label: 'High',
     tintClass: 'bg-purple-500/15 text-purple-400 border-purple-500/40 hover:bg-purple-500/25',
     title: 'Deep reasoning chains'
+  },
+  xhigh: {
+    icon: Flame,
+    label: 'X-High',
+    tintClass: 'bg-orange-500/15 text-orange-400 border-orange-500/40 hover:bg-orange-500/25',
+    title: 'Extended reasoning — slower, more thorough'
+  },
+  max: {
+    icon: Rocket,
+    label: 'Max',
+    tintClass: 'bg-red-500/15 text-red-400 border-red-500/40 hover:bg-red-500/25',
+    title: 'Maximum thinking budget — deepest reasoning'
   }
 } as const
 
-const CYCLE_ORDER: ThinkingEffort[] = ['low', 'medium', 'high']
+const CYCLE_ORDER: ThinkingEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
 interface EffortPillProps {
   effort: ThinkingEffort

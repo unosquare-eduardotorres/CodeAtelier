@@ -123,6 +123,18 @@ class PromptOptimizerService {
   }
 
   /**
+   * Pre-warm the background CLI session for prompt optimization.
+   * Call at app startup to eliminate cold-start latency on the first optimize() call.
+   * If the user has a custom model override, the first optimize() call will
+   * kill and respawn with the correct model (via setModel's change detection).
+   */
+  async warmup(): Promise<void> {
+    backgroundCliSession.setSystemPrompt(META_PROMPT)
+    backgroundCliSession.setModel('claude-haiku-4-5-20251001')
+    await backgroundCliSession.warmup()
+  }
+
+  /**
    * Optimize a user prompt for clarity before dispatch.
    * Returns the original text unchanged when any guard triggers or on error.
    */
@@ -170,9 +182,11 @@ class PromptOptimizerService {
             '--model', model,
             '--system-prompt', META_PROMPT,
             '--permission-mode', 'plan',
-            '--max-turns', '1'
+            '--max-turns', '1',
+            '--tools', '',
+            '--no-session-persistence'
           ],
-          cli: { timeout: 15_000 },
+          cli: { timeout: 60_000 },
           _runner: this._runner
         })
         responseText = t
@@ -183,7 +197,7 @@ class PromptOptimizerService {
           backgroundCliSession.setModel(model)
           const { text: t, usage } = await backgroundCliSession.run({
             userMessage: wrappedPrompt,
-            timeoutMs: 15_000
+            timeoutMs: 45_000
           })
           responseText = t
 
@@ -209,9 +223,11 @@ class PromptOptimizerService {
               '--model', model,
               '--system-prompt', META_PROMPT,
               '--permission-mode', 'plan',
-              '--max-turns', '1'
+              '--max-turns', '1',
+              '--tools', '',
+              '--no-session-persistence'
             ],
-            cli: { timeout: 15_000 }
+            cli: { timeout: 60_000 }
           })
           responseText = t
         }
@@ -219,8 +235,12 @@ class PromptOptimizerService {
 
       return this.parseResponse(responseText, text)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      optimizerLog.warn('[optimize] Claude CLI call failed, using original:', msg)
+      const rawMsg = err instanceof Error ? err.message : String(err)
+      // Truncate "Command failed: claude -p <...500+ chars of system prompt...>" to something readable
+      const msg = rawMsg.startsWith('Command failed:')
+        ? rawMsg.slice(0, 120) + (rawMsg.length > 120 ? '…' : '')
+        : rawMsg
+      optimizerLog.warn('[optimize] Claude CLI call failed, using original:', rawMsg)
       return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: msg }
     }
   }

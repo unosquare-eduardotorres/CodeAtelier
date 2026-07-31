@@ -5,21 +5,29 @@
  * no class dependencies.
  */
 
+import { excludedDirGlobs, matchesSkipPattern } from '../code-graph-exclusions'
+
+// Re-exported so existing importers of this module keep working.
+export { matchesSkipPattern }
+
 // ── Skip Patterns ──
 
 export const SKIP_PATTERNS = [
+  // Directory exclusions derived from the shared source of truth
+  // (ADDITIONAL_EXCLUDED_DIRS) so the code graph and the embedding pipeline
+  // can never drift apart again. Covers bin, obj, packages, BuildSystem,
+  // Tools, ThirdParty, NuGet, .vs, artifacts, publish, Debug, Release, etc.
+  ...excludedDirGlobs(),
+
   // Package managers
   '**/node_modules/**',
   '**/vendor/**',
   '**/.pnp/**',
 
-  // Build output
+  // Build output not covered by the shared directory set
   '**/dist/**',
   '**/build/**',
-  '**/out/**',
   '**/.next/**',
-  '**/bin/**',
-  '**/obj/**',
 
   // Generated files
   '**/*.generated.ts',
@@ -55,27 +63,8 @@ export const SKIP_PATTERNS = [
   '**/*.ttf'
 ]
 
-/**
- * Check if a file path matches any of the skip patterns using simple glob matching.
- * Patterns use ** for any path segment(s) and * for any non-/ characters.
- */
-export function matchesSkipPattern(filePath: string, patterns: string[]): boolean {
-  const normalized = filePath.replace(/\\/g, '/')
-  for (const pattern of patterns) {
-    // Convert glob to regex using placeholder to avoid double-replacement
-    const regexStr = pattern
-      .replace(/\*\*/g, '\0GLOBSTAR\0') // placeholder for **
-      .replace(/\*/g, '[^/]*') // * → non-slash chars
-      .replace(/\./g, '\\.') // escape dots
-      .replace(/\0GLOBSTAR\0\//g, '(?:.+/)?') // **/ → optional prefix ending in /
-      .replace(/\/\0GLOBSTAR\0/g, '(?:/.+)?') // /** → optional suffix starting with /
-      .replace(/\0GLOBSTAR\0/g, '.*') // ** standalone → anything
-    if (new RegExp(`^${regexStr}$`).test(normalized)) {
-      return true
-    }
-  }
-  return false
-}
+// matchesSkipPattern now lives in ../code-graph-exclusions (single source of
+// truth shared with the code graph indexer) and is re-exported above.
 
 /**
  * Stage 1: Determine if a file should be skipped from indexing.

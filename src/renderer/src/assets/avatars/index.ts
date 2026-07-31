@@ -14,24 +14,6 @@ import caAuditor from './code-atelier/atelier-auditor.png'
 import caGrillme from './code-atelier/grillme.png'
 import caMain from './code-atelier/mannequin-main.png'
 
-// ── Glass set ──
-import glUser1 from './glass/user-1.png'
-import glUser2 from './glass/user-2.png'
-import glUser3 from './glass/user-3.png'
-import glDaVinci from './glass/da-vinci.png'
-import glAuditor from './glass/atelier-auditor.png'
-import glGrillme from './glass/grillme.png'
-import glMain from './glass/mannequin-main.png'
-
-// ── Porcelain set ──
-import pcUser1 from './porcelain/user-1.png'
-import pcUser2 from './porcelain/user-2.png'
-import pcUser3 from './porcelain/user-3.png'
-import pcDaVinci from './porcelain/da-vinci.png'
-import pcAuditor from './porcelain/atelier-auditor.png'
-import pcGrillme from './porcelain/grillme.png'
-import pcMain from './porcelain/mannequin-main.png'
-
 export type AvatarKey =
   | 'user-1'
   | 'user-2'
@@ -40,10 +22,6 @@ export type AvatarKey =
   | 'atelier-auditor'
   | 'grillme'
   | 'mannequin-main'
-  | 'mannequin-2'
-  | 'mannequin-3'
-  | 'mannequin-4'
-  | 'mannequin-5'
 
 const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
   'code-atelier': {
@@ -53,37 +31,25 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'da-vinci': caDaVinci,
     'atelier-auditor': caAuditor,
     grillme: caGrillme,
-    'mannequin-main': caMain,
-    'mannequin-2': caMain,
-    'mannequin-3': caMain,
-    'mannequin-4': caMain,
-    'mannequin-5': caMain
+    'mannequin-main': caMain
   },
   glass: {
-    'user-1': glUser1,
-    'user-2': glUser2,
-    'user-3': glUser3,
-    'da-vinci': glDaVinci,
-    'atelier-auditor': glAuditor,
-    grillme: glGrillme,
-    'mannequin-main': glMain,
-    'mannequin-2': glMain,
-    'mannequin-3': glMain,
-    'mannequin-4': glMain,
-    'mannequin-5': glMain
+    'user-1': caUser1,
+    'user-2': caUser2,
+    'user-3': caUser3,
+    'da-vinci': caDaVinci,
+    'atelier-auditor': caAuditor,
+    grillme: caGrillme,
+    'mannequin-main': caMain
   },
   porcelain: {
-    'user-1': pcUser1,
-    'user-2': pcUser2,
-    'user-3': pcUser3,
-    'da-vinci': pcDaVinci,
-    'atelier-auditor': pcAuditor,
-    grillme: pcGrillme,
-    'mannequin-main': pcMain,
-    'mannequin-2': pcMain,
-    'mannequin-3': pcMain,
-    'mannequin-4': pcMain,
-    'mannequin-5': pcMain
+    'user-1': caUser1,
+    'user-2': caUser2,
+    'user-3': caUser3,
+    'da-vinci': caDaVinci,
+    'atelier-auditor': caAuditor,
+    grillme: caGrillme,
+    'mannequin-main': caMain
   },
   // Developer theme reuses Code Atelier avatars (neutral palette works well)
   developer: {
@@ -93,11 +59,7 @@ const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
     'da-vinci': caDaVinci,
     'atelier-auditor': caAuditor,
     grillme: caGrillme,
-    'mannequin-main': caMain,
-    'mannequin-2': caMain,
-    'mannequin-3': caMain,
-    'mannequin-4': caMain,
-    'mannequin-5': caMain
+    'mannequin-main': caMain
   }
 }
 
@@ -123,11 +85,8 @@ export const USER_AVATAR_OPTIONS: readonly {
   { variant: '3', label: 'The Inventor', description: 'Workshop inventor with brass goggles' }
 ] as const
 
-/** Ordered list of mannequin keys for per-workspace rotation (cycles every 5). */
+/** Ordered mannequin keys for per-workspace rotation.
+ *  Currently one portrait — add keys here when new mannequin images are created. */
 export const MANNEQUIN_ROTATION: readonly AvatarKey[] = [
-  'mannequin-main',
-  'mannequin-2',
-  'mannequin-3',
-  'mannequin-4',
-  'mannequin-5'
+  'mannequin-main'
 ] as const

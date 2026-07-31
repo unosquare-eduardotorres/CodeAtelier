@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
-import { detectPlanIntent } from '@renderer/utils/plan-intent-detector'
+import { detectPlanIntent, detectComplexTask } from '@renderer/utils/plan-intent-detector'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import { useWorkspaceStore } from './workspace.store'
 import { useTodoStore } from './todo.store'
@@ -49,6 +49,11 @@ export type { PerConversationStreamState } from './chat-action-utils'
 export interface ChatState {
   conversations: Conversation[]
   activeConversation: Conversation | null
+  /**
+   * All messages for the active conversation, including hidden (auto-sent) ones.
+   * Consumers that display or count messages for the user MUST filter with `!m.hidden`.
+   * Hidden messages are kept because plan detection and LLM context reconstruction need them.
+   */
   messages: Message[]
   streamingContent: string
   streamingRole: 'specialist'
@@ -116,14 +121,16 @@ export interface ChatState {
     routingOverrides?: Partial<ModelRoleMap>,
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null,
-    sourceAuditRunId?: string
+    sourceAuditRunId?: string,
+    branchName?: string,
+    autoBranch?: boolean
   ) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
   updateMode: (mode: ConversationMode) => Promise<void>
   renameConversation: (id: string, title: string) => Promise<void>
   stopGeneration: () => Promise<void>
-  sendMessage: (text: string, attachments?: string[]) => Promise<void>
+  sendMessage: (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => Promise<void>
   appendStreamChunk: (
     chunk: string,
     role?: 'specialist',
@@ -180,7 +187,8 @@ export interface ChatState {
   completeConversation: (
     branchName: string,
     commitMessage: string,
-    description: string
+    description: string,
+    baseBranch?: string
   ) => Promise<CompleteResult>
   closeConversation: (id: string) => Promise<void>
 
@@ -216,6 +224,8 @@ export interface ChatState {
     blockedConvTitle: string | undefined
     retryText: string
     retryAttachments?: string[]
+    /** Preserve hidden/skipOptimizer so retry replays them */
+    retryOptions?: { hidden?: boolean; skipOptimizer?: boolean }
     /** MULTI-CHAT-06: Track the optimistic message ID so we can remove it on dismiss */
     optimisticMessageId?: string
   } | null
@@ -338,7 +348,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     routingOverrides?: Partial<ModelRoleMap>,
     mcpOverrides?: Record<string, boolean>,
     communicationTone?: CommunicationTone | null,
-    sourceAuditRunId?: string
+    sourceAuditRunId?: string,
+    branchName?: string,
+    autoBranch?: boolean
   ) => {
     const conversation = await window.api.createConversation({
       workspaceId,
@@ -349,7 +361,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       routingOverrides,
       mcpOverrides,
       communicationTone,
-      sourceAuditRunId
+      sourceAuditRunId,
+      branchName,
+      autoBranch
     })
     // GAP-R5-1: Stash streaming state of the current conversation before switching.
     // Without this, creating a new conv while viewing a streaming one loses the
@@ -611,6 +625,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         startExecution(id, {
           planId: phaseData.planId,
           title: phaseData.planTitle,
+          planGoal: phaseData.planGoal,
           phases: phaseData.phases
         })
         for (const p of phaseData.progress) {
@@ -729,7 +744,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     internals.resetAccumulator()
   },
 
-  sendMessage: async (text: string, attachments?: string[]) => {
+  sendMessage: async (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => {
     const { activeConversation, updateMode, isStreaming: alreadyStreaming, isSending } = get()
     // SEND-RACE-01: Guard against rapid double-clicks. isSending is set synchronously
     // before the async IPC call, so it can't be bypassed by stale React closures.
@@ -756,19 +771,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       internals.bumpGeneration()
 
       // Auto-detect plan intent in build mode → switch to plan
-      if (activeConversation.mode === 'build' && detectPlanIntent(text)) {
+      if (activeConversation.mode === 'build' && (detectPlanIntent(text) || detectComplexTask(text))) {
         await updateMode('plan')
       }
 
-      const optimisticMessage = createOptimisticUserMessage(activeConversation.id, text, attachments)
+      const isHidden = options?.hidden === true
+      const optimisticMessage = isHidden ? null : createOptimisticUserMessage(activeConversation.id, text, attachments)
 
       set((state) => ({
         // MULTI-CHAT-06: Remove stale optimistic message from a previous blocked-by attempt
         // before appending the new one (edge case: blocking conv finishes naturally, user re-sends)
-        messages: [
-          ...state.messages.filter((m) => m.id !== state.blockedByBanner?.optimisticMessageId),
-          optimisticMessage
-        ],
+        messages: optimisticMessage
+          ? [
+              ...state.messages.filter((m) => m.id !== state.blockedByBanner?.optimisticMessageId),
+              optimisticMessage
+            ]
+          : state.messages.filter((m) => m.id !== state.blockedByBanner?.optimisticMessageId),
         isStreaming: true,
         streamingContent: '',
         streamingSegments: [],
@@ -792,7 +810,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const result = await window.api.sendMessage({
           conversationId: activeConversation.id,
           text,
-          attachments
+          attachments,
+          skipOptimizer: options?.skipOptimizer,
+          hidden: options?.hidden
         })
         // Set the backend-generated requestId so chunk filtering works correctly
         set({ activeRequestId: result.requestId })
@@ -821,8 +841,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 blockedConvTitle,
                 retryText: text,
                 retryAttachments: attachments,
+                retryOptions: options,
                 // MULTI-CHAT-06: Track optimistic message for cleanup on dismiss/retry
-                optimisticMessageId: optimisticMessage.id
+                optimisticMessageId: optimisticMessage?.id
               },
               ...buildStreamingResetState(conv.id, state.streamingConversationIds)
             }))
@@ -914,7 +935,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { budgetCapBanner, activeConversation, isStreaming, isSending } = get()
     if (!budgetCapBanner || !activeConversation || isStreaming || isSending) return
     set({ budgetCapBanner: null })
-    void get().sendMessage('Continue where you left off.')
+    void get().sendMessage('Continue where you left off.', undefined, { hidden: true, skipOptimizer: true })
   },
 
   dismissBudgetCap: () => set({ budgetCapBanner: null }),
@@ -938,7 +959,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   stopBlockingChat: async () => {
     const { blockedByBanner, sendMessage } = get()
     if (!blockedByBanner) return
-    const { blockedConvId, retryText, retryAttachments, optimisticMessageId } = blockedByBanner
+    const { blockedConvId, retryText, retryAttachments, retryOptions, optimisticMessageId } = blockedByBanner
     // MULTI-CHAT-06: Remove old optimistic message — sendMessage will create a fresh one on retry
     set((state) => ({
       blockedByBanner: null,
@@ -951,7 +972,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await window.api.stopGeneration(blockedConvId)
       // Small delay for the backend to settle before retrying
       await new Promise((r) => setTimeout(r, 300))
-      await sendMessage(retryText, retryAttachments)
+      await sendMessage(retryText, retryAttachments, retryOptions)
     } catch (err) {
       rendererLog.error('Failed to stop blocking chat and retry:', err)
       get().appendLocalMessage(
@@ -978,7 +999,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { activeConversation, isStreaming, isSending } = get()
     if (!activeConversation || isStreaming || isSending) return
     set({ turnLimitReached: null })
-    void get().sendMessage('Continue where you left off. Do not repeat completed work.')
+    void get().sendMessage('Continue where you left off. Do not repeat completed work.', undefined, { hidden: true, skipOptimizer: true })
   },
 
   dismissTurnLimit: () => set({ turnLimitReached: null }),
@@ -994,7 +1015,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ conversationState: data })
   },
 
-  completeConversation: async (branchName: string, commitMessage: string, description: string) => {
+  completeConversation: async (branchName: string, commitMessage: string, description: string, baseBranch?: string) => {
     const { activeConversation, conversations } = get()
     if (!activeConversation) throw new Error('No active conversation')
 
@@ -1002,7 +1023,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       conversationId: activeConversation.id,
       branchName,
       commitMessage,
-      description
+      description,
+      baseBranch
     })
 
     // MULTI-CHAT-06: Clean up per-conversation timers and stashed streaming state

@@ -163,7 +163,16 @@ export function BlueprintDetailView({
         {bp.description && <DescriptionBlock description={bp.description} />}
         <div className="flex items-center gap-2 text-[10px] text-text-muted">
           <Clock size={10} />
-          <span>Created {formatTimeAgo(new Date(bp.createdAt))}</span>
+          <span title={bp.createdAt}>Created {formatTimeAgo(new Date(bp.createdAt))}</span>
+          {bp.completedAt && (bp.status === 'complete' || bp.status === 'failed' || bp.status === 'cancelled') && (
+            <>
+              <span>·</span>
+              <span title={bp.completedAt}>
+                {bp.status === 'complete' ? 'Completed' : bp.status === 'failed' ? 'Failed' : 'Stopped'}{' '}
+                {formatTimeAgo(new Date(bp.completedAt))}
+              </span>
+            </>
+          )}
         </div>
       </div>
 

@@ -161,7 +161,7 @@ export function buildConditionalPrefix(opts: {
 
   // ── isPlanGenerationRequest — moved up to suppress contradictory direct-answer signal ──
   const isPlanGenerationRequest =
-    /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|review|examine|what.*(wrong|broken|failing|issue)|assess|evaluate|improve|optimize)\b/i.test(
+    /\b(create a plan|draft a plan|propose a plan|make a plan|write a plan|design a plan|plan for|plan to (implement|build|add|create|fix|refactor)|how (would|should|can) (I|we|you)|what('s| is) the (best|right) (way|approach)|investigate|diagnose|audit|analyze|review|examine|what.*(wrong|broken|failing|issue)|assess|evaluate|improve|optimize|migrate|migration|refactor|rewrite|overhaul|rearchitect|port\b(?!folio)|cut\s+over|transition\s+(to|from))\b/i.test(
       message
     )
 

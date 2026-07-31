@@ -3,7 +3,6 @@ import { MessageSquarePlus } from 'lucide-react'
 import { useChatStore, useChatActions, useSpecialistStore } from '@renderer/store'
 import { MessageBubble } from '@renderer/components/chat'
 import type { MessageBubbleActions } from './MessageBubble'
-import type { StructuredPlan } from '../../../../shared/types'
 import FloatingRobots from './FloatingRobots'
 import ScrollToBottomButton from './ScrollToBottomButton'
 import MessageListFooter from './MessageListFooter'
@@ -11,14 +10,15 @@ import AuditProvenanceBanner from './AuditProvenanceBanner'
 import { useAutoScroll } from './useAutoScroll'
 import { useMessageVirtualizer } from './useMessageVirtualizer'
 import { useThinkingIdentity } from './useThinkingIdentity'
-import { PLAN_BLOCK_RE, BUILD_SUMMARY_RE } from './plan-detection'
+import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE, BUILD_SUMMARY_RE } from './plan-detection'
+import { usePlanExecutionStore } from '@renderer/store/plan-execution.store'
 
 interface MessageListProps {
   searchQuery?: string
 }
 
 export default function MessageList({ searchQuery }: MessageListProps): React.JSX.Element {
-  const messages = useChatStore((s) => s.messages)
+  const allMessages = useChatStore((s) => s.messages)
   const streamingContent = useChatStore((s) => s.streamingContent)
   const streamingSegments = useChatStore((s) => s.streamingSegments)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -42,39 +42,41 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
   const sourceAuditRunId = useChatStore((s) => s.activeConversation?.sourceAuditRunId ?? null)
 
-  const handleBuildFromPlan = useCallback(
-    async (_plan: StructuredPlan, _planContent: string): Promise<void> => {
-      if (!activeConversationId) return
-      await updateMode('build')
-      await sendMessage(
-        'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.'
-      )
-    },
-    [activeConversationId, updateMode, sendMessage]
-  )
+  // Filter out hidden messages (auto-send messages persisted for context but not displayed)
+  const messages = useMemo(() => allMessages.filter((m) => !m.hidden), [allMessages])
 
   // ── Latest plan message detection ──
-  // Scan messages in reverse to find the most recent plan message.
-  // Only this message renders a full TaskPlanCard; older plan messages render collapsed.
+  // Scan all messages (including hidden) in reverse to find the most recent plan message.
+  // Only this message shows the non-superseded slim indicator; older plan messages show "superseded".
   const latestPlanMessageId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i]
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      const msg = allMessages[i]
       if (msg.role !== 'user' && msg.contentMd && PLAN_BLOCK_RE.test(msg.contentMd) && !BUILD_SUMMARY_RE.test(msg.contentMd)) {
         return msg.id
       }
     }
     return null
-  }, [messages])
+  }, [allMessages])
+
+  // ── Push latest plan content to store for ChatExecutionPanel ──
+  useEffect(() => {
+    if (!latestPlanMessageId || !activeConversationId) return
+    const msg = allMessages.find((m) => m.id === latestPlanMessageId)
+    if (!msg?.contentMd) return
+    const match = PLAN_BLOCK_CAPTURE_RE.exec(msg.contentMd)
+    if (match?.[1]) {
+      usePlanExecutionStore.getState().setLatestPlanContent(activeConversationId, match[1])
+    }
+  }, [latestPlanMessageId, messages, activeConversationId])
 
   const bubbleActions: MessageBubbleActions = useMemo(
     () => ({
       updateMode,
       sendMessage,
       appendLocalMessage,
-      saveAsIdea: handleSaveAsIdea,
-      buildFromPlan: handleBuildFromPlan
+      saveAsIdea: handleSaveAsIdea
     }),
-    [updateMode, sendMessage, appendLocalMessage, handleSaveAsIdea, handleBuildFromPlan]
+    [updateMode, sendMessage, appendLocalMessage, handleSaveAsIdea]
   )
 
   // ── Specialist identity resolution (extracted hook) ──
@@ -102,10 +104,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const contentRef = useRef<HTMLDivElement>(null)
   const { virtualizer, measureElement } = useMessageVirtualizer(messages.length, scrollRef)
 
-  // Track which superseded plan cards the user has manually expanded.
-  // Lives as a ref in MessageList so expansion state survives virtualizer
-  // unmount/remount cycles when the user scrolls away and back.
-  const supersededExpandedIds = useRef<Set<string>>(new Set())
 
   // ── Scroll position preservation on plan supersession ──
   // When latestPlanMessageId changes, an old plan card collapses from ~400px to ~50px.
@@ -282,7 +280,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
                       searchHighlight={searchQuery}
                       actions={bubbleActions}
                       isLatestPlan={msg.id === latestPlanMessageId}
-                      supersededExpandedIds={supersededExpandedIds}
                     />
                   </div>
                 </div>

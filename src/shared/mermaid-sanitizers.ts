@@ -43,7 +43,7 @@ export function splitIconNodeLines(definition: string): string {
   // in Mermaid, never valid label text. Handles plain arrows (-->), thick
   // arrows (==>), dotted arrows (-.->), and labeled edges (--text-->).
   result = result.replace(
-    /(@\{[^}]*\})([ \t]*)(--|==|-\.)/g,
+    /(@\{[^}]*\})([ \t]*)(--|==|-\.|<-|~~)/g,
     '$1\n  $3'
   )
 
@@ -54,7 +54,6 @@ export function splitIconNodeLines(definition: string): string {
  * Fix common LLM mistake: @{ icon syntax wrapped inside shape brackets.
  * e.g. A["@{ icon: ... }"] → A@{ icon: ... }
  *      B[("@{ icon: ... }")] → B@{ icon: ... }
- * Only triggers when the label contains @{ with icon: — very unlikely in normal labels.
  *
  * Runs in a loop because each pass only fixes the first bracket-wrapped node
  * per line. After fix + newline insertion, the next pass catches the second
@@ -65,13 +64,29 @@ export function fixIconSyntax(definition: string): string {
   let current = definition
   while (current !== prev) {
     prev = current
+
+    // Pass 1: Line-start nodes (brackets optional, handles :::class conversion)
     current = current.replace(
-      /^(\s*[\w-]+)\s*\[?\(?\s*["']?@\{\s*(icon:\s*[^}]+)\s*\}["']?[ \t]*\)?[ \t]*\]?(:::([\w-]+))?/gm,
+      /^([ \t]*[\w-]+)[ \t]*\[?\(?[ \t]*["']?@\{[ \t]*([^}\n]+)[ \t]*\}["']?[ \t]*\)?[ \t]*\]?(:::([\w-]+))?/gm,
       (_match, indent: string, props: string, _classGroup: string, className: string) => {
         const line = `${indent}@{ ${props.trim()} }`
         // :::class doesn't work with @{ } — convert to class keyword
         if (className) {
           return `${line}\n  class ${indent.trim()} ${className}`
+        }
+        return line
+      }
+    )
+
+    // Pass 2: Mid-line bracket-wrapped nodes (requires [ and ], no :::class)
+    // Catches nodes after arrows or concatenated on the same line.
+    // The required brackets distinguish from bare @{} (already correct).
+    current = current.replace(
+      /([\w-]+)[ \t]*\[[ \t]*\(?[ \t]*["']?@\{[ \t]*([^}\n]+)[ \t]*\}["']?[ \t]*\)?[ \t]*\](:::([ \w-]+))?/g,
+      (_m, nodeId: string, props: string, _classGroup: string, className: string) => {
+        const line = `${nodeId}@{ ${props.trim()} }`
+        if (className) {
+          return `${line}\n  class ${nodeId} ${className}`
         }
         return line
       }
@@ -96,8 +111,11 @@ export function fixIconNames(definition: string): string {
 
 /**
  * Full LLM-output sanitization pipeline for Mermaid definitions.
- * Order: split concatenated nodes → unwrap bracket-wrapped icons → remap deprecated icon names
+ * Order: unwrap bracket-wrapped icons → split concatenated nodes → remap deprecated icon names
  */
 export function sanitizeMermaid(definition: string): string {
-  return fixIconNames(fixIconSyntax(splitIconNodeLines(definition.trim())))
+  const trimmed = definition.trim()
+  const unwrapped = fixIconSyntax(trimmed)
+  const split = splitIconNodeLines(unwrapped)
+  return fixIconNames(split)
 }

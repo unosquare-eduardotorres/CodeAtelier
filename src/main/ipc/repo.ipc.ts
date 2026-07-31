@@ -46,4 +46,16 @@ export function registerRepoIpc(): void {
 
     return repoService.getRepoInfo(workspace.repoPath)
   })
+
+  // List local and remote branches
+  ipcMain.handle(IPC_CHANNELS.REPO_LIST_BRANCHES, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_LIST_BRANCHES)
+    const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.REPO_LIST_BRANCHES)
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    return repoService.listBranches(workspace.repoPath)
+  })
 }

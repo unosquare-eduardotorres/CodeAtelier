@@ -15,12 +15,13 @@ export function registerInsightsIpc(): void {
     const costCents = costTrackerService.getConversationCostCents(conversationId)
     const tokenSummary = agentSessionRepository.getConversationTokenSummary(conversationId)
 
-    // Message counts
-    const messages = messageRepository.findByConversation(conversationId)
+    // Message counts — exclude hidden (auto-sent) messages so counts match visible chat bubbles
+    const allMessages = messageRepository.findByConversation(conversationId)
+    const messages = allMessages.filter((m) => !m.hidden)
     const userMessages = messages.filter((m) => m.role === 'user').length
     const assistantMessages = messages.filter((m) => m.role !== 'user').length
 
-    // Duration (first message → last message)
+    // Duration (first visible message → last visible message)
     const firstMsg = messages[0]
     const lastMsg = messages[messages.length - 1]
     const durationMs =

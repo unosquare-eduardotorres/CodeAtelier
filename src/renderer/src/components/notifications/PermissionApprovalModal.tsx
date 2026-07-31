@@ -116,7 +116,7 @@ export default function PermissionApprovalModal({
   queueCount,
   onRespond,
   onView,
-  onDismiss
+  onDismiss: _onDismiss
 }: PermissionApprovalModalProps): React.JSX.Element {
   const theme = TYPE_THEMES[permission.type]
   const TypeIcon = theme.icon
@@ -144,8 +144,10 @@ export default function PermissionApprovalModal({
       aria-modal="true"
       aria-label={`${theme.label} request from ${permission.workspaceName}`}
       onClick={(e) => {
-        // Dismiss on backdrop click
-        if (e.target === e.currentTarget) onDismiss()
+        // Prevent backdrop click dismissal for permission modals.
+        // Requires explicit Approve/Deny — accidental dismiss stales the chat
+        // because no response is sent to the control-actions server.
+        e.stopPropagation()
       }}
     >
       <div className="bg-surface-float border border-border-default rounded-xl shadow-2xl w-[520px] overflow-hidden permission-modal-card-enter">

@@ -368,6 +368,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/mcp-servers-pure.test',
   // ─── Task execution tracking (task-level visibility in chat panel) ───
   '../services/__tests__/task-execution-tracking.test',
+  // ─── Windows stability: isExcludedPath path-separator handling ───
+  '../services/__tests__/is-excluded-path.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,6 +405,8 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/repo-deep-branch.test',
   // ─── E2E Testing Repos ───
   '../db/repositories/__tests__/e2e-test-repos.test',
+  // ─── Windows stability: upsertEdgesBatched batching + edge cases ───
+  '../db/repositories/__tests__/upsert-edges-batched.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

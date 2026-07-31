@@ -22,6 +22,7 @@ const TEST_FILES: string[] = [
   './preprocessing.test',
   './description-cache.test',
   './code-graph-logic.test',
+  './is-excluded-path.test',
   './vector-search.test',
   './code-graph-db.test',
   './mcp-tool-wiring.test',
@@ -377,6 +378,9 @@ const TEST_FILES: string[] = [
   // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
   './mermaid-sanitizers.test',
 ]
+// NOTE: is-excluded-path.test is registered early (after code-graph-logic)
+// because summaryAsync() calls process.exit(), which can truncate stdout
+// for tests near the end of the array.
 
 // ─── Dynamic import loop with per-file error isolation ───
 // Wrapped in async IIFE because the project is CJS (no top-level await).

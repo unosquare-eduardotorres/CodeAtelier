@@ -109,6 +109,9 @@ interface ExecuteStreamOptions {
   contextTier?: ContextWindowTier
   /** Whether the local LLM context window was reliably detected (vs. heuristic fallback). */
   contextWindowConfident?: boolean
+  /** Explicit goal condition — takes priority over adapter duck-typing. */
+  goal?: string
+  goalMode?: 'advisory' | 'enforce'
 }
 
 /**
@@ -693,6 +696,17 @@ export class AgentSessionService extends AgentBaseService {
       })
     }
 
+    // Consume per-conversation goal from adapter (chat builds via CHAT_SET_GOAL IPC)
+    let chatGoal: string | undefined
+    let chatGoalMode: 'advisory' | 'enforce' = 'advisory'
+    if ('consumeGoalForConversation' in this.adapter) {
+      const consumed = (this.adapter as { consumeGoalForConversation(id: string): { goal: string; mode: 'advisory' | 'enforce' } | null }).consumeGoalForConversation(conversationId)
+      if (consumed) {
+        chatGoal = consumed.goal
+        chatGoalMode = consumed.mode
+      }
+    }
+
     await this.executeStream({
       sdkPrompt,
       systemPrompt,
@@ -704,7 +718,9 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider: conversationProvider,
       localContextWindow,
       contextTier,
-      contextWindowConfident
+      contextWindowConfident,
+      goal: chatGoal,
+      goalMode: chatGoalMode
     })
 
     // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
@@ -1367,15 +1383,17 @@ export class AgentSessionService extends AgentBaseService {
         case 'cli':
         default:
           {
-            // Thread goal condition + mode from MPA/Blueprint adapters (if set)
-            const adapterGoal =
+            // Explicit goal from opts (chat path) takes priority over adapter duck-typing (blueprint/MPA path)
+            const adapterGoal = opts.goal ?? (
               'getGoalCondition' in this.adapter
                 ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
                 : null
-            const adapterGoalMode =
+            )
+            const adapterGoalMode = opts.goalMode ?? (
               'getGoalMode' in this.adapter
                 ? (this.adapter as { getGoalMode(): 'advisory' | 'enforce' }).getGoalMode()
                 : ('advisory' as const)
+            )
             executorStream = this.executeCLIStream({
               prompt: cliPromptInput,
               systemPrompt,

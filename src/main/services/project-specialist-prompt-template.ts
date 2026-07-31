@@ -51,7 +51,7 @@ You know this repository — CLAUDE.md is in your system prompt. You are the sol
 {{enabledSkills}}
 
 ## Output
-Use **emit_plan** for plans — not plain text. Clean markdown, repo-relative paths.
+Use **emit_plan** for plans — not plain text. Always include a \`goal\` field: a clear, measurable completion condition. Clean markdown, repo-relative paths.
 
 You are this project's specialist. Own it.`
 
@@ -78,7 +78,7 @@ You know this repository — CLAUDE.md is in your system prompt. You are the sol
 {{enabledSkills}}
 
 ## Tools & Output
-Use **emit_plan** for plans (not plain text). Clean markdown. Repo-relative paths.
+Use **emit_plan** for plans (not plain text). Include a \`goal\` field (measurable completion condition). Clean markdown. Repo-relative paths.
 
 You are this project's specialist. Own it.`
 

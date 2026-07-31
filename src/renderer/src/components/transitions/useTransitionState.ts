@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { prefersReducedMotion, isE2ETesting, hasSeenTransition, markTransitionSeen } from './transition-utils'
+import { prefersReducedMotion, isE2ETesting } from './transition-utils'
 import { TRANSITION_MIN_DURATION, TRANSITION_MAX_DURATION } from './transition-constants'
 
 export type TransitionPhase = 'idle' | 'animating' | 'disposing' | 'complete'
-export type AnimationType = 'glass' | 'particle' | 'fade' | 'none'
+export type AnimationType = 'particle' | 'fade' | 'none'
 
 interface TransitionState {
   phase: TransitionPhase
@@ -39,11 +39,8 @@ export function useTransitionState(): UseTransitionStateReturn {
       animationType = 'none'
     } else if (prefersReducedMotion()) {
       animationType = 'fade'
-    } else if (!hasSeenTransition(workspaceId)) {
-      animationType = 'particle'
-      markTransitionSeen(workspaceId)
     } else {
-      animationType = 'glass'
+      animationType = 'particle'
     }
 
     if (animationType === 'none') {
@@ -93,6 +90,7 @@ export function useTransitionState(): UseTransitionStateReturn {
       })
       return () => cancelAnimationFrame(id)
     }
+    return undefined
   }, [state.phase])
 
   // Hard cap: never exceed max duration
@@ -103,6 +101,7 @@ export function useTransitionState(): UseTransitionStateReturn {
       }, TRANSITION_MAX_DURATION)
       return () => clearTimeout(timer)
     }
+    return undefined
   }, [state.phase, completeAnimation])
 
   // Cleanup timers on unmount

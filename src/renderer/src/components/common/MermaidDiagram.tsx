@@ -35,31 +35,30 @@ function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
   }
 
   // Dark themes (code-atelier, developer, glass)
-  const surfaceBase = v('--color-surface-base', '#0d1117')
   const teal = v('--color-teal', '#73daca')
   const textPrimary = v('--color-text-primary', '#c0caf5')
   const textSecondary = v('--color-text-secondary', '#787c99')
   const borderSubtle = v('--color-border-subtle', 'rgba(148, 163, 184, 0.08)')
 
   return {
-    // Very dark fills — nodes appear as outlined shapes, not filled blocks
-    primaryColor: surfaceBase,
+    // Transparent fills — nodes appear as outlined shapes with page bg showing through
+    primaryColor: 'transparent',
     primaryTextColor: textPrimary,
     primaryBorderColor: teal,
     lineColor: teal,
-    secondaryColor: surfaceBase,
-    tertiaryColor: surfaceBase,
+    secondaryColor: 'transparent',
+    tertiaryColor: 'transparent',
     background: 'transparent',
-    mainBkg: surfaceBase,
+    mainBkg: 'transparent',
     nodeBorder: teal,
     clusterBkg: 'rgba(13, 17, 23, 0.5)',
     clusterBorder: borderSubtle,
     titleColor: textPrimary,
     edgeLabelBackground: 'transparent',
-    noteBkgColor: surfaceBase,
+    noteBkgColor: 'transparent',
     noteTextColor: textSecondary,
     noteBorderColor: borderSubtle,
-    actorBkg: surfaceBase,
+    actorBkg: 'transparent',
     actorBorder: teal,
     actorTextColor: textPrimary,
     signalColor: teal,

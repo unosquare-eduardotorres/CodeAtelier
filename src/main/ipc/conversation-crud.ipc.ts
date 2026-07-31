@@ -47,6 +47,10 @@ async function handleCreateConversation(args: {
   communicationTone?: CommunicationTone | null
   /** Audit run ID that sourced this conversation (Audit → Chat handoff) */
   sourceAuditRunId?: string
+  /** Explicit branch name override — user-selected from branch picker at creation */
+  branchName?: string
+  /** When true, auto-create a branch from the title (overrides workspace gitAutoBranch setting) */
+  autoBranch?: boolean
 }): Promise<ReturnType<typeof conversationRepository.create>> {
   const ch = IPC_CHANNELS.CHAT_CREATE_CONVERSATION
   const {
@@ -58,7 +62,9 @@ async function handleCreateConversation(args: {
     routingOverrides,
     mcpOverrides,
     communicationTone,
-    sourceAuditRunId
+    sourceAuditRunId,
+    branchName: explicitBranchName,
+    autoBranch
   } = args
 
   if (title !== undefined && title.length > 500) {
@@ -121,28 +127,59 @@ async function handleCreateConversation(args: {
     log.warn('Project Specialist auto-attach failed:', e)
   }
 
-  // Branch-per-conversation: auto-create branch if enabled in workspace settings
-  if (settings.gitAutoBranch) {
+  // Git setup: capture source branch + optionally create auto-branch
+  const wsRow = workspaceRepository.findById(workspaceId)
+  if (wsRow?.repoPath) {
     try {
-      const wsRow = workspaceRepository.findById(workspaceId)
-      const git = simpleGit(wsRow!.repoPath)
+      const git = simpleGit(wsRow.repoPath)
       const isRepo = await git.checkIsRepo()
       if (isRepo) {
-        const branchTitle = conversation.title || 'new-conversation'
-        const slug = branchTitle
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-|-$/g, '')
-          .slice(0, 50)
-        const branchName = `chat/${slug}-${conversation.id.slice(0, 8)}`
+        // Capture the source branch at conversation creation time (always, not just gitAutoBranch)
+        try {
+          const sourceBranch = await git.revparse(['--abbrev-ref', 'HEAD'])
+          conversationRepository.updateSourceBranch(conversation.id, sourceBranch)
+          conversation.sourceBranch = sourceBranch
+        } catch (e) {
+          log.warn('Source branch capture failed (non-fatal):', e)
+        }
 
-        await git.checkoutLocalBranch(branchName)
-        conversationRepository.updateBranchName(conversation.id, branchName)
-        conversation.branchName = branchName
-        log.info(`Auto-created branch: ${branchName}`)
+        // Branch-per-conversation: create/checkout branch if explicitly requested, auto-branch selected, or gitAutoBranch enabled
+        if (explicitBranchName || autoBranch === true || (autoBranch !== false && settings.gitAutoBranch)) {
+          try {
+            let branchName: string
+            if (explicitBranchName) {
+              // User provided an explicit branch name from the branch picker
+              branchName = explicitBranchName
+            } else {
+              // Auto-generate branch name from conversation title
+              const branchTitle = conversation.title || 'new-conversation'
+              const slug = branchTitle
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-|-$/g, '')
+                .slice(0, 50)
+              branchName = `chat/${slug}-${conversation.id.slice(0, 8)}`
+            }
+
+            // Smart checkout: check if branch exists, then checkout vs create
+            const localBranches = await git.branchLocal()
+            if (localBranches.all.includes(branchName)) {
+              await git.checkout(branchName)
+              log.info(`Checked out existing branch: ${branchName}`)
+            } else {
+              await git.checkoutLocalBranch(branchName)
+              log.info(`Created and checked out new branch: ${branchName}`)
+            }
+
+            conversationRepository.updateBranchName(conversation.id, branchName)
+            conversation.branchName = branchName
+          } catch (e) {
+            log.warn('Branch creation/checkout failed (non-fatal):', e)
+          }
+        }
       }
     } catch (e) {
-      log.warn('Auto-branch creation failed (non-fatal):', e)
+      log.warn('Git initialization for conversation failed (non-fatal):', e)
     }
   }
 
@@ -223,7 +260,9 @@ export function registerConversationCrudIpc(): void {
       routingOverrides: args.routingOverrides as Partial<ModelRoleMap> | undefined,
       mcpOverrides: args.mcpOverrides as Record<string, boolean> | undefined,
       communicationTone: args.communicationTone as CommunicationTone | null | undefined,
-      sourceAuditRunId: optionalString(args, 'sourceAuditRunId', ch)
+      sourceAuditRunId: optionalString(args, 'sourceAuditRunId', ch),
+      branchName: optionalString(args, 'branchName', ch),
+      autoBranch: typeof args.autoBranch === 'boolean' ? args.autoBranch : undefined
     })
   })
 

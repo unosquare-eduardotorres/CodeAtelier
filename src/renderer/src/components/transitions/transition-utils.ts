@@ -1,5 +1,4 @@
 import { Scene, WebGLRenderer, Mesh, Points, Line } from 'three'
-import { STORAGE_KEY_PREFIX } from './transition-constants'
 
 /** Check if user prefers reduced motion */
 export function prefersReducedMotion(): boolean {
@@ -9,7 +8,7 @@ export function prefersReducedMotion(): boolean {
 /** Check if running in E2E test environment */
 export function isE2ETesting(): boolean {
   return (
-    !!(window as Record<string, unknown>).__E2E_TESTING__ ||
+    !!(window as unknown as Record<string, unknown>).__E2E_TESTING__ ||
     (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test')
   )
 }
@@ -27,24 +26,6 @@ export function consumeUserInitiated(): boolean {
   const v = _userInitiated
   _userInitiated = false
   return v
-}
-
-/** Check if workspace has been opened before (per-workspace) */
-export function hasSeenTransition(workspaceId: string): boolean {
-  try {
-    return localStorage.getItem(`${STORAGE_KEY_PREFIX}${workspaceId}`) === 'true'
-  } catch {
-    return true // fail-safe: skip particle animation
-  }
-}
-
-/** Mark workspace transition as seen */
-export function markTransitionSeen(workspaceId: string): void {
-  try {
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${workspaceId}`, 'true')
-  } catch {
-    // localStorage full or blocked — non-critical
-  }
 }
 
 /** Dispose all Three.js objects in a scene (geometries + materials) */

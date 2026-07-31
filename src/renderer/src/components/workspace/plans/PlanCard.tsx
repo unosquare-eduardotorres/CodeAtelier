@@ -82,7 +82,11 @@ export default function PlanCard({
           </>
         )}
         <span>·</span>
-        <span>{formatRelativeDate(plan.createdAt)}</span>
+        <span title={plan.completedAt && (plan.status === 'completed' || plan.status === 'archived') ? plan.completedAt : plan.createdAt}>
+          {plan.completedAt && (plan.status === 'completed' || plan.status === 'archived')
+            ? `${plan.status === 'archived' ? 'Archived' : 'Completed'} ${formatRelativeDate(plan.completedAt)}`
+            : formatRelativeDate(plan.createdAt)}
+        </span>
       </div>
 
       {/* Status indicator */}

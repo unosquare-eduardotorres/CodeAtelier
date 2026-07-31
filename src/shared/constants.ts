@@ -45,6 +45,8 @@ export const IPC_CHANNELS = {
   CHAT_STATE_CHANGE: 'chat:stateChange',
   /** Query current streaming state — used by renderer on conversation switch to restore streaming indicator */
   CHAT_GET_STREAMING_STATE: 'chat:getStreamingState',
+  /** Set a /goal condition for the next send on a conversation */
+  CHAT_SET_GOAL: 'chat:setGoal',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -193,6 +195,7 @@ export const IPC_CHANNELS = {
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
   MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
+  MEMORY_SAVE_PLAN_EXECUTION: 'memory:savePlanExecution',
 
   // Memory document ingestion
   MEMORY_INGEST_DOCUMENTS: 'memory:ingest:documents',
@@ -265,6 +268,7 @@ export const IPC_CHANNELS = {
   REPO_GET_PUSH_STATUS: 'repo:getPushStatus',
   REPO_GENERATE_COMMIT_MESSAGE: 'repo:generateCommitMessage',
   REPO_CREATE_PR: 'repo:createPr',
+  REPO_LIST_BRANCHES: 'repo:listBranches',
 
   // PR Description Generation
   CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription',
@@ -469,6 +473,7 @@ export const IPC_CHANNELS = {
   PLAN_DELETE: 'plan:delete',
   PLAN_IMPORT: 'plan:import',
   PLAN_GET_STATUS_HISTORY: 'plan:getStatusHistory',
+  PLAN_FIND_BY_SOURCE: 'plan:findBySource',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',

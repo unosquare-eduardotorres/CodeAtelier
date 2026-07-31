@@ -1,5 +1,5 @@
 import { ipcMain, app } from 'electron'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
@@ -95,6 +95,7 @@ async function handleChatComplete(args: {
   commitMessage: string
   description: string
   branchNameArg?: string
+  baseBranch?: string
 }): Promise<{ branch: string; commitHash: string; prUrl?: string }> {
   const { conversationId, commitMessage, description, branchNameArg } = args
 
@@ -127,6 +128,7 @@ async function handleChatComplete(args: {
 
   const branchName =
     branchNameArg ||
+    conversation.branchName ||
     `chat/${conversation.title
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -134,7 +136,28 @@ async function handleChatComplete(args: {
       .slice(0, 50)}-${conversationId.slice(0, 8)}`
 
   const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD'])
-  await git.checkoutLocalBranch(branchName)
+
+  // Resolve the base branch for the PR (priority: explicit arg > stored source > current)
+  const prBaseBranch = args.baseBranch || conversation.sourceBranch || currentBranch
+
+  // Smart branch checkout — handle all scenarios
+  let branchCreatedHere = false
+  if (currentBranch === branchName) {
+    // S1: Already on the target branch (gitAutoBranch case) — no checkout needed
+    log.debug(`[chat:complete] Already on branch ${branchName}, skipping checkout`)
+  } else {
+    const localBranches = await git.branchLocal()
+    if (localBranches.all.includes(branchName)) {
+      // S2/S4: Branch exists but we're not on it — checkout without -b
+      await git.checkout(branchName)
+      log.debug(`[chat:complete] Switched to existing branch ${branchName}`)
+    } else {
+      // S3: Normal case — create and checkout new branch
+      await git.checkoutLocalBranch(branchName)
+      branchCreatedHere = true
+      log.debug(`[chat:complete] Created and switched to new branch ${branchName}`)
+    }
+  }
 
   try {
     await git.add(changedPaths)
@@ -162,7 +185,7 @@ async function handleChatComplete(args: {
           workspaceId: workspace.id,
           repoPath: workspace.repoPath,
           head: branchName,
-          base: currentBranch,
+          base: prBaseBranch,
           title: commitMessage,
           body: description
         })
@@ -200,8 +223,13 @@ async function handleChatComplete(args: {
     return { branch: branchName, commitHash, prUrl }
   } catch (error) {
     try {
-      await git.checkout(currentBranch)
-      await git.deleteLocalBranch(branchName, true)
+      // Rollback: return to the base branch (not necessarily where we started)
+      const rollbackBranch = prBaseBranch !== branchName ? prBaseBranch : currentBranch
+      await git.checkout(rollbackBranch)
+      // Only delete the branch if we created it in this call — never delete pre-existing branches
+      if (branchCreatedHere) {
+        await git.deleteLocalBranch(branchName, true)
+      }
     } catch {
       /* best effort */
     }
@@ -224,7 +252,8 @@ export function registerChatCompletionIpc(): void {
     const commitMessage = requireString(args, 'commitMessage', IPC_CHANNELS.CHAT_COMPLETE)
     const description = optionalString(args, 'description', IPC_CHANNELS.CHAT_COMPLETE) ?? ''
     const branchNameArg = optionalString(args, 'branchName', IPC_CHANNELS.CHAT_COMPLETE)
-    return handleChatComplete({ conversationId, commitMessage, description, branchNameArg })
+    const baseBranch = optionalString(args, 'baseBranch', IPC_CHANNELS.CHAT_COMPLETE)
+    return handleChatComplete({ conversationId, commitMessage, description, branchNameArg, baseBranch })
   })
 
   ipcMain.handle(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, async (event, rawArgs: unknown) => {
@@ -236,7 +265,9 @@ export function registerChatCompletionIpc(): void {
     if (!conversation) throw new Error('Conversation not found')
 
     const workspace = workspaceRepository.findById(conversation.workspaceId)
-    const messages = messageRepository.findByConversation(conversationId)
+    const messages = messageRepository
+      .findByConversation(conversationId)
+      .filter((m) => !m.hidden)
 
     if (messages.length === 0) {
       return { description: '' }
@@ -299,6 +330,11 @@ Respond with ONLY the PR description, no preamble.`
     const dataUrl = requireString(args, 'dataUrl', IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE)
     const conversationId = optionalString(args, 'conversationId', IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE)
 
+    // Sanitize conversationId — must be alphanumeric/dashes (UUID-like), no path traversal
+    if (conversationId && !/^[\w-]+$/.test(conversationId)) {
+      throw new Error(`${IPC_CHANNELS.SAVE_CLIPBOARD_IMAGE}: invalid conversationId format`)
+    }
+
     // Extract base64 data from data URL
     const matches = dataUrl.match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/)
     if (!matches) {
@@ -328,7 +364,7 @@ Respond with ONLY the PR description, no preamble.`
     // Security: only allow reading from chat-images directory
     const chatImagesDir = join(app.getPath('userData'), 'chat-images')
     const resolved = resolve(filePath)
-    if (!resolved.startsWith(chatImagesDir)) {
+    if (!resolved.startsWith(chatImagesDir + sep) && resolved !== chatImagesDir) {
       throw new Error('Access denied: file is outside chat-images directory')
     }
 

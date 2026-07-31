@@ -13,6 +13,7 @@ interface MessageRow {
   parent_message_id: string | null
   tool_activities_json: string | null
   plan_action: string | null
+  hidden: number
 }
 
 function mapRow(row: MessageRow): Message {
@@ -27,7 +28,8 @@ function mapRow(row: MessageRow): Message {
     parentMessageId: row.parent_message_id ?? undefined,
     // DB-01: Use safeParseJSON to prevent a corrupted row from crashing conversation load
     toolActivities: safeParseJSON<ToolActivity[] | undefined>(row.tool_activities_json, undefined),
-    planAction: row.plan_action ?? undefined
+    planAction: row.plan_action ?? undefined,
+    hidden: row.hidden === 1
   }
 }
 
@@ -42,12 +44,13 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
     role: 'user' | 'specialist',
     contentMd: string,
     agentId?: string,
-    attachmentsJson?: string
+    attachmentsJson?: string,
+    opts?: { hidden?: boolean }
   ): Message {
     const db = this.db()
     const stmt = db.prepare(`
-      INSERT INTO messages (conversation_id, role, content_md, agent_id, attachments_json)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO messages (conversation_id, role, content_md, agent_id, attachments_json, hidden)
+      VALUES (?, ?, ?, ?, ?, ?)
       RETURNING *
     `)
     const row = stmt.get(
@@ -55,7 +58,8 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
       role,
       contentMd,
       agentId ?? null,
-      attachmentsJson ?? '[]'
+      attachmentsJson ?? '[]',
+      opts?.hidden ? 1 : 0
     ) as MessageRow
     return mapRow(row)
   }

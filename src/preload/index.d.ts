@@ -82,6 +82,19 @@ import type {
   E2EProgressEvent,
   PhaseProgressEvent
 } from '../shared/types'
+import type {
+  HandoffRecord,
+  HandoffSource,
+  HandoffTarget,
+  HandoffPriority,
+  HandoffRenderFormat,
+  CompletedStep,
+  RemainingStep,
+  HandoffDecision,
+  HandoffRisk,
+  ArtifactRef,
+  CodeAnchor
+} from '../shared/handoff-types'
 
 interface Api {
   // Workspace
@@ -132,7 +145,14 @@ interface Api {
     conversationId: string
     text: string
     attachments?: string[]
+    skipOptimizer?: boolean
+    hidden?: boolean
   }) => Promise<{ requestId: string }>
+  chatSetGoal: (args: {
+    conversationId: string
+    goal: string
+    goalMode?: 'advisory' | 'enforce'
+  }) => Promise<void>
   getConversations: (args: { workspaceId: string }) => Promise<Conversation[]>
   createConversation: (args: {
     workspaceId: string
@@ -144,6 +164,8 @@ interface Api {
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
     sourceAuditRunId?: string
+    branchName?: string
+    autoBranch?: boolean
   }) => Promise<Conversation>
 
   updateMcpOverrides: (args: {
@@ -178,7 +200,7 @@ interface Api {
   }) => Promise<Conversation>
   updateEffort: (args: {
     conversationId: string
-    effort: 'low' | 'medium' | 'high'
+    effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   }) => Promise<{ effort: string }>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: (conversationId?: string) => Promise<void>
@@ -199,6 +221,7 @@ interface Api {
     branchName: string
     commitMessage: string
     description: string
+    baseBranch?: string
   }) => Promise<CompleteResult>
   closeConversation: (args: { conversationId: string }) => Promise<void>
   getFileChanges: (args: {
@@ -207,6 +230,11 @@ interface Api {
     Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
   >
   generatePrDescription: (args: { conversationId: string }) => Promise<{ description: string }>
+  listBranches: (args: { workspaceId: string }) => Promise<{
+    local: string[]
+    remote: string[]
+    current: string
+  }>
 
   // Agents
   getAgentStatuses: () => Promise<AgentStatus[]>
@@ -345,6 +373,21 @@ interface Api {
   memoryReadClaudeMd: (args: { workspacePath: string }) => Promise<{ content: string | null; path: string }>
   memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
+  memorySavePlanExecution: (args: {
+    workspaceId: string
+    workspacePath: string
+    conversationId: string
+    planTitle: string
+    planGoal?: string
+    status: 'completed' | 'partial' | 'failed'
+    phases: Array<{
+      phaseTitle: string
+      status: string
+      touchedFiles: string[]
+      tasks: Array<{ title: string; status: string }>
+    }>
+    durationMs: number
+  }) => Promise<{ enqueued: boolean }>
 
   // Memory Document Ingestion
   memoryIngestSelectFiles: () => Promise<string[] | null>
@@ -921,11 +964,27 @@ interface Api {
     dir?: string
   }) => Promise<{ sessionId: string }>
 
+  // Session mutation — branch a conversation (legacy alias)
+  sdkForkSession: (args: {
+    sessionId: string
+    upToMessageId?: string
+  }) => Promise<{ sessionId: string }>
+
   // SDK Diagnostics (@alpha — 0.2.138+)
   resolveSettings(): Promise<{
     success: boolean
     settings?: Record<string, unknown>
     error?: string
+  }>
+
+  // Stream Diagnostics — aggregated streaming health metrics
+  getStreamMetrics: () => Promise<{
+    completionRate: number
+    ttftP50: number | null
+    ttftP95: number | null
+    ttftP99: number | null
+    sampleSize: number
+    outcomeCounts: Record<string, number>
   }>
 
   // Persist plan card action on a message
@@ -1022,9 +1081,11 @@ interface Api {
     workspaceId: string
   }) => Promise<{ conversationId: string; planId: string }>
   planGetStatusHistory: (args: { planId: string }) => Promise<PlanStatusHistoryEntry[]>
+  planFindBySource: (args: { source: string; sourceId: string }) => Promise<PlanRecord | null>
   getPhaseProgress: (args: { conversationId: string }) => Promise<{
     planId: string
     planTitle: string
+    planGoal?: string
     phases: Array<{ id: number; title: string }>
     progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[]; tasks?: Array<{ taskId: string; title: string; status: string }> }>
   } | null>
@@ -1542,6 +1603,107 @@ interface Api {
   councilResume: (args: { sessionId: string; workspaceId: string }) => Promise<{ resumed: boolean }>
   councilGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
   councilDeleteSession: (args: { sessionId: string }) => Promise<{ deleted: boolean }>
+
+  // ── Unified Handoff Protocol ──
+
+  handoffCreate: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    extensions?: Record<string, unknown>
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    expiresAt?: string
+  }) => Promise<HandoffRecord>
+
+  handoffExecute: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    extensions?: Record<string, unknown>
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    expiresAt?: string
+  }) => Promise<{ record: HandoffRecord; action: unknown }>
+
+  handoffAccept: (args: {
+    handoffId: string
+    targetSessionId: string
+  }) => Promise<{ success: boolean; error?: string }>
+
+  handoffReject: (args: {
+    handoffId: string
+    reason: string
+  }) => Promise<{ success: boolean; error?: string }>
+
+  handoffGetHistory: (args: {
+    workspaceId: string
+    limit?: number
+  }) => Promise<HandoffRecord[]>
+
+  handoffGetChain: (args: {
+    handoffId: string
+  }) => Promise<HandoffRecord[]>
+
+  handoffPreview: (args: {
+    source: HandoffSource
+    target: HandoffTarget
+    workspaceId: string
+    intent: string
+    originalGoal: string
+    contextSummary: string
+    completedWork?: CompletedStep[]
+    remainingWork?: RemainingStep[]
+    decisions?: HandoffDecision[]
+    constraints?: string[]
+    risks?: HandoffRisk[]
+    artifacts?: ArtifactRef[]
+    codeAnchors?: CodeAnchor[]
+    suggestedTools?: string[]
+    suggestedSkills?: string[]
+    filesToReadFirst?: string[]
+    commandsToRunFirst?: string[]
+    structuredPlanRef?: string
+    parentHandoffId?: string
+    sourceSessionId?: string
+    priority?: HandoffPriority
+    createdBy?: 'user' | 'system'
+    format?: HandoffRenderFormat
+  }) => Promise<{ envelope: unknown; markdown: string; action: unknown }>
 
   // Multi-Workspace Session Management
   getAllWorkspaceStatuses: () => Promise<Record<string, unknown>>

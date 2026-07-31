@@ -1,20 +1,19 @@
 import {
   Scene, PerspectiveCamera, WebGLRenderer, BufferGeometry,
-  Float32BufferAttribute, ShaderMaterial, Points, Color, AdditiveBlending
+  Float32BufferAttribute, ShaderMaterial, Points, Color, NormalBlending
 } from 'three'
 import {
-  COLORS, easeOutCubic, PARTICLE_DURATION,
+  SCENE_BG, easeOutCubic, PARTICLE_DURATION,
   PARTICLE_COUNT_HIGH, PARTICLE_COUNT_LOW, FRAME_TIME_THRESHOLD
 } from './transition-constants'
 import { teardownRenderer } from './transition-utils'
 
-// ── Gold palette for vertex colors ──
+// ── Gold palette for vertex colors (monochromatic warm gold) ──
 const GOLD_PALETTE: readonly [number, number, number][] = [
-  [0.72, 0.59, 0.42],  // atelierGold #b8976a
-  [0.78, 0.72, 0.60],  // brightGold #c8b89a
-  [0.55, 0.44, 0.29],  // mutedGold #8b6f4a
-  [0.77, 0.44, 0.29],  // jewelCopper #c4714a
-  [0.43, 0.77, 0.70],  // tealAccent #6dc4b2 (sparse)
+  [0.85, 0.72, 0.45],  // warmGold
+  [0.78, 0.65, 0.38],  // deepGold
+  [0.92, 0.80, 0.55],  // lightGold
+  [0.70, 0.58, 0.32],  // antiqueGold
 ]
 
 // ── Custom shaders ──
@@ -42,7 +41,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   void main() {
     float dist = length(gl_PointCoord - vec2(0.5));
     if (dist > 0.5) discard;
-    float alpha = smoothstep(0.5, 0.1, dist) * vOpacity;
+    float alpha = smoothstep(0.5, 0.0, dist) * vOpacity;
     gl_FragColor = vec4(vColor, alpha);
   }
 `
@@ -96,7 +95,7 @@ export class GoldParticleAnimation {
 
     // ── Scene ──
     const scene = new Scene()
-    scene.background = new Color(COLORS.obsidian)
+    scene.background = new Color(SCENE_BG)
     this.scene = scene
 
     const camera = new PerspectiveCamera(50, w / h, 0.1, 100)
@@ -144,28 +143,44 @@ export class GoldParticleAnimation {
     // Truncate long names
     const displayName = name.length > 20 ? name.slice(0, 18) + '…' : name
     // Scale font size based on name length
-    const fontSize = Math.max(28, 52 - displayName.length)
+    const fontSize = Math.max(36, 60 - displayName.length)
 
     const canvas = document.createElement('canvas')
-    canvas.width = 500
-    canvas.height = 120
+    canvas.width = 800
+    canvas.height = 200
     const ctx = canvas.getContext('2d')!
     ctx.fillStyle = '#000'
-    ctx.fillRect(0, 0, 500, 120)
+    ctx.fillRect(0, 0, 800, 200)
     ctx.font = `600 ${fontSize}px Georgia, serif`
     ctx.fillStyle = '#fff'
     ctx.textAlign = 'center'
-    ctx.fillText(displayName, 250, 72)
+    ctx.textBaseline = 'middle'
+    ctx.fillText(displayName, 400, 100)
 
-    const imgData = ctx.getImageData(0, 0, 500, 120)
+    const imgData = ctx.getImageData(0, 0, 800, 200)
     const positions: [number, number, number][] = []
-    for (let y = 0; y < 120; y += 2) {
-      for (let x = 0; x < 500; x += 2) {
-        if (imgData.data[(y * 500 + x) * 4] > 128) {
-          positions.push([(x - 250) / 70, (60 - y) / 70, 0])
+    for (let y = 0; y < 200; y += 1) {
+      for (let x = 0; x < 800; x += 1) {
+        if (imgData.data[(y * 800 + x) * 4] > 128) {
+          positions.push([(x - 400) / 100, (100 - y) / 100, 0])
         }
       }
     }
+
+    // Cap text positions to 80% of particle budget so background ring particles
+    // still get allocated. Without this, names ≥6 chars produce more text
+    // positions than PARTICLE_COUNT_HIGH (1500), leaving zero ring particles
+    // and truncating the bottom of letters (scan is top-to-bottom).
+    const maxTextParticles = Math.floor(this.particleCount * 0.9)
+    if (positions.length > maxTextParticles) {
+      // Fisher-Yates shuffle then truncate — preserves even spatial distribution
+      for (let i = positions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[positions[i], positions[j]] = [positions[j], positions[i]]
+      }
+      positions.length = maxTextParticles
+    }
+
     return positions
   }
 
@@ -178,6 +193,10 @@ export class GoldParticleAnimation {
     const speeds = new Float32Array(count)
     const sizes = new Float32Array(count)
 
+    // Compute text extent so background ring clears the text with margin
+    const textMaxX = textTargets.reduce((max, t) => Math.max(max, Math.abs(t[0])), 0)
+    const ringInner = Math.max(2.5, textMaxX + 0.8)  // at least 0.8 units clear of text edge
+
     for (let i = 0; i < count; i++) {
       // Scattered start positions (ring around center)
       const angle = Math.random() * Math.PI * 2
@@ -186,26 +205,32 @@ export class GoldParticleAnimation {
       positions[i * 3 + 1] = Math.sin(angle) * (radius * 0.6)
       positions[i * 3 + 2] = (Math.random() - 0.5) * 4
 
-      // Target: text position or random cluster near center
+      // Target: text position or decorative ring around text
       if (i < textTargets.length) {
         targets[i * 3] = textTargets[i][0]
         targets[i * 3 + 1] = textTargets[i][1]
         targets[i * 3 + 2] = textTargets[i][2]
       } else {
-        targets[i * 3] = (Math.random() - 0.5) * 0.5
-        targets[i * 3 + 1] = (Math.random() - 0.5) * 0.5
-        targets[i * 3 + 2] = (Math.random() - 0.5) * 0.5
+        const bgAngle = Math.random() * Math.PI * 2
+        const bgRadius = ringInner + Math.random() * 2.5  // ring clears text
+        targets[i * 3] = Math.cos(bgAngle) * bgRadius
+        targets[i * 3 + 1] = Math.sin(bgAngle) * (bgRadius * 0.5)
+        targets[i * 3 + 2] = (Math.random() - 0.5) * 2
       }
 
-      // Color from gold palette (teal accent is sparse — 10% chance)
-      const c = GOLD_PALETTE[Math.random() < 0.1 ? 4 : Math.floor(Math.random() * 4)]
-      colors[i * 3] = c[0]
-      colors[i * 3 + 1] = c[1]
-      colors[i * 3 + 2] = c[2]
+      // Color from gold palette (monochromatic warm gold)
+      const isText = i < textTargets.length
+      const c = GOLD_PALETTE[Math.floor(Math.random() * GOLD_PALETTE.length)]
+      const dim = isText ? 1.0 : 0.5
+      colors[i * 3] = c[0] * dim
+      colors[i * 3 + 1] = c[1] * dim
+      colors[i * 3 + 2] = c[2] * dim
 
       phases[i] = Math.random() * Math.PI * 2
       speeds[i] = 0.5 + Math.random() * 1.5
-      sizes[i] = 0.8 + Math.random() * 2.5
+      sizes[i] = isText
+        ? 0.06 + Math.random() * 0.06  // text: 0.06–0.12 (~2–5px on screen) — fine dust
+        : 0.04 + Math.random() * 0.06  // background: 0.04–0.10 (~2–4px)
     }
 
     const geo = new BufferGeometry()
@@ -225,7 +250,7 @@ export class GoldParticleAnimation {
       vertexColors: true,
       transparent: true,
       depthWrite: false,
-      blending: AdditiveBlending,
+      blending: NormalBlending,
     })
 
     this.scene!.add(new Points(geo, mat))
@@ -245,15 +270,15 @@ export class GoldParticleAnimation {
 
     this.mat.uniforms.uTime.value = elapsed / 1000
 
-    // Phase 1: Spiral converge (0–0.4)
-    // Phase 2: Hold as text (0.4–0.6)
-    // Phase 3: Explode outward (0.6–1.0)
+    // Phase 1: Spiral converge (0–0.30)
+    // Phase 2: Hold as text   (0.30–0.72) — 756ms hold
+    // Phase 3: Explode outward (0.72–1.0)
     for (let i = 0; i < count; i++) {
       const ix = i * 3, iy = i * 3 + 1, iz = i * 3 + 2
       const spd = this.speeds[i]
 
-      if (t < 0.4) {
-        const ct = t / 0.4
+      if (t < 0.30) {
+        const ct = t / 0.30
         const ease = easeOutCubic(ct)
         const spiralAngle = (1 - ease) * spd * 3
         const orbX = Math.cos(spiralAngle + i) * (1 - ease) * (3 + spd)
@@ -261,13 +286,13 @@ export class GoldParticleAnimation {
         posAttr.array[ix] = orbX * (1 - ease) + this.targets[ix] * ease
         posAttr.array[iy] = orbY * (1 - ease) + this.targets[iy] * ease
         posAttr.array[iz] = (Math.sin(i + elapsed * 0.002) * 0.5) * (1 - ease) + this.targets[iz] * ease
-      } else if (t < 0.6) {
+      } else if (t < 0.72) {
         const breath = Math.sin(elapsed * 0.006) * 0.015
         posAttr.array[ix] = this.targets[ix] * (1 + breath)
         posAttr.array[iy] = this.targets[iy] * (1 + breath)
         posAttr.array[iz] = this.targets[iz]
       } else {
-        const et = (t - 0.6) / 0.4
+        const et = (t - 0.72) / 0.28
         const ease = et * et
         const dir = i % 2 === 0 ? 1 : -1
         posAttr.array[ix] = this.targets[ix] + Math.cos(i * 0.1) * spd * 3 * ease * dir
@@ -278,7 +303,7 @@ export class GoldParticleAnimation {
     posAttr.needsUpdate = true
 
     // Fade out during explosion phase
-    this.mat.uniforms.uOpacity.value = t < 0.55 ? 0.85 : Math.max(0, 0.85 - ((t - 0.55) / 0.45) * 0.85)
+    this.mat.uniforms.uOpacity.value = t < 0.72 ? 0.85 : Math.max(0, 0.85 - ((t - 0.72) / 0.28) * 0.85)
 
     // Gentle camera drift
     this.camera.position.x = Math.sin(elapsed * 0.0005) * 0.25

@@ -1,5 +1,13 @@
 import { useState } from 'react'
-import { Check, RefreshCw, Network, Info, ChevronDown, ChevronRight } from 'lucide-react'
+import {
+  Check,
+  RefreshCw,
+  Network,
+  Info,
+  ChevronDown,
+  ChevronRight,
+  TriangleAlert
+} from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import { ToggleRow } from '../settings-sections'
 import CodeGraphProgressPanel from '../CodeGraphProgressPanel'
@@ -45,6 +53,21 @@ export default function CodeGraphCard({
         checked={enabled}
         onChange={onToggle}
       />
+
+      {/* Guard-rail degradation warning — a frozen graph must never look healthy */}
+      {codeGraphState?.degraded && (
+        <div className="flex items-start gap-2 text-xs bg-warning-muted border border-warning/40 rounded-md p-3 ml-0.5 mt-2">
+          <TriangleAlert size={12} className="text-warning shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-medium text-text-body">Dependency graph is stale</p>
+            <p className="text-text-secondary">{codeGraphState.degradedReason}</p>
+            <p className="text-text-muted">
+              Add vendored and generated directories to <code>.atelierignore</code> at the workspace
+              root, then Re-index.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Expandable "Why use Code Graph?" info section */}
       <button

@@ -9,7 +9,7 @@ import {
   useProfileStore,
   useAppPreferenceActions
 } from '@renderer/store'
-import type { ConversationPhase, ToolActivity } from '../../../shared/types'
+import type { ConversationPhase, ContextUsageLevel, ToolActivity } from '../../../shared/types'
 import { rendererLog } from '@renderer/utils/logger'
 import { useTodoStore } from '@renderer/store/todo.store'
 import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
@@ -23,13 +23,6 @@ type ChatActions = ReturnType<typeof useChatActions>
 
 // ─── Pure Helpers ─────────────────────────────────────────
 
-/** Derive context quality bucket from quality-window percentage. */
-function getContextQualityLevel(qualityPct: number): 'green' | 'yellow' | 'red' | 'critical' {
-  if (qualityPct > 80) return 'critical'
-  if (qualityPct > 60) return 'red'
-  if (qualityPct > 40) return 'yellow'
-  return 'green'
-}
 
 /** Remove a conversation from the streaming tracking set (shared by complete + state-change). */
 function removeStreamingConversation(conversationId: string): void {
@@ -203,9 +196,17 @@ function processContextUsageUpdate(
     cacheHitRate?: number
   }
 ): void {
-  const effectiveQualityWindow = Math.min(Math.round(update.contextWindowSize * 0.5), 500_000)
-  const qualityPct = Math.round((update.inputTokens / effectiveQualityWindow) * 100)
-  const level = getContextQualityLevel(qualityPct)
+  // Use the same algorithm as resolveContextLevel (context-usage-level.ts)
+  const pct = update.percentage
+  const isSmallWindow = update.contextWindowSize <= 200_000
+  const warnPct = isSmallWindow ? 48 : 56
+  const suggestPct = isSmallWindow ? 60 : 70
+  const autoPct = isSmallWindow ? 75 : 85
+  const level: ContextUsageLevel =
+    pct >= autoPct ? 'critical'
+    : pct >= suggestPct ? 'red'
+    : pct >= warnPct ? 'yellow'
+    : 'green'
 
   useChatStore.setState((state) => ({
     contextUsages: {
@@ -394,15 +395,44 @@ function handleMessageComplete(
   )
   finalizeStream(data.messageId, data.taskId, data.requestId)
 
-  // Auto-clear completed plan executions after 30s so the user sees the final state
+  // Transition completed plan executions to read-only mode after 30s
   const exec = usePlanExecutionStore.getState().executions[data.conversationId]
-  if (exec) {
+  if (exec && !exec.completedAt) {
     const allDone = exec.phases.every(
       (p) => p.status === 'completed' || p.status === 'skipped' || p.status === 'failed'
     )
     if (allDone) {
+      // Extract memories from completed plan execution (fire-and-forget)
+      const workspace = useWorkspaceStore.getState().activeWorkspace
+      if (workspace?.id && workspace.repoPath) {
+        const failedCount = exec.phases.filter(p => p.status === 'failed').length
+        const overallStatus: 'completed' | 'partial' | 'failed' =
+          failedCount === exec.phases.length ? 'failed'
+            : failedCount > 0 ? 'partial'
+            : 'completed'
+
+        window.api.memorySavePlanExecution({
+          workspaceId: workspace.id,
+          workspacePath: workspace.repoPath,
+          conversationId: data.conversationId,
+          planTitle: exec.planTitle,
+          planGoal: exec.planGoal,
+          status: overallStatus,
+          phases: exec.phases.map(p => ({
+            phaseTitle: p.phaseTitle,
+            status: p.status,
+            touchedFiles: p.touchedFiles,
+            tasks: p.tasks.map(t => ({ title: t.title, status: t.status }))
+          })),
+          durationMs: Date.now() - exec.startedAt
+        }).catch(err => {
+          rendererLog.warn('[PlanMemory] Failed to enqueue plan memory extraction:', err)
+        })
+      }
+
+      // Transition to read-only after 30s
       setTimeout(() => {
-        usePlanExecutionStore.getState().clearExecution(data.conversationId)
+        usePlanExecutionStore.getState().completeExecution(data.conversationId)
       }, 30_000)
     }
   }

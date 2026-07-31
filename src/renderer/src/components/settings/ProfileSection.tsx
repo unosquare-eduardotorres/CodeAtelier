@@ -105,7 +105,7 @@ export default function ProfileSection(): React.JSX.Element {
       <div className="mt-5">
         <p className="text-xs font-medium text-text-secondary mb-3">Size Preview</p>
         <div className="flex items-end gap-4 px-2">
-          {SIZE_PREVIEW.map(({ size, px, label }) => {
+          {SIZE_PREVIEW.map(({ size, label }) => {
             const isActive = BUBBLE_TO_AVATAR[currentBubbleSize] === size
 
             return (

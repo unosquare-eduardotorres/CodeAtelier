@@ -41,6 +41,7 @@ interface PlanRow {
   risk_count: number
   created_at: string
   updated_at: string
+  completed_at: string | null
   previous_plan_id: string | null
 }
 
@@ -88,6 +89,7 @@ function mapRow(row: PlanRow): PlanRecord {
     riskCount: row.risk_count ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    completedAt: row.completed_at,
     previousPlanId: row.previous_plan_id ?? null
   }
 }
@@ -281,6 +283,12 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
 
     const sets = ['status = ?', "updated_at = datetime('now')"]
     const params: unknown[] = [status]
+
+    // Set completed_at for terminal statuses
+    const isTerminal = status === 'completed' || status === 'archived'
+    if (isTerminal) {
+      sets.push("completed_at = datetime('now')")
+    }
 
     if (links?.conversationId !== undefined) {
       sets.push('linked_conversation_id = ?')

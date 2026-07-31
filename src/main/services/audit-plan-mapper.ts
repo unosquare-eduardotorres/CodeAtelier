@@ -42,6 +42,7 @@ export function auditPlanToStructuredPlan(audit: AuditPlan): StructuredPlan {
     type: 'audit',
     title: audit.title,
     summary: audit.summary,
+    goal: `Resolve all ${audit.items.length} audit findings: ${audit.items.map((i) => i.title).join(', ')}`,
     phases: phases.length ? phases : undefined,
     files: allFiles.length ? allFiles : undefined,
     risks: audit.risks.length

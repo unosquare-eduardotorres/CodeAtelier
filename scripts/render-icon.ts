@@ -96,6 +96,43 @@ async function applySquircleMask(
   await browser.close()
 }
 
+// ── Crop to content bounding box (for Windows icon) ────────────────────────
+
+/**
+ * Crops a PNG to its non-transparent content bounding box plus a margin,
+ * then resizes to targetSize. Used to produce a Windows icon where the
+ * squircle fills ~94% of the canvas (vs macOS's ~72% with padding).
+ */
+async function cropToContentBbox(
+  srcPath: string,
+  targetSize: number,
+  outPath: string,
+  marginPercent: number = 3
+): Promise<void> {
+  const { execSync } = await import('node:child_process')
+  // Use Python + Pillow to find alpha-channel bbox, crop with margin, resize
+  const script = [
+    'from PIL import Image; import sys',
+    `img = Image.open("${srcPath}").convert("RGBA")`,
+    'bbox = img.split()[3].getbbox()',
+    'if not bbox: sys.exit("No content found")',
+    'cx = (bbox[0] + bbox[2]) / 2',
+    'cy = (bbox[1] + bbox[3]) / 2',
+    'cw = bbox[2] - bbox[0]',
+    'ch = bbox[3] - bbox[1]',
+    `margin = max(cw, ch) * ${marginPercent} / 100`,
+    'half = int((max(cw, ch) + margin * 2) / 2)',
+    'left = max(0, int(cx - half))',
+    'top = max(0, int(cy - half))',
+    `right = min(img.width, int(cx + half))`,
+    `bottom = min(img.height, int(cy + half))`,
+    'cropped = img.crop((left, top, right, bottom))',
+    `resized = cropped.resize((${targetSize}, ${targetSize}), Image.LANCZOS)`,
+    `resized.save("${outPath}", "PNG")`,
+  ].join('; ')
+  execSync(`python3 -c '${script}'`, { stdio: 'pipe' })
+}
+
 // ── Resize with sips ────────────────────────────────────────────────────────
 
 async function resizePng(srcPath: string, size: number, outPath: string): Promise<void> {
@@ -186,7 +223,7 @@ async function generateIco(pngPath: string, outPath: string): Promise<void> {
 
   // Cleanup
   fs.rmSync(tmpDir, { recursive: true, force: true })
-  console.log(`  ✓ ${path.relative(ROOT, outPath)} (ico — T2-based)`)
+  console.log(`  ✓ ${path.relative(ROOT, outPath)} (ico)`)
 }
 
 // ── Main pipeline ───────────────────────────────────────────────────────────
@@ -263,13 +300,7 @@ async function main(): Promise<void> {
   console.log('\nStep 2: Building icon assets...')
   await generateIcns(sizeToFile, path.join(ROOT, 'build', 'icon.icns'))
 
-  // 4. Generate .ico using T2 source (best readability across ICO sizes)
-  const t2Path = APPLY_MASK
-    ? path.join(tmpDir, 'masked-t2.png')
-    : path.join(TIERS_DIR, 't2-medium.png')
-  await generateIco(t2Path, path.join(ROOT, 'build', 'icon.ico'))
-
-  // 5. Copy T1 @ 1024px → resources/icon.png and build/icon.png
+  // 4. Copy T1 @ 1024px → resources/icon.png and build/icon.png
   const t1_1024 = sizeToFile.get(1024)!
   fs.copyFileSync(t1_1024, path.join(ROOT, 'resources', 'icon.png'))
   console.log('  ✓ resources/icon.png (T1 @ 1024px)')
@@ -277,7 +308,17 @@ async function main(): Promise<void> {
   fs.copyFileSync(t1_1024, path.join(ROOT, 'build', 'icon.png'))
   console.log('  ✓ build/icon.png (T1 @ 1024px)')
 
-  // 6. Resize T1 → docs/CodeAtelier/icon_512x512.png
+  // 5. Generate Windows-specific icon (cropped to content bbox + 3% margin)
+  //    Windows taskbar renders icons at full canvas — no padding normalization.
+  //    Cropping the squircle to ~94% fill matches other Windows apps (Docker, etc).
+  const winIconPath = path.join(ROOT, 'resources', 'icon-win.png')
+  await cropToContentBbox(t1_1024, 1024, winIconPath, 3)
+  console.log('  ✓ resources/icon-win.png (Windows — 94% fill)')
+
+  // 6. Generate .ico from Windows-cropped source (for .exe embedded icon)
+  await generateIco(winIconPath, path.join(ROOT, 'build', 'icon.ico'))
+
+  // 7. Resize T1 → docs/CodeAtelier/icon_512x512.png
   const docsIconPath = path.join(ROOT, 'docs', 'CodeAtelier', 'icon_512x512.png')
   fs.mkdirSync(path.dirname(docsIconPath), { recursive: true })
   const t1_512 = sizeToFile.get(512)!

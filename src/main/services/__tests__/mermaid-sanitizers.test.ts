@@ -85,6 +85,20 @@ describe('splitIconNodeLines', () => {
     const result = splitIconNodeLines(input)
     assert.equal(result, input, 'non-icon braces should not be affected')
   })
+
+  test('splits reverse arrow trailing @{} node (<--)', () => {
+    const input = 'A@{ icon: "lucide:home" } <-- B'
+    const result = splitIconNodeLines(input)
+    assert.ok(result.includes('}\n'), 'should split before reverse arrow')
+    assert.ok(result.includes('<--'), 'reverse arrow should be on next line')
+  })
+
+  test('splits tilde link trailing @{} node (~~~)', () => {
+    const input = 'A@{ icon: "lucide:home" } ~~~ B'
+    const result = splitIconNodeLines(input)
+    assert.ok(result.includes('}\n'), 'should split before tilde link')
+    assert.ok(result.includes('~~~'), 'tilde link should be on next line')
+  })
 })
 
 // ── fixIconSyntax ────────────────────────────────────────────────────────────
@@ -113,6 +127,33 @@ describe('fixIconSyntax', () => {
     const input = '  A@{ icon: "lucide:home" }'
     const result = fixIconSyntax(input)
     assert.equal(result, input)
+  })
+
+  test('leaves multiline @{} blocks unchanged', () => {
+    const input = '  A@{\n    icon: "lucide:home",\n    label: "Home"\n  }'
+    const result = fixIconSyntax(input)
+    assert.equal(result, input, 'multiline @{} should not be collapsed')
+  })
+
+  test('unwraps form:-first bracket-wrapped node', () => {
+    const input = '  A["@{ form: circle, icon: \"lucide:home\" }"]'
+    const result = fixIconSyntax(input)
+    assert.ok(result.includes('A@{'), 'should unwrap brackets with form: first')
+    assert.ok(result.includes('form: circle'), 'should preserve form: property')
+  })
+
+  test('unwraps bracket-wrapped node after arrow (mid-line)', () => {
+    const input = '  X --> A["@{ icon: \"lucide:home\" }"]'
+    const result = fixIconSyntax(input)
+    assert.ok(result.includes('A@{'), 'should unwrap mid-line bracket-wrapped node')
+    assert.ok(!result.includes('["'), 'brackets should be removed')
+  })
+
+  test('unwraps two concatenated bracket-wrapped nodes', () => {
+    const input = '  A["@{ icon: \"lucide:home\" }"]B["@{ icon: \"lucide:star\" }"]'
+    const result = fixIconSyntax(input)
+    assert.ok(result.includes('A@{'), 'first node should be unwrapped')
+    assert.ok(result.includes('B@{'), 'second node should be unwrapped')
   })
 })
 
@@ -187,5 +228,20 @@ describe('sanitizeMermaid', () => {
     const input = '  \n  A --> B  \n  '
     const result = sanitizeMermaid(input)
     assert.equal(result, 'A --> B')
+  })
+
+  test('full pipeline: bracket-wrapped + concatenated nodes', () => {
+    const input = '  A["@{ icon: \"lucide:home\" }"]B["@{ icon: \"lucide:star\" }"]'
+    const result = sanitizeMermaid(input)
+    const lines = result.split('\n').map(l => l.trim()).filter(Boolean)
+    assert.ok(lines.length >= 2, 'concatenated bracket-wrapped nodes should be split')
+    assert.ok(result.includes('A@{'), 'first node unwrapped')
+    assert.ok(result.includes('B@{'), 'second node unwrapped')
+  })
+
+  test('preserves valid multiline diagram unchanged', () => {
+    const input = 'flowchart TD\n  A@{\n    icon: "lucide:house",\n    label: "Home"\n  }\n  B@{\n    icon: "lucide:star"\n  }\n  A --> B'
+    const result = sanitizeMermaid(input)
+    assert.equal(result, input, 'valid multiline diagram should pass through unchanged')
   })
 })

@@ -963,6 +963,7 @@ body::after {
 [data-testid="mermaid-diagram"] .label {
   font-family: 'Inter', sans-serif !important;
   font-weight: 500 !important;
+  text-align: center !important;
 }
 
 /* Icon shapes: proper sizing */
