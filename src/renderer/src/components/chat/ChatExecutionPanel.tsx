@@ -44,6 +44,7 @@ import { PLAN_BLOCK_RE, BUILD_SUMMARY_RE } from './plan-detection'
 import type { SectionKey } from './task-plan/TaskPlanSections'
 import { BuildActionBar, usePlanMemos, buildSectionMap } from './task-plan'
 import type { StructuredPlan } from '../../../../shared/types'
+import { derivePlanTasks, derivePhaseFiles, renderTaskManifest } from '../../../../shared/plan-tasks'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -401,31 +402,38 @@ function PlanTabContent({
         .catch(console.error)
     }
 
-    // Initialize plan execution tracking
+    // Initialize plan execution tracking. derivePlanTasks/derivePhaseFiles are the
+    // SAME helpers used to render the task manifest sent to the model below —
+    // this is what makes agent-reported taskIds actually match what the UI tracks.
     if (structuredPlan?.phases?.length) {
       const { startExecution } = usePlanExecutionStore.getState()
       startExecution(conversationId, {
         planId: null,
         title: structuredPlan.title,
         planGoal: effectiveGoal || undefined,
-        phases: structuredPlan.phases.map((p) => ({
-          id: p.id,
-          title: p.title,
-          tasks:
-            p.files?.map((f, i) => ({
-              taskId: `${p.id}-${i}`,
-              title: f.change || f.file,
-              files: [f.file]
-            })) ?? []
-        })),
-        phaseFiles: Object.fromEntries(
-          structuredPlan.phases.map((p) => [p.id, (p.files ?? []).map((f) => f.file)])
-        )
+        phases: derivePlanTasks(structuredPlan),
+        phaseFiles: derivePhaseFiles(structuredPlan)
       })
     }
 
     setUserClicked(true)
     void updateMode('build')
+
+    // Build the kickoff message with an explicit task manifest so the model
+    // reports emit_phase_progress taskId/taskStatus against the SAME taskIds
+    // the panel already created via startExecution above — without this the
+    // model invents its own IDs (or skips task-level reporting entirely) and
+    // task rows never update.
+    const manifest = structuredPlan?.phases?.length ? renderTaskManifest(structuredPlan) : ''
+    const buildKickoffMessage = manifest
+      ? [
+          'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.',
+          '',
+          'Task manifest — use these EXACT taskId values when reporting taskId/taskTitle/taskStatus ' +
+            '(call with taskStatus "running" before starting a task and "complete"/"failed" after):',
+          manifest
+        ].join('\n')
+      : 'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.'
 
     // Set goal on adapter before sending (enforce mode for autonomous execution)
     const goalToEnforce = effectiveGoal?.trim()
@@ -435,23 +443,15 @@ function PlanTabContent({
         goal: goalToEnforce,
         goalMode: 'enforce'
       }).then(() => {
-        void sendMessage(
-          'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.',
-          undefined,
-          { hidden: true, skipOptimizer: true }
-        )
+        void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
       }).catch((err) => {
         console.error('[plan] Failed to set goal, sending without enforcement:', err)
-        void sendMessage(
-          'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.',
-          undefined,
-          { hidden: true, skipOptimizer: true }
-        )
+        void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
       })
     } else {
       // No goal — send without enforcement (backward compat)
       void sendMessage(
-        'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.',
+        buildKickoffMessage,
         undefined,
         { hidden: true, skipOptimizer: true }
       )

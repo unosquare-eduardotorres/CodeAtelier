@@ -1897,6 +1897,29 @@ export class AgentSessionService extends AgentBaseService {
       this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
       this.emit('plan', planEvent)
       this.log.info(`[ipc-bridge] Plan event received for ${this.currentConversationId}`)
+
+      // Persist the plan so phase/task progress has a DB row to attach to.
+      // Without this, planRepository.findActiveByConversationId() (used by the
+      // phaseProgress listener below) always returns null and phase progress
+      // persistence silently no-ops — progress only ever lives in renderer state.
+      if (planEvent.structuredPlan && this.workspaceId && this.currentConversationId) {
+        try {
+          planRepository.savePlan({
+            workspaceId: this.workspaceId,
+            source: 'chat',
+            sourceId: this.currentConversationId,
+            title: planEvent.structuredPlan.title,
+            summary: planEvent.structuredPlan.summary,
+            structuredPlan: planEvent.structuredPlan,
+            linkedConversationId: this.currentConversationId
+          })
+        } catch (err) {
+          this.log.warn(
+            `[ipc-bridge] Failed to persist plan for ${this.currentConversationId}:`,
+            err
+          )
+        }
+      }
     })
 
     bridge.on('askUser', (payload: unknown, requestId?: string) => {

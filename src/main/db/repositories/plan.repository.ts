@@ -178,14 +178,24 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     const savedPlan = mapRow(row)
 
     // ── Revision linking: auto-archive previous plan from same source ──
+    // Scoped to the same linked conversation (when set) so two concurrent chat
+    // conversations in one workspace don't archive each other's active plan —
+    // sources without a linked conversation (blueprint/audit/council revisions)
+    // keep the original workspace-wide "latest wins" behavior.
     if (params.source && params.sourceId) {
       const existing = this.db()
         .prepare(
-          `SELECT id, status FROM plans WHERE workspace_id = ? AND source = ? AND id != ? AND status != 'archived' ORDER BY created_at DESC LIMIT 1`
+          `SELECT id, status FROM plans
+           WHERE workspace_id = ? AND source = ? AND id != ? AND status != 'archived'
+             AND (linked_conversation_id IS NULL OR linked_conversation_id = ?)
+           ORDER BY created_at DESC LIMIT 1`
         )
-        .get(params.workspaceId, params.source, savedPlan.id) as
-        | { id: string; status: string }
-        | undefined
+        .get(
+          params.workspaceId,
+          params.source,
+          savedPlan.id,
+          params.linkedConversationId ?? null
+        ) as { id: string; status: string } | undefined
       if (existing) {
         this.updateStatus(existing.id, 'archived', undefined, 'system')
         this.db()
