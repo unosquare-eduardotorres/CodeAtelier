@@ -24,7 +24,7 @@ describe('code-graph-server — internal logic', () => {
       const result = truncateToolOutput(long)
       assert.ok(result.length < long.length, 'Output should be truncated')
       assert.ok(result.length > 0, 'Output should not be empty')
-    } catch (err) {
+    } catch (_err) {
       // Module may fail in Node — acceptable
     }
   })
@@ -35,7 +35,7 @@ describe('code-graph-server — internal logic', () => {
       const short = 'Hello, world!'
       const result = truncateToolOutput(short)
       assert.equal(result, short)
-    } catch (err) {
+    } catch (_err) {
       // Module may fail in Node — acceptable
     }
   })
@@ -45,7 +45,7 @@ describe('code-graph-server — tool-error-handler', () => {
   test('withErrorBoundary wraps async handler errors', async () => {
     try {
       const { withErrorBoundary } = await import('../../mcp-servers/tool-error-handler')
-      const handler = withErrorBoundary(async () => {
+      const handler = withErrorBoundary('test-tool', async () => {
         throw new Error('test error')
       })
       const result = await handler({})
@@ -58,7 +58,7 @@ describe('code-graph-server — tool-error-handler', () => {
           assert.ok(content[0].text?.includes('test error') || content[0].text?.includes('Error'))
         }
       }
-    } catch (err) {
+    } catch (_err) {
       // Module may not load — acceptable
     }
   })
@@ -66,15 +66,15 @@ describe('code-graph-server — tool-error-handler', () => {
   test('withErrorBoundary passes through successful results', async () => {
     try {
       const { withErrorBoundary } = await import('../../mcp-servers/tool-error-handler')
-      const handler = withErrorBoundary(async () => ({
-        content: [{ type: 'text' as const, text: 'success' }],
+      const handler = withErrorBoundary('test-tool', async () => ({
+        content: [{ type: 'text' as const, text: 'success' }]
       }))
       const result = await handler({})
       assert.ok(result !== undefined)
       if (result && typeof result === 'object' && 'content' in result) {
         assert.equal((result as any).content[0].text, 'success')
       }
-    } catch (err) {
+    } catch (_err) {
       // Module may not load
     }
   })
@@ -87,9 +87,9 @@ describe('code-graph-server — native-module-check', () => {
       const result = checkNativeModuleCompat()
       assert.equal(typeof result.ok, 'boolean')
       if (!result.ok) {
-        assert.equal(typeof result.message, 'string')
+        assert.equal(typeof result.error, 'string')
       }
-    } catch (err) {
+    } catch (_err) {
       // Module may not load
     }
   })
