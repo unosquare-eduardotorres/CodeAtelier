@@ -44,9 +44,7 @@ describe('buildPlannerSystemPrompt — planner prompt assembly', () => {
         {
           header: 'Auth Strategy',
           selectedOption: 'JWT',
-          reason: 'Stateless',
-          questionId: 'q1',
-          score: 8
+          reason: 'Stateless'
         }
       ]
     })
@@ -189,7 +187,7 @@ describe('buildBuilderSystemPrompt — builder prompt assembly', () => {
   test('handles empty existingPatterns', () => {
     const prompt = buildBuilderSystemPrompt({
       goal: 'Add auth',
-      plan: { ...basePlan, existingPatterns: undefined },
+      plan: { ...basePlan, existingPatterns: [] },
       workspaceName: 'app',
       detectedTechs: ['TS']
     })
@@ -208,7 +206,14 @@ describe('buildBuilderSystemPrompt — builder prompt assembly', () => {
         implemented: 1,
         partial: 1,
         missing: 0,
-        issues: [{ planItemId: 'P2', status: 'partial', detail: 'Missing error handling' }],
+        issues: [
+          {
+            planItemId: 'P2',
+            status: 'partial',
+            detail: 'Missing error handling',
+            filesChecked: ['src/auth.ts']
+          }
+        ],
         crossCutting: {
           frontendBackendConnected: true,
           backendDatabaseConnected: false,
