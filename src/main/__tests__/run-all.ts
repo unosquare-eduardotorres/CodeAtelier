@@ -501,7 +501,21 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/opencode-config-writer-p27.test',
   '../services/__tests__/memory-feed-p27.test',
   '../services/__tests__/grill-persistence-deep-p27.test',
-  '../services/__tests__/specialist-builder-deep-p27.test'
+  '../services/__tests__/specialist-builder-deep-p27.test',
+  // ─── R006: Close the gap to 65% — service-runners, handoff-adapters, mcp-servers ───
+  // Real behavioural coverage of the deterministic (no-LLM) E2E service
+  // runners — replaces the coverage-theatre assertions previously in
+  // e2e-service-runners-phase25.test.ts (kept below as a registry/type-drift
+  // guard instead).
+  '../services/__tests__/e2e-runner-deterministic.test',
+  // toEnvelope() end-to-end coverage for handoff-adapters/base.adapter.ts —
+  // truncation boundary, TTL math, size guard, redaction pipeline applied.
+  '../services/__tests__/handoff-base-adapter-envelope.test',
+  // ─── R006: Previously-orphaned mcp-servers tests found via discovery diff ───
+  // Both existed on disk with real, guarded (self-runnable) assertions but
+  // were never added to this registry, so they contributed zero coverage.
+  '../mcp-servers/__tests__/mcp-tool-error-handling.test',
+  '../mcp-servers/__tests__/native-module-smoke.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
