@@ -57,7 +57,7 @@ describe('calculateConfidence — derived confidence scoring', () => {
 
   test('decisions add 0.1', () => {
     const confidence = calculateConfidence({
-      decisions: [{ what: 'Use JWT', why: 'Stateless', madeAt: '' }]
+      decisions: [{ what: 'Use JWT', why: 'Stateless' }]
     })
     assert.equal(confidence, 0.6)
   })
@@ -86,7 +86,7 @@ describe('calculateConfidence — derived confidence scoring', () => {
   test('max confidence is 1.0', () => {
     const confidence = calculateConfidence({
       structuredPlanRef: 'plan-1',
-      decisions: [{ what: 'a', why: 'b', madeAt: '' }],
+      decisions: [{ what: 'a', why: 'b' }],
       completedWork: [{ title: 'x', outcome: 'y' }],
       constraints: ['c'],
       risks: [{ risk: 'r', severity: 'low' }]
@@ -97,7 +97,7 @@ describe('calculateConfidence — derived confidence scoring', () => {
   test('partial envelope scores correctly', () => {
     const confidence = calculateConfidence({
       structuredPlanRef: 'plan-1',
-      decisions: [{ what: 'a', why: 'b', madeAt: '' }]
+      decisions: [{ what: 'a', why: 'b' }]
     })
     assert.equal(confidence, 0.8) // 0.5 + 0.2 + 0.1
   })
@@ -124,7 +124,7 @@ describe('renderEnvelopeMarkdown — format rendering', () => {
       remainingWork: [
         { title: 'Add tests', description: 'Unit tests for auth', priority: 'medium' }
       ],
-      decisions: [{ what: 'Use JWT', why: 'Stateless sessions', madeAt: '' }],
+      decisions: [{ what: 'Use JWT', why: 'Stateless sessions' }],
       risks: [{ risk: 'Breaking change to API', severity: 'medium' }],
       filesToReadFirst: ['src/auth.ts']
     })
@@ -146,10 +146,10 @@ describe('renderEnvelopeMarkdown — format rendering', () => {
   test('full format includes all details', () => {
     const env = baseEnvelope({
       completedWork: [{ title: 'Auth fix', outcome: 'Done' }],
-      artifacts: [{ path: 'src/auth.ts', description: 'Auth module', type: 'file' }],
+      artifacts: [{ path: 'src/auth.ts', description: 'Auth module', type: 'diff' }],
       commandsToRunFirst: ['npm test'],
       constraints: ['Must maintain backward compatibility'],
-      codeAnchors: [{ file: 'src/auth.ts', title: 'Entry', line: 1 }]
+      codeAnchors: [{ file: 'src/auth.ts', title: 'Entry', startLine: 1, endLine: 5 }]
     })
     const result = renderEnvelopeMarkdown(env, 'full')
     assert.ok(result.length > 0)
