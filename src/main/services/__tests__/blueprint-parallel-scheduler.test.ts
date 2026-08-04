@@ -229,7 +229,7 @@ describe('no-double-dispatch invariant (C3 fix)', () => {
     const pending = [
       { taskId: 'T001', files: normalizePaths(['src/a.ts']) },
       { taskId: 'T002', files: normalizePaths(['src/a.ts', 'src/b.ts']) }, // overlaps T001
-      { taskId: 'T003', files: normalizePaths(['src/c.ts']) }               // no overlap
+      { taskId: 'T003', files: normalizePaths(['src/c.ts']) } // no overlap
     ]
     const cap = 3
     const dispatched = new Set<string>()
@@ -239,12 +239,20 @@ describe('no-double-dispatch invariant (C3 fix)', () => {
     let scanStart = 0
     while (inFlight.size < cap && scanStart < pending.length) {
       const task = pending[scanStart]
-      if (dispatched.has(task.taskId)) { scanStart++; continue }
+      if (dispatched.has(task.taskId)) {
+        scanStart++
+        continue
+      }
 
       const currentFiles = new Set<string>()
-      for (const entry of inFlight.values()) { for (const f of entry.files) currentFiles.add(f) }
+      for (const entry of inFlight.values()) {
+        for (const f of entry.files) currentFiles.add(f)
+      }
 
-      if (filesOverlap(task.files, currentFiles)) { scanStart++; continue }
+      if (filesOverlap(task.files, currentFiles)) {
+        scanStart++
+        continue
+      }
 
       inFlight.set(task.taskId, { files: task.files })
       dispatched.add(task.taskId)
@@ -264,12 +272,20 @@ describe('no-double-dispatch invariant (C3 fix)', () => {
     const dispatched2 = new Set<string>()
     while (inFlight.size < cap && scanStart < pending.length) {
       const task = pending[scanStart]
-      if (dispatched.has(task.taskId)) { scanStart++; continue } // C3 fix: skip already-dispatched
+      if (dispatched.has(task.taskId)) {
+        scanStart++
+        continue
+      } // C3 fix: skip already-dispatched
 
       const currentFiles = new Set<string>()
-      for (const entry of inFlight.values()) { for (const f of entry.files) currentFiles.add(f) }
+      for (const entry of inFlight.values()) {
+        for (const f of entry.files) currentFiles.add(f)
+      }
 
-      if (filesOverlap(task.files, currentFiles)) { scanStart++; continue }
+      if (filesOverlap(task.files, currentFiles)) {
+        scanStart++
+        continue
+      }
 
       dispatched2.add(task.taskId)
       dispatched.add(task.taskId)
@@ -313,7 +329,11 @@ describe('exclusive-blocks-all invariant (C4 fix)', () => {
 
     // Now try to dispatch regular task — should be blocked by exclusiveInFlight
     const canDispatch = !exclusiveInFlight && inFlight.size < cap
-    assert.strictEqual(canDispatch, false, 'regular task must not dispatch while exclusive is in-flight')
+    assert.strictEqual(
+      canDispatch,
+      false,
+      'regular task must not dispatch while exclusive is in-flight'
+    )
 
     // After exclusive completes
     inFlight.delete(exclusiveTask.taskId)
@@ -399,8 +419,11 @@ describe('dispatch-time skip predicate', () => {
   })
 
   test('does NOT skip tasks with status "failed" (retry preserved)', () => {
-    assert.strictEqual(shouldSkipAtDispatch('failed'), false,
-      'failed tasks must remain eligible for dispatch so retry/resume re-executes them')
+    assert.strictEqual(
+      shouldSkipAtDispatch('failed'),
+      false,
+      'failed tasks must remain eligible for dispatch so retry/resume re-executes them'
+    )
   })
 
   test('does NOT skip tasks with status "pending"', () => {
@@ -448,9 +471,14 @@ describe('asStringArray', () => {
   })
 
   test('filters non-string elements from a mixed array', () => {
-    assert.deepStrictEqual(asStringArray(['src/a.ts', 42, null, 'src/b.ts', true]), ['src/a.ts', 'src/b.ts'])
+    assert.deepStrictEqual(asStringArray(['src/a.ts', 42, null, 'src/b.ts', true]), [
+      'src/a.ts',
+      'src/b.ts'
+    ])
   })
 })
 
 // ── Runner ──
-void summaryAsync()
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}
