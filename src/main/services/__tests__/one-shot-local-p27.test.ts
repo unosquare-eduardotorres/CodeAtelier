@@ -27,13 +27,13 @@ describe('buildMemoryFeedFallbackArgs — fallback arg construction', () => {
     const prompt = 'Extract key architectural decisions'
     const result = buildMemoryFeedFallbackArgs(prompt)
     const joined = result.join(' ')
-    assert.ok(joined.includes(prompt) || result.some((a) => a === prompt))
+    assert.ok(joined.includes(prompt) || result.some((a: string) => a === prompt))
   })
 
   test('includes required CLI flags', () => {
     const result = buildMemoryFeedFallbackArgs('test prompt')
     // Should include -p flag for prompt
-    assert.ok(result.includes('-p') || result.some((a) => a.startsWith('--')))
+    assert.ok(result.includes('-p') || result.some((a: string) => a.startsWith('--')))
   })
 })
 
