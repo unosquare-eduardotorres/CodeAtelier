@@ -27,15 +27,15 @@ describe('control-actions-server — ask-user registry (shared)', () => {
     }
   })
 
-  test('register returns a promise and requestId', async () => {
+  test('register+resolve resolves the wrapping promise with the answer', async () => {
     try {
       const { createAskUserRegistry } = await import('../../mcp-servers/ask-user-registry')
       const registry = createAskUserRegistry()
-      const { requestId, promise } = registry.register()
-      assert.equal(typeof requestId, 'string')
-      assert.ok(requestId.length > 0)
-      // Resolve it to avoid hanging
-      registry.resolve(requestId, 'test answer')
+      const requestId = 'req-1'
+      const promise = new Promise<string>((resolve) => registry.register(requestId, resolve))
+      assert.equal(registry.size, 1)
+      const resolved = registry.resolve(requestId, 'test answer')
+      assert.equal(resolved, true)
       const answer = await promise
       assert.equal(answer, 'test answer')
     } catch {
@@ -47,12 +47,13 @@ describe('control-actions-server — ask-user registry (shared)', () => {
     try {
       const { createAskUserRegistry } = await import('../../mcp-servers/ask-user-registry')
       const registry = createAskUserRegistry()
-      const { promise: p1 } = registry.register()
-      const { promise: p2 } = registry.register()
+      const p1 = new Promise<string>((resolve) => registry.register('req-1', resolve))
+      const p2 = new Promise<string>((resolve) => registry.register('req-2', resolve))
       registry.resolveAll('shutdown')
       const [r1, r2] = await Promise.all([p1, p2])
       assert.equal(r1, 'shutdown')
       assert.equal(r2, 'shutdown')
+      assert.equal(registry.size, 0)
     } catch {
       // acceptable
     }
