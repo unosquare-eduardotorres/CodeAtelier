@@ -151,17 +151,20 @@ describe('MemoryCaptureSettings', () => {
     // Simulates the memory.ipc.ts GET pattern
     const settings: Record<string, any> = {} // empty workspace settings
     const captureBlueprints = settings.memoryCaptureBlueprints !== false
+    const capturePlans = settings.memoryCapturePlans !== false
     const captureGrill = settings.memoryCaptureGrill !== false
     const captureDocumentsOnAttach = settings.memoryCaptureDocumentsOnAttach !== false
 
     assert.equal(captureBlueprints, true, 'captureBlueprints defaults ON')
+    assert.equal(capturePlans, true, 'capturePlans defaults ON')
     assert.equal(captureGrill, true, 'captureGrill defaults ON')
     assert.equal(captureDocumentsOnAttach, true, 'captureDocumentsOnAttach defaults ON')
   })
 
   test('settings can be explicitly disabled', () => {
-    const settings = { memoryCaptureBlueprints: false, memoryCaptureGrill: false, memoryCaptureDocumentsOnAttach: false }
+    const settings = { memoryCaptureBlueprints: false, memoryCapturePlans: false, memoryCaptureGrill: false, memoryCaptureDocumentsOnAttach: false }
     assert.equal(settings.memoryCaptureBlueprints !== false, false)
+    assert.equal(settings.memoryCapturePlans !== false, false)
     assert.equal(settings.memoryCaptureGrill !== false, false)
     assert.equal(settings.memoryCaptureDocumentsOnAttach !== false, false)
   })

@@ -82,10 +82,10 @@ export function registerChatModeIpc(): void {
       throw new Error('Cannot change effort while streaming — stop or wait for completion')
     }
 
-    const validEfforts: ThinkingEffort[] = ['low', 'medium', 'high']
+    const validEfforts: ThinkingEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
     if (!validEfforts.includes(effort as ThinkingEffort)) {
       throw new Error(
-        `${IPC_CHANNELS.CHAT_UPDATE_EFFORT}: effort must be "low", "medium", or "high"`
+        `${IPC_CHANNELS.CHAT_UPDATE_EFFORT}: effort must be "low", "medium", "high", "xhigh", or "max"`
       )
     }
 

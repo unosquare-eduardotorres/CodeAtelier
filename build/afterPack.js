@@ -200,6 +200,11 @@ module.exports = async function afterPack(context) {
     [FuseV1Options.RunAsNode]: false,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    // OnlyLoadAppFromAsar: false — Required because native N-API modules
+    // (better-sqlite3, onnxruntime-web) load .node binaries from outside
+    // the ASAR archive via node_modules copied by this afterPack hook.
+    // Enabling this fuse would prevent native module loading.
+    // See: https://www.electronjs.org/docs/latest/tutorial/fuses
     [FuseV1Options.OnlyLoadAppFromAsar]: false
   })
   console.log('[afterPack] Fuses flipped successfully')

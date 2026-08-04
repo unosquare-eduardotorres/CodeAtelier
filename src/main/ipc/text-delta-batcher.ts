@@ -17,6 +17,8 @@ export class TextDeltaBatcher {
   private buffers = new Map<string, string>()
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private flushers = new Map<string, (text: string) => void>()
+  /** Per-key active interval — tracks what interval each key's timer was armed with. */
+  private activeIntervals = new Map<string, number>()
   private readonly intervalMs: number
 
   constructor(intervalMs: number = TEXT_BATCH_INTERVAL_MS) {
@@ -27,14 +29,33 @@ export class TextDeltaBatcher {
    * Buffer `text` under `key`. The most recent `flush` callback for a key wins
    * (closures may capture fresh per-chunk context). A timer is armed once per
    * key and fires `flush(buffer)` after the batch interval.
+   *
+   * @param intervalOverride — optional per-push interval override (ms). When the
+   *   recommended interval changes (e.g. due to backpressure), the pending timer
+   *   is rescheduled to the new interval. Omit to use the constructor default.
    */
-  push(key: string, text: string, flush: (text: string) => void): void {
+  push(key: string, text: string, flush: (text: string) => void, intervalOverride?: number): void {
     this.flushers.set(key, flush)
     this.buffers.set(key, (this.buffers.get(key) ?? '') + text)
+    const interval = intervalOverride ?? this.intervalMs
+    const activeInterval = this.activeIntervals.get(key)
+
     if (!this.timers.has(key)) {
+      // No pending timer — arm a new one
+      this.activeIntervals.set(key, interval)
       this.timers.set(
         key,
-        setTimeout(() => this.flushKey(key), this.intervalMs)
+        setTimeout(() => this.flushKey(key), interval)
+      )
+    } else if (activeInterval !== undefined && interval > activeInterval) {
+      // IPC-BACKPRESSURE: Backpressure increased — reschedule with longer interval.
+      // Only reschedule when slowing down (interval > active), not when speeding up,
+      // to avoid cancelling a timer that's about to fire.
+      clearTimeout(this.timers.get(key)!)
+      this.activeIntervals.set(key, interval)
+      this.timers.set(
+        key,
+        setTimeout(() => this.flushKey(key), interval)
       )
     }
   }
@@ -73,6 +94,7 @@ export class TextDeltaBatcher {
       clearTimeout(timer)
       this.timers.delete(key)
     }
+    this.activeIntervals.delete(key)
     const buffer = this.buffers.get(key)
     const flusher = this.flushers.get(key)
     if (buffer && flusher) {

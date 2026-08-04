@@ -103,6 +103,18 @@ module.exports = {
     themeSource: 'system',
     on: noop,
   },
+  safeStorage: {
+    encryptString: function(str) {
+      // Simple reversible mock: prepend 'ENC:' and return as Buffer
+      return Buffer.from('ENC:' + str)
+    },
+    decryptString: function(buf) {
+      const str = buf.toString()
+      if (!str.startsWith('ENC:')) throw new Error('Mock: cannot decrypt non-mock data')
+      return str.slice(4)
+    },
+    isEncryptionAvailable: function() { return true },
+  },
   clipboard: { writeText: noop, readText: function() { return '' } },
   screen: {
     getPrimaryDisplay: function() { return { workAreaSize: { width: 1920, height: 1080 } } },

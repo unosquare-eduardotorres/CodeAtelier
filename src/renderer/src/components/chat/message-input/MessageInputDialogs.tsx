@@ -16,8 +16,10 @@ interface MessageInputDialogsProps {
   onCompleteConfirm: (
     branchName: string,
     commitMessage: string,
-    description: string
+    description: string,
+    baseBranch?: string
   ) => Promise<void>
+  onCompleteClose: () => Promise<void>
   onCompleteCancel: () => void
   // Close confirm
   showCloseConfirm: boolean
@@ -44,6 +46,7 @@ export default function MessageInputDialogs({
   conversationTitle,
   conversationId,
   onCompleteConfirm,
+  onCompleteClose,
   onCompleteCancel,
   showCloseConfirm,
   onCloseConfirm,
@@ -78,6 +81,7 @@ export default function MessageInputDialogs({
         conversationTitle={conversationTitle}
         conversationId={conversationId}
         onConfirm={onCompleteConfirm}
+        onClose={onCompleteClose}
         onCancel={onCompleteCancel}
       />
 

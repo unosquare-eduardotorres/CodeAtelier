@@ -156,6 +156,37 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     }
   )
 
+  // ── Save from plan execution completion ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_SAVE_PLAN_EXECUTION,
+    async (event, args: {
+      workspaceId: string
+      workspacePath: string
+      conversationId: string
+      planTitle: string
+      planGoal?: string
+      status: 'completed' | 'partial' | 'failed'
+      phases: Array<{
+        phaseTitle: string
+        status: string
+        touchedFiles: string[]
+        tasks: Array<{ title: string; status: string }>
+      }>
+      durationMs: number
+    }) => {
+      validateSender(event)
+
+      // Gate on capturePlans setting
+      const settings = workspaceRepository.getSettings(args.workspaceId) as Record<string, unknown>
+      if (settings.memoryCapturePlans === false) return { enqueued: false }
+
+      const { memoryExtractionService } = await import('../services/memory-extraction.service')
+      memoryExtractionService.enqueuePlanExecutionExtraction(args)
+      return { enqueued: true }
+    }
+  )
+
   // ── Contradictions ──
 
   ipcMain.handle(
@@ -199,6 +230,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         commitCapture: (settings as any).memoryCommitCapture !== false,
         docCapture: (settings as any).memoryDocCapture !== false,
         captureBlueprints: (settings as any).memoryCaptureBlueprints !== false,
+        capturePlans: (settings as any).memoryCapturePlans !== false,
         captureGrill: (settings as any).memoryCaptureGrill !== false,
         captureDocumentsOnAttach: (settings as any).memoryCaptureDocumentsOnAttach !== false,
         watcherGlobs: (settings as any).memoryWatcherGlobs ?? ['docs/**/*.md', 'README.md', 'CLAUDE.md']
@@ -218,6 +250,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ...(args.settings.commitCapture !== undefined && { memoryCommitCapture: args.settings.commitCapture }),
         ...(args.settings.docCapture !== undefined && { memoryDocCapture: args.settings.docCapture }),
         ...(args.settings.captureBlueprints !== undefined && { memoryCaptureBlueprints: args.settings.captureBlueprints }),
+        ...(args.settings.capturePlans !== undefined && { memoryCapturePlans: args.settings.capturePlans }),
         ...(args.settings.captureGrill !== undefined && { memoryCaptureGrill: args.settings.captureGrill }),
         ...(args.settings.captureDocumentsOnAttach !== undefined && { memoryCaptureDocumentsOnAttach: args.settings.captureDocumentsOnAttach }),
         ...(args.settings.watcherGlobs !== undefined && { memoryWatcherGlobs: args.settings.watcherGlobs })

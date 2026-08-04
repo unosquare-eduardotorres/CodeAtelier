@@ -3,7 +3,7 @@
  *
  * Fills gaps in chat-lifecycle.e2e.ts by testing UI components that render
  * within a chat conversation:
- *   - TaskPlanCard rendering in plan-mode responses
+ *   - Plan rendering in execution panel for plan-mode responses
  *   - BuildActionBar buttons (Build Now, Council, Save as Idea, Refine)
  *   - Tool activity block expand/collapse
  *   - Code block copy-to-clipboard button
@@ -55,9 +55,9 @@ test.describe('Chat Interactions', () => {
     return chat
   }
 
-  // ── TaskPlanCard ──
+  // ── Plan Slim Indicator ──
 
-  test('TaskPlanCard renders in conversation with plan content', async ({
+  test('Plan slim indicator renders in conversation with plan content', async ({
     electronPage: page
   }) => {
     const chat = await ensureWorkspaceOpen(page)
@@ -68,27 +68,27 @@ test.describe('Chat Interactions', () => {
       return
     }
 
-    // Look for TaskPlanCard in existing messages
-    const planCard = page.locator('[data-testid="task-plan-card"]')
-    const count = await planCard.count()
+    // Look for plan slim indicators in existing messages
+    const slimIndicator = page.locator('[data-testid="plan-slim-indicator"]')
+    const count = await slimIndicator.count()
 
     if (count === 0) {
-      // No plan cards in current conversation history
+      // No plan messages in current conversation history
       test.skip()
       return
     }
 
-    const firstCard = planCard.first()
-    await expect(firstCard).toBeVisible({ timeout: 5_000 })
+    const firstIndicator = slimIndicator.first()
+    await expect(firstIndicator).toBeVisible({ timeout: 5_000 })
 
-    // Plan card should contain structured content (phases, steps, etc.)
-    const text = await firstCard.textContent()
-    expect(text?.length).toBeGreaterThan(0)
+    // Slim indicator should contain "Plan available" text
+    const text = await firstIndicator.textContent()
+    expect(text).toContain('Plan available')
   })
 
-  // ── BuildActionBar ──
+  // ── BuildActionBar (in execution panel) ──
 
-  test('BuildActionBar buttons render below plan card', async ({ electronPage: page }) => {
+  test('BuildActionBar renders in execution panel when plan exists', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -97,28 +97,48 @@ test.describe('Chat Interactions', () => {
       return
     }
 
-    const actionBar = page.locator('[data-testid="build-action-bar"]')
-    const hasBar = await actionBar.isVisible({ timeout: 5_000 }).catch(() => false)
+    // Open the execution panel via the badge toggle
+    const toggleBtn = page.locator('[data-testid="task-summary-badge-toggle"]')
+    const hasToggle = await toggleBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasBar) {
-      // No build action bar — may not have a plan in the conversation
+    if (!hasToggle) {
+      // No tasks/plan badge — skip
       test.skip()
       return
     }
 
-    // Check for presence of action buttons
-    const buildNow = page.locator('[data-testid="build-now-button"]')
-    const council = page.locator('[data-testid="council-review-button"]')
-    const saveIdea = page.locator('[data-testid="save-idea-button"]')
-    const refine = page.locator('[data-testid="refine-plan-button"]')
+    await toggleBtn.click()
+    await page.waitForTimeout(500)
 
-    const hasBuild = await buildNow.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasCouncil = await council.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasSave = await saveIdea.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasRefine = await refine.isVisible({ timeout: 3_000 }).catch(() => false)
+    // Look for the BuildActionBar inside the execution panel
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+    const hasPanel = await panel.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
-    // At least some buttons should be visible (availability depends on callbacks)
-    expect(hasBuild || hasCouncil || hasSave || hasRefine).toBeTruthy()
+    // Switch to Plan tab
+    const planTab = panel.locator('[data-testid="chat-execution-tab-plan"]')
+    await planTab.click()
+    await page.waitForTimeout(300)
+
+    // Look for the action bar inside the panel
+    const actionBar = panel.locator('[data-testid="task-plan-build-bar"]')
+    const hasBar = await actionBar.isVisible({ timeout: 5_000 }).catch(() => false)
+
+    if (!hasBar) {
+      // No action bar — plan may have already been actioned
+      test.skip()
+      return
+    }
+
+    // At least Build Now or Refine should be visible
+    const buildNow = actionBar.getByText('Build Now')
+    const refine = actionBar.getByText('Refine Plan')
+    const hasBuild = await buildNow.isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasRefine = await refine.isVisible({ timeout: 2_000 }).catch(() => false)
+    expect(hasBuild || hasRefine).toBeTruthy()
   })
 
   // ── Code block copy ──

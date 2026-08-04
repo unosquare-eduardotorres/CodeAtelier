@@ -109,6 +109,9 @@ interface ExecuteStreamOptions {
   contextTier?: ContextWindowTier
   /** Whether the local LLM context window was reliably detected (vs. heuristic fallback). */
   contextWindowConfident?: boolean
+  /** Explicit goal condition — takes priority over adapter duck-typing. */
+  goal?: string
+  goalMode?: 'advisory' | 'enforce'
 }
 
 /**
@@ -693,6 +696,17 @@ export class AgentSessionService extends AgentBaseService {
       })
     }
 
+    // Consume per-conversation goal from adapter (chat builds via CHAT_SET_GOAL IPC)
+    let chatGoal: string | undefined
+    let chatGoalMode: 'advisory' | 'enforce' = 'advisory'
+    if ('consumeGoalForConversation' in this.adapter) {
+      const consumed = (this.adapter as { consumeGoalForConversation(id: string): { goal: string; mode: 'advisory' | 'enforce' } | null }).consumeGoalForConversation(conversationId)
+      if (consumed) {
+        chatGoal = consumed.goal
+        chatGoalMode = consumed.mode
+      }
+    }
+
     await this.executeStream({
       sdkPrompt,
       systemPrompt,
@@ -704,7 +718,9 @@ export class AgentSessionService extends AgentBaseService {
       llmProvider: conversationProvider,
       localContextWindow,
       contextTier,
-      contextWindowConfident
+      contextWindowConfident,
+      goal: chatGoal,
+      goalMode: chatGoalMode
     })
 
     // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
@@ -813,7 +829,14 @@ export class AgentSessionService extends AgentBaseService {
     // MODE-SWITCH-NOLOCK-01: Serialize after the current send (if any) to prevent
     // mid-stream permission changes and MCP cache invalidation.
     const conversationId = this.currentConversationId
-    if (!conversationId) return
+    if (!conversationId) {
+      // Fresh session (e.g. after app restart) — no send in flight, no lock to
+      // serialize against. Apply directly so the first send doesn't run with the
+      // stale default 'plan' mode. (Was a silent return — dropped the deferred
+      // mode switch from chat-stream.dispatchToAgent and left Build-mode chats
+      // streaming with a Plan-mode system prompt.)
+      return this._doSwitchMode(mode)
+    }
     const prevLock = this.sendLocks.get(conversationId) ?? Promise.resolve()
     const thisLock = prevLock.then(
       () => this._doSwitchMode(mode),
@@ -1360,15 +1383,17 @@ export class AgentSessionService extends AgentBaseService {
         case 'cli':
         default:
           {
-            // Thread goal condition + mode from MPA/Blueprint adapters (if set)
-            const adapterGoal =
+            // Explicit goal from opts (chat path) takes priority over adapter duck-typing (blueprint/MPA path)
+            const adapterGoal = opts.goal ?? (
               'getGoalCondition' in this.adapter
                 ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
                 : null
-            const adapterGoalMode =
+            )
+            const adapterGoalMode = opts.goalMode ?? (
               'getGoalMode' in this.adapter
                 ? (this.adapter as { getGoalMode(): 'advisory' | 'enforce' }).getGoalMode()
                 : ('advisory' as const)
+            )
             executorStream = this.executeCLIStream({
               prompt: cliPromptInput,
               systemPrompt,
@@ -1872,6 +1897,29 @@ export class AgentSessionService extends AgentBaseService {
       this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
       this.emit('plan', planEvent)
       this.log.info(`[ipc-bridge] Plan event received for ${this.currentConversationId}`)
+
+      // Persist the plan so phase/task progress has a DB row to attach to.
+      // Without this, planRepository.findActiveByConversationId() (used by the
+      // phaseProgress listener below) always returns null and phase progress
+      // persistence silently no-ops — progress only ever lives in renderer state.
+      if (planEvent.structuredPlan && this.workspaceId && this.currentConversationId) {
+        try {
+          planRepository.savePlan({
+            workspaceId: this.workspaceId,
+            source: 'chat',
+            sourceId: this.currentConversationId,
+            title: planEvent.structuredPlan.title,
+            summary: planEvent.structuredPlan.summary,
+            structuredPlan: planEvent.structuredPlan,
+            linkedConversationId: this.currentConversationId
+          })
+        } catch (err) {
+          this.log.warn(
+            `[ipc-bridge] Failed to persist plan for ${this.currentConversationId}:`,
+            err
+          )
+        }
+      }
     })
 
     bridge.on('askUser', (payload: unknown, requestId?: string) => {
@@ -1923,6 +1971,10 @@ export class AgentSessionService extends AgentBaseService {
         status: string
         totalPhases: number
         message?: string
+        taskId?: string
+        taskTitle?: string
+        taskStatus?: string
+        totalTasks?: number
       }
 
       // Resolve planId from the plan registry for this conversation
@@ -1953,9 +2005,14 @@ export class AgentSessionService extends AgentBaseService {
           } catch { /* non-critical */ }
         }
 
+        // Build optional task update for persistence
+        const taskUpdate = progress.taskId && progress.taskStatus
+          ? { taskId: progress.taskId, title: progress.taskTitle ?? progress.taskId, status: progress.taskStatus }
+          : undefined
+
         try {
           planRepository.updatePhaseProgress(
-            planId, progress.phaseId, progress.status, undefined, touchedFiles
+            planId, progress.phaseId, progress.status, undefined, touchedFiles, taskUpdate
           )
         } catch { /* non-critical */ }
 
@@ -1983,7 +2040,11 @@ export class AgentSessionService extends AgentBaseService {
           phaseTitle: progress.phaseTitle,
           status: progress.status,
           totalPhases: progress.totalPhases,
-          message: progress.message
+          message: progress.message,
+          taskId: progress.taskId,
+          taskTitle: progress.taskTitle,
+          taskStatus: progress.taskStatus,
+          totalTasks: progress.totalTasks
         }
       } as StreamChunk)
       this.log.info(

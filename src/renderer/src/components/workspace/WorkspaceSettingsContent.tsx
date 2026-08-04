@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Landmark, Lightbulb } from 'lucide-react'
-import { useWorkspaceStore, useChatStore } from '@renderer/store'
+import { useWorkspaceStore } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
 import TokenUsagePage from './TokenUsagePage'
 import EventLogPage from './EventLogPage'
@@ -18,6 +18,7 @@ import GoalPage from './GoalPage'
 import PlansPage from './PlansPage'
 import BlueprintPage from './BlueprintPage'
 import { CouncilLanding } from './council'
+import { useCouncilOutcomeActions } from './council/useCouncilOutcomeActions'
 import { SkillDetailPage } from '@renderer/components/settings'
 import CoreTeamPage from '@renderer/components/settings/CoreTeamPage'
 import ClaudeMdDiffModal from '@renderer/components/settings/ClaudeMdDiffModal'
@@ -50,6 +51,9 @@ export default function WorkspaceSettingsContent({
   onPendingGrillConsumed
 }: WorkspaceSettingsContentProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
+
+  const { handleUpdatePlan, handleAcceptAndBuild, isProcessing: councilProcessing } =
+    useCouncilOutcomeActions(onNavigateToChat)
 
   const {
     selectedSkill,
@@ -140,17 +144,10 @@ export default function WorkspaceSettingsContent({
             scored verdict with recommendations.
           </p>
           <CouncilLanding
-            onAcceptAndBuild={() => {
-              onNavigateToChat()
-            }}
-            onRevisePlan={(feedback) => {
-              const { appendLocalMessage } = useChatStore.getState()
-              appendLocalMessage(
-                `🏛️ **Council Review Feedback:**\n\n${feedback}\n\nPlease revise the plan based on this feedback.`,
-                { role: 'user' }
-              )
-              onNavigateToChat()
-            }}
+            onUpdatePlan={handleUpdatePlan}
+            onAcceptAndBuild={handleAcceptAndBuild}
+            isProcessing={councilProcessing}
+            onNavigateToPlans={() => onSettingsTabChange?.('plans')}
             onDismiss={() => {
               // In standalone context: just reset, stay on council page
               // CouncilView already calls reset() before onDismiss

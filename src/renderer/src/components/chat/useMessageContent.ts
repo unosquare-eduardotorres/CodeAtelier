@@ -5,6 +5,7 @@ import type {
   BuildSummary,
   StructuredPlan
 } from '../../../../shared/types'
+import { PLAN_BLOCK_CAPTURE_RE } from './plan-detection'
 
 export interface MessageContentData {
   imageAttachments: string[]
@@ -204,7 +205,7 @@ export function useMessageContent(
       isUser
     )
 
-    const plan = extractStructuredBlock(contentMd, /`{3,4}plan\n([\s\S]*?)`{3,4}/, toStructuredPlan)
+    const plan = extractStructuredBlock(contentMd, PLAN_BLOCK_CAPTURE_RE, toStructuredPlan)
     const grill = extractStructuredBlock(
       contentMd,
       /```grill-summary\n([\s\S]*?)```/,

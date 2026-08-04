@@ -1000,6 +1000,108 @@ describe('normalizeMessage — unknown type', () => {
   })
 })
 
+// ── toolInputRaw (P0 fix — raw JSON survives alongside the display summary) ──
+
+function toolUseBlock(msg: {
+  toolId: string
+  toolName: string
+  input: Record<string, unknown>
+}): Record<string, unknown> {
+  return {
+    type: 'stream_event',
+    event: {
+      type: 'content_block_start',
+      content_block: { type: 'tool_use', id: msg.toolId, name: msg.toolName, input: msg.input }
+    }
+  }
+}
+
+function toolResultMessage(toolUseId: string, content = 'ok'): Record<string, unknown> {
+  return {
+    type: 'user',
+    message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] }
+  }
+}
+
+describe('normalizeMessage — toolInputRaw', () => {
+  test('tool_use carries toolInputRaw as parseable JSON alongside the display-string toolInput', () => {
+    const chunks = collect(
+      toolUseBlock({ toolId: 'tu-raw-1', toolName: 'Write', input: { file_path: 'src/a.ts' } })
+    )
+    const toolUse = chunks.find((c) => c.type === 'tool_use')
+    assert.ok(toolUse)
+    assert.ok(toolUse?.toolInputRaw, 'toolInputRaw must be set')
+    // toolInput is a human-readable summary — NOT expected to be JSON.
+    assert.doesNotThrow(() => JSON.parse(toolUse!.toolInputRaw!))
+    const parsed = JSON.parse(toolUse!.toolInputRaw!) as { file_path: string }
+    assert.equal(parsed.file_path, 'src/a.ts')
+  })
+
+  test('tool_result carries the SAME toolInputRaw that was registered at tool_use time', () => {
+    const tools = new ToolTracker()
+    collect(
+      toolUseBlock({ toolId: 'tu-raw-2', toolName: 'Edit', input: { file_path: 'src/b.ts' } }),
+      tools
+    )
+    const chunks = collect(toolResultMessage('tu-raw-2'), tools)
+    const toolResult = chunks.find((c) => c.type === 'tool_result')
+    assert.ok(toolResult)
+    assert.ok(toolResult?.toolInputRaw, 'tool_result must carry toolInputRaw from the tracker')
+    const parsed = JSON.parse(toolResult!.toolInputRaw!) as { file_path: string }
+    assert.equal(parsed.file_path, 'src/b.ts')
+  })
+
+  test('tool_use with empty input → no toolInputRaw (nothing to recover)', () => {
+    const chunks = collect(toolUseBlock({ toolId: 'tu-raw-3', toolName: 'Bash', input: {} }))
+    const toolUse = chunks.find((c) => c.type === 'tool_use')
+    assert.equal(toolUse?.toolInputRaw, undefined)
+  })
+})
+
+// ── TodoWrite → todoSync (full-snapshot reconcile, including clears) ─────────
+
+describe('normalizeMessage — TodoWrite todoSync', () => {
+  test('emits todoSync with text/completed/index derived from the todo list', () => {
+    const chunks = collect(
+      toolUseBlock({
+        toolId: 'tu-todo-1',
+        toolName: 'TodoWrite',
+        input: {
+          todos: [
+            { content: 'Task A', status: 'completed' },
+            { content: 'Task B', status: 'in_progress' }
+          ]
+        }
+      })
+    )
+    const sync = chunks.find((c) => c.type === 'todo_update')
+    assert.ok(sync)
+    assert.deepEqual(sync?.todoSync, [
+      { text: 'Task A', completed: true, index: 0 },
+      { text: 'Task B', completed: false, index: 1 }
+    ])
+  })
+
+  test('TodoWrite({ todos: [] }) emits an EMPTY todoSync — clearing must propagate, not be dropped', () => {
+    const chunks = collect(
+      toolUseBlock({ toolId: 'tu-todo-2', toolName: 'TodoWrite', input: { todos: [] } })
+    )
+    const sync = chunks.find((c) => c.type === 'todo_update')
+    assert.ok(sync, 'a clear must still emit a todo_update chunk')
+    assert.deepEqual(sync?.todoSync, [])
+  })
+
+  test('non-array todos input → no todoSync emitted', () => {
+    const chunks = collect(
+      toolUseBlock({ toolId: 'tu-todo-3', toolName: 'TodoWrite', input: { todos: 'not-an-array' } })
+    )
+    assert.equal(
+      chunks.some((c) => c.type === 'todo_update'),
+      false
+    )
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

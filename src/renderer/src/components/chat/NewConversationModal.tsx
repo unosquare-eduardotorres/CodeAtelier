@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   ClipboardList,
   Hammer,
-  GitBranch,
   Lightbulb,
   X,
   MessageSquare,
@@ -19,6 +18,7 @@ import { useClipboardImagePaste, IMAGE_REGEX } from '@renderer/hooks'
 import { ModelPicker } from './ModelPicker'
 import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
+import BranchPicker, { type BranchMode } from './BranchPicker'
 
 /** Map tone icon names to Lucide components */
 const TONE_ICON_MAP: Record<string, LucideIcon> = { MessageSquare, Heart, Sun, Flame, Bone }
@@ -32,7 +32,8 @@ interface NewConversationModalProps {
     mode: ConversationMode
     communicationTone?: CommunicationTone | null
     attachments?: string[]
-    useIsolatedBranch?: boolean
+    branchName?: string
+    autoBranch?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<ModelRoleMap>
   }) => void
@@ -171,7 +172,9 @@ export default function NewConversationModal({
   const [mode, setMode] = useState<ConversationMode>('plan')
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
-  const [useIsolatedBranch, setUseIsolatedBranch] = useState(false)
+  const [branchMode, setBranchMode] = useState<BranchMode>('none')
+  const [customBranchName, setCustomBranchName] = useState('')
+  const [gitAutoBranch, setGitAutoBranch] = useState(false)
   const [routingOverrides, setRoutingOverrides] = useState<Partial<ModelRoleMap>>({})
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -211,8 +214,25 @@ export default function NewConversationModal({
       setMode('plan')
       setConversationTone(null)
       setAttachments([])
-      setUseIsolatedBranch(false)
+      setCustomBranchName('')
       setRoutingOverrides({})
+
+      // Load gitAutoBranch setting and set default branch mode
+      if (activeWorkspace?.id) {
+        window.api
+          .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+          .then((s) => {
+            const autoBranch = !!s.gitAutoBranch
+            setGitAutoBranch(autoBranch)
+            setBranchMode(autoBranch ? 'auto' : 'none')
+          })
+          .catch(() => {
+            setGitAutoBranch(false)
+            setBranchMode('none')
+          })
+      } else {
+        setBranchMode('none')
+      }
     }
   // Only reset on open — not when defaultLlmProvider changes mid-modal
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -228,13 +248,25 @@ export default function NewConversationModal({
     // Derive provider from routing overrides or workspace routing
     const effectiveProvider = routingOverrides['specialist:plan']?.provider ?? derivedProvider
 
+    // Resolve branch settings based on picker mode
+    let branchName: string | undefined
+    let autoBranch: boolean | undefined
+    if (branchMode === 'custom' && customBranchName.trim()) {
+      branchName = customBranchName.trim()
+    } else if (branchMode === 'auto') {
+      autoBranch = true
+    } else if (branchMode === 'none') {
+      autoBranch = false // Explicit "no branch" — overrides workspace gitAutoBranch setting
+    }
+
     onSubmit({
       title: trimmedTitle,
       description: description.trim() || undefined,
       mode,
       communicationTone: conversationTone,
       attachments: attachments.length > 0 ? attachments : undefined,
-      useIsolatedBranch: mode === 'build' ? useIsolatedBranch : undefined,
+      branchName,
+      autoBranch,
       llmProvider: effectiveProvider,
       routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined
     })
@@ -244,7 +276,8 @@ export default function NewConversationModal({
     mode,
     conversationTone,
     attachments,
-    useIsolatedBranch,
+    branchMode,
+    customBranchName,
     derivedProvider,
     routingOverrides,
     onSubmit
@@ -384,28 +417,17 @@ export default function NewConversationModal({
             </AttachmentDropzone>
           </div>
 
-          {/* Isolated branch checkbox — only in Build mode */}
-          {mode === 'build' && (
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={useIsolatedBranch}
-                onChange={(e) => setUseIsolatedBranch(e.target.checked)}
-                className="w-4 h-4 rounded border-border-subtle bg-surface-overlay text-primary focus:ring-primary/30 focus:ring-2 cursor-pointer"
-              />
-              <div className="flex items-center gap-2">
-                <GitBranch
-                  size={14}
-                  className="text-text-secondary group-hover:text-text-primary transition-colors"
-                />
-                <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">
-                  Use isolated branch
-                </span>
-              </div>
-              <span className="text-xs text-text-muted ml-auto">
-                Creates a git worktree for this conversation
-              </span>
-            </label>
+          {/* Branch picker */}
+          {activeWorkspace && (
+            <BranchPicker
+              mode={branchMode}
+              onModeChange={setBranchMode}
+              customBranchName={customBranchName}
+              onCustomBranchNameChange={setCustomBranchName}
+              workspaceId={activeWorkspace.id}
+              gitAutoBranch={gitAutoBranch}
+              datalistId="new-conv-modal"
+            />
           )}
         </div>
 

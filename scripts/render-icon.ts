@@ -2,23 +2,32 @@
  * Generates size-optimized icon assets from tiered source PNGs.
  *
  * Each tier has a different detail level, mapped to appropriate icon sizes:
- *   T1 (full glitch)   → 512px, 1024px
- *   T2 (medium glitch) → 128px, 256px
- *   T3 (simple bold)   → 32px, 64px
- *   T4 (pixel glyph)   → 16px
+ *   T1 (full detail)    → 512px, 1024px
+ *   T2 (medium detail)  → 128px, 256px
+ *   T3 (simple bold)    → 32px, 64px
+ *   T4 (pixel glyph)    → 16px
  *
- * Applies macOS squircle mask (border-radius: 22.37%) via Playwright
- * headless Chromium for proper alpha-transparent corners.
+ * Two modes:
+ *   DEFAULT (pre-masked) — Source PNGs are already finished icons with their
+ *     own squircle shape and padding (e.g. CA Logo.png). Just resize to all
+ *     target sizes and generate icns/ico. No Playwright needed.
  *
- * Usage: npx tsx scripts/render-icon.ts
- * Requirements: playwright (devDependency), sips, iconutil (macOS built-ins)
+ *   --apply-mask — Source PNGs are raw flat artwork that fill the entire canvas.
+ *     Applies macOS squircle mask (border-radius: 22.37%) via Playwright headless
+ *     Chromium and scales artwork to 80.5% of canvas (Apple icon grid inset).
+ *
+ * Usage:
+ *   npx tsx scripts/render-icon.ts               # pre-masked sources (default)
+ *   npx tsx scripts/render-icon.ts --apply-mask   # raw artwork → apply squircle
+ *
+ * Requirements: sips, iconutil (macOS built-ins); playwright (devDep, --apply-mask only)
  */
-import { chromium } from 'playwright'
 import path from 'node:path'
 import fs from 'node:fs'
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 const TIERS_DIR = path.join(ROOT, 'resources', 'icon-tiers')
+const APPLY_MASK = process.argv.includes('--apply-mask')
 
 // ── Tier → size slot mapping ────────────────────────────────────────────────
 
@@ -48,13 +57,14 @@ const ICONSET_SLOTS: Array<{ name: string; pixelSize: number; tierIndex: number 
   { name: 'icon_16x16.png', pixelSize: 16, tierIndex: 3 },
 ]
 
-// ── Squircle mask via Playwright ────────────────────────────────────────────
+// ── Squircle mask via Playwright (--apply-mask only) ───────────────────────
 
 async function applySquircleMask(
   srcPath: string,
   size: number,
   outPath: string
 ): Promise<void> {
+  const { chromium } = await import('playwright')
   const browser = await chromium.launch()
   const page = await browser.newPage({
     viewport: { width: size, height: size },
@@ -84,6 +94,43 @@ async function applySquircleMask(
   await page.setContent(html, { waitUntil: 'networkidle' })
   await page.screenshot({ path: outPath, omitBackground: true, type: 'png' })
   await browser.close()
+}
+
+// ── Crop to content bounding box (for Windows icon) ────────────────────────
+
+/**
+ * Crops a PNG to its non-transparent content bounding box plus a margin,
+ * then resizes to targetSize. Used to produce a Windows icon where the
+ * squircle fills ~94% of the canvas (vs macOS's ~72% with padding).
+ */
+async function cropToContentBbox(
+  srcPath: string,
+  targetSize: number,
+  outPath: string,
+  marginPercent: number = 3
+): Promise<void> {
+  const { execSync } = await import('node:child_process')
+  // Use Python + Pillow to find alpha-channel bbox, crop with margin, resize
+  const script = [
+    'from PIL import Image; import sys',
+    `img = Image.open("${srcPath}").convert("RGBA")`,
+    'bbox = img.split()[3].getbbox()',
+    'if not bbox: sys.exit("No content found")',
+    'cx = (bbox[0] + bbox[2]) / 2',
+    'cy = (bbox[1] + bbox[3]) / 2',
+    'cw = bbox[2] - bbox[0]',
+    'ch = bbox[3] - bbox[1]',
+    `margin = max(cw, ch) * ${marginPercent} / 100`,
+    'half = int((max(cw, ch) + margin * 2) / 2)',
+    'left = max(0, int(cx - half))',
+    'top = max(0, int(cy - half))',
+    `right = min(img.width, int(cx + half))`,
+    `bottom = min(img.height, int(cy + half))`,
+    'cropped = img.crop((left, top, right, bottom))',
+    `resized = cropped.resize((${targetSize}, ${targetSize}), Image.LANCZOS)`,
+    `resized.save("${outPath}", "PNG")`,
+  ].join('; ')
+  execSync(`python3 -c '${script}'`, { stdio: 'pipe' })
 }
 
 // ── Resize with sips ────────────────────────────────────────────────────────
@@ -176,13 +223,14 @@ async function generateIco(pngPath: string, outPath: string): Promise<void> {
 
   // Cleanup
   fs.rmSync(tmpDir, { recursive: true, force: true })
-  console.log(`  ✓ ${path.relative(ROOT, outPath)} (ico — T2-based)`)
+  console.log(`  ✓ ${path.relative(ROOT, outPath)} (ico)`)
 }
 
 // ── Main pipeline ───────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log('Generating tier-optimized icon assets with squircle mask...\n')
+  const mode = APPLY_MASK ? 'raw artwork → squircle mask' : 'pre-masked (direct resize)'
+  console.log(`Generating icon assets [${mode}]...\n`)
 
   // Validate all tier sources exist
   for (const tier of TIERS) {
@@ -194,69 +242,93 @@ async function main(): Promise<void> {
 
   const tmpDir = path.join(ROOT, 'build', 'icon-tmp')
   fs.mkdirSync(tmpDir, { recursive: true })
+  fs.mkdirSync(path.join(ROOT, 'build'), { recursive: true })
 
-  // 1. Apply squircle mask to each tier at 1024px (large enough for all downscales)
-  console.log('Step 1: Applying squircle masks via Playwright...')
-  const maskedPaths: string[] = []
-  for (let i = 0; i < TIERS.length; i++) {
-    const tier = TIERS[i]
-    const srcPath = path.join(TIERS_DIR, tier.source)
-    const maskedPath = path.join(tmpDir, `masked-t${i + 1}.png`)
-    await applySquircleMask(srcPath, 1024, maskedPath)
-    maskedPaths.push(maskedPath)
-    console.log(`  ✓ T${i + 1} masked (${tier.source})`)
-  }
-
-  // 2. Resize each masked tier to its target sizes
-  console.log('\nStep 2: Resizing masked tiers to target sizes...')
   const sizeToFile = new Map<number, string>()
 
-  for (let i = 0; i < TIERS.length; i++) {
-    const tier = TIERS[i]
-    const maskedPath = maskedPaths[i]
+  if (APPLY_MASK) {
+    // ── Mode: Raw artwork → apply squircle mask via Playwright ──────────
+    console.log('Step 1: Applying squircle masks via Playwright...')
+    const maskedPaths: string[] = []
+    for (let i = 0; i < TIERS.length; i++) {
+      const tier = TIERS[i]
+      const srcPath = path.join(TIERS_DIR, tier.source)
+      const maskedPath = path.join(tmpDir, `masked-t${i + 1}.png`)
+      await applySquircleMask(srcPath, 1024, maskedPath)
+      maskedPaths.push(maskedPath)
+      console.log(`  ✓ T${i + 1} masked (${tier.source})`)
+    }
 
-    for (const size of tier.sizes) {
-      const sizedPath = path.join(tmpDir, `t${i + 1}-${size}.png`)
-      if (size === 1024) {
-        // Already at 1024px from the mask step
-        fs.copyFileSync(maskedPath, sizedPath)
-      } else {
-        await resizePng(maskedPath, size, sizedPath)
+    console.log('\nStep 2: Resizing masked tiers to target sizes...')
+    for (let i = 0; i < TIERS.length; i++) {
+      const tier = TIERS[i]
+      const maskedPath = maskedPaths[i]
+
+      for (const size of tier.sizes) {
+        const sizedPath = path.join(tmpDir, `t${i + 1}-${size}.png`)
+        if (size === 1024) {
+          fs.copyFileSync(maskedPath, sizedPath)
+        } else {
+          await resizePng(maskedPath, size, sizedPath)
+        }
+        sizeToFile.set(size, sizedPath)
+        console.log(`  ✓ T${i + 1} → ${size}px`)
       }
-      sizeToFile.set(size, sizedPath)
-      console.log(`  ✓ T${i + 1} → ${size}px`)
+    }
+  } else {
+    // ── Mode: Pre-masked — sources already have squircle + padding ──────
+    console.log('Step 1: Resizing pre-masked tiers to target sizes...')
+    console.log('  (squircle mask skipped — sources already have shape + padding)')
+    for (let i = 0; i < TIERS.length; i++) {
+      const tier = TIERS[i]
+      const srcPath = path.join(TIERS_DIR, tier.source)
+
+      for (const size of tier.sizes) {
+        const sizedPath = path.join(tmpDir, `t${i + 1}-${size}.png`)
+        if (size === 1024) {
+          fs.copyFileSync(srcPath, sizedPath)
+        } else {
+          await resizePng(srcPath, size, sizedPath)
+        }
+        sizeToFile.set(size, sizedPath)
+        console.log(`  ✓ T${i + 1} → ${size}px`)
+      }
     }
   }
 
   // 3. Build .icns with tier-specific artwork per slot
-  console.log('\nStep 3: Building icon assets...')
-  fs.mkdirSync(path.join(ROOT, 'build'), { recursive: true })
+  console.log('\nStep 2: Building icon assets...')
   await generateIcns(sizeToFile, path.join(ROOT, 'build', 'icon.icns'))
 
-  // 4. Generate .ico using T2 masked as source (best readability across ICO sizes)
-  const t2MaskedPath = maskedPaths[1]
-  await generateIco(t2MaskedPath, path.join(ROOT, 'build', 'icon.ico'))
-
-  // 5. Copy T1 masked 1024px → resources/icon.png
+  // 4. Copy T1 @ 1024px → resources/icon.png and build/icon.png
   const t1_1024 = sizeToFile.get(1024)!
   fs.copyFileSync(t1_1024, path.join(ROOT, 'resources', 'icon.png'))
-  console.log('  ✓ resources/icon.png (T1 @ 1024px with squircle)')
+  console.log('  ✓ resources/icon.png (T1 @ 1024px)')
 
-  // 5b. Copy T1 masked 1024px → build/icon.png (Linux electron-builder icon)
   fs.copyFileSync(t1_1024, path.join(ROOT, 'build', 'icon.png'))
-  console.log('  ✓ build/icon.png (T1 @ 1024px with squircle)')
+  console.log('  ✓ build/icon.png (T1 @ 1024px)')
 
-  // 6. Resize T1 masked → docs/CodeAtelier/icon_512x512.png
+  // 5. Generate Windows-specific icon (cropped to content bbox + 3% margin)
+  //    Windows taskbar renders icons at full canvas — no padding normalization.
+  //    Cropping the squircle to ~94% fill matches other Windows apps (Docker, etc).
+  const winIconPath = path.join(ROOT, 'resources', 'icon-win.png')
+  await cropToContentBbox(t1_1024, 1024, winIconPath, 3)
+  console.log('  ✓ resources/icon-win.png (Windows — 94% fill)')
+
+  // 6. Generate .ico from Windows-cropped source (for .exe embedded icon)
+  await generateIco(winIconPath, path.join(ROOT, 'build', 'icon.ico'))
+
+  // 7. Resize T1 → docs/CodeAtelier/icon_512x512.png
   const docsIconPath = path.join(ROOT, 'docs', 'CodeAtelier', 'icon_512x512.png')
   fs.mkdirSync(path.dirname(docsIconPath), { recursive: true })
   const t1_512 = sizeToFile.get(512)!
   fs.copyFileSync(t1_512, docsIconPath)
-  console.log('  ✓ docs/CodeAtelier/icon_512x512.png (T1 @ 512px with squircle)')
+  console.log('  ✓ docs/CodeAtelier/icon_512x512.png (T1 @ 512px)')
 
   // Cleanup temp files
   fs.rmSync(tmpDir, { recursive: true, force: true })
 
-  console.log('\nDone! All tier-optimized icon assets regenerated.')
+  console.log('\nDone! All icon assets regenerated.')
 }
 
 main().catch((err) => {

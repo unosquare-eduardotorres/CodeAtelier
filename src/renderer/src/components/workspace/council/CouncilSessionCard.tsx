@@ -1,4 +1,4 @@
-import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark, Trash2 } from 'lucide-react'
+import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark, Trash2, ArrowRight } from 'lucide-react'
 import type {
   CouncilSessionStatus,
   CouncilInputType,
@@ -21,6 +21,7 @@ export interface CouncilSessionSummary {
   peerReviews?: CouncilPeerReview[]
   advisorReviews?: CouncilReview[]
   structuredPlanJson?: string | null
+  conversationId?: string | null
 }
 
 // ── Status badge config ────────────────────────────────────────────────────
@@ -122,16 +123,20 @@ function extractDisplayTitle(session: CouncilSessionSummary): string {
 
 interface CouncilSessionCardProps {
   session: CouncilSessionSummary
+  planTitle?: string | null
   onView: (sessionId: string) => void
   onResume?: (sessionId: string) => void
   onDelete?: (sessionId: string) => void
+  onNavigateToPlans?: () => void
 }
 
 export default function CouncilSessionCard({
   session,
+  planTitle,
   onView,
   onResume,
-  onDelete
+  onDelete,
+  onNavigateToPlans
 }: CouncilSessionCardProps): React.JSX.Element {
   const config = STATUS_CONFIG[session.status]
   const displayTitle = extractDisplayTitle(session)
@@ -165,6 +170,26 @@ export default function CouncilSessionCard({
           </span>
           <span className="text-[10px] text-text-muted">·</span>
           <span className="text-[10px] text-text-muted">{relativeTime(session.createdAt)}</span>
+          {planTitle && (
+            <>
+              <span className="text-[10px] text-text-muted">·</span>
+              {onNavigateToPlans ? (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onNavigateToPlans() }}
+                  className="flex items-center gap-0.5 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  <ArrowRight size={10} />
+                  Plan: {planTitle.length > 40 ? planTitle.slice(0, 40) + '…' : planTitle}
+                </button>
+              ) : (
+                <span className="flex items-center gap-0.5 text-[10px] text-indigo-400">
+                  <ArrowRight size={10} />
+                  Plan: {planTitle.length > 40 ? planTitle.slice(0, 40) + '…' : planTitle}
+                </span>
+              )}
+            </>
+          )}
         </div>
       </div>
 

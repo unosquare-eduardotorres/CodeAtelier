@@ -1,7 +1,7 @@
 /**
  * TaskPlanSections — individual section renderers for the structured plan card.
  *
- * Extracted from TaskPlanCard to reduce its line count and make each section
+ * Extracted from TaskPlanCard (now used by PlanTabContent in ChatExecutionPanel) to reduce its line count and make each section
  * independently readable. The parent passes in pre-filtered visible data from
  * usePlanMemos and the structured plan.
  */
@@ -16,7 +16,8 @@ import {
   ChevronRight,
   Search,
   ArrowRight,
-  Lightbulb
+  Lightbulb,
+  ScrollText
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -217,9 +218,24 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   } = props
 
   const titleSection = structuredPlan?.summary ? (
-    <div className="border-l-4 border-[var(--color-plan-card)] pl-4 bg-surface-overlay rounded-r">
-      <p className="text-sm text-text-body leading-relaxed">{structuredPlan.summary}</p>
-    </div>
+    <details
+      open
+      className="rounded-lg border border-border-subtle bg-surface-overlay group"
+    >
+      <summary className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          size={12}
+          className="text-text-muted transition-transform group-open:rotate-90"
+        />
+        <ScrollText size={12} className="text-[var(--color-plan-card)]" />
+        Plan Summary
+      </summary>
+      <div className="px-3 pb-3 text-sm text-text-body leading-relaxed prose prose-sm prose-invert max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>
+          {structuredPlan.summary}
+        </ReactMarkdown>
+      </div>
+    </details>
   ) : null
 
   const summarySection = false

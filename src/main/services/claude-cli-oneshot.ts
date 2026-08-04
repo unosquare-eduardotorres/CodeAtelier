@@ -35,8 +35,13 @@ export function runCliOneShot(
       },
       (err, stdout, stderr) => {
         if (err) {
-          const detail = stderr && stderr.trim() ? `\n${stderr.trim()}` : ''
-          reject(new Error(`${err.message}${detail}`))
+          const sErr = stderr?.trim() || ''
+          if ((err as NodeJS.ErrnoException & { killed?: boolean }).killed) {
+            const secs = Math.round((opts.timeout ?? DEFAULT_TIMEOUT) / 1000)
+            reject(new Error(`CLI timed out after ${secs}s${sErr ? `\n${sErr}` : ''}`))
+            return
+          }
+          reject(new Error(`${err.message}${sErr ? `\n${sErr}` : ''}`))
           return
         }
         resolve(stdout)

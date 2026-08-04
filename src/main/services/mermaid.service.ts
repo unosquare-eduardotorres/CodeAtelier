@@ -1,4 +1,5 @@
 import { JSDOM } from 'jsdom'
+import { sanitizeMermaid } from '../../shared/mermaid-sanitizers'
 
 class MermaidService {
   private initialized = false
@@ -52,13 +53,22 @@ class MermaidService {
         fontSize: '13px',
       }
     })
+
+    // Register Lucide icon pack for @{} icon nodes
+    this.mermaid.registerIconPacks([
+      {
+        name: 'lucide',
+        loader: () => import('@iconify-json/lucide').then((module) => module.icons),
+      },
+    ])
+
     this.initialized = true
   }
 
   async render(definition: string, id?: string): Promise<{ svg: string }> {
     await this.ensureInit()
     const diagramId = id ?? `mermaid-${Date.now()}`
-    const { svg } = await this.mermaid!.render(diagramId, definition.trim())
+    const { svg } = await this.mermaid!.render(diagramId, sanitizeMermaid(definition))
     return { svg }
   }
 }

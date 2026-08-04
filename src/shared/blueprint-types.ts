@@ -53,6 +53,7 @@ export interface Blueprint {
   settingsJson: Record<string, unknown>
   createdAt: string
   updatedAt: string
+  completedAt: string | null
 }
 
 export interface BlueprintPhase {

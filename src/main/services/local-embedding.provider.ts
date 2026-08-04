@@ -27,7 +27,7 @@ import log from 'electron-log/main'
 import { omlxEmbeddingProvider } from './omlx-embedding.service'
 import { ollamaManager } from './ollama-manager.service'
 import { workspaceRepository } from '../db/repositories'
-import { OMLX_DEFAULT_PORT, OLLAMA_DEFAULT_PORT } from '../../shared/constants'
+import { OLLAMA_DEFAULT_PORT } from '../../shared/constants'
 import type { LocalLLMBackend } from '../../shared/types'
 
 const embLog = log.scope('LocalEmbedding')

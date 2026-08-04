@@ -104,7 +104,7 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   {
     command: '/effort',
-    description: 'Set thinking depth (low / medium / high)',
+    description: 'Set thinking depth (low / medium / high / xhigh / max)',
     icon: Gauge,
     iconColor: 'text-purple-400'
   },
@@ -164,7 +164,7 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/close': 'Close and permanently delete this conversation',
   '/compact': 'Compress conversation context to save tokens',
   '/clear': 'Clear chat display (keeps AI context)',
-  '/effort': 'Set thinking depth — `/effort low` | `/effort medium` | `/effort high`',
+  '/effort': 'Set thinking depth — `/effort low` | `/effort medium` | `/effort high` | `/effort xhigh` | `/effort max`',
   '/todos': 'Show/hide agent task list',
   '/grillme': 'Grill an idea — AI-led Q&A across 8 specialist tracks',
   '/voice': 'Toggle push-to-talk voice input',
@@ -378,7 +378,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
 
         '/effort': async () => {
           const arg = trimmed.split(' ')[1]?.toLowerCase()
-          const validEfforts: ThinkingEffort[] = ['low', 'medium', 'high']
+          const validEfforts: ThinkingEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
           if (arg && validEfforts.includes(arg as ThinkingEffort)) {
             const effort = arg as ThinkingEffort
             await window.api.updateEffort({
@@ -388,7 +388,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             opts.setEffort(opts.currentConversationId, effort)
             opts.appendLocalMessage(`Thinking effort set to **${effort}**`)
           } else {
-            opts.appendLocalMessage('Usage: `/effort low` | `/effort medium` | `/effort high`')
+            opts.appendLocalMessage('Usage: `/effort low` | `/effort medium` | `/effort high` | `/effort xhigh` | `/effort max`')
           }
         },
 

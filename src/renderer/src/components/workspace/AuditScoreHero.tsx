@@ -6,8 +6,7 @@
 import { MinusCircle, AlertTriangle, ShieldCheck } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditApplicability } from '../../../../shared/types'
-import { getAvatarImage } from '@renderer/assets/avatars'
-import { useAppTheme } from '@renderer/store'
+import Avatar from '@renderer/components/common/Avatar'
 import ScoreGauge from './ScoreGauge'
 
 interface AuditScoreHeroProps {
@@ -31,17 +30,15 @@ export default function AuditScoreHero({
   issueCount,
   passedCount
 }: AuditScoreHeroProps): React.JSX.Element {
-  const theme = useAppTheme()
-
   return (
     <div className="border-b border-border-subtle bg-surface-raised">
       <div className="flex items-start gap-4 px-5 py-4">
         {/* Auditor portrait — square, like GrillSidebar */}
         <div className="flex-shrink-0">
-          <img
-            src={getAvatarImage('atelier-auditor', theme)}
-            alt={`${trackName} Auditor`}
-            className="w-24 h-24 rounded-xl object-cover border border-border-subtle shadow-sm"
+          <Avatar
+            avatarKey="atelier-auditor"
+            size="xxl"
+            className="!rounded-xl border border-border-subtle shadow-sm"
           />
         </div>
 

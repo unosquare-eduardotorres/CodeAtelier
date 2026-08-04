@@ -72,6 +72,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   protected semanticSearchEnabled = true
   protected githubConfigured = false
   protected codeAnalysisEnabled = true
+  protected processManagerEnabled = true
 
   // ── Strategy Λ: Locked MCP flags ──────────────────────────────────
   // Snapshotted at onSessionStart() — tool set stays stable for the entire
@@ -157,6 +158,8 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
 
     // Propagate code-analysis availability to prompt guidance gating
     this.codeAnalysisEnabled = result.codeAnalysisEnabled
+    // Process manager: excluded in plan mode (read-only)
+    this.processManagerEnabled = ctx.mode !== 'plan'
 
     return result
   }
@@ -258,7 +261,8 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
       githubConfigured: this.githubConfigured,
       includeGitContext: this.getIncludeGitContext(),
       includeCheckpoint: false,
-      codeAnalysisEnabled: this.codeAnalysisEnabled
+      codeAnalysisEnabled: this.codeAnalysisEnabled,
+      processManagerEnabled: this.processManagerEnabled
     }
   }
 

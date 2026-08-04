@@ -52,6 +52,7 @@ export function grillPlanToStructuredPlan(grill: GrillStructuredPlan): Structure
     type: GOAL_TYPE_MAP[grill.goalType],
     title: grill.title,
     summary: grill.summary,
+    goal: `Complete ${grill.title}: ${grill.items.map((i) => i.title).join(', ')}`,
     decisions: decisions.length ? decisions : undefined,
     phases: phases.length ? phases : undefined,
     // GRILL-MAP-01: Guard against undefined files in items (malformed LLM output)
