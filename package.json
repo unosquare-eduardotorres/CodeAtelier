@@ -25,7 +25,7 @@
     "test:all": "npm run test:unit && npm run test:repo",
     "test:cov": "c8 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:html": "c8 --reporter=html --reporter=text node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
-    "test:cov:check": "c8 --check-coverage --lines 61 --functions 79 --branches 76 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
+    "test:cov:check": "c8 --check-coverage --lines 65 --functions 77 --branches 76 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:full": "bash scripts/coverage-full.sh",
     "coverage:rank": "node scripts/coverage-rank.mjs",
     "test:cov:report": "npm run test:cov && npm run coverage:rank",
