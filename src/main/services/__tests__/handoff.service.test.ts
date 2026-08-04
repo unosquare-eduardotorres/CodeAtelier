@@ -636,6 +636,7 @@ describe('blueprintAdapter.toEnvelope', () => {
       settingsJson: { fast_mode: true },
       createdAt: '2024-01-01',
       updatedAt: '2024-01-02',
+      completedAt: null,
       phases: [
         { id: 'p1', blueprintId: 'bp-1', phase: 'specify', status: 'complete', conversationId: null, artifactsJson: [{ type: 'spec', filePath: 'spec.md' }], contextSnapshot: null, startedAt: '2024-01-01', completedAt: '2024-01-01' },
         { id: 'p2', blueprintId: 'bp-1', phase: 'build', status: 'active', conversationId: null, artifactsJson: [], contextSnapshot: null, startedAt: '2024-01-02', completedAt: null },

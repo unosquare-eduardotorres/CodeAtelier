@@ -2,8 +2,11 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import { extname } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { chatStreamService } from '../services/chat-stream.service'
+import { chatAgentService } from '../services/chat-agent.service'
 import { conversationStateMachine } from '../services/conversation-state-machine'
 import { lifecycleRegistry } from '../services/conversation-lifecycle'
+import type { ProjectSpecialistRoleAdapter } from '../services/role-adapters/project-specialist.adapter'
+import { conversationRepository } from '../db/repositories/conversation.repository'
 
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -28,6 +31,8 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     const conversationId = requireString(args, 'conversationId', ch)
     const text = requireString(args, 'text', ch)
     const attachments = args.attachments as string[] | undefined
+    const skipOptimizer = args.skipOptimizer === true
+    const hidden = args.hidden === true
 
     if (text.length > MAX_MESSAGE_LENGTH) {
       throw new Error(`Message too long: ${text.length} chars (max ${MAX_MESSAGE_LENGTH})`)
@@ -64,7 +69,10 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     // stream() returns a StreamHandle. We await it to get the handle (validates inputs,
     // starts streaming), but let the `done` promise run in the background — the renderer
     // receives progress via IPC events, not via this handler's return value.
-    const handle = await chatStreamService.stream(conversationId, text, attachments)
+    const handle = await chatStreamService.stream(conversationId, text, attachments, {
+      optimizePrompt: !skipOptimizer,
+      hidden
+    })
 
     // Fire-and-forget: let pipeline complete asynchronously.
     // Errors are surfaced to the renderer via CHAT_MESSAGE_CHUNK error events.
@@ -76,6 +84,37 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     // streaming chunks. This is the SINGLE SOURCE OF TRUTH for requestId —
     // the renderer must NOT generate its own.
     return { requestId: handle.requestId }
+  })
+
+  // ── Set goal for next execution ──
+  ipcMain.handle(IPC_CHANNELS.CHAT_SET_GOAL, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_SET_GOAL)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_SET_GOAL)
+    const goal = requireString(args, 'goal', IPC_CHANNELS.CHAT_SET_GOAL)
+    const goalMode = (args.goalMode === 'advisory' ? 'advisory' : 'enforce') as 'advisory' | 'enforce'
+
+    // Validate goal length (CLI caps at 4000 chars)
+    if (goal.length > 4000) {
+      throw new Error(`Goal too long: ${goal.length} chars (max 4000)`)
+    }
+
+    // Resolve workspace from the conversation, not from activeWorkspaceId
+    // (prevents goal landing on wrong adapter during rapid workspace switches)
+    const workspaceId = conversationRepository.getWorkspaceId(conversationId)
+    if (!workspaceId) {
+      log.warn('[CHAT_SET_GOAL] Conversation not found, cannot resolve workspace:', conversationId)
+      return
+    }
+
+    const adapter = chatAgentService.getAdapterForWorkspace(workspaceId)
+    if (adapter && 'setGoalCondition' in adapter) {
+      ;(adapter as ProjectSpecialistRoleAdapter).setGoalCondition(conversationId, goal, goalMode)
+    } else {
+      log.warn('[CHAT_SET_GOAL] Adapter not found or missing setGoalCondition for workspace:', workspaceId)
+    }
+
+    log.info('SET_GOAL received:', { conversationId, goalLen: goal.length, goalMode, workspaceId })
   })
 
   // ── Compact conversation context ──

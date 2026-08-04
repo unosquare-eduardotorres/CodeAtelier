@@ -41,6 +41,7 @@ interface PlanRow {
   risk_count: number
   created_at: string
   updated_at: string
+  completed_at: string | null
   previous_plan_id: string | null
 }
 
@@ -88,6 +89,7 @@ function mapRow(row: PlanRow): PlanRecord {
     riskCount: row.risk_count ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    completedAt: row.completed_at,
     previousPlanId: row.previous_plan_id ?? null
   }
 }
@@ -176,14 +178,24 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     const savedPlan = mapRow(row)
 
     // ── Revision linking: auto-archive previous plan from same source ──
+    // Scoped to the same linked conversation (when set) so two concurrent chat
+    // conversations in one workspace don't archive each other's active plan —
+    // sources without a linked conversation (blueprint/audit/council revisions)
+    // keep the original workspace-wide "latest wins" behavior.
     if (params.source && params.sourceId) {
       const existing = this.db()
         .prepare(
-          `SELECT id, status FROM plans WHERE workspace_id = ? AND source = ? AND id != ? AND status != 'archived' ORDER BY created_at DESC LIMIT 1`
+          `SELECT id, status FROM plans
+           WHERE workspace_id = ? AND source = ? AND id != ? AND status != 'archived'
+             AND (linked_conversation_id IS NULL OR linked_conversation_id = ?)
+           ORDER BY created_at DESC LIMIT 1`
         )
-        .get(params.workspaceId, params.source, savedPlan.id) as
-        | { id: string; status: string }
-        | undefined
+        .get(
+          params.workspaceId,
+          params.source,
+          savedPlan.id,
+          params.linkedConversationId ?? null
+        ) as { id: string; status: string } | undefined
       if (existing) {
         this.updateStatus(existing.id, 'archived', undefined, 'system')
         this.db()
@@ -282,6 +294,12 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     const sets = ['status = ?', "updated_at = datetime('now')"]
     const params: unknown[] = [status]
 
+    // Set completed_at for terminal statuses
+    const isTerminal = status === 'completed' || status === 'archived'
+    if (isTerminal) {
+      sets.push("completed_at = datetime('now')")
+    }
+
     if (links?.conversationId !== undefined) {
       sets.push('linked_conversation_id = ?')
       params.push(links.conversationId)
@@ -375,7 +393,8 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
     phaseId: number,
     status: string,
     completedAt?: string,
-    touchedFiles?: string[]
+    touchedFiles?: string[],
+    taskUpdate?: { taskId: string; title: string; status: string }
   ): void {
     const row = this.db()
       .prepare('SELECT phase_progress_json FROM plans WHERE id = ?')
@@ -395,6 +414,17 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
         const merged = [...new Set([...current, ...touchedFiles])]
         existing.touchedFiles = merged
       }
+      // Merge task update
+      if (taskUpdate) {
+        const tasks = existing.tasks ?? []
+        const taskIdx = tasks.findIndex((t) => t.taskId === taskUpdate.taskId)
+        if (taskIdx >= 0) {
+          tasks[taskIdx] = { ...tasks[taskIdx], ...taskUpdate }
+        } else {
+          tasks.push(taskUpdate)
+        }
+        existing.tasks = tasks
+      }
     } else {
       progress.push({
         phaseId,
@@ -404,12 +434,13 @@ export class PlanRepository extends BaseRepository<PlanRow, PlanRecord> {
           status === 'completed' || status === 'failed'
             ? (completedAt ?? new Date().toISOString())
             : null,
-        touchedFiles: touchedFiles ?? []
+        touchedFiles: touchedFiles ?? [],
+        tasks: taskUpdate ? [taskUpdate] : undefined
       })
     }
 
     this.db()
-      .prepare('UPDATE plans SET phase_progress_json = ?, updated_at = datetime("now") WHERE id = ?')
+      .prepare("UPDATE plans SET phase_progress_json = ?, updated_at = datetime('now') WHERE id = ?")
       .run(JSON.stringify(progress), planId)
   }
 

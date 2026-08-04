@@ -312,6 +312,14 @@ export default function GrillPage({
 
   const handleCouncilSweep = useCallback(async () => {
     if (!activeWorkspace || !structuredPlan) return
+
+    // Mark grill as complete BEFORE navigating away
+    try {
+      await window.api.grillComplete({ ideaId })
+    } catch (err) {
+      console.error('grillComplete failed:', err)
+    }
+
     const councilStore = useCouncilStore.getState()
     councilStore.startCouncil()
     const { sessionId } = await window.api.councilStart({
@@ -324,11 +332,6 @@ export default function GrillPage({
     })
     councilStore.setSessionIdentity(sessionId, activeWorkspace.id)
     onNavigateToCouncil?.()
-    try {
-      await window.api.grillComplete({ ideaId })
-    } catch (err) {
-      console.error('grillComplete failed:', err)
-    }
   }, [activeWorkspace, structuredPlan, ideaTitle, conversationId, ideaId, onNavigateToCouncil])
 
   return (

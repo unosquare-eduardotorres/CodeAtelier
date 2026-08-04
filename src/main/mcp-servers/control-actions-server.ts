@@ -95,7 +95,7 @@ const askUserRegistry = createAskUserRegistry()
 const permissionRegistry = createAskUserRegistry()
 
 /** Timeout for permission prompts — denies automatically if user doesn't respond. */
-const PERMISSION_TIMEOUT_MS = 120_000
+const PERMISSION_TIMEOUT_MS = 900_000 // 15 minutes — matches user multitasking workflow
 
 const SOCKET_CLOSED_MESSAGE =
   'Connection to the app closed before you answered — ask again or proceed.'
@@ -174,6 +174,11 @@ const planSchema = z.object({
     .describe('Plan classification'),
   title: z.string().describe('Short title for the plan'),
   summary: z.string().describe('1-3 sentence overview'),
+  goal: z.string().optional().describe(
+    'Clear, measurable completion condition defining what "done" looks like. ' +
+    'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
+    'no regressions in existing tests"'
+  ),
   problemSummary: z.string().optional(),
   rootCause: z.string().optional(),
   decisions: z.array(z.object({ what: z.string(), why: z.string() })).optional(),
@@ -316,13 +321,22 @@ const phaseProgressSchema = z.object({
     .enum(['started', 'in_progress', 'completed', 'failed', 'skipped'])
     .describe('Current phase status'),
   totalPhases: z.number().describe('Total number of phases in the plan'),
-  message: z.string().optional().describe('Brief note about progress or outcome')
+  message: z.string().optional().describe('Brief note about progress or outcome'),
+  // ── Task-level tracking (optional, backward-compatible) ──
+  taskId: z.string().optional().describe('Task ID within the phase (for task-level tracking)'),
+  taskTitle: z.string().optional().describe('Task title (e.g., "Add login endpoint")'),
+  taskStatus: z
+    .enum(['pending', 'running', 'complete', 'failed', 'skipped'])
+    .optional()
+    .describe('Status of the specific task within this phase'),
+  totalTasks: z.number().optional().describe('Total number of tasks in this phase')
 })
 
 server.tool(
   'emit_phase_progress',
   'Report progress on plan execution. Call this when starting, completing, or failing a plan phase during build mode. ' +
-    'The UI renders a live progress tracker showing which phases are done.',
+    'The UI renders a live progress tracker showing which phases and tasks are done. ' +
+    'Include taskId/taskTitle/taskStatus to report individual task progress within a phase.',
   phaseProgressSchema.shape,
   async (args) => {
     const progress = phaseProgressSchema.parse(args)
@@ -335,10 +349,41 @@ server.tool(
   }
 )
 
+// ── Auto-approve whitelist ──────────────────────────────────────────
+// Tools that are inherently safe (read-only, no side effects) are auto-approved
+// server-side to avoid unnecessary UI roundtrips. This reduces noise for
+// non-destructive batches in build mode where acceptEdits still prompts for Bash.
+
+const AUTO_APPROVE_TOOLS = new Set([
+  'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
+  'SummarizePage', 'Snapshot', 'Evaluate', // browser read tools
+])
+
+/** Read-only Bash command prefixes that are safe to auto-approve. */
+const SAFE_BASH_PREFIXES = [
+  'git status', 'git log', 'git diff', 'git show', 'git branch',
+  'git tag', 'git remote', 'git rev-parse', 'git describe', 'git stash list',
+  'ls', 'cat ', 'head ', 'tail ', 'wc ', 'find ', 'du ', 'df ',
+  'echo ', 'pwd', 'whoami', 'date', 'uname', 'which ', 'type ',
+  'npm ls', 'npm list', 'npm test', 'npm run test', 'npm run lint',
+  'npm run typecheck', 'npm --version', 'npm run build',
+  'npx tsc --noEmit', 'npx tsc -noEmit',
+  'node --version', 'node -v',
+]
+
+function shouldAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
+  if (AUTO_APPROVE_TOOLS.has(toolName)) return true
+  if (toolName === 'Bash' && typeof input.command === 'string') {
+    const cmd = input.command.trim()
+    return SAFE_BASH_PREFIXES.some((prefix) => cmd.startsWith(prefix))
+  }
+  return false
+}
+
 // permission_prompt tool — implements the Claude CLI --permission-prompt-tool contract.
 // When Claude needs permission for a tool call, it invokes this tool instead of
 // auto-denying. We surface the request in the Electron UI toast and block until
-// the user approves/denies (or a 120s timeout fires).
+// the user approves/denies (or a 15min timeout fires).
 server.tool(
   'permission_prompt',
   'Request user permission before executing a tool. ' +
@@ -350,6 +395,14 @@ server.tool(
   },
   async (args) => {
     const { tool_name, input, tool_use_id } = args
+
+    // Auto-approve safe read-only tools without UI roundtrip
+    if (shouldAutoApprove(tool_name, input)) {
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'allow', updatedInput: input }) }]
+      }
+    }
+
     const requestId = crypto.randomUUID()
 
     // Build a human-readable summary of what the tool wants to do
@@ -378,7 +431,7 @@ server.tool(
       )
     })
 
-    // Race against timeout — auto-deny if user doesn't respond in 120s
+    // Race against timeout — auto-deny if user doesn't respond in time
     const timeoutPromise = new Promise<string>((resolve) => {
       setTimeout(() => {
         // If the promise is still pending, resolve it via the registry

@@ -21,3 +21,6 @@ coverage/
 
 # Native binding backup (build-mac.sh temp dir)
 .native-binding-backup/
+
+# Process manager state (auto-generated, workspace-specific)
+.pm-state/

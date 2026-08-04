@@ -47,6 +47,7 @@ if (!require.cache[schemaSqlPath]) {
 export function createTestDb(): Database.Database {
   const db = new Database(':memory:')
   db.pragma('journal_mode = WAL')
+  db.pragma('busy_timeout = 5000') // Match production busy_timeout for test parity
   db.pragma('foreign_keys = ON')
 
   // Lazy require to avoid triggering electron imports at module load time.

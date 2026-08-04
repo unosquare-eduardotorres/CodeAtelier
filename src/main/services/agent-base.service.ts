@@ -42,6 +42,16 @@ export interface StreamChunk {
   content?: string
   toolName?: string
   toolInput?: string
+  /**
+   * Raw JSON tool input (unsummarized). `toolInput` on the CLI backend is a
+   * human-readable display string ("src/a.ts (1 lines)") produced by
+   * summarizeToolInput — it is NOT parseable JSON, so extractStructuredMeta
+   * (tool-chunk-processor.ts) cannot recover file_path from it. This field
+   * carries the actual tool input object (JSON.stringify'd) so structured
+   * fields like file_path survive to consumers that need them (task-derived
+   * progress tracking, in particular).
+   */
+  toolInputRaw?: string
   toolId?: string
   error?: string
   /** True when the CLI's tool_result had is_error: true (e.g. permission denied). */
@@ -109,6 +119,13 @@ export interface StreamChunk {
     text: string
     index?: number
   }
+  /**
+   * Full todo list snapshot from Claude Code's TodoWrite tool (CLI backend).
+   * TodoWrite always ships the COMPLETE list on every call (not a delta), so
+   * this is authoritative — consumers replace the entire per-conversation
+   * todo list rather than applying it as an incremental patch.
+   */
+  todoSync?: Array<{ text: string; completed: boolean; index: number }>
   /** Phase progress update from plan execution */
   phaseProgress?: {
     planId: string | null
@@ -117,6 +134,11 @@ export interface StreamChunk {
     status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
     totalPhases: number
     message?: string
+    // ── Task-level tracking ──
+    taskId?: string
+    taskTitle?: string
+    taskStatus?: 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
+    totalTasks?: number
   }
   /** Turn limit reached — emitted when all auto-continuations are exhausted */
   turnLimit?: {

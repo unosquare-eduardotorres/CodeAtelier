@@ -13,6 +13,9 @@ import { test, describe, summaryAsync, createSpy } from './../../services/__test
 import { routeChunk, getAndClearToolActivities, type ChunkRouterContext } from '../chunk-router'
 import type { StreamChunk } from '../../services'
 import { IPC_CHANNELS } from '../../../shared/constants'
+import { trySetupTestDb, seedConversation } from '../../db/repositories/__tests__/db-test-helper'
+import { planRepository } from '../../db/repositories/plan.repository'
+import type { StructuredPlan } from '../../../shared/types'
 
 type SendSpy = ReturnType<typeof createSpy<[string, unknown], void>>
 
@@ -452,7 +455,212 @@ describe('chunk-router › handlePhaseProgress', () => {
     } as unknown as StreamChunk)
     assert.equal(send.callCount, 1)
   })
+
+  test('phaseProgress with task-level fields → passes them through', () => {
+    const { window, send } = mockWindow()
+    const progress = {
+      planId: 'plan-456',
+      phaseId: 2,
+      phaseTitle: 'Auth endpoints',
+      status: 'in_progress' as const,
+      totalPhases: 4,
+      taskId: '2-1',
+      taskTitle: 'Add login endpoint',
+      taskStatus: 'running' as const,
+      totalTasks: 3
+    }
+    routeChunk(ctx('c-task-progress', window), {
+      type: 'phase_progress',
+      phaseProgress: progress
+    } as unknown as StreamChunk)
+    assert.equal(send.callCount, 1)
+    const payload = send.lastCall?.[1] as Record<string, unknown>
+    const pp = payload.phaseProgress as typeof progress
+    assert.equal(pp.taskId, '2-1')
+    assert.equal(pp.taskTitle, 'Add login endpoint')
+    assert.equal(pp.taskStatus, 'running')
+    assert.equal(pp.totalTasks, 3)
+  })
 })
+
+// ── Task derivation from observed tool activity (TASK-DERIVE-01) ──
+//
+// Regression coverage for the audit finding that this path was dead code:
+// toolInput on the CLI backend is a human-readable summary string, not JSON,
+// so extractStructuredMeta's JSON.parse(toolInput) always threw and filePath
+// was never populated. This exercises the real fix — toolInputRaw — end to
+// end: a Write tool_result with a plan-matching path must derive task
+// completion in the DB and emit a synthetic phaseProgress chunk.
+{
+  const dbEnv = trySetupTestDb()
+
+  describe('chunk-router › derivePlanTaskFromFileActivity (task derivation)', () => {
+    if (!dbEnv) {
+      test('Write tool_result with plan-matching path derives task completion', () => {}, {
+        skipReason: 'no DB'
+      })
+      return
+    }
+    const { wsId } = dbEnv
+
+    function makeStructuredPlan(): StructuredPlan {
+      return {
+        title: 'Derivation Test Plan',
+        summary: 'test',
+        phases: [
+          {
+            id: 1,
+            title: 'Phase One',
+            complexity: 2,
+            risk: 'low',
+            description: '',
+            files: [{ file: 'src/a.ts', change: 'Add A' }]
+          }
+        ]
+      }
+    }
+
+    test('Write tool_result with plan-matching path derives task completion', () => {
+      const conversationId = seedConversation(dbEnv.db, wsId, 'Derivation conv')
+      const plan = planRepository.savePlan({
+        workspaceId: wsId,
+        source: 'chat',
+        sourceId: conversationId,
+        title: 'Derivation Test Plan',
+        summary: 'test',
+        structuredPlan: makeStructuredPlan(),
+        linkedConversationId: conversationId
+      })
+
+      const { window, send } = mockWindow()
+      routeChunk(ctx(conversationId, window), {
+        type: 'tool_result',
+        toolId: 'tool-write-1',
+        toolName: 'Write',
+        toolInputRaw: JSON.stringify({ file_path: 'src/a.ts' }),
+        content: 'File written'
+      } as unknown as StreamChunk)
+
+      // A phaseProgress chunk with taskStatus 'complete' must have been sent —
+      // this is what fails today if toolInputRaw isn't wired end to end.
+      const calls = send.calls ?? []
+      const phaseProgressCall = calls.find(
+        (c) => (c[1] as Record<string, unknown>)?.phaseProgress
+      )
+      assert.ok(phaseProgressCall, 'expected a CHAT_MESSAGE_CHUNK send carrying phaseProgress')
+      const pp = (phaseProgressCall![1] as Record<string, unknown>).phaseProgress as Record<
+        string,
+        unknown
+      >
+      assert.equal(pp.taskId, '1-0')
+      assert.equal(pp.taskStatus, 'complete')
+      assert.equal(pp.phaseId, 1)
+
+      // And it must be persisted — not just emitted — so it survives reload.
+      const progress = planRepository.getPhaseProgress(plan.id)
+      const phase1 = progress.find((p) => p.phaseId === 1)
+      assert.ok(phase1, 'phase 1 progress must be persisted')
+      assert.equal(phase1?.tasks?.find((t) => t.taskId === '1-0')?.status, 'complete')
+    })
+
+    test('Read tool_result (not write/edit) does not derive task completion', () => {
+      const conversationId = seedConversation(dbEnv.db, wsId, 'Derivation conv 2')
+      const plan = planRepository.savePlan({
+        workspaceId: wsId,
+        source: 'chat',
+        sourceId: conversationId,
+        title: 'Derivation Test Plan 2',
+        summary: 'test',
+        structuredPlan: makeStructuredPlan(),
+        linkedConversationId: conversationId
+      })
+
+      const { window, send } = mockWindow()
+      routeChunk(ctx(conversationId, window), {
+        type: 'tool_result',
+        toolId: 'tool-read-1',
+        toolName: 'Read',
+        toolInputRaw: JSON.stringify({ file_path: 'src/a.ts' }),
+        content: 'file contents'
+      } as unknown as StreamChunk)
+
+      const progress = planRepository.getPhaseProgress(plan.id)
+      assert.equal(progress.length, 0, 'a Read must not derive/persist any task progress')
+      assert.equal(
+        (send.calls ?? []).some((c) => (c[1] as Record<string, unknown>)?.phaseProgress),
+        false
+      )
+    })
+
+    test('phase auto-finalizes to completed once every DECLARED task settles — never on a partial subset', () => {
+      const conversationId = seedConversation(dbEnv.db, wsId, 'Finalize conv')
+      const twoTaskPlan: StructuredPlan = {
+        title: 'Two-task phase',
+        summary: 'test',
+        phases: [
+          {
+            id: 1,
+            title: 'Phase One',
+            complexity: 2,
+            risk: 'low',
+            description: '',
+            files: [
+              { file: 'src/a.ts', change: 'Add A' },
+              { file: 'src/b.ts', change: 'Add B' }
+            ]
+          }
+        ]
+      }
+      const plan = planRepository.savePlan({
+        workspaceId: wsId,
+        source: 'chat',
+        sourceId: conversationId,
+        title: 'Two-task phase',
+        summary: 'test',
+        structuredPlan: twoTaskPlan,
+        linkedConversationId: conversationId
+      })
+
+      const { window: w1 } = mockWindow()
+      routeChunk(ctx(conversationId, w1), {
+        type: 'tool_result',
+        toolId: 'tool-a',
+        toolName: 'Write',
+        toolInputRaw: JSON.stringify({ file_path: 'src/a.ts' }),
+        content: 'ok'
+      } as unknown as StreamChunk)
+
+      // Only 1 of 2 declared tasks done — phase must NOT be finalized yet.
+      let phase1 = planRepository.getPhaseProgress(plan.id).find((p) => p.phaseId === 1)
+      assert.equal(
+        phase1?.status,
+        'in_progress',
+        'phase must stay in_progress with an unsettled declared task remaining'
+      )
+
+      const { window: w2, send: send2 } = mockWindow()
+      routeChunk(ctx(conversationId, w2), {
+        type: 'tool_result',
+        toolId: 'tool-b',
+        toolName: 'Write',
+        toolInputRaw: JSON.stringify({ file_path: 'src/b.ts' }),
+        content: 'ok'
+      } as unknown as StreamChunk)
+
+      // Both declared tasks now settled — phase must auto-finalize.
+      phase1 = planRepository.getPhaseProgress(plan.id).find((p) => p.phaseId === 1)
+      assert.equal(phase1?.status, 'completed')
+      assert.equal(phase1?.tasks?.find((t) => t.taskId === '1-0')?.status, 'complete')
+      assert.equal(phase1?.tasks?.find((t) => t.taskId === '1-1')?.status, 'complete')
+
+      const pp = (send2.calls ?? []).find((c) => (c[1] as Record<string, unknown>)?.phaseProgress)
+      const ppStatus = (
+        (pp?.[1] as Record<string, unknown>)?.phaseProgress as Record<string, unknown>
+      )?.status
+      assert.equal(ppStatus, 'completed', 'the emitted phaseProgress chunk must reflect completed')
+    })
+  })
+}
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()

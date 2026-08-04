@@ -431,6 +431,126 @@ class MemoryExtractionService {
     }
   }
 
+  // ── Plan execution completion extraction ────────────────────────────────
+
+  /**
+   * Extract facts from a completed chat plan execution. Assembles a context
+   * block from phases, tasks, touched files, and timing, then runs LLM
+   * extraction. Enqueued (non-blocking).
+   *
+   * Follows MEM-BP-COMPLETE-01 philosophy: one extraction per completion,
+   * not per-task — task outcomes are summarized holistically.
+   */
+  enqueuePlanExecutionExtraction(params: {
+    workspaceId: string
+    workspacePath: string
+    conversationId: string
+    planTitle: string
+    planGoal?: string
+    status: 'completed' | 'partial' | 'failed'
+    phases: Array<{
+      phaseTitle: string
+      status: string
+      touchedFiles: string[]
+      tasks: Array<{ title: string; status: string }>
+    }>
+    durationMs: number
+  }): void {
+    this.enqueue(async () => {
+      await this.extractFromPlanExecution(params)
+    })
+  }
+
+  private async extractFromPlanExecution(params: {
+    workspaceId: string
+    workspacePath: string
+    conversationId: string
+    planTitle: string
+    planGoal?: string
+    status: 'completed' | 'partial' | 'failed'
+    phases: Array<{
+      phaseTitle: string
+      status: string
+      touchedFiles: string[]
+      tasks: Array<{ title: string; status: string }>
+    }>
+    durationMs: number
+  }): Promise<void> {
+    const { workspaceId, workspacePath, conversationId, planTitle, planGoal, status, phases, durationMs } = params
+
+    const parts: string[] = []
+    parts.push(`## Chat Plan Execution: ${planTitle}\nFinal status: ${status}\nDuration: ${Math.round(durationMs / 1000)}s\n`)
+
+    if (planGoal) {
+      parts.push(`### Goal\n${planGoal}`)
+    }
+
+    // Phase summary
+    parts.push('### Phases')
+    for (const phase of phases) {
+      const taskSummary = phase.tasks.length > 0
+        ? phase.tasks.map(t => `  - [${t.status}] ${t.title}`).join('\n')
+        : '  (no tasks)'
+      const filesSummary = phase.touchedFiles.length > 0
+        ? `  Files: ${phase.touchedFiles.join(', ')}`
+        : ''
+      parts.push(`- **${phase.phaseTitle}** (${phase.status})\n${taskSummary}${filesSummary ? '\n' + filesSummary : ''}`)
+    }
+
+    // All touched files (deduped)
+    const allFiles = [...new Set(phases.flatMap(p => p.touchedFiles))]
+    if (allFiles.length > 0) {
+      parts.push(`### Files Modified\n${allFiles.slice(0, 30).join('\n')}`)
+    }
+
+    // Failed phases/tasks for gotcha extraction
+    const failedPhases = phases.filter(p => p.status === 'failed')
+    const failedTasks = phases.flatMap(p => p.tasks.filter(t => t.status === 'failed'))
+    if (failedPhases.length > 0 || failedTasks.length > 0) {
+      parts.push('### Failures')
+      for (const fp of failedPhases) {
+        parts.push(`- Phase "${fp.phaseTitle}" failed`)
+      }
+      for (const ft of failedTasks.slice(0, 10)) {
+        parts.push(`- Task "${ft.title}" failed`)
+      }
+    }
+
+    const combined = parts.join('\n\n')
+    const prompt = buildExtractionPrompt(combined)
+
+    try {
+      const result = await this.spawnSummarizer(prompt, workspacePath, workspaceId)
+      const facts = parseExtractedFacts(result)
+
+      let created = 0
+      for (const fact of facts) {
+        try {
+          await memoryEngineService.writeFact({
+            workspaceId,
+            category: fact.category,
+            title: fact.title,
+            content: fact.content,
+            tags: [...(fact.tags ?? []), 'plan-execution', `plan:${conversationId}`],
+            scopePaths: fact.scopePaths ?? allFiles.slice(0, 10),
+            sourceType: 'session',
+            sourceRef: conversationId,
+            workspacePath
+          })
+          created++
+        } catch (err) {
+          log.warn('[MemoryExtraction] Failed to write plan execution fact:', err)
+        }
+      }
+
+      if (created > 0) {
+        log.info(`[MemoryExtraction] Plan execution extraction: ${created} facts from "${planTitle}" (${status})`)
+      }
+    } catch (err) {
+      log.warn('[MemoryExtraction] Plan execution extraction failed:', err)
+    }
+  }
+
   // ── Single-message extraction (for "Save to memory" hover action) ──────
 
   /**

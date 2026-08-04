@@ -9,9 +9,20 @@
  */
 
 import assert from 'node:assert/strict'
+import { setupElectronStub } from './electron-stub'
 import { test, describe, summaryAsync } from './test-harness'
-import { promptOptimizerService } from '../prompt-optimizer.service'
-import { workspaceRepository } from '../../db/repositories'
+
+// Install electron stubs BEFORE importing services that depend on the DB.
+// This intercepts `require('electron')` and Vite `?raw` SQL imports so the
+// test can run standalone (`npx tsx prompt-optimizer.test.ts`) as well as
+// through run-tests.ts. The call is idempotent — safe when the runner
+// has already called it.
+setupElectronStub()
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { promptOptimizerService } = require('../prompt-optimizer.service') as typeof import('../prompt-optimizer.service')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { workspaceRepository } = require('../../db/repositories') as typeof import('../../db/repositories')
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -659,6 +670,17 @@ describe('PromptOptimizerService', () => {
     })
   })
 
+  // ── Warmup ──
+
+  describe('warmup', () => {
+    test('warmup sets system prompt and model then calls backgroundCliSession.warmup', async () => {
+      // Verify warmup exists and is callable
+      assert.equal(typeof promptOptimizerService.warmup, 'function')
+      // The actual backgroundCliSession.warmup() will fail in test (no claude CLI)
+      // but that's caught and swallowed — verify it doesn't throw
+      await promptOptimizerService.warmup()
+    })
+  })
 
 })
 

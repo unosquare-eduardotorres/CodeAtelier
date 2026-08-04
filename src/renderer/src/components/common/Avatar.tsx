@@ -1,7 +1,8 @@
-import { useState, useCallback } from 'react'
-import { useAppTheme } from '@renderer/store'
-import { getAvatarImage, type AvatarKey } from '@renderer/assets/avatars'
+import { useState, useCallback, useEffect } from 'react'
+import { useAppTheme, useUserAvatarVariant } from '@renderer/store'
+import { getAvatarImage, resolveUserAvatarKey, type AvatarKey } from '@renderer/assets/avatars'
 import { rendererLog } from '@renderer/utils/logger'
+import type { AppTheme } from '../../../../shared/types'
 
 interface AvatarProps {
   avatarKey: string
@@ -54,11 +55,23 @@ const INITIALS_SIZE_MAP = {
   xxl: 'text-3xl'
 } as const
 
+// ── Theme tint overlays — subtle color wash for non-native themes ──
+const THEME_TINT: Record<AppTheme, string | null> = {
+  'code-atelier': null,
+  developer: null,
+  glass: 'rgba(124,140,247,0.12)',
+  porcelain: 'rgba(71,85,105,0.08)'
+}
+
 /**
  * Renders a bundled portrait image by key, themed to the active theme.
  * Falls back to Code Atelier if the key or theme is unknown.
  * If the image is a placeholder (naturalWidth ≤ 4), renders an initials
  * circle instead. This benefits chat/grill/blueprint equally.
+ *
+ * When avatarKey is 'user', resolves to the user's chosen variant
+ * (user-1/2/3) from app preferences. Specific variant keys like
+ * 'user-1' bypass resolution (used by the avatar picker).
  */
 export default function Avatar({
   avatarKey,
@@ -67,9 +80,21 @@ export default function Avatar({
   accentColor
 }: AvatarProps): React.JSX.Element {
   const theme = useAppTheme()
+  const userAvatarVariant = useUserAvatarVariant()
   const px = SIZE_MAP[size]
-  const src = getAvatarImage(avatarKey as AvatarKey, theme)
+
+  // Resolve 'user' role key → specific variant image key
+  const resolvedKey = avatarKey === 'user'
+    ? resolveUserAvatarKey(userAvatarVariant)
+    : avatarKey
+
+  const src = getAvatarImage(resolvedKey as AvatarKey, theme)
   const [isPlaceholder, setIsPlaceholder] = useState(false)
+
+  // Reset placeholder detection when the avatar source changes
+  useEffect(() => {
+    setIsPlaceholder(false)
+  }, [resolvedKey, theme])
 
   const handleLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
     // Detect 68-byte placeholder PNGs — they decode to tiny dimensions
@@ -78,14 +103,6 @@ export default function Avatar({
     }
   }, [])
 
-  const baseStyle: React.CSSProperties = {
-    width: px,
-    height: px,
-    minWidth: px,
-    minHeight: px,
-    ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
-  }
-
   // Render initials circle for unknown keys or detected placeholders
   if (!src || isPlaceholder) {
     if (!src) {
@@ -93,29 +110,60 @@ export default function Avatar({
     }
     const colorClass = getInitialsColor(avatarKey)
     const sizeClass = INITIALS_SIZE_MAP[size]
+    const initialsStyle: React.CSSProperties = {
+      width: px,
+      height: px,
+      ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
+    }
     return (
-      <div
-        className={`inline-flex items-center justify-center rounded-full ${colorClass} ${className}`}
-        style={baseStyle}
-        aria-hidden="true"
-      >
-        <span className={`${sizeClass} font-semibold text-white select-none`}>
-          {getInitials(avatarKey)}
-        </span>
+      <div className="relative inline-flex" style={{ width: px, height: px, minWidth: px, minHeight: px }}>
+        <div
+          className={`inline-flex items-center justify-center rounded-full ${colorClass} ${className}`}
+          style={initialsStyle}
+          aria-hidden="true"
+        >
+          <span className={`${sizeClass} font-semibold text-white select-none`}>
+            {getInitials(avatarKey)}
+          </span>
+        </div>
       </div>
     )
   }
 
+  const tint = THEME_TINT[theme]
+  const isUserVariant = resolvedKey.startsWith('user-')
+
+  const wrapperStyle: React.CSSProperties = {
+    width: px,
+    height: px,
+    minWidth: px,
+    minHeight: px
+  }
+
+  const imgStyle: React.CSSProperties = {
+    width: px,
+    height: px,
+    ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
+  }
+
   return (
-    <img
-      src={src}
-      width={px}
-      height={px}
-      className={`inline-block rounded-full object-cover transition-all duration-150 ${className}`}
-      style={baseStyle}
-      alt=""
-      aria-hidden="true"
-      onLoad={handleLoad}
-    />
+    <div className="relative inline-flex" style={wrapperStyle}>
+      <img
+        src={src}
+        width={px}
+        height={px}
+        className={`inline-block rounded-full object-cover transition-opacity duration-150 ${className}`}
+        style={imgStyle}
+        alt=""
+        aria-hidden="true"
+        onLoad={handleLoad}
+      />
+      {tint && !isPlaceholder && isUserVariant && (
+        <div
+          className="absolute inset-0 rounded-full pointer-events-none"
+          style={{ backgroundColor: tint, mixBlendMode: 'color' }}
+        />
+      )}
+    </div>
   )
 }

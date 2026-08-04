@@ -118,6 +118,12 @@ export default function CaptureSettings({
               onChange={(v) => onUpdateSettings(workspaceId, { captureBlueprints: v })}
             />
             <CaptureToggle
+              label="Chat plan execution"
+              description="Extract memories when chat plan executions complete"
+              checked={captureSettings.capturePlans}
+              onChange={(v) => onUpdateSettings(workspaceId, { capturePlans: v })}
+            />
+            <CaptureToggle
               label="Grill decisions"
               description="Extract memories from grill evaluations and structured plans"
               checked={captureSettings.captureGrill}

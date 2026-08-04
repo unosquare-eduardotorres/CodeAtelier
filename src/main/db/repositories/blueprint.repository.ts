@@ -36,6 +36,7 @@ interface BlueprintRow {
   settings_json: string | null
   created_at: string
   updated_at: string
+  completed_at: string | null
 }
 
 interface BlueprintPhaseRow {
@@ -83,7 +84,8 @@ function mapBlueprintRow(row: BlueprintRow): Blueprint {
     constitutionSnapshot: row.constitution_snapshot,
     settingsJson: safeParseJSON<Record<string, unknown>>(row.settings_json, {}),
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at
   }
 }
 
@@ -180,11 +182,11 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
   // ── Update ──
 
   updateStatus(id: string, status: BlueprintStatus): Blueprint | undefined {
-    const row = this.db()
-      .prepare(
-        `UPDATE blueprints SET status = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`
-      )
-      .get(status, id) as BlueprintRow | undefined
+    const isTerminal = status === 'complete' || status === 'failed' || status === 'cancelled'
+    const sql = isTerminal
+      ? `UPDATE blueprints SET status = ?, completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? RETURNING *`
+      : `UPDATE blueprints SET status = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`
+    const row = this.db().prepare(sql).get(status, id) as BlueprintRow | undefined
     return row ? mapBlueprintRow(row) : undefined
   }
 
@@ -237,6 +239,13 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
     if (data.status !== undefined) {
       sets.push('status = ?')
       values.push(data.status)
+      // Sync completed_at with terminal status transitions
+      const isTerminal = data.status === 'complete' || data.status === 'failed' || data.status === 'cancelled'
+      if (isTerminal) {
+        sets.push("completed_at = datetime('now')")
+      } else {
+        sets.push('completed_at = NULL')
+      }
     }
     if (data.currentPhase !== undefined) {
       sets.push('current_phase = ?')
@@ -276,7 +285,7 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
 
   markStaleAsFailed(excludeIds: string[] = []): number {
     const db = this.db()
-    let query = `UPDATE blueprints SET status = 'failed', updated_at = datetime('now')
+    let query = `UPDATE blueprints SET status = 'failed', completed_at = datetime('now'), updated_at = datetime('now')
          WHERE status IN ('specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying')`
     const params: string[] = []
     if (excludeIds.length > 0) {

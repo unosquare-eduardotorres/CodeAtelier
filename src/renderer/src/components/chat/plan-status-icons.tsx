@@ -1,7 +1,7 @@
 /**
  * plan-status-icons — shared phase status icons and styling utilities.
  *
- * Used by PlanProgressBar and TaskPlanCard (PlanHelpers) for consistent
+ * Used by TaskSummaryBadge and ChatExecutionPanel for consistent
  * status visualization across the plan execution UI.
  */
 

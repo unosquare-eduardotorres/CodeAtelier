@@ -43,8 +43,8 @@ export default function PromptOptimizerCard({
           </div>
           <p className="text-[10px] text-text-muted pl-1">
             A one-shot call rewrites your prompt before dispatch. The original ↔ optimized text
-            appears in a Prompt Optimizer activity card. Skipped for short prompts (&lt;80 chars),
-            slash commands, and local-LLM sessions.
+            appears in a Prompt Optimizer activity card. Skipped for short prompts (&lt;80 chars)
+            and slash commands.
           </p>
         </div>
       )}

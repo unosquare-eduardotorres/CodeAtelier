@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, Copy, Check, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useAppTheme } from '@renderer/store'
+import { sanitizeMermaid } from '../../../../shared/mermaid-sanitizers'
 
 interface MermaidDiagramProps {
   definition: string
@@ -34,31 +35,30 @@ function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
   }
 
   // Dark themes (code-atelier, developer, glass)
-  const surfaceBase = v('--color-surface-base', '#0d1117')
   const teal = v('--color-teal', '#73daca')
   const textPrimary = v('--color-text-primary', '#c0caf5')
   const textSecondary = v('--color-text-secondary', '#787c99')
   const borderSubtle = v('--color-border-subtle', 'rgba(148, 163, 184, 0.08)')
 
   return {
-    // Very dark fills — nodes appear as outlined shapes, not filled blocks
-    primaryColor: surfaceBase,
+    // Transparent fills — nodes appear as outlined shapes with page bg showing through
+    primaryColor: 'transparent',
     primaryTextColor: textPrimary,
     primaryBorderColor: teal,
     lineColor: teal,
-    secondaryColor: surfaceBase,
-    tertiaryColor: surfaceBase,
+    secondaryColor: 'transparent',
+    tertiaryColor: 'transparent',
     background: 'transparent',
-    mainBkg: surfaceBase,
+    mainBkg: 'transparent',
     nodeBorder: teal,
     clusterBkg: 'rgba(13, 17, 23, 0.5)',
     clusterBorder: borderSubtle,
     titleColor: textPrimary,
     edgeLabelBackground: 'transparent',
-    noteBkgColor: surfaceBase,
+    noteBkgColor: 'transparent',
     noteTextColor: textSecondary,
     noteBorderColor: borderSubtle,
-    actorBkg: surfaceBase,
+    actorBkg: 'transparent',
     actorBorder: teal,
     actorTextColor: textPrimary,
     signalColor: teal,
@@ -128,27 +128,7 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
   return mermaidReady
 }
 
-/**
- * Fix common LLM mistake: @{ icon syntax wrapped inside shape brackets.
- * e.g. A["@{ icon: ... }"] → A@{ icon: ... }
- *      B[("@{ icon: ... }")] → B@{ icon: ... }
- * Only triggers when the label contains @{ with icon: — very unlikely in normal labels.
- */
-function fixIconSyntax(definition: string): string {
-  // Match: NodeId + optional shape brackets wrapping @{ ... icon: ... }
-  // Captures: (nodeId)(opening brackets)(@{ ... })(closing brackets)(optional :::class)
-  return definition.replace(
-    /^(\s*\w+)\s*\[?\(?\s*"?@\{\s*(icon:\s*[^}]+)\s*\}"?\s*\)?\]?(:::(\w+))?/gm,
-    (_match, indent: string, props: string, _classGroup: string, className: string) => {
-      const line = `${indent}@{ ${props.trim()} }`
-      // :::class doesn't work with @{ } — convert to class keyword
-      if (className) {
-        return `${line}\n  class ${indent.trim()} ${className}`
-      }
-      return line
-    }
-  )
-}
+
 
 let renderCounter = 0
 
@@ -208,7 +188,7 @@ export default function MermaidDiagram({
 
     const diagramId = id ?? `mermaid-r-${++renderCounter}`
 
-    const sanitized = fixIconSyntax(definition.trim())
+    const sanitized = sanitizeMermaid(definition)
 
     getMermaid(theme)
       .then((mermaid) => mermaid.render(diagramId, sanitized))

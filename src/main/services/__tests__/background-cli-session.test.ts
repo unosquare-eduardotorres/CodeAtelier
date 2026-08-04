@@ -391,6 +391,121 @@ describe('BackgroundCliSession', () => {
     })
   })
 
+  describe('spawn environment', () => {
+    test('spawn environment removes CLAUDECODE and prepends PATH via buildEnvWithPath', async () => {
+      let capturedEnv: Record<string, string | undefined> | null = null
+      const session = new BackgroundCliSession()
+      const fake = createFakeProcess()
+      ;(session as unknown as AnySession)._spawner = (_args: string[], opts: { env: NodeJS.ProcessEnv }) => {
+        capturedEnv = opts.env as Record<string, string | undefined>
+        return fake.proc
+      }
+      session.setSystemPrompt('Test')
+
+      // Temporarily set these env vars to verify they are stripped
+      const origClaudeCode = process.env.CLAUDECODE
+      const origEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT
+      process.env.CLAUDECODE = 'should-be-removed'
+      process.env.CLAUDE_CODE_ENTRYPOINT = 'should-be-removed'
+
+      try {
+        const runPromise = session.run({ userMessage: 'Hi', timeoutMs: 5000 })
+        await tick()
+        fake.stdout.push(systemInitEvent())
+        await tick()
+        fake.stdout.push(resultEvent('Done'))
+        await runPromise
+
+        assert.ok(capturedEnv, 'Spawner should have been called')
+        const env = capturedEnv as Record<string, string | undefined>
+        assert.equal(env.CLAUDECODE, undefined, 'CLAUDECODE should be removed')
+        assert.equal(env.CLAUDE_CODE_ENTRYPOINT, undefined, 'CLAUDE_CODE_ENTRYPOINT should be removed')
+      } finally {
+        // Restore original env
+        if (origClaudeCode !== undefined) process.env.CLAUDECODE = origClaudeCode
+        else delete process.env.CLAUDECODE
+        if (origEntrypoint !== undefined) process.env.CLAUDE_CODE_ENTRYPOINT = origEntrypoint
+        else delete process.env.CLAUDE_CODE_ENTRYPOINT
+        session.dispose()
+      }
+    })
+  })
+
+  describe('warmup()', () => {
+    test('warmup spawns process and makes isAlive true', async () => {
+      const { session, fake } = createTestSession()
+      session.setSystemPrompt('test prompt')
+
+      try {
+        const warmupPromise = session.warmup()
+        await tick()
+        fake.stdout.push(systemInitEvent())
+        await warmupPromise
+
+        assert.ok(session.isAlive, 'Process should be alive after warmup')
+      } finally {
+        session.dispose()
+      }
+    })
+
+    test('warmup is no-op when already alive', async () => {
+      let spawnCount = 0
+      const session = new BackgroundCliSession()
+      let currentFake = createFakeProcess()
+
+      ;(session as unknown as AnySession)._spawner = () => {
+        spawnCount++
+        currentFake = createFakeProcess()
+        return currentFake.proc
+      }
+      session.setSystemPrompt('test prompt')
+
+      try {
+        // First warmup — triggers spawn
+        const p1 = session.warmup()
+        await tick()
+        currentFake.stdout.push(systemInitEvent())
+        await p1
+        assert.equal(spawnCount, 1, 'First warmup should spawn')
+
+        // Second warmup — should return immediately
+        await session.warmup()
+        assert.equal(spawnCount, 1, 'Second warmup should NOT re-spawn')
+        assert.ok(session.isAlive)
+      } finally {
+        session.dispose()
+      }
+    })
+
+    test('warmup skips when no system prompt set', async () => {
+      const { session } = createTestSession()
+      try {
+        await session.warmup()
+        assert.ok(!session.isAlive, 'Process should not be alive without system prompt')
+      } finally {
+        session.dispose()
+      }
+    })
+
+    test('warmup failure does not throw', async () => {
+      const { session, fake } = createTestSession()
+      session.setSystemPrompt('test prompt')
+
+      try {
+        const warmupPromise = session.warmup()
+        await tick()
+        // Simulate spawn failure by ending stdout without init event
+        fake.stdout.push(null)
+
+        // Should not throw
+        await warmupPromise
+        assert.ok(!session.isAlive, 'Process should not be alive after failed warmup')
+      } finally {
+        session.dispose()
+      }
+    })
+  })
+
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

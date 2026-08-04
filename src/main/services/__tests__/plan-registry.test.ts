@@ -34,6 +34,7 @@ function makePlanRecord(overrides: Partial<PlanRecord> = {}): PlanRecord {
     riskCount: 0,
     createdAt: '2024-01-01',
     updatedAt: '2024-01-01',
+    completedAt: null,
     previousPlanId: null,
     ...overrides
   }

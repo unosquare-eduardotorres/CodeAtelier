@@ -59,7 +59,8 @@ export default function ChatSidebar({
     communicationTone?: CommunicationTone | null
     personaSpecialistId?: string
     attachments?: string[]
-    useIsolatedBranch?: boolean
+    branchName?: string
+    autoBranch?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
   }): Promise<void> => {
@@ -72,15 +73,12 @@ export default function ChatSidebar({
       data.llmProvider,
       data.routingOverrides,
       undefined,
-      data.communicationTone
+      data.communicationTone,
+      undefined, // sourceAuditRunId
+      data.branchName,
+      data.autoBranch
     )
     setShowNewChatModal(false)
-    if (data.useIsolatedBranch) {
-      // TODO: integrate worktree IPC — creates a git worktree for this conversation
-      console.info(
-        '[NewConversationModal] Isolated branch requested — worktree integration pending'
-      )
-    }
     // Send when there is a description OR attachments — an image-only creation
     // (title + pasted screenshot, no text) must not silently drop the image.
     const body = data.description?.trim() ?? ''

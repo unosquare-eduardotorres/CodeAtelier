@@ -2,8 +2,8 @@ import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { PluggableList } from 'unified'
 import type { Components } from 'react-markdown'
+import { FileText } from 'lucide-react'
 import BuildSummaryCard from './BuildSummaryCard'
-import TaskPlanCard from './TaskPlanCard'
 import type { MessageContentData } from './useMessageContent'
 
 /**
@@ -92,14 +92,8 @@ export interface MessageCardRendererProps {
   remarkPlugins: PluggableList
   rehypePlugins: PluggableList
   markdownComponents: Components
-  // Plan action handlers
-  onBuildNow: () => void
-  onRefine: () => void
-  onSaveAsIdea?: () => void
-  onCouncilReview?: () => void
-  planActionTaken?: string
-  /** Conversation ID for live phase status badges */
-  conversationId?: string
+  /** True when this is the most recent plan message — older plans show "superseded" */
+  isLatestPlan?: boolean
 }
 
 /**
@@ -114,12 +108,7 @@ export default function MessageCardRenderer({
   remarkPlugins,
   rehypePlugins,
   markdownComponents,
-  onBuildNow,
-  onRefine,
-  onSaveAsIdea,
-  onCouncilReview,
-  planActionTaken,
-  conversationId
+  isLatestPlan
 }: MessageCardRendererProps): React.JSX.Element | null {
   const {
     planContent,
@@ -153,14 +142,8 @@ export default function MessageCardRenderer({
     )
   }
 
-  // ── Plan block ──
+  // ── Plan block (moved to side panel) ──
   if (planContent) {
-    // The plan card is the deliverable and must ALWAYS render last, regardless of
-    // model behavior. Any narration the model produces — whether it streamed before
-    // OR after the emit_plan tool call — is rendered as context ABOVE the card so a
-    // misbehaving turn can never bury the card. We also strip a boilerplate trailing
-    // line (e.g. "I've emitted the plan as an actionable card") since the card itself
-    // makes such narration redundant; the prompt rules should already prevent it.
     const narration = [beforePlan ?? '', stripPlanBoilerplate(afterPlan ?? '')]
       .map((t) => t.trim())
       .filter(Boolean)
@@ -174,24 +157,16 @@ export default function MessageCardRenderer({
           rehypePlugins={rehypePlugins}
           components={markdownComponents}
         />
-        <TaskPlanCard
-          summary={(() => {
-            try {
-              const parsed = planContent ? JSON.parse(planContent) : null
-              return parsed?.title ?? 'Implementation Plan'
-            } catch {
-              return 'Implementation Plan'
-            }
-          })()}
-          mode="plan"
-          planContent={planContent}
-          onBuildNow={onBuildNow}
-          onSaveAsIdea={onSaveAsIdea}
-          onRefine={onRefine}
-          onCouncilReview={onCouncilReview}
-          planActionTaken={planActionTaken}
-          conversationId={conversationId}
-        />
+        {/* Slim indicator — full plan details live in the Plan tab */}
+        <div data-testid="plan-slim-indicator" className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-plan-card/30 bg-plan-card-muted">
+          <FileText size={14} className="text-plan-card flex-shrink-0" />
+          <span className="text-sm text-plan-card-text">
+            Plan available — view in the Plan tab
+          </span>
+          {isLatestPlan === false && (
+            <span data-testid="plan-superseded-label" className="text-xs text-text-muted ml-auto">superseded</span>
+          )}
+        </div>
       </div>
     )
   }

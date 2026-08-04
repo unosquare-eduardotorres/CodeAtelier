@@ -99,28 +99,34 @@ test.describe('Investigation Flow', () => {
       page!.locator('[data-testid="message-input"], [aria-label="Message input"]').first()
     ).toBeVisible({ timeout: 15000 })
 
-    // 2. Wait for TaskPlanCard to appear (triggered by handoff)
+    // 2. Wait for plan slim indicator to appear (triggered by handoff)
     // This test assumes a conversation is already in progress or we can trigger one
     // In a real scenario, we'd send a message that triggers investigation
-    const taskPlanCard = page!.locator('[data-testid="task-plan-card"]')
+    const planIndicator = page!.locator('[data-testid="plan-slim-indicator"]')
 
-    // If a task plan card appears, verify the investigation flow
-    if (await taskPlanCard.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // 3. Click "Sequential" to start execution
-      const sequentialBtn = page!.locator('button:has-text("Sequential")')
-      if (await sequentialBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await sequentialBtn.click()
+    // If a plan indicator appears, verify the investigation flow
+    if (await planIndicator.isVisible({ timeout: 5000 }).catch(() => false)) {
+      // 3. Open the execution panel and click Build Now
+      const toggleBtn = page!.locator('[data-testid="task-summary-badge-toggle"]')
+      if (await toggleBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await toggleBtn.click()
+        await page!.waitForTimeout(500)
       }
 
-      // 4. Wait for completion or investigation report (unified card)
-      const reportCard = page!.locator('[data-testid="task-plan-card"]')
-      await expect(reportCard).toBeVisible({ timeout: 120000 })
+      // Switch to Plan tab and look for Build Now
+      const planTab = page!.locator('[data-testid="chat-execution-tab-plan"]')
+      if (await planTab.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await planTab.click()
+        await page!.waitForTimeout(300)
+      }
 
-      // 5. Verify unified action buttons are present
-      await expect(page!.locator('button:has-text("Build Now")')).toBeVisible()
-      await expect(page!.locator('button:has-text("Orchestrated Build")')).toBeVisible()
-      await expect(page!.locator('button:has-text("Refine Plan")')).toBeVisible()
-      await expect(page!.locator('button:has-text("Save as Idea")')).toBeVisible()
+      const buildNowBtn = page!.locator('button:has-text("Build Now")')
+      if (await buildNowBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await buildNowBtn.click()
+      }
+
+      // 4. Wait for completion — plan indicator should still be visible
+      await expect(planIndicator).toBeVisible({ timeout: 120000 })
     }
   })
 
@@ -130,7 +136,7 @@ test.describe('Investigation Flow', () => {
     // Verify DOM ordering of rendered messages
     // Specialist message should appear before the task plan card
     const messageElements = page!.locator(
-      '[data-testid="message-bubble"], [data-testid="task-plan-card"], [data-testid="handoff-indicator"]'
+      '[data-testid="message-bubble"], [data-testid="plan-slim-indicator"], [data-testid="handoff-indicator"]'
     )
 
     const count = await messageElements.count()
@@ -144,17 +150,17 @@ test.describe('Investigation Flow', () => {
 
       // If we have both message bubbles and task plan, verify ordering
       const firstMessageIdx = testIds.indexOf('message-bubble')
-      const taskPlanIdx = testIds.indexOf('task-plan-card')
+      const planIndicatorIdx = testIds.indexOf('plan-slim-indicator')
       const handoffIdx = testIds.indexOf('handoff-indicator')
 
-      if (firstMessageIdx !== -1 && taskPlanIdx !== -1) {
-        // Messages should appear before task plan
-        expect(firstMessageIdx).toBeLessThan(taskPlanIdx)
+      if (firstMessageIdx !== -1 && planIndicatorIdx !== -1) {
+        // Messages should appear before plan indicator
+        expect(firstMessageIdx).toBeLessThan(planIndicatorIdx)
       }
 
-      if (handoffIdx !== -1 && taskPlanIdx !== -1) {
-        // Handoff indicator should appear before task plan
-        expect(handoffIdx).toBeLessThan(taskPlanIdx)
+      if (handoffIdx !== -1 && planIndicatorIdx !== -1) {
+        // Handoff indicator should appear before plan indicator
+        expect(handoffIdx).toBeLessThan(planIndicatorIdx)
       }
     }
   })
@@ -237,21 +243,16 @@ test.describe('Investigation Flow', () => {
   test('investigation report card shows structured findings', async () => {
     test.skip(!page, 'Page not available — Electron may not have launched')
 
-    const reportCard = page!.locator('[data-testid="task-plan-card"]')
-    const hasReport = await reportCard.isVisible({ timeout: 5000 }).catch(() => false)
+    const planIndicator = page!.locator('[data-testid="plan-slim-indicator"]')
+    const hasIndicator = await planIndicator.isVisible({ timeout: 5000 }).catch(() => false)
 
-    if (!hasReport) {
+    if (!hasIndicator) {
       test.skip()
       return
     }
 
-    // Report card should contain structured content (buttons, sections)
-    const buttons = reportCard.locator('button')
-    const buttonCount = await buttons.count()
-    expect(buttonCount).toBeGreaterThan(0)
-
-    // Should have at least the action buttons
-    const textContent = await reportCard.textContent()
-    expect(textContent?.length).toBeGreaterThan(10)
+    // Plan indicator should contain "Plan available" text
+    const textContent = await planIndicator.textContent()
+    expect(textContent).toContain('Plan available')
   })
 })

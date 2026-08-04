@@ -360,6 +360,33 @@ export class RepoService {
 
     return { branch, commitsAhead, hasRemote }
   }
+
+  async listBranches(repoPath: string): Promise<{
+    local: string[]
+    remote: string[]
+    current: string
+  }> {
+    const git = simpleGit(repoPath)
+    const branchSummary = await git.branch(['-a'])
+
+    const local: string[] = []
+    const remote: string[] = []
+
+    for (const name of Object.keys(branchSummary.branches)) {
+      if (name.startsWith('remotes/origin/')) {
+        const shortName = name.replace('remotes/origin/', '')
+        if (shortName !== 'HEAD') remote.push(shortName)
+      } else {
+        local.push(name)
+      }
+    }
+
+    return {
+      local,
+      remote,
+      current: branchSummary.current
+    }
+  }
 }
 
 export const repoService = new RepoService()

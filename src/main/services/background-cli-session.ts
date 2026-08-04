@@ -23,11 +23,12 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { parseNdjsonStream, writeNdjsonMessage, buildUserMessage } from './cli-executor/ndjson-parser'
 import type { OneShotUsage } from './one-shot-claude'
+import { buildEnvWithPath } from './env-utils'
 
 const sessionLog = log.scope('bg-cli-session')
 
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
-const DEFAULT_CALL_TIMEOUT_MS = 15_000 // 15 seconds
+const DEFAULT_CALL_TIMEOUT_MS = 45_000 // 45 seconds — first call after spawn needs time for cold API cache
 
 export interface BackgroundCliRunResult {
   text: string
@@ -129,6 +130,7 @@ export class BackgroundCliSession {
   private mutexTail: Promise<void> = Promise.resolve()
   private needsClear = false
   private model: string = 'claude-haiku-4-5-20251001'
+  private stderrBuffer = ''
 
   /** Test seam — overrides spawn('claude', ...) for tests */
   _spawner?: Spawner
@@ -205,6 +207,35 @@ export class BackgroundCliSession {
   /** Check if the process is alive */
   get isAlive(): boolean {
     return this.alive && this.process !== null && !this.process.killed
+  }
+
+  /**
+   * Pre-spawn the CLI process so the first run() call avoids cold start.
+   * Requires systemPrompt to be set via setSystemPrompt() beforehand.
+   * Serialized via mutex — safe to call concurrently with run().
+   * Errors are caught and logged (non-fatal).
+   */
+  async warmup(): Promise<void> {
+    if (this.isAlive) return // already warm
+    if (!this.systemPrompt) {
+      sessionLog.info('[bg-cli] warmup skipped — no system prompt configured')
+      return
+    }
+
+    const release = this.acquireMutex()
+    try {
+      await release.acquired
+      if (this.isAlive) return // re-check under mutex (another caller may have spawned)
+      sessionLog.info('[bg-cli] Warming up CLI process...')
+      await this.spawnProcess()
+      this.resetIdleTimer()
+      sessionLog.info('[bg-cli] Warmup complete — process ready')
+    } catch (err) {
+      sessionLog.warn('[bg-cli] Warmup failed (non-fatal):', (err as Error).message)
+      this.killProcess() // Clean up half-initialized state
+    } finally {
+      release.release()
+    }
   }
 
   // ── Private implementation ──
@@ -286,12 +317,13 @@ export class BackgroundCliSession {
       '--system-prompt-file', this.systemPromptFile,
       '--model', this.model,
       '--permission-mode', 'plan',
-      '--verbose'
+      '--verbose',
+      '--tools', ''
     ]
 
     sessionLog.info(`[bg-cli] Spawning warm process: claude ${args.join(' ')}`)
 
-    const env = { ...process.env }
+    const env = buildEnvWithPath()
 
     try {
       if (this._spawner) {
@@ -320,11 +352,14 @@ export class BackgroundCliSession {
       this.cleanupSystemPromptFile()
     })
 
-    // Wire stderr logging
+    // Wire stderr logging + buffering for diagnostics
     if (this.process.stderr) {
       this.process.stderr.on('data', (chunk: Buffer) => {
         const text = chunk.toString('utf-8').trim()
-        if (text) sessionLog.warn(`[bg-cli:stderr] ${text}`)
+        if (text) {
+          sessionLog.warn(`[bg-cli:stderr] ${text}`)
+          this.stderrBuffer += text + '\n'
+        }
       })
     }
 
@@ -369,7 +404,11 @@ export class BackgroundCliSession {
       }
 
       if (iterResult.done) {
-        throw new Error('Background CLI session: stream ended during init')
+        const detail = this.stderrBuffer.trim()
+        throw new Error(
+          'Background CLI session: stream ended during init' +
+          (detail ? ` — stderr: ${detail.slice(0, 500)}` : '')
+        )
       }
 
       const event = iterResult.value
@@ -440,6 +479,7 @@ export class BackgroundCliSession {
     this.alive = false
     this.ndjsonIterator = null
     this.needsClear = false
+    this.stderrBuffer = ''
 
     if (this.process) {
       try {

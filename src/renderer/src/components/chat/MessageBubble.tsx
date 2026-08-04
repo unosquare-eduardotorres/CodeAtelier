@@ -12,12 +12,7 @@ import {
   remarkStripStrayBackticks
 } from './remark-plugins'
 import { CodeBlock } from './CodeBlock'
-import type {
-  Message,
-  ToolActivity,
-  ConversationMode,
-  StructuredPlan
-} from '../../../../shared/types'
+import type { Message, ToolActivity, ConversationMode } from '../../../../shared/types'
 import ToolActivityBlock from './ToolActivityBlock'
 import HookActivityIndicator from './HookActivityIndicator'
 import MessageCardRenderer from './MessageCardRenderer'
@@ -25,8 +20,7 @@ import AttachmentList from './AttachmentList'
 import { useMessageContent } from './useMessageContent'
 import { useMessageIdentity } from './useMessageIdentity'
 import type { MessageIdentity } from './useMessageIdentity'
-import { useChatBubbleSize, useChatAvatarSize, useChatStore, useWorkspaceStore, usePlanExecutionStore } from '@renderer/store'
-import { useCouncilStore } from '@renderer/store/council.store'
+import { useChatBubbleSize, useChatAvatarSize, useWorkspaceStore } from '@renderer/store'
 import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar } from '@renderer/components/common'
 
@@ -36,8 +30,6 @@ export interface MessageBubbleActions {
   sendMessage: (text: string, attachments?: string[]) => Promise<void>
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => void
   saveAsIdea?: (title: string, description: string) => void
-  /** Direct plan-to-build: skip agent round-trip when structured plan is available */
-  buildFromPlan?: (plan: StructuredPlan, planContent: string) => Promise<void>
 }
 
 interface MessageBubbleProps {
@@ -49,6 +41,9 @@ interface MessageBubbleProps {
   actions?: MessageBubbleActions
   /** Override the auto-resolved identity (name, avatar, color). Used by Grill. */
   identityOverride?: MessageIdentity
+  /** True when this message contains the most recent plan in the conversation.
+   *  Older plan messages show a "superseded" label on the slim indicator. */
+  isLatestPlan?: boolean
 }
 
 function formatTime(dateStr: string): string {
@@ -106,7 +101,6 @@ const BUBBLE_SIZE_CLASSES: Record<
   large: { text: 'text-sm leading-relaxed', userMax: 'max-w-[80%]', aiMax: 'max-w-[92%]' },
   xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[92%]' }
 }
-
 
 // Module-level constants — stable references, never recreated on render
 const REMARK_PLUGINS_BASE = [
@@ -188,31 +182,6 @@ const markdownComponents = {
   )
 }
 
-// ── Module-level council helper ──
-
-function startCouncilReview(
-  workspaceId: string,
-  planContent: string,
-  structuredPlan: StructuredPlan | null,
-  originalUserRequest: string
-): void {
-  const councilStore = useCouncilStore.getState()
-  councilStore.startCouncil()
-  window.api
-    .councilStart({
-      workspaceId,
-      inputType: 'plan',
-      planContent,
-      structuredPlan: structuredPlan ?? undefined,
-      originalUserRequest,
-      conversationId: undefined
-    })
-    .then(({ sessionId }) => {
-      councilStore.setSessionIdentity(sessionId, workspaceId)
-    })
-    .catch(console.error)
-}
-
 // ── Extracted sub-components ──
 
 interface BubbleContentBodyProps {
@@ -222,11 +191,8 @@ interface BubbleContentBodyProps {
   aiBubbleClass: string
   sizeClasses: { text: string; userMax: string; aiMax: string }
   hasStructuredContent: boolean
-  onBuildNow: () => void
-  onRefine: () => void
-  onSaveAsIdea?: () => void
-  onCouncilReview?: () => void
-  planActionTaken?: string
+  /** Whether this message's plan card is the latest (non-superseded) plan */
+  isLatestPlan?: boolean
 }
 
 function BubbleContentBody({
@@ -236,19 +202,14 @@ function BubbleContentBody({
   aiBubbleClass,
   sizeClasses,
   hasStructuredContent,
-  onBuildNow,
-  onRefine,
-  onSaveAsIdea,
-  onCouncilReview,
-  planActionTaken
+  isLatestPlan
 }: BubbleContentBodyProps): React.JSX.Element | null {
   const {
     imageAttachments,
     fileAttachments,
     isGrillActivation,
     ideaToRefineMatch,
-    displayContent,
-    planContent
+    displayContent
   } = content
 
   if (hasStructuredContent) {
@@ -259,12 +220,7 @@ function BubbleContentBody({
         remarkPlugins={REMARK_PLUGINS}
         rehypePlugins={REHYPE_PLUGINS}
         markdownComponents={markdownComponents}
-        onBuildNow={onBuildNow}
-        onRefine={onRefine}
-        onSaveAsIdea={onSaveAsIdea}
-        onCouncilReview={planContent ? onCouncilReview : undefined}
-        planActionTaken={planActionTaken}
-        conversationId={message.conversationId}
+        isLatestPlan={isLatestPlan}
       />
     )
   }
@@ -355,7 +311,7 @@ function SaveToMemoryButton({ message }: { message: Message }): React.JSX.Elemen
       title={feedbackLabel ?? 'Save to memory'}
     >
       <BookmarkPlus className="w-3 h-3" />
-      {saving ? 'Saving…' : feedbackLabel ?? 'Save to memory'}
+      {saving ? 'Saving…' : (feedbackLabel ?? 'Save to memory')}
     </button>
   )
 }
@@ -424,15 +380,14 @@ function MessageBubbleInner({
   message,
   isStreaming,
   toolActivities,
-  actions,
-  identityOverride
+  actions: _actions,
+  identityOverride,
+  isLatestPlan
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
   const avatarSize = useChatAvatarSize()
   const sizeClasses = BUBBLE_SIZE_CLASSES[bubbleSize]
-  const { updateMode, sendMessage, appendLocalMessage, buildFromPlan } =
-    actions ?? ({} as MessageBubbleActions)
   const autoIdentity = useMessageIdentity(message)
   const identity = identityOverride ?? autoIdentity
 
@@ -444,72 +399,12 @@ function MessageBubbleInner({
     isGrillActivation: _isGrillActivation,
     ideaToRefineMatch: _ideaToRefineMatch,
     displayContent: _displayContent,
-    planContent,
-    structuredPlan,
+    planContent: _planContent,
     buildSummaryData
   } = content
 
   /** True when the message contains a structured block that MessageCardRenderer handles */
-  const hasStructuredContent = buildSummaryData != null || planContent != null
-
-  const persistPlanAction = (action: string): void => {
-    if (message.planAction) return // already persisted
-    // Update in-memory store so virtualizer remounts get the correct value
-    useChatStore.setState((state) => ({
-      messages: state.messages.map((m) =>
-        m.id === message.id ? { ...m, planAction: action } : m
-      )
-    }))
-    window.api.chatSetPlanAction({ messageId: message.id, action }).catch(console.error)
-  }
-
-  const handleBuildNow = (): void => {
-    persistPlanAction('build')
-
-    // Initialize plan execution tracking
-    if (structuredPlan?.phases?.length && message.conversationId) {
-      const { startExecution } = usePlanExecutionStore.getState()
-      startExecution(message.conversationId, {
-        planId: null,
-        title: structuredPlan.title,
-        phases: structuredPlan.phases.map((p) => ({ id: p.id, title: p.title })),
-        phaseFiles: Object.fromEntries(
-          structuredPlan.phases.map((p) => [p.id, (p.files ?? []).map((f) => f.file)])
-        )
-      })
-    }
-
-    if (structuredPlan && planContent && buildFromPlan) {
-      buildFromPlan(structuredPlan, planContent)
-      return
-    }
-    updateMode('build')
-    sendMessage(
-      'Implement the plan we just discussed. If the plan has multiple phases, ' +
-        'call emit_phase_progress as you begin and complete each phase. ' +
-        'If the plan is small enough, implement it all at once.'
-    )
-  }
-
-  const handleRefine = (): void => {
-    persistPlanAction('refine')
-    appendLocalMessage("Refine this plan — tell me what to change and I'll update it.")
-  }
-
-  const handleSaveAsIdea = (): void => {
-    persistPlanAction('save_as_idea')
-    if (!actions?.saveAsIdea) return
-    const title = 'Implementation Plan'
-    const description = planContent ?? ''
-    actions.saveAsIdea(title, description)
-  }
-
-  const handleCouncilReview = (): void => {
-    persistPlanAction('council')
-    const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
-    if (!workspaceId || !planContent) return
-    startCouncilReview(workspaceId, planContent, structuredPlan, message.contentMd ?? '')
-  }
+  const hasStructuredContent = buildSummaryData != null || _planContent != null
 
   /** Shared AI bubble styles */
   const aiBubbleClass =
@@ -533,12 +428,15 @@ function MessageBubbleInner({
       <div
         className={`flex flex-col min-w-0 ${
           isUser
-            ? `${planContent ? 'max-w-[95%]' : sizeClasses.userMax} items-end`
-            : `${planContent ? 'max-w-[95%]' : sizeClasses.aiMax} items-start`
+            ? `${_planContent ? 'max-w-[95%]' : sizeClasses.userMax} items-end`
+            : `${_planContent ? 'max-w-[95%]' : sizeClasses.aiMax} items-start`
         }`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>
-          <span data-testid="message-bubble-identity" className="text-sm font-semibold text-text-primary leading-tight">
+          <span
+            data-testid="message-bubble-identity"
+            className="text-sm font-semibold text-text-primary leading-tight"
+          >
             {identity.displayName}
           </span>
           {identity.subtitle && (
@@ -553,11 +451,7 @@ function MessageBubbleInner({
           aiBubbleClass={aiBubbleClass}
           sizeClasses={sizeClasses}
           hasStructuredContent={hasStructuredContent}
-          onBuildNow={handleBuildNow}
-          onRefine={handleRefine}
-          onSaveAsIdea={actions?.saveAsIdea ? handleSaveAsIdea : undefined}
-          onCouncilReview={planContent ? handleCouncilReview : undefined}
-          planActionTaken={message.planAction}
+          isLatestPlan={isLatestPlan}
         />
 
         <BubbleFooterActions

@@ -76,6 +76,9 @@ export function registerPermissionIpc(): void {
             feedback?: string
             runId?: string
           }
+          if (typeof resp.approved !== 'boolean') {
+            throw new Error(`${ch}: field 'approved' must be a boolean`)
+          }
           const runId = resp.runId ?? mpaOrchestrationService.currentRunId
           if (runId) {
             mpaOrchestrationService.respondToGate(runId, resp.approved, resp.feedback)

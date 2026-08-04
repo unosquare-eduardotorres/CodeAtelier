@@ -73,7 +73,8 @@ import type {
   E2ERunSummary,
   E2EResultSummary,
   E2EResultDetail,
-  E2EProgressEvent
+  E2EProgressEvent,
+  BugRecord
 } from '../shared/types'
 import type {
   HandoffRecord,
@@ -159,7 +160,15 @@ const api = {
     conversationId: string
     text: string
     attachments?: string[]
+    skipOptimizer?: boolean
+    hidden?: boolean
   }): Promise<{ requestId: string }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SEND, args),
+
+  chatSetGoal: (args: {
+    conversationId: string
+    goal: string
+    goalMode?: 'advisory' | 'enforce'
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_SET_GOAL, args),
 
   getConversations: (args: { workspaceId: string }): Promise<Conversation[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_CONVERSATIONS, args),
@@ -174,6 +183,8 @@ const api = {
     mcpOverrides?: Record<string, boolean>
     communicationTone?: CommunicationTone | null
     sourceAuditRunId?: string
+    branchName?: string
+    autoBranch?: boolean
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
 
@@ -214,7 +225,7 @@ const api = {
 
   updateEffort: (args: {
     conversationId: string
-    effort: 'low' | 'medium' | 'high'
+    effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   }): Promise<{ effort: string }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_UPDATE_EFFORT, args),
 
   renameConversation: (args: { conversationId: string; title: string }): Promise<Conversation> =>
@@ -246,6 +257,7 @@ const api = {
     branchName: string
     commitMessage: string
     description: string
+    baseBranch?: string
   }): Promise<CompleteResult> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPLETE, args),
 
   closeConversation: (args: { conversationId: string }): Promise<void> =>
@@ -259,6 +271,12 @@ const api = {
 
   generatePrDescription: (args: { conversationId: string }): Promise<{ description: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, args),
+
+  listBranches: (args: { workspaceId: string }): Promise<{
+    local: string[]
+    remote: string[]
+    current: string
+  }> => ipcRenderer.invoke(IPC_CHANNELS.REPO_LIST_BRANCHES, args),
 
   // ── Agents ──
   getAgentStatuses: (): Promise<AgentStatus[]> =>
@@ -569,6 +587,23 @@ const api = {
   memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }): Promise<{ created: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SAVE_MESSAGE, args),
 
+  memorySavePlanExecution: (args: {
+    workspaceId: string
+    workspacePath: string
+    conversationId: string
+    planTitle: string
+    planGoal?: string
+    status: 'completed' | 'partial' | 'failed'
+    phases: Array<{
+      phaseTitle: string
+      status: string
+      touchedFiles: string[]
+      tasks: Array<{ title: string; status: string }>
+    }>
+    durationMs: number
+  }): Promise<{ enqueued: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SAVE_PLAN_EXECUTION, args),
+
   // ── Memory Document Ingestion ──
   memoryIngestSelectFiles: (): Promise<string[] | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_SELECT_FILES),
@@ -749,6 +784,7 @@ const api = {
         text: string
         index?: number
       }
+      todoSync?: Array<{ text: string; completed: boolean; index: number }>
       phaseProgress?: import('../shared/types').PhaseProgressEvent
       turnLimit?: {
         continuable: boolean
@@ -859,6 +895,11 @@ const api = {
 
   respondToAskUser: (data: { requestId: string; response: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_ASK_USER_RESPOND, data),
+
+  /** IPC-BACKPRESSURE: Send ACK to backend after processing a batch of chunks. */
+  chunkAck: (data: { processed: number; timestamp: number }): void => {
+    ipcRenderer.send(IPC_CHANNELS.CHAT_CHUNK_ACK, data)
+  },
 
   onTaskRetry: (
     callback: (data: {
@@ -1819,7 +1860,7 @@ const api = {
     sortDir?: 'asc' | 'desc'
   }): Promise<unknown[]> => ipcRenderer.invoke(IPC_CHANNELS.BUG_LIST, filters),
 
-  getBug: (args: { id: string }): Promise<unknown> =>
+  getBug: (args: { id: string }): Promise<BugRecord | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.BUG_GET, args),
 
   resolveBug: (args: { id: string }): Promise<void> =>
@@ -1839,8 +1880,8 @@ const api = {
   bugExportMarkdown: (args: { markdown: string; defaultFilename?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.BUG_EXPORT_MARKDOWN, args),
 
-  onNewBug: (callback: (bug: unknown) => void): (() => void) => {
-    const handler = (_event: unknown, bug: unknown): void => callback(bug)
+  onNewBug: (callback: (bug: BugRecord) => void): (() => void) => {
+    const handler = (_event: unknown, bug: BugRecord): void => callback(bug)
     ipcRenderer.on(IPC_CHANNELS.BUG_NEW, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BUG_NEW, handler)
   },
@@ -1934,11 +1975,23 @@ const api = {
   }): Promise<PlanStatusHistoryEntry[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_STATUS_HISTORY, args),
 
+  planFindBySource: (args: {
+    source: string
+    sourceId: string
+  }): Promise<PlanRecord | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLAN_FIND_BY_SOURCE, args),
+
   getPhaseProgress: (args: { conversationId: string }): Promise<{
     planId: string
     planTitle: string
-    phases: Array<{ id: number; title: string }>
-    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[] }>
+    planGoal?: string
+    phases: Array<{
+      id: number
+      title: string
+      tasks: Array<{ taskId: string; title: string; files: string[] }>
+    }>
+    phaseFiles: Record<number, string[]>
+    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[]; tasks?: Array<{ taskId: string; title: string; status: string }> }>
   } | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_PHASE_PROGRESS, args),
 
@@ -2468,6 +2521,10 @@ const api = {
       isSimple: boolean
       payload: unknown
       receivedAt: number
+      toolName?: string
+      toolInput?: Record<string, unknown>
+      conversationTitle?: string
+      mode?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2481,6 +2538,10 @@ const api = {
         isSimple: boolean
         payload: unknown
         receivedAt: number
+        toolName?: string
+        toolInput?: Record<string, unknown>
+        conversationTitle?: string
+        mode?: string
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.PERMISSION_REQUEST, handler)

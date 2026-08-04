@@ -44,6 +44,9 @@ import './plan-status-history.test'
 // ─── E2E Testing Repos ───
 import './e2e-test-repos.test'
 
+// ─── Windows stability: upsertEdgesBatched batching + edge cases ───
+import './upsert-edges-batched.test'
+
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

@@ -1,5 +1,5 @@
 import { BaseRepository } from '../base-repository'
-import type { AppPreferences, AppTheme, UpdateSourceProvider } from '../../../shared/types'
+import type { AppPreferences, AppTheme, UpdateSourceProvider, UserAvatarVariant } from '../../../shared/types'
 
 interface AppPreferenceRow {
   key: string
@@ -62,7 +62,12 @@ export class AppPreferenceRepository extends BaseRepository<
       context7ApiKey: this.get('context7_api_key') ?? '',
       notificationsEnabled: this.getBool('notifications_enabled', true),
       parallelBuildAgents: this.getInt('parallel_build_agents', 3, 1, 6),
-      leanBuildMcp: this.getBool('lean_build_mcp', false)
+      leanBuildMcp: this.getBool('lean_build_mcp', false),
+      userAvatarVariant: ((): UserAvatarVariant => {
+        const raw = this.get('user_avatar_variant')
+        return raw === '1' || raw === '2' || raw === '3' ? raw : '1'
+      })(),
+      maxStreamLifetimeMin: this.getInt('max_stream_lifetime_min', 30, 10, 120)
     }
   }
 }

@@ -40,6 +40,8 @@ export class StreamSegmentAccumulator {
   private currentContent = ''
   private currentToolActivities: ToolActivity[] = []
   private currentSegmentStartedAt: number = Date.now()
+  /** Reentrance guard — prevents nested emitChange when onChange triggers resetAccumulator */
+  private isFlushing = false
 
   constructor(private onChange: (state: SegmentState) => void) {}
 
@@ -127,6 +129,12 @@ export class StreamSegmentAccumulator {
   }
 
   private emitChange(): void {
-    this.onChange(this.getState())
+    if (this.isFlushing) return
+    try {
+      this.isFlushing = true
+      this.onChange(this.getState())
+    } finally {
+      this.isFlushing = false
+    }
   }
 }
