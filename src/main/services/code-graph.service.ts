@@ -20,6 +20,7 @@ import {
   matchesSkipPattern
 } from './code-graph-exclusions'
 import { loadAllIgnorePatterns } from './workspace-ignore'
+import { memoryCheckpoint } from './indexing-diagnostics'
 
 /**
  * Directories repomap-mcp prunes internally — mirrored so our walker matches.
@@ -415,19 +416,36 @@ class CodeGraphService extends EventEmitter {
       const { totalEdges } = await this.buildAndPersistGraph(workspaceId, allTags, allNodes)
       state.totalEdges = totalEdges
 
+      // ── Memory release ──
+      // Capture counts before releasing for the log and diagnostics
+      const fileCount = allFiles.length
+      const tagCount = allTags.length
+      memoryCheckpoint('PRE_CLEANUP', {
+        tags: tagCount,
+        edges: totalEdges,
+        files: fileCount
+      })
+      // Truncate arrays to release backing storage immediately
+      // (setting .length = 0 is faster than reassignment for GC)
+      allTags.length = 0
+      allFiles.length = 0
+      fileMtimes.clear()
+
       state.status = 'complete'
       // A completed full rebuild clears any prior degradation.
       state.degraded = false
       state.degradedReason = undefined
       log.info(
-        `[CodeGraph] Indexing complete: ${allFiles.length} files, ${allTags.length} tags, ${totalEdges} edges`
+        `[CodeGraph] Indexing complete: ${fileCount} files, ${tagCount} tags, ${totalEdges} edges`
       )
       this.emitProgress(state)
+      this.postIndexCleanup(workspaceId)
     } catch (error) {
       state.status = 'error'
       state.error = (error as Error).message
       log.error('[CodeGraph] Indexing failed:', error)
       this.emitProgress(state)
+      this.postIndexCleanup(workspaceId)
     }
   }
 
@@ -466,6 +484,13 @@ class CodeGraphService extends EventEmitter {
     await codeGraphEdgeRepository.upsertEdgesBatched(workspaceId, mappedEdges)
     codeGraphRankRepository.upsertRanks(workspaceId, ranks)
 
+    // Capture count before releasing, then release large intermediate arrays.
+    // At this point edges, mappedEdges, and ranks are fully persisted to SQLite.
+    const totalEdges = edges.length
+    mappedEdges.length = 0
+    edges.length = 0
+    ranks.clear()
+
     // Truncate the WAL after the largest write in the app. Without this the
     // journal stays saturated at journal_size_limit (256 MB), which is exactly
     // the 268 MB WAL observed during the freeze — checkpoint starvation under
@@ -477,7 +502,7 @@ class CodeGraphService extends EventEmitter {
       log.warn(`[CodeGraph] WAL checkpoint after graph build failed: ${(err as Error).message}`)
     }
 
-    return { totalEdges: edges.length }
+    return { totalEdges }
   }
 
   /**
@@ -579,8 +604,12 @@ class CodeGraphService extends EventEmitter {
     // Small/medium workspace: full rebuild is fast enough
     const allTags = codeGraphTagRepository.findAllByWorkspace(workspaceId)
     await this.buildAndPersistGraph(workspaceId, allTags)
+    allTags.length = 0  // release after persist
 
     log.info(`[CodeGraph] Incremental: ${changedRelPaths.length} files, ${newTags.length} new tags`)
+
+    // Clean up after incremental reindex too
+    this.postIndexCleanup(workspaceId)
   }
 
   /**
@@ -1190,6 +1219,39 @@ class CodeGraphService extends EventEmitter {
       .replace(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\b/g, 'IDENT')
       .replace(/\s+/g, ' ')
       .trim()
+  }
+
+  /**
+   * Release memory after indexing. V8 on Windows doesn't aggressively GC
+   * large allocations when system RAM is plentiful — we need to nudge it.
+   */
+  private postIndexCleanup(workspaceId: string): void {
+    // 1. Clear the completed indexing state after a delay
+    //    (keep it briefly so the UI can read the final status)
+    setTimeout(() => {
+      const state = this.indexingStates.get(workspaceId)
+      if (state?.status === 'complete' || state?.status === 'error') {
+        this.indexingStates.delete(workspaceId)
+      }
+    }, 30_000)
+
+    // 2. Release the tree-sitter WASM parser — it allocated memory outside
+    //    V8's heap that the GC cannot see. Will be re-initialized on next index.
+    initParserPromise = null
+
+    // 3. Shrink SQLite page cache after the heavy write burst
+    try {
+      const { getDatabase } = require('../db')
+      getDatabase().pragma('shrink_memory')
+    } catch { /* best-effort */ }
+
+    // 4. Nudge V8 GC (available when Electron runs with --expose-gc,
+    //    already used by vector-search.service.ts)
+    if (typeof global.gc === 'function') {
+      global.gc()
+    }
+
+    memoryCheckpoint('POST_INDEX_CLEANUP')
   }
 
   private emitProgress(state: CodeGraphIndexingState): void {
