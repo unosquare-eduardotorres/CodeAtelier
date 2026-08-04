@@ -24,7 +24,12 @@ setupElectronStub()
 describe('SendOutcome type — valid values', () => {
   test('all expected outcome values are assignable', () => {
     const outcomes: SendOutcome[] = [
-      'ok', 'overload', 'turn_limit_exhausted', 'context_overflow', 'error', 'aborted'
+      'ok',
+      'overload',
+      'turn_limit_exhausted',
+      'context_overflow',
+      'error',
+      'aborted'
     ]
     assert.equal(outcomes.length, 6)
     assert.ok(outcomes.includes('ok'))
@@ -63,32 +68,62 @@ function expectedOutcome(c: ErrorClassification, maxTurnsCanContinue: boolean): 
 
 describe('Error classification → SendOutcome mapping', () => {
   test('API overload → overload', () => {
-    const c: ErrorClassification = { isOverload: true, isMaxTurns: false, isContextOverflow: false, isAbort: false }
+    const c: ErrorClassification = {
+      isOverload: true,
+      isMaxTurns: false,
+      isContextOverflow: false,
+      isAbort: false
+    }
     assert.equal(expectedOutcome(c, false), 'overload')
   })
 
   test('max_turns with continuations available → ok (auto-continue)', () => {
-    const c: ErrorClassification = { isOverload: false, isMaxTurns: true, isContextOverflow: false, isAbort: false }
+    const c: ErrorClassification = {
+      isOverload: false,
+      isMaxTurns: true,
+      isContextOverflow: false,
+      isAbort: false
+    }
     assert.equal(expectedOutcome(c, true), 'ok')
   })
 
   test('max_turns exhausted → turn_limit_exhausted', () => {
-    const c: ErrorClassification = { isOverload: false, isMaxTurns: true, isContextOverflow: false, isAbort: false }
+    const c: ErrorClassification = {
+      isOverload: false,
+      isMaxTurns: true,
+      isContextOverflow: false,
+      isAbort: false
+    }
     assert.equal(expectedOutcome(c, false), 'turn_limit_exhausted')
   })
 
   test('context overflow → context_overflow', () => {
-    const c: ErrorClassification = { isOverload: false, isMaxTurns: false, isContextOverflow: true, isAbort: false }
+    const c: ErrorClassification = {
+      isOverload: false,
+      isMaxTurns: false,
+      isContextOverflow: true,
+      isAbort: false
+    }
     assert.equal(expectedOutcome(c, false), 'context_overflow')
   })
 
   test('abort/timeout → aborted', () => {
-    const c: ErrorClassification = { isOverload: false, isMaxTurns: false, isContextOverflow: false, isAbort: true }
+    const c: ErrorClassification = {
+      isOverload: false,
+      isMaxTurns: false,
+      isContextOverflow: false,
+      isAbort: true
+    }
     assert.equal(expectedOutcome(c, false), 'aborted')
   })
 
   test('generic error (no flags) → error', () => {
-    const c: ErrorClassification = { isOverload: false, isMaxTurns: false, isContextOverflow: false, isAbort: false }
+    const c: ErrorClassification = {
+      isOverload: false,
+      isMaxTurns: false,
+      isContextOverflow: false,
+      isAbort: false
+    }
     assert.equal(expectedOutcome(c, false), 'error')
   })
 })
@@ -151,7 +186,7 @@ describe('no-write-activity detection', () => {
 
   test('claims files + write tools > 0 → pass', () => {
     const claimedFiles = 3
-    let writeToolCalls = 2
+    const writeToolCalls: number = 2
     const bashCalls = 0
     const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
     const shouldFail = noWriteActivity && claimedFiles > 0
@@ -161,7 +196,7 @@ describe('no-write-activity detection', () => {
   test('claims files + bash calls > 0 → pass (bash may write)', () => {
     const claimedFiles = 3
     const writeToolCalls = 0
-    let bashCalls = 1
+    const bashCalls: number = 1
     const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
     const shouldFail = noWriteActivity && claimedFiles > 0
     assert.equal(shouldFail, false)
@@ -223,7 +258,7 @@ describe('overload-aware cap halving', () => {
 
   test('non-overload failure does not halve cap', () => {
     let cap = 6
-    let failureReason = 'error'
+    const failureReason: string = 'error'
     let draining = false
     if (failureReason === 'overload' && cap > 1) {
       cap = Math.max(1, Math.floor(cap / 2))
@@ -352,7 +387,12 @@ describe('overload retry — retries-exhausted drain logic', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('non-overload failures bypass retry path', () => {
-  const nonOverloadReasons = ['error', 'turn_limit_exhausted', 'context_overflow', 'no-write-activity']
+  const nonOverloadReasons = [
+    'error',
+    'turn_limit_exhausted',
+    'context_overflow',
+    'no-write-activity'
+  ]
 
   for (const reason of nonOverloadReasons) {
     test(`failureReason='${reason}' → never retried`, () => {
@@ -363,7 +403,7 @@ describe('non-overload failures bypass retry path', () => {
 
   test('non-overload failure drains wave immediately (no retry)', () => {
     let draining = false
-    let failureReason = 'error'
+    const failureReason: string = 'error'
 
     if (failureReason === 'overload') {
       // Would enter retry path
@@ -406,20 +446,14 @@ describe('abortAwareSleep', () => {
   test('rejects immediately when signal already aborted', async () => {
     const ac = new AbortController()
     ac.abort()
-    await assert.rejects(
-      () => abortAwareSleep(60_000, ac.signal),
-      { message: 'aborted' }
-    )
+    await assert.rejects(() => abortAwareSleep(60_000, ac.signal), { message: 'aborted' })
   })
 
   test('rejects when signal fires during sleep', async () => {
     const ac = new AbortController()
     const start = Date.now()
     setTimeout(() => ac.abort(), 30) // abort after 30ms
-    await assert.rejects(
-      () => abortAwareSleep(60_000, ac.signal),
-      { message: 'aborted' }
-    )
+    await assert.rejects(() => abortAwareSleep(60_000, ac.signal), { message: 'aborted' })
     const elapsed = Date.now() - start
     // Should reject quickly (within ~100ms), not wait 60s
     assert.ok(elapsed < 500, `Expected rejection within 500ms, got ${elapsed}ms`)
@@ -534,6 +568,9 @@ describe('retry settlement — timing aggregation', () => {
 
 // ── Standalone runner ──
 
-if (import.meta.url === `file://${process.argv[1]}` || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`
+) {
   void summaryAsync()
 }
