@@ -130,7 +130,7 @@ describe('redactEnvelope — path normalization', () => {
   test('normalizes artifact paths', () => {
     const env = baseEnvelope({
       artifacts: [
-        { path: '/Users/john/project/dist/bundle.js', description: 'Build output', type: 'file' }
+        { path: '/Users/john/project/dist/bundle.js', description: 'Build output', type: 'diff' }
       ]
     })
     const result = redactEnvelope(env)
@@ -158,7 +158,13 @@ describe('redactEnvelope — nested field redaction', () => {
 
   test('redacts remainingWork titles and descriptions', () => {
     const env = baseEnvelope({
-      remainingWork: [{ title: 'Email john@example.com', description: 'Fix path /Users/dev/app' }]
+      remainingWork: [
+        {
+          title: 'Email john@example.com',
+          description: 'Fix path /Users/dev/app',
+          priority: 'medium'
+        }
+      ]
     })
     const result = redactEnvelope(env)
     assert.ok(result.remainingWork[0].title.includes('[REDACTED:email]'))
@@ -196,7 +202,9 @@ describe('redactEnvelope — nested field redaction', () => {
 
   test('redacts codeAnchors', () => {
     const env = baseEnvelope({
-      codeAnchors: [{ file: '/Users/john/project/src/index.ts', title: 'Main entry', line: 1 }]
+      codeAnchors: [
+        { file: '/Users/john/project/src/index.ts', title: 'Main entry', startLine: 1, endLine: 5 }
+      ]
     })
     const result = redactEnvelope(env)
     assert.ok(result.codeAnchors![0].file.includes('~'))
