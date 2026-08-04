@@ -515,7 +515,81 @@ const SERVICE_TEST_FILES: string[] = [
   // Both existed on disk with real, guarded (self-runnable) assertions but
   // were never added to this registry, so they contributed zero coverage.
   '../mcp-servers/__tests__/mcp-tool-error-handling.test',
-  '../mcp-servers/__tests__/native-module-smoke.test'
+  '../mcp-servers/__tests__/native-module-smoke.test',
+  // ─── R009: Orphan sweep (FR-031/SC-009) — 81 on-disk test files found via
+  // comm -23 against this registry that were never registered and therefore
+  // contributed zero coverage. All verified to either call summary()/
+  // summaryAsync() behind a self-run guard (safe to import from a unified
+  // runner) or never call it directly. Two additional on-disk files
+  // (opencode-executor-integration.test.ts, opencode-session-diagnostic.test.ts)
+  // are deliberately NOT registered here — they require a real `opencode` CLI
+  // and a live oMLX server and are excluded via the DENY_LIST in
+  // scripts/check-test-orphans.mjs with justification comments there.
+  '../ipc/__tests__/audit-ipc-handlers.test',
+  '../ipc/__tests__/blueprint-ipc-handlers.test',
+  '../ipc/__tests__/config-ipc-validation.test',
+  '../ipc/__tests__/conversation-crud-handlers.test',
+  '../ipc/__tests__/crud-ipc-validation.test',
+  '../ipc/__tests__/grill-ipc-handlers.test',
+  '../ipc/__tests__/ipc-utilities.test',
+  '../ipc/__tests__/mpa-ipc-handlers.test',
+  '../ipc/__tests__/workspace-ipc-handlers.test',
+  '../services/__tests__/agent-session-handlers.test',
+  '../services/__tests__/agentic-claude-runner.test',
+  '../services/__tests__/auth-provider.test',
+  '../services/__tests__/autofix-pr.test',
+  '../services/__tests__/base-adapter.test',
+  '../services/__tests__/blueprint-prompt-loader.test',
+  '../services/__tests__/blueprint-task-verification.test',
+  '../services/__tests__/btw.test',
+  '../services/__tests__/budget-exceeded-error.test',
+  '../services/__tests__/budget-preflight.test',
+  '../services/__tests__/chat-stream-handlers.test',
+  '../services/__tests__/claude-md-generator-formatters.test',
+  '../services/__tests__/cli-mcp-config-builders.test',
+  '../services/__tests__/code-graph-enhancements.test',
+  '../services/__tests__/cost-tracker-pricing.test',
+  '../services/__tests__/description-cache-handlers.test',
+  '../services/__tests__/description-cache-makekey.test',
+  '../services/__tests__/event-logger-formatters.test',
+  '../services/__tests__/event-logger-sequence.test',
+  '../services/__tests__/event-logger.service.test',
+  '../services/__tests__/file-service-utils.test',
+  '../services/__tests__/git-sandbox.test',
+  '../services/__tests__/github-service-checks.test',
+  '../services/__tests__/grill-prompt-blocks.test',
+  '../services/__tests__/grill-prompt-builders.test',
+  '../services/__tests__/handoff.service.test',
+  '../services/__tests__/heuristic-description-batch.test',
+  '../services/__tests__/json-utils.test',
+  '../services/__tests__/language-detector.test',
+  '../services/__tests__/local-context-reconstructor.test',
+  '../services/__tests__/local-plan-state-maprow.test',
+  '../services/__tests__/mcp-tool-consistency.test',
+  '../services/__tests__/mermaid-sanitizers.test',
+  '../services/__tests__/model-config-utils.test',
+  '../services/__tests__/notification.service.test',
+  '../services/__tests__/opencode-agent-writer-builders.test',
+  '../services/__tests__/opencode-config-data-registry.test',
+  '../services/__tests__/opencode-config-writer-builders.test',
+  '../services/__tests__/opencode-executor-event-stream.test',
+  '../services/__tests__/opencode-executor-logic.test',
+  '../services/__tests__/plan-tasks.test',
+  '../services/__tests__/preprocessing-pipeline.test',
+  '../services/__tests__/process-manager.test',
+  '../services/__tests__/prompt-builder-extractors.test',
+  '../services/__tests__/prompt-builder-local.test',
+  '../services/__tests__/repo-service-utils.test',
+  '../services/__tests__/scope-guard.test',
+  '../services/__tests__/skill-enrichment-builders.test',
+  '../services/__tests__/skill-tier-parser.test',
+  '../services/__tests__/specialist-builder-handlers.test',
+  '../services/__tests__/specialist-builder-logic.test',
+  '../services/__tests__/subscription-version.test',
+  '../services/__tests__/tool-result-timeout.test',
+  '../services/__tests__/usage-tracker-helpers.test',
+  '../services/__tests__/version-parser.test',
+  '../services/__tests__/workspace-mcp-config-builder.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -554,7 +628,25 @@ const REPO_TEST_FILES: string[] = [
   // ─── Windows stability: upsertEdgesBatched batching + edge cases ───
   '../db/repositories/__tests__/upsert-edges-batched.test',
   // ─── Phase 24: Zero-coverage repository tests ───
-  '../db/repositories/__tests__/zero-coverage-repos-phase24.test'
+  '../db/repositories/__tests__/zero-coverage-repos-phase24.test',
+  // ─── R009: Orphan sweep (FR-031/SC-009) — 16 on-disk repository tests
+  // never registered here (see full explanation in SERVICE_TEST_FILES above).
+  '../db/repositories/__tests__/agent-session.repository.test',
+  '../db/repositories/__tests__/app-preference.repository.test',
+  '../db/repositories/__tests__/audit-plan.repository.test',
+  '../db/repositories/__tests__/base-repository.test',
+  '../db/repositories/__tests__/checkpoint.repository.test',
+  '../db/repositories/__tests__/chunk-embedding.repository.test',
+  '../db/repositories/__tests__/code-chunk.repository.test',
+  '../db/repositories/__tests__/code-graph-edge.repository.test',
+  '../db/repositories/__tests__/code-graph-rank.repository.test',
+  '../db/repositories/__tests__/code-graph-tag.repository.test',
+  '../db/repositories/__tests__/conversation-specialist.repository.test',
+  '../db/repositories/__tests__/core-agent-alias.repository.test',
+  '../db/repositories/__tests__/core-agent-prompt.repository.test',
+  '../db/repositories/__tests__/mpa-artifact.repository.test',
+  '../db/repositories/__tests__/turn-usage.repository.test',
+  '../db/repositories/__tests__/user-profile.repository.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

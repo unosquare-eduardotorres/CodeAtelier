@@ -28,7 +28,8 @@
     "test:cov:check": "c8 --check-coverage --lines 61 --functions 79 --branches 76 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:full": "bash scripts/coverage-full.sh",
     "coverage:rank": "node scripts/coverage-rank.mjs",
-    "test:cov:report": "npm run test:cov && npm run coverage:rank"
+    "test:cov:report": "npm run test:cov && npm run coverage:rank",
+    "test:check-orphans": "node scripts/check-test-orphans.mjs"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
