@@ -23,6 +23,7 @@
  */
 import { setupElectronStub } from '../services/__tests__/electron-stub'
 import { summaryAsync } from '../services/__tests__/test-harness'
+import { restoreFullMock } from '../services/__tests__/setup-full-mock'
 
 // Install the shared electron/electron-log stubs ONCE before any test file
 // loads. See run-tests.ts for rationale.
@@ -401,6 +402,106 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Phase 24: Deep Tests for Low/Medium-Coverage Services ───
   '../services/__tests__/low-coverage-services-deep-phase24.test',
   '../services/__tests__/medium-coverage-augment-phase24.test',
+  // ─── Phase 25: Wave 1 — Giant Services Deep Body Coverage ───
+  '../services/__tests__/blueprint-build-deep-phase25.test',
+  '../services/__tests__/agent-session-deep-phase25.test',
+  '../services/__tests__/chat-stream-deep-phase25.test',
+  '../services/__tests__/opencode-executor-deep-phase25.test',
+  '../services/__tests__/vector-search-deep-phase25.test',
+  '../services/__tests__/blueprint-spec-deep-phase25.test',
+  '../services/__tests__/blueprint-service-deep-phase25.test',
+  '../services/__tests__/code-graph-deep-phase25.test',
+  '../services/__tests__/blueprint-verify-deep-phase25.test',
+  '../services/__tests__/memory-extraction-deep-phase25.test',
+  // ─── Phase 25: Wave 2 — Pipeline Services Deep Coverage ───
+  '../services/__tests__/mpa-orchestration-deep-phase25.test',
+  '../services/__tests__/cli-executor-deep-phase25.test',
+  '../services/__tests__/council-deep-phase25.test',
+  '../services/__tests__/memory-engine-deep-phase25.test',
+  '../services/__tests__/memory-bootstrap-deep-phase25.test',
+  '../services/__tests__/audit-agent-deep-phase25.test',
+  '../services/__tests__/workspace-deploy-deep-phase25.test',
+  '../services/__tests__/grill-persistence-deep-phase25.test',
+  // ─── Phase 25: Wave 3 — IPC Handler Body Deep Coverage ───
+  '../ipc/__tests__/ipc-blueprint-body-deep.test',
+  '../ipc/__tests__/ipc-audit-body-deep.test',
+  '../ipc/__tests__/ipc-mpa-council-body-deep.test',
+  '../ipc/__tests__/ipc-chat-completion-body.test',
+  '../ipc/__tests__/ipc-remaining-body-deep.test',
+  // ─── Phase 25: Wave 4 — Medium Services + MCP ───
+  '../services/__tests__/wave4-services-deep-phase25.test',
+  '../mcp-servers/__tests__/code-analysis-deep-phase25.test',
+  // ─── Phase 25: Wave 5 — E2E Testing Infrastructure ───
+  '../services/__tests__/e2e-assertions-deep-phase25.test',
+  '../services/__tests__/e2e-runner-deep-phase25.test',
+  '../services/__tests__/e2e-service-runners-phase25.test',
+  // ─── Phase 25: Wave 6 — Remaining Repos & Adapters ───
+  '../services/__tests__/wave6-repos-adapters-phase25.test',
+  // ─── Phase 26: Wave 1 — Giant Service Bodies (Module-Mock Deep Body) ───
+  '../services/__tests__/blueprint-build-body-p26.test',
+  '../services/__tests__/agent-session-body-p26.test',
+  '../services/__tests__/chat-stream-body-p26.test',
+  '../services/__tests__/vector-search-body-p26.test',
+  '../services/__tests__/opencode-exec-body-p26.test',
+  '../services/__tests__/blueprint-spec-body-p26.test',
+  '../services/__tests__/blueprint-svc-body-p26.test',
+  '../services/__tests__/memory-extract-body-p26.test',
+  '../services/__tests__/blueprint-verify-body-p26.test',
+  '../services/__tests__/blueprint-ipc-body-p26.test',
+  '../services/__tests__/memory-engine-body-p26.test',
+  // ─── Phase 26: Wave 2 — IPC Handler Deep Body ───
+  '../services/__tests__/audit-ipc-body-p26.test',
+  '../services/__tests__/grill-ipc-body-p26.test',
+  '../services/__tests__/convo-crud-ipc-body-p26.test',
+  '../services/__tests__/mpa-ipc-body-p26.test',
+  '../services/__tests__/chat-ipc-body-p26.test',
+  '../services/__tests__/memory-ipc-body-p26.test',
+  '../services/__tests__/workspace-ipc-body-p26.test',
+  '../services/__tests__/remaining-ipc-body-p26.test',
+  // ─── Phase 26: Wave 3 — Pipeline Service Method Bodies ───
+  '../services/__tests__/memory-engine-pipeline-p26.test',
+  '../services/__tests__/mpa-orch-body-p26.test',
+  '../services/__tests__/memory-boot-body-p26.test',
+  '../services/__tests__/cli-executor-body-p26.test',
+  '../services/__tests__/council-body-p26.test',
+  '../services/__tests__/audit-agent-body-p26.test',
+  '../services/__tests__/workspace-deploy-body-p26.test',
+  '../services/__tests__/grill-persist-body-p26.test',
+  // ─── Phase 26: Wave 4 — Repository Deep Coverage ───
+  '../services/__tests__/memory-fact-repo-deep-p26.test',
+  '../services/__tests__/blueprint-repo-deep-p26.test',
+  '../services/__tests__/audit-repo-deep-p26.test',
+  '../services/__tests__/agent-session-repo-p26.test',
+  '../services/__tests__/remaining-repos-p26.test',
+  // ─── Phase 26: Wave 5 — Medium Services + MCP ───
+  '../services/__tests__/code-analysis-mcp-p26.test',
+  '../services/__tests__/preflight-body-p26.test',
+  '../services/__tests__/skill-specialist-body-p26.test',
+  '../services/__tests__/agent-sync-preprocessing-p26.test',
+  '../services/__tests__/e2e-assertions-body-p26.test',
+  // ─── Phase 26: Wave 6 — Adapters + Edge Cases ───
+  '../services/__tests__/role-adapters-body-p26.test',
+  '../services/__tests__/chat-agent-body-p26.test',
+  '../services/__tests__/medium-services-batch-p26.test',
+  '../services/__tests__/db-index-migrations-p26.test',
+  // ─── Phase 27: Coverage Push — Pure Functions + Zero-Coverage Services ───
+  '../services/__tests__/compaction-policy-p27.test',
+  '../services/__tests__/handoff-redaction-p27.test',
+  '../services/__tests__/mpa-prompts-p27.test',
+  '../services/__tests__/audit-discovery-p27.test',
+  '../services/__tests__/agent-executor-factory-p27.test',
+  '../services/__tests__/handoff-adapters-p27.test',
+  '../services/__tests__/one-shot-local-p27.test',
+  // ─── Phase 27: IPC handler tests ───
+  '../ipc/__tests__/ipc-code-changes-p27.test',
+  '../services/__tests__/parsing-utils-p27.test',
+  '../services/__tests__/structured-output-repair-p27.test',
+  '../services/__tests__/github-service-p27.test',
+  '../services/__tests__/event-logger-deep-p27.test',
+  '../services/__tests__/opencode-config-writer-p27.test',
+  '../services/__tests__/memory-feed-p27.test',
+  '../services/__tests__/grill-persistence-deep-p27.test',
+  '../services/__tests__/specialist-builder-deep-p27.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,7 +540,7 @@ const REPO_TEST_FILES: string[] = [
   // ─── Windows stability: upsertEdgesBatched batching + edge cases ───
   '../db/repositories/__tests__/upsert-edges-batched.test',
   // ─── Phase 24: Zero-coverage repository tests ───
-  '../db/repositories/__tests__/zero-coverage-repos-phase24.test',
+  '../db/repositories/__tests__/zero-coverage-repos-phase24.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───
@@ -455,6 +556,15 @@ void (async () => {
     } catch (err) {
       console.error(`\n[run-all] FAILED to load ${file}:`, err)
       loadFailures++
+    } finally {
+      // Undo setupFullMock()'s Module._load patch (if this file installed it)
+      // before the next file loads. Every module-level `require()` in a
+      // full-mock test file runs synchronously during `await import(file)`
+      // above — deferred/async test bodies only reuse those already-captured
+      // references — so restoring here scopes the interception to exactly
+      // this file and prevents it from silently mocking real modules
+      // (e.g. db/repositories/*.repository.ts) for every file loaded after.
+      restoreFullMock()
     }
   }
 
@@ -462,7 +572,9 @@ void (async () => {
     console.error(`\n[run-all] ${loadFailures} file(s) failed to load`)
     process.exitCode = 1
   }
-  console.log(`[run-all] all ${ALL_TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`)
+  console.log(
+    `[run-all] all ${ALL_TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`
+  )
 
   // Single summary at the end — awaits all pending async tests, prints totals,
   // and exits with code 1 on any failure.
