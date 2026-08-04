@@ -47,6 +47,9 @@ import './e2e-test-repos.test'
 // ─── Windows stability: upsertEdgesBatched batching + edge cases ───
 import './upsert-edges-batched.test'
 
+// ─── Phase 24: Zero-coverage repository tests ───
+import './zero-coverage-repos-phase24.test'
+
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

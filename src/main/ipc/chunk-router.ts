@@ -245,7 +245,7 @@ export function completeStreamMetrics(
   streamAggregator.record(outcome, ttft, duration)
 
   // IPC-BACKPRESSURE: Collect backpressure metrics for this stream
-  const bp = chunkAckTracker.getMetrics('__global__')
+  const bp = chunkAckTracker.getMetrics(conversationId)
 
   chatIpcLogger.info(
     `[METRIC:STREAM_COMPLETE] ` +
@@ -261,8 +261,8 @@ export function completeStreamMetrics(
   )
 
   // Clean up backpressure tracking for this stream
-  chunkAckTracker.cleanup('__global__')
-  chunkAckTracker.clearMetrics('__global__')
+  chunkAckTracker.cleanup(conversationId)
+  chunkAckTracker.clearMetrics(conversationId)
 }
 
 /** Expose the aggregator for diagnostic IPC or health checks. */
@@ -284,7 +284,7 @@ function pushText(ctx: ChunkRouterContext, text: string): void {
   // IPC-BACKPRESSURE: Pass the adaptive interval to the batcher. When the
   // renderer is under pressure (pending > HWM), the interval widens from
   // 33ms (~30fps) to 100ms (~10fps), giving React more breathing room.
-  const interval = chunkAckTracker.getRecommendedInterval('__global__')
+  const interval = chunkAckTracker.getRecommendedInterval(ctx.conversationId)
   textBatcher.push(ctx.conversationId, text, (buffer) => {
     safeSend(
       ctx,
@@ -292,7 +292,7 @@ function pushText(ctx: ChunkRouterContext, text: string): void {
       createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
     )
     // Record send for backpressure tracking
-    chunkAckTracker.recordSend('__global__')
+    chunkAckTracker.recordSend(ctx.conversationId)
   }, interval)
 }
 
@@ -1018,9 +1018,15 @@ export function registerStreamDiagnosticsIpc(): void {
 
   // IPC-BACKPRESSURE: Renderer sends ACK after processing a batch of chunks.
   // This feeds the adaptive batcher interval adjustment.
-  ipcMain.on(IPC_CHANNELS.CHAT_CHUNK_ACK, (_event, data: { processed: number; timestamp: number }) => {
-    // The ACK doesn't specify a conversationId — distribute across all pending.
-    // In practice with MAX_CONCURRENT_STREAMS=1, there's only ever one active.
-    chunkAckTracker.recordAck('__global__', data.processed)
+  ipcMain.on(IPC_CHANNELS.CHAT_CHUNK_ACK, (_event, data: { processed: number; timestamp: number; perConversation?: Record<string, number> }) => {
+    if (data.perConversation) {
+      // Phase-2: Per-conversation ACK routing — backpressure tracked independently
+      for (const [convId, count] of Object.entries(data.perConversation)) {
+        chunkAckTracker.recordAck(convId, count)
+      }
+    } else {
+      // Backward compat fallback for old renderers
+      chunkAckTracker.recordAck('__global__', data.processed)
+    }
   })
 }

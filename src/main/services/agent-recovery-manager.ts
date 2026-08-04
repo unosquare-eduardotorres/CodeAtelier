@@ -68,7 +68,7 @@ export class AgentRecoveryManager {
     if (isLocal) {
       const discoveries = this.s.toolActivityAccumulator.buildDiscoverySummary(2000)
       const planState = localPlanStateService.getForConversation(conversationId)
-      const partialPlan = this.s.accumulatedText.slice(-1000)
+      const partialPlan = (this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').slice(-1000)
 
       continuationPrompt = [
         '## Continuation — Complete the Plan',
@@ -333,7 +333,7 @@ export class AgentRecoveryManager {
     ) {
       this.s.log.warn(
         `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
-          `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${this.s.accumulatedText.length}`
+          `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
       )
       const recoveryResult = await this.s.recoveryNudge.attemptRecovery({
         cliExecutor: this.s.cliExecutor,
@@ -360,7 +360,12 @@ export class AgentRecoveryManager {
       this.s.log.info(
         `[PIPELINE:recovery-nudge-result] recovered=${recoveryResult.recovered} textLen=${recoveryResult.text.length}`
       )
-      this.s.accumulatedText += recoveryResult.text
+      const recovCtx = this.s.activeStreams?.get(conversationId)
+      if (recovCtx) {
+        recovCtx.accumulatedText += recoveryResult.text
+      } else {
+        this.s.accumulatedText += recoveryResult.text
+      }
     }
   }
 
@@ -373,7 +378,8 @@ export class AgentRecoveryManager {
     recoveryDepth: number
   ): void {
     // Auto-capture conversation summary for ALL providers
-    if (this.s.accumulatedText.length > 100) {
+    const convAccText = this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
+    if (convAccText.length > 100) {
       try {
         const summary = this.extractStructuredSummary(conversationId)
         if (summary) {
@@ -393,7 +399,7 @@ export class AgentRecoveryManager {
 
     // Delegate intent detection to the adapter
     this.s.adapter.emitDetectedIntents({
-      accumulatedText: this.s.accumulatedText,
+      accumulatedText: convAccText,
       controlToolState: this.s.controlToolState,
       mode: this.s.currentMode,
       conversationId,
@@ -414,7 +420,7 @@ export class AgentRecoveryManager {
     if (!this.s.controlToolState.plan && !this.s.controlToolState.askUser) {
       this.s.emit('intent', {
         type: 'response',
-        content: this.s.accumulatedText
+        content: convAccText
       } as AgentIntent)
     }
 
@@ -463,7 +469,7 @@ export class AgentRecoveryManager {
     }
 
     this.s.log.info(
-      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${this.s.accumulatedText.length}`
+      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
     )
 
     // Step 1: Handle overload / max_turns auto-continue
@@ -485,34 +491,33 @@ export class AgentRecoveryManager {
 
   /** Save partial progress on error (all providers). */
   private saveErrorProgress(): void {
-    if (
-      this.s.accumulatedText.length <= 50 ||
-      !this.s.currentConversationId
-    ) {
+    const errConvId = this.s.lastStreamOpts?.conversationId ?? (this.s as any).lastActiveConversationId ?? this.s.currentConversationId
+    const errAccText = errConvId ? (this.s.activeStreams?.get(errConvId)?.accumulatedText ?? this.s.accumulatedText ?? '') : ''
+    if (errAccText.length <= 50 || !errConvId) {
       return
     }
     try {
-      const summary = this.extractStructuredSummary(this.s.currentConversationId)
+      const summary = this.extractStructuredSummary(errConvId)
       if (summary) {
         // Guard: don't overwrite a richer prior summary with a sparse error-path one.
         // A brief error turn can produce near-empty output that would clobber
         // detailed context from a prior successful turn.
-        const existingSummary = conversationRepository.getSummary(this.s.currentConversationId)
+        const existingSummary = conversationRepository.getSummary(errConvId)
         if (existingSummary && summary.length < existingSummary.length) {
           this.s.log.info(
             `[S6:error-summary-skipped] existing=${existingSummary.length} new=${summary.length} — keeping richer summary`
           )
         } else {
-          conversationRepository.updateSummary(this.s.currentConversationId, summary)
+          conversationRepository.updateSummary(errConvId, summary)
           this.s.log.info(
-            `[S6:error-summary-saved] conversationId=${this.s.currentConversationId} provider=${this.s.llmProvider} len=${summary.length}`
+            `[S6:error-summary-saved] conversationId=${errConvId} provider=${this.s.llmProvider} len=${summary.length}`
           )
         }
       }
     } catch {
       /* non-fatal */
     }
-    this.saveCurrentPlanState(this.s.currentConversationId)
+    this.saveCurrentPlanState(errConvId)
   }
 
   /** Classify a stream error into one of the known categories. */
@@ -587,7 +592,19 @@ export class AgentRecoveryManager {
     recoveryDepth = 0,
     effectiveTimeoutMs?: number
   ): Promise<void> {
-    this.s.sdkAbortController = null
+    // Clear abort controller for the errored conversation (from lastStreamOpts if available)
+    const errorConvId = this.s.lastStreamOpts?.conversationId ?? (this.s as any).lastActiveConversationId ?? null
+    if (errorConvId) {
+      const ctx = this.s.activeStreams?.get(errorConvId)
+      if (ctx) {
+        ctx.abortController = null
+      } else {
+        // Fallback: clear via property (handles test doubles + _directAbortController)
+        this.s.sdkAbortController = null
+      }
+    } else {
+      this.s.sdkAbortController = null
+    }
     this.saveErrorProgress()
 
     const { isOverload, isMaxTurns, isContextOverflow, isAbort } =
@@ -626,7 +643,7 @@ export class AgentRecoveryManager {
         const controlCallbacks = this.s.adapter.buildControlCallbacks({
           conversationId,
           emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload),
-          getAccumulatedText: () => this.s.accumulatedText
+          getAccumulatedText: () => this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
         })
         freshMcpResult = this.s.adapter.buildMcpConfig({
           mode: this.s.currentMode,
@@ -721,7 +738,7 @@ export class AgentRecoveryManager {
     if (!this.s.workspaceId || this.s.currentMode !== 'plan') return
     try {
       const filesExplored = this.s.toolActivityAccumulator.getExploredFiles()
-      const text = this.s.accumulatedText
+      const text = this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
 
       const planLineRegex =
         /^\s*(?:\d+[.)]\s|[-*]\s|#{2,4}\s(?:Step|Phase|Change|Modify|Add|Remove|Update|Create|Fix|Implement)|\*{1,2}\d+[.)]\*{0,2}\s)/i
@@ -758,7 +775,7 @@ export class AgentRecoveryManager {
   // ── Structured Summary Extraction ─────────────────────────────────────
 
   extractStructuredSummary(_conversationId: string): string | null {
-    const text = this.s.accumulatedText
+    const text = this.s.activeStreams?.get(_conversationId)?.accumulatedText ?? this.s.accumulatedText
     if (!text || text.length < 50) return null
 
     const filesExplored = this.s.toolActivityAccumulator.getExploredFiles()

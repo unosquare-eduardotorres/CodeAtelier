@@ -897,7 +897,7 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_ASK_USER_RESPOND, data),
 
   /** IPC-BACKPRESSURE: Send ACK to backend after processing a batch of chunks. */
-  chunkAck: (data: { processed: number; timestamp: number }): void => {
+  chunkAck: (data: { processed: number; timestamp: number; perConversation?: Record<string, number> }): void => {
     ipcRenderer.send(IPC_CHANNELS.CHAT_CHUNK_ACK, data)
   },
 

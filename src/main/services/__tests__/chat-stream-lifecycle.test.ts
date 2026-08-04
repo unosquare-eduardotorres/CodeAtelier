@@ -180,30 +180,37 @@ describe('acquireStreamLock', () => {
       lifecycleRegistry.abort('conv-1', 'test-cleanup')
     }))
 
-  // A1: Cross-conversation concurrency gate — rejects while MAX_CONCURRENT_STREAMS=1
-  test('rejects cross-conversation stream while another conversation is streaming (A1 gate)', () =>
+  // Phase 2: Cross-conversation streams are now ALLOWED (up to MAX_CONCURRENT_STREAMS=3)
+  test('allows cross-conversation stream alongside another conversation (Phase 2)', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
       svc.acquireStreamLock('conv-A')
 
-      assert.throws(
-        () => svc.acquireStreamLock('conv-B'),
-        /Another chat is still processing/,
-        'should reject cross-conversation stream while gate=1'
-      )
+      // Should succeed — Phase 2 allows concurrent streams for different conversations
+      const resultB = svc.acquireStreamLock('conv-B')
+      assert.ok(resultB.requestId, 'conv-B lock acquired alongside conv-A')
 
-      // conv-A should still be streaming, conv-B should NOT be locked
+      // Both should be streaming
       assert.equal(svc.streamingLocks.has('conv-A'), true, 'A lock still held')
-      assert.equal(svc.streamingLocks.has('conv-B'), false, 'B lock never acquired')
-      assert.equal(conversationStateMachine.getState('conv-B'), 'idle', 'B state machine still idle')
+      assert.equal(svc.streamingLocks.has('conv-B'), true, 'B lock acquired')
 
       lifecycleRegistry.abortAll('test-cleanup')
     }))
 
-  // Phase 2 twin: will pass when MAX_CONCURRENT_STREAMS is raised
-  // Uncomment/unskip when Phase 2 per-conversation isolation lands.
-  // test('allows concurrent streams for DIFFERENT conversations (Phase 2)', () => { ... })
+  // Phase 2: Per-conversation execution isolation is now in place
+  test('allows concurrent streams for DIFFERENT conversations (Phase 2)', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      svc.acquireStreamLock('conv-1')
+      // Should NOT throw — different conversation
+      svc.acquireStreamLock('conv-2')
+      assert.equal(lifecycleRegistry.active().length, 2, 'two streams active')
+      assert.equal(svc.streamingLocks.has('conv-1'), true, 'conv-1 lock held')
+      assert.equal(svc.streamingLocks.has('conv-2'), true, 'conv-2 lock held')
+      lifecycleRegistry.abortAll('test-cleanup')
+    }))
 
   test('resets stoppedConversations for the conversation', () =>
     runExclusive(async () => {
@@ -740,26 +747,19 @@ describe('StreamContext mutable state', () => {
 // H. Concurrent streaming — A1 gate enforcement + per-conversation isolation
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe('Concurrent streaming — A1 gate enforcement', () => {
-  test('cross-conversation lock rejected while gate=1', () =>
+describe('Concurrent streaming — resource limit gate', () => {
+  test('cross-conversation lock ALLOWED with Phase 2 isolation (MAX=3)', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
       svc.acquireStreamLock('conv-A')
 
-      // With MAX_CONCURRENT_STREAMS=1, conv-B should be rejected
-      assert.throws(
-        () => svc.acquireStreamLock('conv-B'),
-        /Another chat is still processing/,
-        'cross-conversation lock should be rejected'
-      )
-
-      // Stopping conv-A should then allow conv-B
-      lifecycleRegistry.abort('conv-A', 'userStop')
+      // Phase 2: conv-B should succeed — different conversation, under the limit
       const resultB = svc.acquireStreamLock('conv-B')
-      assert.ok(resultB.requestId, 'conv-B should acquire lock after A stopped')
+      assert.ok(resultB.requestId, 'conv-B should acquire lock alongside conv-A')
+      assert.equal(lifecycleRegistry.active().length, 2, 'two streams active')
 
-      lifecycleRegistry.abort('conv-B', 'test-cleanup')
+      lifecycleRegistry.abortAll('test-cleanup')
     }))
 
   test('same-conversation supersede still works under the gate', () =>

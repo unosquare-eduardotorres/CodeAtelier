@@ -183,8 +183,12 @@ export class AgentSessionService extends AgentBaseService {
 
   private workspacePath: string | null = null
   private workspaceId: string | null = null
-  private currentConversationId: string | null = null
-  private accumulatedText = ''
+  /** Most-recently-started conversation — for backward-compat queries (logging, UI, bridge). */
+  private _lastActiveConversationId: string | null = null
+  /** Per-conversation stream contexts (text accumulator + abort controller). */
+  private readonly activeStreams = new Map<string, import('./agent-session-host').ActiveStreamContext>()
+  /** Fallback accumulator for direct field access when no activeStreams context exists (test compat). */
+  private _directAccumulatedText = ''
   /** HEAD sha captured at session start — for memory extraction git delta. */
   private currentStartSha: string | undefined
   /** Per-session set of fact IDs already injected — prevents re-injection on subsequent turns. */
@@ -201,14 +205,26 @@ export class AgentSessionService extends AgentBaseService {
   /** Whether the last executeStream was terminated by the interaction timeout. */
   private _lastTimedOut = false
 
-  /** AbortController for the current in-flight query. */
-  private sdkAbortController: AbortController | null = null
+  // sdkAbortController moved into per-conversation ActiveStreamContext (activeStreams map)
   /** OpenCode config path (written to temp dir). */
   private _openCodeConfigPath: string | undefined
   /** A-1: Pending priming context parts — consumed by the first execute() call. */
   private _pendingPrimingContext: Array<{ type: 'text'; text: string }> | undefined
-  /** CLI executor — interactive claude process, subscription billing. */
-  private readonly cliExecutor = new CLIExecutor()
+  /** Per-conversation CLI executors — each conversation gets its own interactive claude process. */
+  private readonly cliExecutors = new Map<string, CLIExecutor>()
+  /** Backward-compat accessor — returns the executor for lastActiveConversationId (or a fresh one). */
+  get cliExecutor(): CLIExecutor {
+    return this.getOrCreateCliExecutor(this._lastActiveConversationId ?? '__default__')
+  }
+
+  private getOrCreateCliExecutor(conversationId: string): CLIExecutor {
+    let executor = this.cliExecutors.get(conversationId)
+    if (!executor) {
+      executor = new CLIExecutor()
+      this.cliExecutors.set(conversationId, executor)
+    }
+    return executor
+  }
   /** CLI MCP config writer — generates --mcp-config JSON for Claude CLI sessions. */
   private readonly mcpConfigWriter = new CliMcpConfigWriter()
   /** IPC bridge — Unix domain socket for control-actions MCP server ↔ Electron main process. */
@@ -273,6 +289,74 @@ export class AgentSessionService extends AgentBaseService {
     this.executorFactory = new AgentExecutorFactory(this)
   }
 
+  // ── Per-conversation state proxies ──────────────────────────────
+  // Getter/setters proxy through lastActiveConversationId so the 50+
+  // existing references in bridge listeners, logging, and error paths
+  // work unchanged.  Hot-path delegates (stream processor, recovery manager)
+  // use activeStreams.get(conversationId) directly for correctness.
+
+  /** Backward-compat alias — always points at the most-recently-started conversation. */
+  get lastActiveConversationId(): string | null {
+    return this._lastActiveConversationId
+  }
+  set lastActiveConversationId(v: string | null) {
+    this._lastActiveConversationId = v
+  }
+
+  get currentConversationId(): string | null {
+    return this._lastActiveConversationId
+  }
+  set currentConversationId(v: string | null) {
+    this._lastActiveConversationId = v
+  }
+
+  get accumulatedText(): string {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) return ctx.accumulatedText
+    }
+    return this._directAccumulatedText
+  }
+  set accumulatedText(value: string) {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) {
+        ctx.accumulatedText = value
+        return
+      }
+    }
+    this._directAccumulatedText = value
+  }
+
+  private _directAbortController: AbortController | null = null
+  get sdkAbortController(): AbortController | null {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) return ctx.abortController
+    }
+    return this._directAbortController
+  }
+  set sdkAbortController(value: AbortController | null) {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) {
+        ctx.abortController = value
+        return
+      }
+    }
+    this._directAbortController = value
+  }
+
+  /** Get accumulated text for a specific conversation (or lastActive if omitted). */
+  getAccumulatedTextForConversation(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    return convId ? (this.activeStreams.get(convId)?.accumulatedText ?? '') : ''
+  }
+
   // ── Accessors ─────────────────────────────────────────────────────
 
   getRole(): AgentRoleAdapter['role'] {
@@ -296,15 +380,16 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   getCurrentConversationId(): string | null {
-    return this.currentConversationId
+    return this._lastActiveConversationId
   }
 
   getMode(): ConversationMode {
     return this.currentMode
   }
 
-  getStreamedContent(): string {
-    return this.accumulatedText
+  getStreamedContent(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    return convId ? (this.activeStreams.get(convId)?.accumulatedText ?? '') : ''
   }
 
   /** Return the outcome of the most recent send() call. */
@@ -339,6 +424,13 @@ export class AgentSessionService extends AgentBaseService {
     // SENDLOCKS-LEAK-01: Clean up send lock — it's a synchronization artifact,
     // not resumable state. Once a conversation is cleared, its lock is dead weight.
     this.sendLocks.delete(conversationId)
+    // Phase-2: Clean up per-conversation stream context and CLI executor
+    this.activeStreams.delete(conversationId)
+    const executor = this.cliExecutors.get(conversationId)
+    if (executor) {
+      executor.killProcess().catch(() => {})
+      this.cliExecutors.delete(conversationId)
+    }
   }
 
   /**
@@ -413,8 +505,11 @@ export class AgentSessionService extends AgentBaseService {
   ): Promise<void> {
     // Don't abort an active stream if we're re-starting for the same workspace.
     // This prevents HMR, React strict mode, or auto-open from killing in-flight queries.
+    // Check if ANY stream is active in this workspace
+    const hasActiveStream = this.activeStreams.size > 0 &&
+      [...this.activeStreams.values()].some(ctx => ctx.abortController !== null)
     if (
-      this.sdkAbortController &&
+      hasActiveStream &&
       this.workspacePath === workspacePath &&
       this.currentStatus !== 'idle' &&
       this.currentStatus !== 'failed'
@@ -423,14 +518,18 @@ export class AgentSessionService extends AgentBaseService {
       return
     }
 
-    if (this.sdkAbortController) {
+    if (hasActiveStream) {
       this.log.warn(
-        `[start] Aborting active sdkAbortController — ` +
+        `[start] Aborting ${this.activeStreams.size} active stream(s) — ` +
           `currentWorkspace=${this.workspacePath} newWorkspace=${workspacePath} ` +
-          `status=${this.currentStatus} conversationId=${this.currentConversationId}`
+          `status=${this.currentStatus} conversationId=${this._lastActiveConversationId}`
       )
-      this.sdkAbortController.abort()
-      this.sdkAbortController = null
+      for (const [, ctx] of this.activeStreams) {
+        if (ctx.abortController) {
+          ctx.abortController.abort()
+          ctx.abortController = null
+        }
+      }
     }
 
     this.workspacePath = workspacePath
@@ -445,8 +544,10 @@ export class AgentSessionService extends AgentBaseService {
     this.cacheReadTokens = 0
     this.cacheCreationTokens = 0
     this.lastContextTokens = undefined
-    this.currentConversationId = null
-    this.accumulatedText = ''
+    this._lastActiveConversationId = null
+    this.activeStreams.clear()
+    this._directAccumulatedText = ''
+    this._directAbortController = null
     this.compactCount = 0
     this.compactSuggested = false
     this.turnsSinceCompactSuggestion = 0
@@ -495,8 +596,8 @@ export class AgentSessionService extends AgentBaseService {
     })
 
     // Pre-populate session map for resume
-    if (resumeSessionId && this.currentConversationId) {
-      this.sessionMap.set(this.currentConversationId, resumeSessionId)
+    if (resumeSessionId && this._lastActiveConversationId) {
+      this.sessionMap.set(this._lastActiveConversationId, resumeSessionId)
     }
 
     // Load declarative hooks
@@ -658,7 +759,7 @@ export class AgentSessionService extends AgentBaseService {
     const controlCallbacks = this.adapter.buildControlCallbacks({
       conversationId,
       emit: (evt, payload) => this.emitAdapterEvent(evt, payload),
-      getAccumulatedText: () => this.accumulatedText
+      getAccumulatedText: () => this.activeStreams?.get(conversationId)?.accumulatedText ?? ''
     })
     this.wrapControlCallbacks(controlCallbacks)
 
@@ -666,7 +767,7 @@ export class AgentSessionService extends AgentBaseService {
       mode: this.currentMode,
       workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
-      conversationId: this.currentConversationId,
+      conversationId,
       controlCallbacks,
       contextTier
     })
@@ -728,27 +829,51 @@ export class AgentSessionService extends AgentBaseService {
     this.adapter.onSendSuccess?.(conversationId)
   }
 
-  /** Cancels the current in-flight query (SDK, CLI, or OpenCode). */
-  cancelCurrentQuery(): void {
-    if (this.sdkAbortController) {
-      this.sdkAbortController.abort()
-      this.sdkAbortController = null
-    }
-    // CLI backend: also kill the process to stop tool execution
-    if (this.executorBackend === 'cli' && this.cliExecutor.isAlive()) {
-      this.cliExecutor.killProcess().catch(() => {
-        /* non-fatal: CLI process may already be dead — kill is best-effort */
-      })
-    }
-    // #2: OpenCode backend — abort the active session via SDK client
-    if (this.executorBackend === 'opencode') {
-      const conversationId = this.currentConversationId ?? ''
-      const sessionId = openCodeExecutor.getSessionId(conversationId)
-      if (sessionId && openCodeExecutor.isRunning()) {
-        openCodeExecutor.abortSession(sessionId).catch((err) => {
-          this.log.warn('[opencode] Session abort failed:', err)
-        })
-        this.log.info(`[cancelCurrentQuery] OpenCode session ${sessionId} abort requested`)
+  /**
+   * Cancels an in-flight query (SDK, CLI, or OpenCode).
+   * @param conversationId — cancel only this conversation. If omitted, cancels ALL active streams.
+   */
+  cancelCurrentQuery(conversationId?: string): void {
+    if (conversationId) {
+      // Per-conversation cancel
+      const ctx = this.activeStreams.get(conversationId)
+      if (ctx?.abortController) {
+        ctx.abortController.abort()
+        ctx.abortController = null
+      }
+      if (this.executorBackend === 'cli') {
+        const executor = this.cliExecutors.get(conversationId)
+        if (executor?.isAlive()) {
+          executor.killProcess().catch(() => { /* best-effort */ })
+        }
+      }
+      if (this.executorBackend === 'opencode') {
+        const sessionId = openCodeExecutor.getSessionId(conversationId)
+        if (sessionId && openCodeExecutor.isRunning()) {
+          openCodeExecutor.abortSession(sessionId).catch((err) => {
+            this.log.warn('[opencode] Session abort failed:', err)
+          })
+          this.log.info(`[cancelCurrentQuery] OpenCode session ${sessionId} abort requested for ${conversationId}`)
+        }
+      }
+    } else {
+      // Cancel ALL active streams (full reset / backward compat)
+      for (const [convId, ctx] of this.activeStreams) {
+        if (ctx.abortController) {
+          ctx.abortController.abort()
+          ctx.abortController = null
+        }
+        if (this.executorBackend === 'opencode') {
+          const sessionId = openCodeExecutor.getSessionId(convId)
+          if (sessionId && openCodeExecutor.isRunning()) {
+            openCodeExecutor.abortSession(sessionId).catch(() => {})
+          }
+        }
+      }
+      if (this.executorBackend === 'cli') {
+        for (const executor of this.cliExecutors.values()) {
+          if (executor.isAlive()) executor.killProcess().catch(() => {})
+        }
       }
     }
   }
@@ -758,13 +883,23 @@ export class AgentSessionService extends AgentBaseService {
     // If any sub-step (killProcess, opencode stop, IPC teardown) wedges,
     // the pipeline still advances and markPipelineStopped() can fire.
     const stopBody = async (): Promise<void> => {
-      if (this.sdkAbortController) {
-        this.sdkAbortController.abort()
-        this.sdkAbortController = null
+      // Abort all per-conversation streams
+      for (const [, ctx] of this.activeStreams) {
+        if (ctx.abortController) {
+          ctx.abortController.abort()
+          ctx.abortController = null
+        }
       }
-      // Kill CLI process if active
+      // Fallback: abort _directAbortController if set (test compat + direct assignment)
+      if (this._directAbortController) {
+        this._directAbortController.abort()
+        this._directAbortController = null
+      }
+      // Kill ALL CLI executors
       if (this.executorBackend === 'cli') {
-        await this.cliExecutor.killProcess()
+        for (const executor of this.cliExecutors.values()) {
+          await executor.killProcess().catch(() => {})
+        }
       }
 
       // Clean up CLI MCP config
@@ -811,8 +946,15 @@ export class AgentSessionService extends AgentBaseService {
     this.adapter.onSessionStop()
     this.completeDbSession('terminated')
     this.currentStatus = 'idle'
-    this.currentConversationId = null
-    this.accumulatedText = ''
+    this._lastActiveConversationId = null
+    this.activeStreams.clear()
+    this._directAccumulatedText = ''
+    this._directAbortController = null
+    // Dispose all per-conversation CLI executors
+    for (const executor of this.cliExecutors.values()) {
+      executor.killProcess().catch(() => {})
+    }
+    this.cliExecutors.clear()
 
     // SENDLOCKS-LEAK-01: Clear all locks on session stop. New conversations
     // will create fresh locks on their first send().
@@ -1056,8 +1198,8 @@ export class AgentSessionService extends AgentBaseService {
   // ── Internal: per-message reset ───────────────────────────────────
 
   private resetForNewMessage(conversationId: string): void {
-    if (this.currentConversationId && this.currentConversationId !== conversationId) {
-      this.log.info(`Conversation switch: ${this.currentConversationId} → ${conversationId}`)
+    if (this._lastActiveConversationId && this._lastActiveConversationId !== conversationId) {
+      this.log.info(`Conversation switch: ${this._lastActiveConversationId} → ${conversationId}`)
 
       // F6: Abandon stale in-progress plans for this workspace when switching conversations.
       // Prevents getLatestForWorkspace() from returning plans from a prior conversation.
@@ -1073,9 +1215,13 @@ export class AgentSessionService extends AgentBaseService {
     this.currentStatus = 'thinking'
     this._lastTimedOut = false
     this.messageStartedAt = Date.now()
-    this.currentConversationId = conversationId
+    this._lastActiveConversationId = conversationId
     this.updateDbSessionConversation(conversationId)
-    this.accumulatedText = ''
+    // Create per-conversation stream context
+    this.activeStreams.set(conversationId, {
+      accumulatedText: '',
+      abortController: null
+    })
     // SES-03: Only reset circuit breaker and tool accumulator when switching TO
     // this conversation. The send lock (SES-01) prevents concurrent sends within
     // the same conversation, but a conversation switch mid-stream could wipe the
@@ -1342,7 +1488,9 @@ export class AgentSessionService extends AgentBaseService {
     const resumeAt = this.pendingResumeAt.get(conversationId)
     this.pendingResumeAt.delete(conversationId)
     const abortController = new AbortController()
-    this.sdkAbortController = abortController
+    // Set abort controller on per-conversation context (not global)
+    const streamCtx = this.activeStreams.get(conversationId)
+    if (streamCtx) streamCtx.abortController = abortController
 
     // Reset timeout flag before building timer (buildStreamTimeout sets _lastTimedOut on fire)
     this._lastTimedOut = false
@@ -1406,6 +1554,7 @@ export class AgentSessionService extends AgentBaseService {
               localContextWindow,
               goal: adapterGoal ?? undefined,
               goalMode: adapterGoalMode,
+              conversationId,
             })
           }
           break
@@ -1433,7 +1582,9 @@ export class AgentSessionService extends AgentBaseService {
       }
 
       clearTimeout(interactionTimer)
-      this.sdkAbortController = null
+      // Clear per-conversation abort controller
+      const postCtx = this.activeStreams.get(conversationId)
+      if (postCtx) postCtx.abortController = null
 
       const recovered = await this.handleSessionRecovery({
         sessionRecoveryNeeded: streamState.sessionRecoveryNeeded,
@@ -1462,7 +1613,8 @@ export class AgentSessionService extends AgentBaseService {
 
       // Enqueue memory extraction from session transcript + git delta
       try {
-        if (this.workspaceId && this.accumulatedText.length > 200) {
+        const convAccText = this.activeStreams.get(conversationId)?.accumulatedText ?? ''
+        if (this.workspaceId && convAccText.length > 200) {
           // Gate on sessionCapture setting
           const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<string, unknown>
           if (wSettings.memorySessionCapture !== false) {
@@ -1470,7 +1622,7 @@ export class AgentSessionService extends AgentBaseService {
             memoryExtractionService.enqueueSessionExtraction({
               workspaceId: this.workspaceId,
               workspacePath: this.workspacePath,
-              transcript: this.accumulatedText,
+              transcript: convAccText,
               startSha: this.currentStartSha ?? null,
               conversationId
             })
@@ -1537,9 +1689,13 @@ export class AgentSessionService extends AgentBaseService {
     localContextWindow?: number
     goal?: string
     goalMode?: 'advisory' | 'enforce'
+    conversationId?: string
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
     const cliOptions = this.buildCLIExecuteOptions(params)
-    return this.cliExecutor.execute(cliOptions)
+    const executor = this.getOrCreateCliExecutor(
+      params.conversationId ?? this._lastActiveConversationId ?? '__default__'
+    )
+    return executor.execute(cliOptions)
   }
 
   /**

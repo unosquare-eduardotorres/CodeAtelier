@@ -378,6 +378,37 @@ const TEST_FILES: string[] = [
   './mcp-servers-pure.test',
   // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
   './mermaid-sanitizers.test',
+  // ─── Phase 24: IPC Coverage Blitz — 16 new IPC test files ───
+  '../../ipc/__tests__/ipc-bug-idea-events.test',
+  '../../ipc/__tests__/ipc-specialist-skill.test',
+  '../../ipc/__tests__/ipc-code-graph-indexing.test',
+  '../../ipc/__tests__/ipc-ollama-embedding.test',
+  '../../ipc/__tests__/ipc-docs-repo-github.test',
+  '../../ipc/__tests__/ipc-cost-token-log.test',
+  '../../ipc/__tests__/ipc-app-preference-zoom.test',
+  '../../ipc/__tests__/ipc-shell-sync-hooks.test',
+  '../../ipc/__tests__/ipc-core-agent-alias-prompt.test',
+  '../../ipc/__tests__/ipc-chat-lifecycle-shared.test',
+  '../../ipc/__tests__/ipc-checkpoint-permission.test',
+  '../../ipc/__tests__/ipc-workspace-project-session.test',
+  '../../ipc/__tests__/ipc-chat-completion-mode.test',
+  '../../ipc/__tests__/ipc-plan-sdk-handoff.test',
+  '../../ipc/__tests__/ipc-workspace-deploy-testing.test',
+  '../../ipc/__tests__/ipc-memory-deep.test',
+  '../../ipc/__tests__/ipc-blueprint-deep.test',
+  '../../ipc/__tests__/ipc-audit-deep.test',
+  '../../ipc/__tests__/ipc-grill-mpa-council-deep.test',
+  '../../ipc/__tests__/ipc-conversation-crud-deep.test',
+  // ─── Phase 24: MCP Server Coverage ───
+  '../../mcp-servers/__tests__/code-graph-server.test',
+  '../../mcp-servers/__tests__/git-context-server.test',
+  '../../mcp-servers/__tests__/control-actions-server.test',
+  // ─── Phase 24: Zero-Coverage Services ───
+  './subscription-auto-update.test',
+  './docs-mermaid-filewatcher.test',
+  // ─── Phase 24: Deep Tests for Low/Medium-Coverage Services ───
+  './low-coverage-services-deep-phase24.test',
+  './medium-coverage-augment-phase24.test',
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

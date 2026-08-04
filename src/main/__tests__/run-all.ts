@@ -370,6 +370,37 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/task-execution-tracking.test',
   // ─── Windows stability: isExcludedPath path-separator handling ───
   '../services/__tests__/is-excluded-path.test',
+  // ─── Phase 24: IPC Coverage Blitz — 20 new IPC test files ───
+  '../ipc/__tests__/ipc-bug-idea-events.test',
+  '../ipc/__tests__/ipc-specialist-skill.test',
+  '../ipc/__tests__/ipc-code-graph-indexing.test',
+  '../ipc/__tests__/ipc-ollama-embedding.test',
+  '../ipc/__tests__/ipc-docs-repo-github.test',
+  '../ipc/__tests__/ipc-cost-token-log.test',
+  '../ipc/__tests__/ipc-app-preference-zoom.test',
+  '../ipc/__tests__/ipc-shell-sync-hooks.test',
+  '../ipc/__tests__/ipc-core-agent-alias-prompt.test',
+  '../ipc/__tests__/ipc-chat-lifecycle-shared.test',
+  '../ipc/__tests__/ipc-checkpoint-permission.test',
+  '../ipc/__tests__/ipc-workspace-project-session.test',
+  '../ipc/__tests__/ipc-chat-completion-mode.test',
+  '../ipc/__tests__/ipc-plan-sdk-handoff.test',
+  '../ipc/__tests__/ipc-workspace-deploy-testing.test',
+  '../ipc/__tests__/ipc-memory-deep.test',
+  '../ipc/__tests__/ipc-blueprint-deep.test',
+  '../ipc/__tests__/ipc-audit-deep.test',
+  '../ipc/__tests__/ipc-grill-mpa-council-deep.test',
+  '../ipc/__tests__/ipc-conversation-crud-deep.test',
+  // ─── Phase 24: MCP Server Coverage ───
+  '../mcp-servers/__tests__/code-graph-server.test',
+  '../mcp-servers/__tests__/git-context-server.test',
+  '../mcp-servers/__tests__/control-actions-server.test',
+  // ─── Phase 24: Zero-Coverage Services ───
+  '../services/__tests__/subscription-auto-update.test',
+  '../services/__tests__/docs-mermaid-filewatcher.test',
+  // ─── Phase 24: Deep Tests for Low/Medium-Coverage Services ───
+  '../services/__tests__/low-coverage-services-deep-phase24.test',
+  '../services/__tests__/medium-coverage-augment-phase24.test',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,6 +438,8 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/e2e-test-repos.test',
   // ─── Windows stability: upsertEdgesBatched batching + edge cases ───
   '../db/repositories/__tests__/upsert-edges-batched.test',
+  // ─── Phase 24: Zero-coverage repository tests ───
+  '../db/repositories/__tests__/zero-coverage-repos-phase24.test',
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

@@ -44,12 +44,14 @@ const log = chatIpcLogger
 
 /**
  * Maximum number of concurrent cross-conversation streams.
- * Set to 1 until Phase 2 lands per-conversation execution isolation
- * (conversationId-tagged chunk/complete events, per-conversation
- * getStreamedContent, per-conversation switchMode/compact).
- * Flip to Infinity when Phase 2 is complete.
+ * Phase 2 complete — per-conversation execution isolation in place:
+ *   - activeStreams Map (accumulatedText + abortController per conversation)
+ *   - per-conversation CLIExecutors
+ *   - per-conversation ACK tracking
+ *   - per-conversation cancel + getStreamedContent
+ * Start with 3 as a resource safety valve (each stream spawns a claude CLI process).
  */
-const MAX_CONCURRENT_STREAMS = 1
+const MAX_CONCURRENT_STREAMS = 3
 
 // ── StreamContext — explicit per-stream state bag ──
 
@@ -190,12 +192,12 @@ export class ChatStreamService {
   /**
    * Resolve the conversation ID that is currently streaming.
    *
-   * PHASE-2-READY: Uses the authoritative streamingLocks Set instead of the
-   * global chatAgentService.getCurrentConversationId() which returns the
-   * *active UI* conversation — not necessarily the *streaming* one.
-   * With MAX_CONCURRENT_STREAMS = 1, the Set has at most one entry.
-   * When Phase 2 multi-stream lands, events must carry conversationId in
-   * their payload and this helper should be removed.
+   * Phase 2 note: With multiple concurrent streams, this returns the first
+   * lock entry (most recently acquired). Events from chatAgentService (plan,
+   * askUser, elicitation) are inherently tied to the lastActiveConversationId
+   * in the session, so this heuristic is correct for the bridge event path.
+   * The per-message onChunk/onComplete path uses the explicit StreamContext
+   * conversationId instead.
    */
   private resolveStreamingConversationId(): string {
     const [first] = this.streamingLocks
@@ -458,11 +460,8 @@ export class ChatStreamService {
       )
     }
 
-    // A1-FIX: Interim cross-conversation concurrency gate.
-    // Until Phase 2 lands per-conversation execution isolation, reject if
-    // another conversation is already streaming. Prevents the corruption
-    // path where shared global state (accumulatedText, sdkAbortController,
-    // single CLIExecutor) is interleaved between two streams.
+    // Phase-2: Resource limit gate — reject when at max concurrent streams.
+    // Each stream spawns a separate claude CLI process (CPU + memory cost).
     const activeStreams = lifecycleRegistry.active()
     if (
       activeStreams.length >= MAX_CONCURRENT_STREAMS &&
@@ -470,15 +469,12 @@ export class ChatStreamService {
     ) {
       const busyConvId = activeStreams[0]?.conversationId ?? 'unknown'
       log.warn(
-        `[STREAM:cross-conv-rejected] conversationId=${conversationId} ` +
-          `blocked by active stream in ${busyConvId} (MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS})`
+        `[STREAM:resource-limit] conversationId=${conversationId} ` +
+          `blocked — ${activeStreams.length} active streams (MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS})`
       )
-      // F6-FIX: Include the blocking conversationId so the renderer can
-      // tell the user which chat is busy (e.g. map to a conversation title).
-      // The `(blockedBy:<uuid>)` tag is parsed by parseBlockedByError() in
-      // renderer/src/store/chat-action-utils.ts — keep the format in sync.
       throw new Error(
-        `Another chat is still processing. Please wait for it to complete or stop it first. (blockedBy:${busyConvId})`
+        `Too many chats are processing simultaneously (max ${MAX_CONCURRENT_STREAMS}). ` +
+        `Please wait for one to complete or stop it first. (blockedBy:${busyConvId})`
       )
     }
 
@@ -883,15 +879,11 @@ export class ChatStreamService {
     // release locks and remove listeners — the executor keeps running.
     // cancelCurrentQuery() is idempotent; the duplicate call from stop()'s
     // finally block is harmless.
-    //
-    // PHASE-2-NOTE: cancelCurrentQuery() is GLOBAL — it kills whichever query
-    // is active, not specifically this conversation's query. With
-    // MAX_CONCURRENT_STREAMS = 1 this is correct. When Phase 2 raises the
-    // limit, this disposer for conversation A could kill conversation B's
-    // executor. Fix: pass conversationId to a per-conversation cancel method.
+    // Phase-2: Per-conversation cancel — only kills THIS conversation's query,
+    // not any sibling streams.
     lifecycle.onDispose(() => {
       try {
-        chatAgentService.cancelCurrentQuery()
+        chatAgentService.cancelCurrentQuery(conversationId)
       } catch (e) {
         log.warn('[STREAM] Lifecycle dispose: cancelCurrentQuery failed:', e)
       }
@@ -1098,7 +1090,7 @@ export class ChatStreamService {
       const cleanedContent = ctx.streamedContent.trim()
 
       if (!cleanedContent) {
-        const accumulatedText = chatAgentService.getStreamedContent()
+        const accumulatedText = chatAgentService.getStreamedContent(ctx.conversationId)
         log.error(
           `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
             `streamedLen=${ctx.streamedContent.length} ` +
@@ -1614,14 +1606,9 @@ export class ChatStreamService {
         await this.stopSingleConversation(targetConversationId)
       }
     } finally {
-      // A3-FIX: Cancel the global query ONCE after all per-conversation stops
-      // have completed. Previously each stopSingleConversation iteration called
-      // cancelCurrentQuery(), which with N streams would kill whichever query
-      // was active on the first call, then no-op on subsequent calls.
-      // R2-FIX: Wrap in try/catch so a throw here doesn't mask the original
-      // stop error propagating through the finally block.
+      // Phase-2: Cancel per-conversation or ALL depending on whether a target was given.
       try {
-        chatAgentService.cancelCurrentQuery()
+        chatAgentService.cancelCurrentQuery(targetConversationId)
       } catch (cancelErr) {
         log.error('[STREAM:stop-cancel-failed] cancelCurrentQuery threw:', cancelErr)
       }
@@ -1658,25 +1645,9 @@ export class ChatStreamService {
       // Save partial content
       if (conversationId) {
         try {
-          // A3-FIX: Only read global getStreamedContent() when this conversation
-          // owns the active session. With the A1 gate (MAX_CONCURRENT_STREAMS=1),
-          // at most one stream is active, so this is the common path. For any
-          // other conversation (e.g. background abort), save the plain marker
-          // to avoid writing another stream's content into this conversation.
-          const isActiveSession =
-            chatAgentService.getCurrentConversationId() === conversationId
-          const partialContent = isActiveSession
-            ? chatAgentService.getStreamedContent()
-            : ''
-          // F5-FIX: Log loudly on the fallback path so Phase 2 work
-          // (per-conversation getStreamedContent) has a visible signal.
-          // This path saves only a plain marker — partial content is discarded.
-          if (!isActiveSession) {
-            log.warn(
-              `[STREAM:stop-fallback] saving plain marker — conversation ${conversationId} ` +
-              `does not own active session (active=${chatAgentService.getCurrentConversationId()})`
-            )
-          }
+          // Phase-2: Always use per-conversation getStreamedContent — each
+          // conversation has its own accumulator now.
+          const partialContent = chatAgentService.getStreamedContent(conversationId)
           const contentToSave = partialContent
             ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
             : '⏹ *Generation stopped by user.*'

@@ -341,8 +341,8 @@ export class ChatAgentService extends EventEmitter {
     }
   }
 
-  cancelCurrentQuery(): void {
-    this.getActiveSession()?.cancelCurrentQuery()
+  cancelCurrentQuery(conversationId?: string): void {
+    this.getActiveSession()?.cancelCurrentQuery(conversationId)
   }
 
   async switchMode(mode: ConversationMode): Promise<void> {
@@ -477,8 +477,8 @@ export class ChatAgentService extends EventEmitter {
     return this.getActiveSession()?.getCurrentConversationId() ?? null
   }
 
-  getStreamedContent(): string {
-    return this.getActiveSession()?.getStreamedContent() ?? ''
+  getStreamedContent(conversationId?: string): string {
+    return this.getActiveSession()?.getStreamedContent(conversationId) ?? ''
   }
 
   getMode(): ConversationMode {

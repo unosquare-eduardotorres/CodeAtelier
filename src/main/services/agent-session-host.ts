@@ -87,6 +87,14 @@ export interface AgentSessionHost {
   dbSessionId: string | null
   workspacePath: string | null
   workspaceId: string | null
+  /** Most-recently-started conversation — backward-compat alias for currentConversationId. */
+  lastActiveConversationId: string | null
+  /** Per-conversation stream contexts (text accumulator + abort controller). */
+  activeStreams: Map<string, ActiveStreamContext>
+  /**
+   * Backward-compat proxy — reads/writes lastActiveConversationId's context.
+   * Delegates with conversationId in scope should prefer activeStreams.get(conversationId).
+   */
   currentConversationId: string | null
   accumulatedText: string
   currentMode: ConversationMode
@@ -120,6 +128,9 @@ export interface AgentSessionHost {
   pendingResumeAt: Map<string, string>
   sdkAbortController: AbortController | null
 
+  /** Get accumulated text for a specific conversation (or lastActive if omitted). */
+  getAccumulatedTextForConversation(conversationId?: string): string
+
   // ── Methods ──
   emit(event: string | symbol, ...args: unknown[]): boolean
   resolveLocalContextWindow(): number
@@ -140,5 +151,11 @@ export const SESSION_CONSTANTS = {
   MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000,
   EXTERNAL_MCP_INTERACTION_TIMEOUT_MS: 30 * 60_000
 } as const
+
+/** Per-conversation streaming state — isolates accumulatedText + abortController per conversation. */
+export interface ActiveStreamContext {
+  accumulatedText: string
+  abortController: AbortController | null
+}
 
 export type { StreamChunk, ExecutorResult, CLIExecuteOptions }
