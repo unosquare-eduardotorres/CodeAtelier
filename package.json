@@ -26,7 +26,9 @@
     "test:cov": "c8 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:html": "c8 --reporter=html --reporter=text node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:check": "c8 --check-coverage --lines 33 --functions 50 --branches 75 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
-    "test:cov:full": "bash scripts/coverage-full.sh"
+    "test:cov:full": "bash scripts/coverage-full.sh",
+    "coverage:rank": "node scripts/coverage-rank.mjs",
+    "test:cov:report": "npm run test:cov && npm run coverage:rank"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
@@ -87,7 +89,7 @@
     "react": "^19.2.1",
     "react-diff-viewer-continued": "^4.4.0",
     "react-dom": "^19.2.1",
-    "react-dropzone": "^15.0.0",
+    "react-dropzone": "^19.3.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.1",
     "react-simple-code-editor": "^0.14.1",
