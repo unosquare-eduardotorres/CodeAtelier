@@ -8,7 +8,7 @@
  * Run: tsx src/main/services/__tests__/medium-coverage-augment-phase24.test.ts
  */
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync, createSpy } from './test-harness'
+import { test, describe, summaryAsync } from './test-harness'
 import { setupElectronStub } from './electron-stub'
 
 setupElectronStub()
@@ -80,7 +80,7 @@ describe('opencode-executor — deep service shape', () => {
   test('exports OpenCodeExecutor class or factory', async () => {
     try {
       const mod = await import('../../services/opencode-executor')
-      assert.ok(mod.OpenCodeExecutor !== undefined || mod.createOpenCodeExecutor !== undefined)
+      assert.ok(mod.OpenCodeExecutor !== undefined || mod.openCodeExecutor !== undefined)
     } catch {
       assert.ok(true, 'opencode-executor may not load')
     }
@@ -95,7 +95,7 @@ describe('cli-executor — deep service shape', () => {
   test('exports CliExecutor class', async () => {
     try {
       const mod = await import('../../services/cli-executor')
-      assert.ok(mod.CliExecutor !== undefined)
+      assert.ok(mod.CLIExecutor !== undefined)
     } catch {
       assert.ok(true, 'cli-executor may not load')
     }
@@ -213,8 +213,8 @@ describe('grill-agent.service — deep state', () => {
       const mod = await import('../../services/grill-agent.service')
       assert.ok(mod.grillAgentService !== undefined)
       const svc = mod.grillAgentService
-      if (typeof svc.isRunning === 'function') {
-        assert.equal(svc.isRunning(), false)
+      if (typeof svc.isRunning === 'boolean') {
+        assert.equal(svc.isRunning, false)
       }
       if (typeof svc.isRunningForWorkspace === 'function') {
         assert.equal(svc.isRunningForWorkspace('nonexistent'), false)
@@ -232,7 +232,8 @@ describe('grill-agent.service — deep state', () => {
 describe('memory.service — deep shape', () => {
   test('exports memoryService singleton', async () => {
     try {
-      const mod = await import('../../services/memory.service')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require('../../services/memory.service')
       assert.ok(mod.memoryService !== undefined)
     } catch {
       assert.ok(true, 'memory.service may not load')
@@ -264,10 +265,10 @@ describe('mpa-campaign.service — deep state', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('description-cache.service — deep shape', () => {
-  test('exports descriptionCacheService singleton', async () => {
+  test('exports descriptionCache singleton', async () => {
     try {
       const mod = await import('../../services/description-cache.service')
-      assert.ok(mod.descriptionCacheService !== undefined)
+      assert.ok(mod.descriptionCache !== undefined)
     } catch {
       assert.ok(true, 'description-cache.service may not load')
     }
