@@ -81,6 +81,22 @@ if (!total) {
   process.exit(1)
 }
 
+// Guard against a stale/corrupt summary reporting an all-zero run (e.g. a committed
+// artifact from before instrumentation ran, or a run that crashed before any module
+// loaded). Printing a plausible-looking 0.00%-everywhere report here would silently
+// mislead the SC-011 "10-minute onboarding" path in docs/testing/coverage.md — fail
+// loudly instead so the stale file gets regenerated rather than trusted.
+if (total.lines && total.lines.total > 0 && total.lines.covered === 0) {
+  console.error(
+    `[coverage-rank] ${path.relative(ROOT, opts.file)} reports 0/${total.lines.total} lines covered across ${Object.keys(fileEntries).length} file(s) — this looks like a stale or corrupt summary, not a real run.`
+  )
+  console.error(
+    '[coverage-rank] Delete coverage/ and re-run `npm run test:cov` (or `npm run test:cov:report`) to regenerate it.'
+  )
+  process.exitCode = 1
+  process.exit(1)
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 function toRelative(absPath) {
   const rel = path.relative(ROOT, absPath)
