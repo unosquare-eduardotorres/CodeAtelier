@@ -174,7 +174,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
   const supersededFacts = facts.filter((f) => f.status === 'superseded')
 
   return (
-    <div data-testid="memory-settings-page" className="space-y-6">
+    <div data-testid="memory-settings-page" className="p-6 space-y-6">
       {/* ── Embedding Status Strip ── */}
       <EmbeddingStatusStrip
         status={embeddingStatus}
