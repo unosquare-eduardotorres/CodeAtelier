@@ -45,6 +45,20 @@ const scopeStack: DescribeScope[] = []
 // Track pending async tests so `summaryAsync()` can await them.
 const pendingAsyncTests: Promise<void>[] = []
 
+/**
+ * Every test name passed to `test()`, and every name that actually reported a
+ * result. A test registered but never reported is silently absent from the
+ * totals — the run looks green while its assertions never ran. `summary()` and
+ * `summaryAsync()` treat any such gap as a failure.
+ */
+const registeredTests: string[] = []
+const reportedTests = new Set<string>()
+
+/** Names registered but never reported. */
+function findDroppedTests(): string[] {
+  return registeredTests.filter((name) => !reportedTests.has(name))
+}
+
 async function runHooks(hooks: Hook[]): Promise<void> {
   for (const hook of hooks) {
     await hook()
@@ -60,6 +74,7 @@ function collectHooks(kind: 'beforeEach' | 'afterEach'): Hook[] {
 
 function reportSuccess(name: string): void {
   console.log(`  \u2713 ${name}`)
+  reportedTests.add(name)
   passed++
 }
 
@@ -67,6 +82,7 @@ function reportFailure(name: string, err: unknown): void {
   console.error(`  \u2717 ${name}`)
   const message = err instanceof Error ? err.stack || err.message : String(err)
   console.error(`    ${message}`)
+  reportedTests.add(name)
   failed++
 }
 
@@ -96,8 +112,10 @@ export function test(
   fn: () => void | Promise<void>,
   options?: { skipReason?: string }
 ): void {
+  registeredTests.push(name)
   if (options?.skipReason) {
     console.log(`  - ${name} (skipped: ${options.skipReason})`)
+    reportedTests.add(name)
     skipped++
     return
   }
@@ -193,22 +211,80 @@ export function summary(): void {
       `[test-harness] ${pendingAsyncTests.length} async test(s) pending — use summaryAsync() instead.`
     )
   }
+  const dropped = reportDroppedTests()
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`)
-  process.exit(failed > 0 || process.exitCode ? 1 : 0)
+  process.exit(failed > 0 || dropped > 0 || process.exitCode ? 1 : 0)
 }
 
 /**
  * Async summary — awaits every pending async test before printing totals.
  * Use this when your suite contains `async` tests.
  */
-export async function summaryAsync(): Promise<void> {
-  // Drain the queue — new tests may schedule more pending promises.
+/** Drain the pending queue; new tests may schedule more while we wait. */
+async function drainPending(): Promise<void> {
   while (pendingAsyncTests.length > 0) {
     const batch = pendingAsyncTests.splice(0, pendingAsyncTests.length)
     await Promise.all(batch)
   }
+}
+
+/**
+ * How long to wait for stragglers with no progress before giving up. The clock
+ * resets whenever another straggler reports, so a heavily loaded run keeps
+ * waiting as long as it is still making progress.
+ */
+const DROP_STALL_MS = 30_000
+
+/** Absolute cap on straggler waiting, so a genuinely hung test can't wedge CI. */
+const DROP_TOTAL_CAP_MS = 180_000
+
+export async function summaryAsync(): Promise<void> {
+  await drainPending()
+
+  // A test whose result depends on a real timer can still be in flight when the
+  // queue looks empty — its promise isn't in `pendingAsyncTests` yet, or the
+  // timer simply hasn't fired. Exiting here abandons it: the assertions never
+  // run and the test appears in neither the passed nor the failed count. Wait
+  // for stragglers instead of exiting out from under them — but only while they
+  // keep arriving. How long this takes scales with suite size and machine load,
+  // so a fixed window either wastes time or truncates a big run.
+  const startedWaiting = Date.now()
+  let remaining = findDroppedTests().length
+  let lastProgressAt = Date.now()
+
+  while (remaining > 0) {
+    if (Date.now() - lastProgressAt > DROP_STALL_MS) break
+    if (Date.now() - startedWaiting > DROP_TOTAL_CAP_MS) break
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await drainPending()
+    const now = findDroppedTests().length
+    if (now < remaining) lastProgressAt = Date.now()
+    remaining = now
+  }
+
+  const dropped = reportDroppedTests()
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`)
-  process.exit(failed > 0 || process.exitCode ? 1 : 0)
+  process.exit(failed > 0 || dropped > 0 || process.exitCode ? 1 : 0)
+}
+
+/**
+ * Print any registered-but-unreported tests and return the count.
+ *
+ * A silently dropped test is worse than a failing one: it looks like passing
+ * coverage while asserting nothing. This turned a whole file's worth of
+ * streaming-lifecycle tests into dead weight without the totals ever moving,
+ * so the condition is loud and fails the run.
+ */
+function reportDroppedTests(): number {
+  const dropped = findDroppedTests()
+  if (dropped.length === 0) return 0
+
+  console.error(
+    `\n✗ ${dropped.length} test(s) were registered but never reported — ` +
+      `they did not run and are counted in neither passed nor failed:`
+  )
+  for (const name of dropped) console.error(`    - ${name}`)
+  return dropped.length
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -239,6 +315,8 @@ export function resetCounters(): void {
   skipped = 0
   pendingAsyncTests.length = 0
   scopeStack.length = 0
+  registeredTests.length = 0
+  reportedTests.clear()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
