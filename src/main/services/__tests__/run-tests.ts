@@ -392,6 +392,7 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../../renderer/src/store/__tests__/update-snooze.test',
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
+  '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -545,7 +546,47 @@ const TEST_FILES: string[] = [
   '../executor-utils/__tests__/tool-progress-heartbeat.test',
   '../executor-utils/__tests__/tool-tracker-leak.test',
   '../../ipc/__tests__/tool-chunk-progress.test',
-  '../../../shared/__tests__/db-time.test'
+  '../../../shared/__tests__/db-time.test',
+  // ─── Registry drift repair ───
+  // These existed on disk and were registered in run-all.ts (so they counted
+  // toward coverage) but had never been added here, so `npm run test:unit`
+  // silently skipped them. Verified green in isolation before registering.
+  './agent-session-handlers.test',
+  './auth-provider.test',
+  './autofix-pr.test',
+  './base-adapter.test',
+  './blueprint-prompt-loader.test',
+  './btw.test',
+  './budget-exceeded-error.test',
+  './chat-stream-handlers.test',
+  './cli-mcp-config-builders.test',
+  './code-graph-enhancements.test',
+  './cost-tracker-pricing.test',
+  './description-cache-handlers.test',
+  './description-cache-makekey.test',
+  './e2e-runner-deterministic.test',
+  './event-logger-formatters.test',
+  './event-logger.service.test',
+  './file-service-utils.test',
+  './git-sandbox.test',
+  './github-service-checks.test',
+  './grill-prompt-builders.test',
+  './handoff-base-adapter-envelope.test',
+  './heuristic-description-batch.test',
+  './json-utils.test',
+  './local-context-reconstructor.test',
+  './model-config-utils.test',
+  './opencode-config-data-registry.test',
+  './opencode-executor-event-stream.test',
+  './preprocessing-pipeline.test',
+  './repo-service-utils.test',
+  './scope-guard.test',
+  './skill-enrichment-builders.test',
+  './skill-tier-parser.test',
+  './specialist-builder-handlers.test',
+  './specialist-builder-logic.test',
+  './task-execution-tracking.test',
+  './usage-tracker-helpers.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout
