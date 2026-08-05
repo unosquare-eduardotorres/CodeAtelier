@@ -881,14 +881,20 @@ export class ChatStreamService {
       })
     })
 
-    // ORPHAN-EXECUTOR-FIX: Kill the CLI process on lifecycle abort.
+    // ORPHAN-EXECUTOR-FIX: Kill the CLI process on lifecycle abort ONLY.
     // Without this, safety-timeout and workspace-switch abort paths only
     // release locks and remove listeners — the executor keeps running.
     // cancelCurrentQuery() is idempotent; the duplicate call from stop()'s
     // finally block is harmless.
     // Phase-2: Per-conversation cancel — only kills THIS conversation's query,
     // not any sibling streams.
+    //
+    // Guard: On normal completion the process must stay alive so background
+    // shell commands can finish and the next turn can reuse it (canContinue).
+    // lifecycle.signal.aborted is true only when abort() was called (which
+    // fires controllerBeforeDispose.abort(reason) BEFORE runDisposers()).
     lifecycle.onDispose(() => {
+      if (!lifecycle.signal?.aborted) return
       try {
         chatAgentService.cancelCurrentQuery(conversationId)
       } catch (e) {
