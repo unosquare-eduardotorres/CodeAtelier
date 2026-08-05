@@ -24,3 +24,6 @@ coverage/
 
 # Process manager state (auto-generated, workspace-specific)
 .pm-state/
+
+# Build lock (build-mac.sh / build-win.sh concurrency guard)
+.build-lock/

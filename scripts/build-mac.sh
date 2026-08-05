@@ -57,6 +57,23 @@ export APPLE_KEYCHAIN_PROFILE="${APPLE_KEYCHAIN_PROFILE:-code-atelier}"
 PRUNED=false
 BUILD_EXIT=0
 
+# ── Build lock ──────────────────────────────────────────────────────────────
+# This script mutates shared state (node_modules, package.json) and its trap
+# does `rm -rf node_modules`. Two builds in the same tree corrupt each other:
+# the macOS strip step deletes win32-x64.node, so a Windows build packaging
+# concurrently ships an installer with no SQLite binding (Step 3b catches it,
+# but only after several minutes of packaging and signing).
+# mkdir is atomic, so it doubles as the lock acquire.
+LOCKDIR="$ROOT/.build-lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+  echo "❌ Another build is already running in this tree."
+  echo "   Builds mutate node_modules/package.json and cannot run concurrently —"
+  echo "   run platform builds sequentially (build:mac, then build:win)."
+  echo "   If no build is actually running, clear the stale lock:"
+  echo "     rm -rf \"$LOCKDIR\""
+  exit 1
+fi
+
 restore_deps() {
   # Restore package.json if it was modified
   if [ -f "package.json.original" ]; then
@@ -74,6 +91,7 @@ restore_deps() {
     echo "  node_modules restored (clean install)"
   fi
 
+  rm -rf "$LOCKDIR"
 }
 trap restore_deps EXIT
 
@@ -108,7 +126,19 @@ echo "▸ Step 2a: Strip unused platform prebuilts"
 # better-sqlite3 v13 ships N-API prebuilts for ALL platforms (~16MB).
 # Keep only the target platform binary to save ~14MB in the DMG.
 KEEP_PREBUILT="darwin-$(uname -m | sed 's/x86_64/x64/').node"
-find node_modules/better-sqlite3/prebuilds -name '*.node' ! -name "$KEEP_PREBUILT" -delete 2>/dev/null
+PREBUILD_DIR="node_modules/better-sqlite3/prebuilds"
+# Assert the binary we need exists BEFORE deleting its siblings. A killed
+# build (SIGKILL skips the trap) leaves a stripped tree behind; without this
+# check we would delete the rest and silently package an app with no SQLite
+# binding, only discovering it in Step 3b after packaging and signing.
+if [ ! -f "$PREBUILD_DIR/$KEEP_PREBUILT" ]; then
+  echo "  ❌ $KEEP_PREBUILT missing from $PREBUILD_DIR"
+  echo "     node_modules is in a stripped state from an earlier interrupted build."
+  echo "     Restore it, then re-run this script:"
+  echo "       rm -rf node_modules && npm install --include=dev"
+  exit 1
+fi
+find "$PREBUILD_DIR" -name '*.node' ! -name "$KEEP_PREBUILT" -delete 2>/dev/null
 echo "  Kept only $KEEP_PREBUILT prebuilt"
 
 echo ""
