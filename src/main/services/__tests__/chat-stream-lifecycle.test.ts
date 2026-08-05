@@ -33,6 +33,7 @@ interface ChatStreamServiceInternal {
   streamingLocks: Set<string>
   stoppedConversations: Set<string>
   activeRequestIds: Map<string, string>
+  lockAcquiredAt: Map<string, number>
   currentStreamingRole: 'specialist'
   keepaliveTimers: Map<string, ReturnType<typeof setInterval>>
   safetyTimerResets: Map<string, () => void>
@@ -65,6 +66,12 @@ interface ChatStreamServiceInternal {
   finalizeStreamMessage(ctx: StreamContext, lifecycle: ConversationLifecycle): Promise<void>
   enqueueMemoryExtraction(ctx: StreamContext): void
   forceResetIfStuck(): void
+  // Consolidated busy-state authority — acquireStreamLock and both stall
+  // watchdogs route through these, so the double must carry them.
+  describeBusy(conversationId: string): string | null
+  isConversationBusy(conversationId: string): boolean
+  releaseConversation(conversationId: string, reason: string, requestId?: string): boolean
+  sweepOrphanedConversations(): string[]
 }
 
 // ── Test doubles ──
@@ -96,6 +103,7 @@ function createTestService(overrides?: {
     streamingLocks: new Set(),
     stoppedConversations: new Set(),
     activeRequestIds: new Map(),
+    lockAcquiredAt: new Map(),
     currentStreamingRole: 'specialist',
     keepaliveTimers: new Map(),
     safetyTimerResets: new Map(),
@@ -110,7 +118,14 @@ function createTestService(overrides?: {
       undefined as unknown as ChatStreamServiceInternal['finalizeStreamMessage'],
     enqueueMemoryExtraction:
       undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
-    forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck']
+    forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck'],
+    describeBusy: undefined as unknown as ChatStreamServiceInternal['describeBusy'],
+    isConversationBusy:
+      undefined as unknown as ChatStreamServiceInternal['isConversationBusy'],
+    releaseConversation:
+      undefined as unknown as ChatStreamServiceInternal['releaseConversation'],
+    sweepOrphanedConversations:
+      undefined as unknown as ChatStreamServiceInternal['sweepOrphanedConversations']
   }
 
   // Bind the real private methods from the class prototype onto our test double.
@@ -128,6 +143,10 @@ function createTestService(overrides?: {
   svc.finalizeStreamMessage = proto.finalizeStreamMessage.bind(svc)
   svc.enqueueMemoryExtraction = proto.enqueueMemoryExtraction.bind(svc)
   svc.forceResetIfStuck = proto.forceResetIfStuck.bind(svc)
+  svc.describeBusy = proto.describeBusy.bind(svc)
+  svc.isConversationBusy = proto.isConversationBusy.bind(svc)
+  svc.releaseConversation = proto.releaseConversation.bind(svc)
+  svc.sweepOrphanedConversations = proto.sweepOrphanedConversations.bind(svc)
 
   return svc
 }
