@@ -473,6 +473,34 @@ export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
   danger: DANGER_MODE_SECTION_LEAN
 }
 
+/**
+ * Compact plan mode sections for turns 2+ — strip the Mermaid diagram reference
+ * block (~453 tokens) since it’s already in the conversation history from turn 1.
+ * Build/danger modes don’t include diagram blocks, so they stay unchanged.
+ */
+export const PLAN_MODE_SECTION_COMPACT = PLAN_MODE_SECTION.replace(
+  MERMAID_DIAGRAM_REFERENCE,
+  '\n### Diagrams\nSee diagram reference from turn 1. Add to `diagrams` array for complex plans.'
+)
+export const PLAN_MODE_SECTION_LEAN_COMPACT = PLAN_MODE_SECTION_LEAN.replace(
+  MERMAID_DIAGRAM_REFERENCE,
+  '\n### Diagrams\nSee diagram reference from turn 1. Add to `diagrams` array for complex plans.'
+)
+
+/** Compact per-message mode blocks for turns 2+ (plan modes strip diagram reference). */
+export const MODE_CONTEXT_SECTIONS_COMPACT: Record<ConversationMode, string> = {
+  plan: PLAN_MODE_SECTION_COMPACT,
+  build: BUILD_MODE_SECTION,
+  danger: DANGER_MODE_SECTION
+}
+
+/** Compact lean per-message mode blocks for turns 2+ (plan modes strip diagram reference). */
+export const MODE_CONTEXT_SECTIONS_LEAN_COMPACT: Record<ConversationMode, string> = {
+  plan: PLAN_MODE_SECTION_LEAN_COMPACT,
+  build: BUILD_MODE_SECTION_LEAN,
+  danger: DANGER_MODE_SECTION_LEAN
+}
+
 // ── Tool Priority Directive ────────────────────────────────────────────────
 
 // Shared constant injected into evaluation agent prompts (grill, council, audit, MPA).
