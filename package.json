@@ -36,7 +36,7 @@
     "@iconify-json/lucide": "^1.2.117",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.15.3",
-    "better-sqlite3": "13.0.2",
+    "better-sqlite3": "13.0.3",
     "d3-force": "^3.0.0",
     "echarts": "^6.1.0",
     "electron-log": "^5.4.4",
