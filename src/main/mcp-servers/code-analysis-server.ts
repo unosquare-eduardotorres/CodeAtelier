@@ -938,10 +938,18 @@ async function handleEslintRules(args: {
 
 // ── Audit scan (combined tool) ──────────────────────────────────────
 
+/**
+ * Structural declarations are referenced by shape rather than by call, so
+ * "no cross-file reference" is a poor dead-code signal for them. Mirrors the
+ * default in code-graph's find_dead_code so both tools answer identically.
+ */
+const STRUCTURAL_SYMBOL_KINDS = ['interface', 'type']
+
 async function handleAuditScan(args: {
   paths: string[]
   complexityThreshold: number
   maxResults: number
+  includeTypeDeclarations?: boolean
 }): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const sections: string[] = ['## Audit Scan Results\n']
 
@@ -1046,7 +1054,8 @@ async function handleAuditScan(args: {
       const { codeGraphService } = await import('../services/code-graph.service')
       const deadResults = await codeGraphService.findDeadCode(WORKSPACE_ID, WORKSPACE_PATH, {
         path: args.paths.length === 1 ? args.paths[0] : undefined,
-        maxResults: args.maxResults
+        maxResults: args.maxResults,
+        excludeSymbolKinds: args.includeTypeDeclarations ? undefined : STRUCTURAL_SYMBOL_KINDS
       })
       sections.push(`### Dead Code (${deadResults.length} unreferenced symbols)`)
       if (deadResults.length === 0) {
@@ -1153,7 +1162,16 @@ function registerEslintTools(): void {
         .max(100)
         .optional()
         .default(25)
-        .describe('Max results per section (default: 25)')
+        .describe('Max results per section (default: 25)'),
+      includeTypeDeclarations: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          'Include interfaces and type aliases in the dead-code section. Off by ' +
+            'default: they are referenced structurally rather than by call, so ' +
+            'unreferenced ≠ dead.'
+        )
     },
     handleAuditScan
   )

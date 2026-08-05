@@ -49,6 +49,8 @@ export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph
 Prefer mcp__code-graph__search_identifiers or mcp__code-graph__graph_map as your first step for codebase questions.
 mcp__code-graph__file_outline before Read on large files.
 Impact → mcp__code-graph__find_callers/mcp__code-graph__find_references. Architecture → mcp__code-graph__coupling_analysis + mcp__code-graph__circular_dependencies.
+"How does A reach B?" → mcp__code-graph__shortest_path.
+Results tagged resolution=inferred/ambiguous are name-matches with several candidate definitions — treat them as leads, not facts.
 Grep is fine for exact strings, regex, config values, error messages, or when code-graph returns nothing. Glob for directory/file discovery. If a code-graph tool errors, fall back — don't retry it.`
 
 export const REPOMAP_GUIDANCE_PROMPT_LEAN = REPOMAP_GUIDANCE_PROMPT
@@ -527,7 +529,7 @@ Grep for exact strings, regex, or config values. Glob for file/directory discove
 /** Builder-specific variant — includes write-mode context (file_outline, find_references before changes) */
 export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
 ## Tool Priority
-Prefer code graph tools (mcp__code-graph__file_outline, mcp__code-graph__find_references, mcp__code-graph__find_callers) to understand structure before writing code.
+Prefer code graph tools (mcp__code-graph__file_outline, mcp__code-graph__find_references, mcp__code-graph__find_callers, mcp__code-graph__shortest_path) to understand structure before writing code.
 mcp__code-graph__file_outline before Read on large files. mcp__code-graph__find_references before changing signatures.
 Grep for exact strings, config values, or when code-graph returns nothing. Glob for finding files by pattern.
 
