@@ -1,5 +1,6 @@
 import { Monitor, Layout, Plug, RefreshCw } from 'lucide-react'
 import type { BugRecord } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 
 interface BugRowProps {
   bug: BugRecord
@@ -16,7 +17,7 @@ const PROCESS_ICON = {
 } as const
 
 function formatRelativeTime(isoString: string): string {
-  const diff = Date.now() - new Date(isoString).getTime()
+  const diff = Date.now() - parseDbTimestamp(isoString).getTime()
   const seconds = Math.floor(diff / 1000)
   if (seconds < 60) return 'just now'
   const minutes = Math.floor(seconds / 60)

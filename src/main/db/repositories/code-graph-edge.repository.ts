@@ -10,6 +10,15 @@ function escapeLikePattern(value: string): string {
 
 export type EdgeType = 'calls' | 'imports' | 'extends' | 'implements' | 'references'
 
+/**
+ * How confidently a reference was matched to its definition.
+ *  - 'extracted'  — exactly one definition carries this name: unambiguous
+ *  - 'inferred'   — several candidate definitions; the edge is one of N guesses
+ *  - 'ambiguous'  — fan-out above AMBIGUITY_THRESHOLD (utility-name explosion)
+ * Enforced in TypeScript, not by a SQL CHECK (see migration v130).
+ */
+export type EdgeResolution = 'extracted' | 'inferred' | 'ambiguous'
+
 export interface CodeGraphEdge {
   id?: string
   workspaceId: string
@@ -19,6 +28,9 @@ export interface CodeGraphEdge {
   targetSymbol: string
   edgeType: EdgeType
   pageRank?: number
+  resolution?: EdgeResolution
+  /** Number of definition sites that carried this symbol name. */
+  defFanout?: number
 }
 
 interface EdgeRow {
@@ -30,6 +42,8 @@ interface EdgeRow {
   target_symbol: string
   edge_type: string
   page_rank: number | null
+  resolution: string | null
+  def_fanout: number | null
   created_at: string
 }
 
@@ -42,8 +56,27 @@ function mapRow(row: EdgeRow): CodeGraphEdge {
     targetFile: row.target_file,
     targetSymbol: row.target_symbol,
     edgeType: row.edge_type as EdgeType,
-    pageRank: row.page_rank ?? 0
+    pageRank: row.page_rank ?? 0,
+    resolution: (row.resolution as EdgeResolution) ?? 'inferred',
+    defFanout: row.def_fanout ?? 1
   }
+}
+
+/**
+ * Sort key so unambiguous edges are presented to the model first.
+ * 'extracted' (1 definition) ≻ 'inferred' (N candidates) ≻ 'ambiguous'.
+ */
+export function resolutionRank(resolution: EdgeResolution | undefined): number {
+  return resolution === 'extracted' ? 0 : resolution === 'inferred' ? 1 : 2
+}
+
+/** Order edges most-trustworthy first: resolution, then smaller fan-out. */
+export function sortByResolution<T extends CodeGraphEdge>(edges: T[]): T[] {
+  return [...edges].sort(
+    (a, b) =>
+      resolutionRank(a.resolution) - resolutionRank(b.resolution) ||
+      (a.defFanout ?? 1) - (b.defFanout ?? 1)
+  )
 }
 
 /**
@@ -72,8 +105,9 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
 
       const stmt = db.prepare(`
         INSERT INTO code_graph_edges
-          (workspace_id, source_file, source_symbol, target_file, target_symbol, edge_type, page_rank)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (workspace_id, source_file, source_symbol, target_file, target_symbol, edge_type,
+           page_rank, resolution, def_fanout)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
 
       for (const edge of edges) {
@@ -84,7 +118,9 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
           edge.targetFile,
           edge.targetSymbol,
           edge.edgeType,
-          edge.pageRank ?? 0
+          edge.pageRank ?? 0,
+          edge.resolution ?? 'inferred',
+          edge.defFanout ?? 1
         )
       }
     })
@@ -107,8 +143,9 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
     const deleteStmt = db.prepare('DELETE FROM code_graph_edges WHERE workspace_id = ?')
     const insertStmt = db.prepare(`
       INSERT INTO code_graph_edges
-        (workspace_id, source_file, source_symbol, target_file, target_symbol, edge_type, page_rank)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (workspace_id, source_file, source_symbol, target_file, target_symbol, edge_type,
+         page_rank, resolution, def_fanout)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     for (let i = 0; i < edges.length; i += BATCH_SIZE) {
@@ -129,7 +166,9 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
             edge.targetFile,
             edge.targetSymbol,
             edge.edgeType,
-            edge.pageRank ?? 0
+            edge.pageRank ?? 0,
+            edge.resolution ?? 'inferred',
+            edge.defFanout ?? 1
           )
         }
       })
@@ -163,22 +202,48 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
   /**
    * Find all edges where the given symbol is the target (i.e., who calls/references it).
    */
-  findCallersOf(workspaceId: string, targetSymbol: string): CodeGraphEdge[] {
+  findCallersOf(
+    workspaceId: string,
+    targetSymbol: string,
+    opts?: { edgeTypes?: EdgeType[] }
+  ): CodeGraphEdge[] {
     const db = this.db()
+    const params: string[] = [workspaceId, targetSymbol]
+    let typeFilter = ''
+    if (opts?.edgeTypes && opts.edgeTypes.length > 0) {
+      typeFilter = `AND edge_type IN (${opts.edgeTypes.map(() => '?').join(', ')})`
+      params.push(...opts.edgeTypes)
+    }
     const rows = db
-      .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ? AND target_symbol = ?')
-      .all(workspaceId, targetSymbol) as EdgeRow[]
+      .prepare(
+        `SELECT * FROM code_graph_edges
+         WHERE workspace_id = ? AND target_symbol = ? ${typeFilter}`
+      )
+      .all(...params) as EdgeRow[]
     return rows.map(mapRow)
   }
 
   /**
    * Find all edges where the given symbol is the source (i.e., what does it call/reference).
    */
-  findCalleesOf(workspaceId: string, sourceSymbol: string): CodeGraphEdge[] {
+  findCalleesOf(
+    workspaceId: string,
+    sourceSymbol: string,
+    opts?: { edgeTypes?: EdgeType[] }
+  ): CodeGraphEdge[] {
     const db = this.db()
+    const params: string[] = [workspaceId, sourceSymbol]
+    let typeFilter = ''
+    if (opts?.edgeTypes && opts.edgeTypes.length > 0) {
+      typeFilter = `AND edge_type IN (${opts.edgeTypes.map(() => '?').join(', ')})`
+      params.push(...opts.edgeTypes)
+    }
     const rows = db
-      .prepare('SELECT * FROM code_graph_edges WHERE workspace_id = ? AND source_symbol = ?')
-      .all(workspaceId, sourceSymbol) as EdgeRow[]
+      .prepare(
+        `SELECT * FROM code_graph_edges
+         WHERE workspace_id = ? AND source_symbol = ? ${typeFilter}`
+      )
+      .all(...params) as EdgeRow[]
     return rows.map(mapRow)
   }
 
@@ -291,6 +356,39 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
   }
 
   /**
+   * Collapse the edge table into distinct file→file pairs with weights.
+   *
+   * Subsystem detection needs the shape of the graph, not every edge: on a large
+   * workspace this turns millions of rows into tens of thousands of pairs inside
+   * SQLite instead of loading them all into JS.
+   */
+  findFilePairs(
+    workspaceId: string,
+    opts?: { maxPairs?: number }
+  ): { sourceFile: string; targetFile: string; edgeCount: number }[] {
+    const db = this.db()
+    const rows = db
+      .prepare(
+        `SELECT source_file, target_file, COUNT(*) AS edge_count
+         FROM code_graph_edges
+         WHERE workspace_id = ? AND source_file != target_file
+         GROUP BY source_file, target_file
+         ORDER BY edge_count DESC
+         LIMIT ?`
+      )
+      .all(workspaceId, opts?.maxPairs ?? 100_000) as {
+      source_file: string
+      target_file: string
+      edge_count: number
+    }[]
+    return rows.map((r) => ({
+      sourceFile: r.source_file,
+      targetFile: r.target_file,
+      edgeCount: r.edge_count
+    }))
+  }
+
+  /**
    * Get module boundary health metrics — counts intra-module vs cross-module edges.
    * Module boundaries determined by directory depth.
    */
@@ -372,6 +470,135 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
     }
 
     return result
+  }
+
+  /**
+   * Shortest dependency path between two files, via bidirectional BFS.
+   *
+   * Answers "how does A reach B?" — the traversal primitive the graph lacked.
+   * Searches forward from `fromFile` and backward from `toFile` one level at a
+   * time and stops at the meeting point, which explores dramatically fewer
+   * nodes than one-directional BFS on a graph this dense.
+   *
+   * Returns `null` when no path exists within `maxDepth` hops. Each hop carries
+   * the symbol, edge type and resolution so callers can judge how much to trust it.
+   */
+  findShortestPath(
+    workspaceId: string,
+    fromFile: string,
+    toFile: string,
+    maxDepth: number = 6
+  ): {
+    path: string[]
+    hops: {
+      from: string
+      to: string
+      symbol: string
+      edgeType: EdgeType
+      resolution: EdgeResolution
+    }[]
+  } | null {
+    if (fromFile === toFile) return { path: [fromFile], hops: [] }
+
+    const db = this.db()
+    const forwardStmt = db.prepare(
+      `SELECT DISTINCT target_file AS next FROM code_graph_edges
+       WHERE workspace_id = ? AND source_file = ? AND source_file != target_file`
+    )
+    const backwardStmt = db.prepare(
+      `SELECT DISTINCT source_file AS next FROM code_graph_edges
+       WHERE workspace_id = ? AND target_file = ? AND source_file != target_file`
+    )
+
+    // parent maps: node → the node it was reached from on that side
+    const fromParents = new Map<string, string | null>([[fromFile, null]])
+    const toParents = new Map<string, string | null>([[toFile, null]])
+    let fromFrontier = [fromFile]
+    let toFrontier = [toFile]
+    let meeting: string | null = null
+
+    const expand = (
+      frontier: string[],
+      parents: Map<string, string | null>,
+      otherParents: Map<string, string | null>,
+      stmt: typeof forwardStmt
+    ): string[] => {
+      const next: string[] = []
+      for (const node of frontier) {
+        const rows = stmt.all(workspaceId, node) as { next: string }[]
+        for (const row of rows) {
+          if (parents.has(row.next)) continue
+          parents.set(row.next, node)
+          if (otherParents.has(row.next)) {
+            meeting = row.next
+            return next
+          }
+          next.push(row.next)
+        }
+      }
+      return next
+    }
+
+    for (let depth = 0; depth < maxDepth && meeting === null; depth++) {
+      // Always expand the smaller frontier — keeps the search balanced.
+      if (fromFrontier.length <= toFrontier.length) {
+        fromFrontier = expand(fromFrontier, fromParents, toParents, forwardStmt)
+      } else {
+        toFrontier = expand(toFrontier, toParents, fromParents, backwardStmt)
+      }
+      if (fromFrontier.length === 0 && toFrontier.length === 0) break
+    }
+
+    if (meeting === null) return null
+
+    // Walk both parent chains outward from the meeting point
+    const head: string[] = []
+    for (let n: string | null | undefined = meeting; n != null; n = fromParents.get(n)) {
+      head.unshift(n)
+    }
+    const tail: string[] = []
+    let node: string | null | undefined = toParents.get(meeting)
+    while (node != null) {
+      tail.push(node)
+      node = toParents.get(node)
+    }
+    const path = [...head, ...tail]
+
+    // Annotate each hop with its most trustworthy edge
+    const hopStmt = db.prepare(
+      `SELECT source_symbol, edge_type, resolution, def_fanout FROM code_graph_edges
+       WHERE workspace_id = ? AND source_file = ? AND target_file = ?`
+    )
+    const hops: {
+      from: string
+      to: string
+      symbol: string
+      edgeType: EdgeType
+      resolution: EdgeResolution
+    }[] = []
+    for (let i = 0; i < path.length - 1; i++) {
+      const rows = hopStmt.all(workspaceId, path[i], path[i + 1]) as {
+        source_symbol: string
+        edge_type: string
+        resolution: string | null
+        def_fanout: number | null
+      }[]
+      const best = rows.sort(
+        (a, b) =>
+          resolutionRank((a.resolution as EdgeResolution) ?? 'inferred') -
+            resolutionRank((b.resolution as EdgeResolution) ?? 'inferred') ||
+          (a.def_fanout ?? 1) - (b.def_fanout ?? 1)
+      )[0]
+      hops.push({
+        from: path[i],
+        to: path[i + 1],
+        symbol: best?.source_symbol ?? '',
+        edgeType: (best?.edge_type as EdgeType) ?? 'references',
+        resolution: (best?.resolution as EdgeResolution) ?? 'inferred'
+      })
+    }
+
+    return { path, hops }
   }
 }
 

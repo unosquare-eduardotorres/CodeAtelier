@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, Copy, Check, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useAppTheme } from '@renderer/store'
 import { sanitizeMermaid } from '../../../../shared/mermaid-sanitizers'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 interface MermaidDiagramProps {
   definition: string
@@ -329,26 +330,10 @@ export default function MermaidDiagram({
   }, [])
 
   const handleCopy = useCallback(async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(definition)
+    const ok = await copyTextToClipboard(definition)
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      // Fallback: textarea + execCommand for restricted Electron contexts
-      try {
-        const textarea = document.createElement('textarea')
-        textarea.value = definition
-        textarea.style.position = 'fixed'
-        textarea.style.opacity = '0'
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      } catch (fallbackErr) {
-        console.error('MermaidDiagram: clipboard copy failed', err, fallbackErr)
-      }
     }
   }, [definition])
 

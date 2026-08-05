@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 129
+export const CURRENT_SCHEMA_VERSION = 131
 
 export interface Migration {
   version: number
@@ -3510,6 +3510,34 @@ export const migrations: Migration[] = [
     up: (db) => {
       db.exec(`ALTER TABLE conversations ADD COLUMN source_branch TEXT DEFAULT NULL`)
       dbLogger.info('[migration-129] ✓ Added source_branch column to conversations')
+    }
+  },
+  {
+    version: 130,
+    name: 'code-graph-edge-typing-and-provenance',
+    up: (db) => {
+      // Deliberately plain TEXT without CHECK — SQLite ALTER TABLE ADD COLUMN
+      // with a CHECK on a populated table is an avoidable footgun. The enum is
+      // enforced in TypeScript (EdgeResolution / SymbolKind).
+      db.exec(`ALTER TABLE code_graph_tags ADD COLUMN symbol_kind TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE code_graph_edges ADD COLUMN resolution TEXT NOT NULL DEFAULT 'inferred'`)
+      db.exec(`ALTER TABLE code_graph_edges ADD COLUMN def_fanout INTEGER NOT NULL DEFAULT 1`)
+      dbLogger.info('[migration-130] ✓ Added symbol_kind, resolution, def_fanout')
+      dbLogger.info(
+        '[migration-130] Existing rows keep default values until the next index run, ' +
+          'which detects the untyped index and re-parses every file automatically.'
+      )
+    }
+  },
+  {
+    version: 131,
+    name: 'drop-unused-code-graph-resolution-index',
+    up: (db) => {
+      // resolution is never a WHERE/ORDER BY term — ordering happens in JS.
+      // The index only cost migration time and per-insert maintenance on
+      // workspaces with millions of edges.
+      db.exec('DROP INDEX IF EXISTS idx_graph_resolution')
+      dbLogger.info('[migration-131] ✓ Dropped unused idx_graph_resolution')
     }
   }
 ]

@@ -528,7 +528,9 @@ export function useAppIpcListeners(): void {
     const unsubUpdateAvailable = window.api.onUpdateAvailable((info) =>
       setAvailable(info.version, info.releaseNotes, info.releaseDate)
     )
-    const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable(() => setNotAvailable())
+    const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable((info) =>
+      setNotAvailable(info.currentVersion)
+    )
     const unsubUpdateDownloaded = window.api.onUpdateDownloaded((info) =>
       setDownloaded(info.version)
     )

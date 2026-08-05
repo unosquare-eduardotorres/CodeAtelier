@@ -27,7 +27,11 @@ You think before acting, favor simplicity, and make surgical changes.`
 
 export const ASK_QUESTION_PROMPT = `[Use ask_user for clarifying questions with structured options. Mark one option "(recommended)" when you have a preference. 1-4 questions per call.]`
 
-/** Unified — lean-eligible models (Sonnet 4.6+, Opus 4.8+) and Haiku share this block. */
+/*
+ * W2/W3 Unified _LEAN aliases — these are identical to their base constants
+ * after Wave 2/3 unification. Kept for backward compatibility with test imports.
+ * Only ESLINT_GUIDANCE_PROMPT_LEAN and DIRECT_ANSWER_BOOST_PROMPT_LEAN still differ.
+ */
 export const ASK_QUESTION_PROMPT_LEAN = ASK_QUESTION_PROMPT
 
 export const MEMORY_TOOLS_PROMPT = `## Memory Protocol
@@ -38,7 +42,6 @@ export const MEMORY_TOOLS_PROMPT = `## Memory Protocol
 
 Tools: mcp__memory__memory_search (topic lookup), mcp__memory__memory_record (save new facts), mcp__memory__memory_flag (confirm or contradict existing facts).`
 
-/** Backward-compat aliases */
 export const MEMORY_PROTOCOL_PROMPT = MEMORY_TOOLS_PROMPT
 export const MEMORY_PROTOCOL_PROMPT_LEAN = MEMORY_TOOLS_PROMPT
 
@@ -54,7 +57,6 @@ export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search
 
 mcp__semantic-search__semantic_search for concepts, mcp__semantic-search__similar_code for duplicates/patterns. Prefer over Grep for meaning-based queries.`
 
-/** Unified — FQDNs are already in tool schemas. */
 export const SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN = SEMANTIC_SEARCH_GUIDANCE_PROMPT
 
 export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context
@@ -79,7 +81,6 @@ export const CODE_ANALYSIS_GUIDANCE_PROMPT = `## Code Analysis
 
 mcp__code-analysis__audit_scan for tech debt + complexity + dead code (combined). mcp__code-analysis__analyze_test_coverage for untested files, mcp__code-analysis__analyze_dependencies for package audits.`
 
-/** Unified — FQDNs are already in tool schemas. */
 export const CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN = CODE_ANALYSIS_GUIDANCE_PROMPT
 
 export const LIBRARY_DOCS_GUIDANCE_PROMPT = `## Library Docs
@@ -87,7 +88,6 @@ mcp__code-analysis__resolve_library_id → mcp__code-analysis__query_library_doc
 Use for external library APIs (Zod, Electron, MCP SDK, React, Tailwind). Not internal code (use Code Graph).
 Fallback: local cache → Context7 → npm. Call resolve once per library per session.`
 
-/** Unified — lean variant had the better coverage (includes fallback chain). */
 export const LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN = LIBRARY_DOCS_GUIDANCE_PROMPT
 
 export const ESLINT_GUIDANCE_PROMPT = `## ESLint
@@ -107,7 +107,6 @@ Cloud: list_cloud_devices → run_on_cloud → get_cloud_status.
 Always call list_devices, cheat_sheet, and inspect_screen before run. Plan mode: inspect and screenshot only.
 Use testID selectors. Add assertVisible sync points after navigation taps.`
 
-/** Unified — both variants are now identical after Wave 1 compression. */
 export const MAESTRO_GUIDANCE_PROMPT_LEAN = MAESTRO_GUIDANCE_PROMPT
 
 export const PROCESS_MANAGER_GUIDANCE_PROMPT = `## Background Processes
@@ -118,16 +117,25 @@ For long-running commands that don't exit (dev servers, watchers, tunnels):
 - Use \`stop_process\` to terminate a background process when done.
 - Use \`list_processes\` to see all tracked background processes (including from previous sessions).
 - NEVER use Bash for \`npm run dev\`, \`yarn start\`, \`npx serve\`, or similar server commands — they block the chat indefinitely.
-- Bash is fine for commands that complete quickly (build, test, lint, install).`
+- Bash is fine for commands that complete quickly (build, test, lint, install).
+
+### Waiting for a command that DOES finish (builds, long test runs)
+You have exactly two options. Pick one — never invent a third.
+1. Wait inside this turn: \`run_background\` then \`wait_process(pid)\` — blocks up to 8 minutes and returns the exit code and final output. Use this when you need the result to keep working.
+2. Hand off to a later turn: \`run_background\` with \`notifyOnExit: true\`, then end your turn and tell the user plainly that you will reply with the result when it finishes. The app notifies them and wakes you with the output as a NEW message — that reply genuinely arrives.
+
+NEVER say you will 'check back in N minutes', 'monitor progress', 'keep an eye on it', or 'follow up later' on your own. You cannot act between turns — when a turn ends, no time passes for you. Promising otherwise leaves the user waiting for a message that will never come.
+If \`wait_process\` times out and you still need the result, either call \`wait_process\` again or switch to option 2.`
 
 export const PROCESS_MANAGER_GUIDANCE_PROMPT_LEAN = PROCESS_MANAGER_GUIDANCE_PROMPT
+// end W2/W3 unified aliases (ESLINT and DIRECT_ANSWER_BOOST below still differ)
 
 export const DIRECT_ANSWER_BOOST_PROMPT = `## Direct Answer Mode
 Follow-up about the conversation? Answer from context — no tools. Keep to 1-3 paragraphs.
 Only use tools for NEW information not in context.
 Once answered, STOP — don't call tools to verify or double-check.`
 
-/** Compressed direct-answer boost for lean-eligible models (Sonnet 4.6+, Opus 4.8+). */
+/** Still differs from full: compressed for lean-eligible models. */
 export const DIRECT_ANSWER_BOOST_PROMPT_LEAN = `[Follow-up about this conversation? Answer from context — no tools. Once answered, stop — don't verify with tools.]`
 
 // ── Plan & Direct Answer conditional prefix constants ─────────────────────
@@ -140,7 +148,6 @@ export const DIRECT_ANSWER_PLAN_MODE_EARLY = `[This is a question — answer it 
 
 export const IMAGE_ATTACHMENTS_PROMPT = `[Image attached — analyze it directly. Don't search the filesystem for it.]`
 
-/** Unified — only the 1-line behavioral reminder is needed; models process images inline. */
 export const IMAGE_ATTACHMENTS_PROMPT_LEAN = IMAGE_ATTACHMENTS_PROMPT
 
 // ── Shared Diagram Reference ──────────────────────────────────────────────────
@@ -184,6 +191,12 @@ Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data)
 Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
 
 No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).`
+
+// ── Shared Identity Directives ─────────────────────────────────────────────────
+
+/** Core "sole implementer" directive shared across identity and template prompts. */
+export const SOLE_IMPLEMENTER_DIRECTIVE =
+  'You are the sole implementer: read, plan, implement directly, never delegate.'
 
 // ── Communication Tone Style Directives ──
 
@@ -241,7 +254,7 @@ export function buildSpecialistIdentityPromptLean(tone: CommunicationTone = 'def
   const styleDirective = TONE_STYLE_DIRECTIVES[tone] ?? TONE_STYLE_DIRECTIVES.default
   return `You are the development partner for this workspace in Code Atelier.
 
-You are the sole implementer: you read, plan, and implement directly. You never delegate.
+${SOLE_IMPLEMENTER_DIRECTIVE}
 
 ## Style
 ${styleDirective}
@@ -325,7 +338,7 @@ Full access: read, search, run commands, write files. You are the implementer.
 
 ### Code
 - Create/modify/delete any file type. Confirm migrations/DDL before executing.
-- Follow project conventions. After edits, run \`npm run typecheck\` + \`npm run lint\`. Fix up to 2× (separate from Failure Recovery).
+- Follow project conventions. See Finalization Checklist for post-edit verification.
 
 ### Failure Recovery
 - Command fails with an obvious fix (missing deps → install, missing env var → set, syntax error you introduced → fix) → attempt ONE recovery, then continue.
@@ -407,7 +420,7 @@ Full access: read, search, run commands, write files. You are the implementer.
 Lookup: package.json → Makefile → README. Run exact command asked. Background long-running servers. Start wrapping up around 15 tool calls.
 
 ### Code
-Create/modify/delete any file. Confirm migrations first. Follow conventions. Run typecheck + lint after edits, fix up to 2× (separate from Failure Recovery).
+Create/modify/delete any file. Confirm migrations first. Follow conventions. See Finalization Checklist for post-edit verification.
 
 ### Failure Recovery
 Obvious fix (missing deps, env var, your own typo) → attempt ONE fix, continue. Second failure → report and STOP. Unknown cause → STOP immediately. No port-killing. >5 recovery calls → summarize and ask. Destructive commands need approval.

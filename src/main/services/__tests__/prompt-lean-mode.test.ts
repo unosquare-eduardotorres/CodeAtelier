@@ -56,7 +56,10 @@ describe('Lean Mode Blocks', () => {
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('Destructive'), 'Missing Destructive command rule')
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('approval'), 'Missing approval requirement')
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('Tool Errors'), 'Missing Tool Errors section')
-    assert.ok(BUILD_MODE_SECTION_LEAN.includes('typecheck'), 'Missing typecheck requirement')
+    assert.ok(
+      BUILD_MODE_SECTION_LEAN.includes('Finalization Checklist'),
+      'Missing Finalization Checklist reference'
+    )
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('ask_user'), 'Missing ask_user for ambiguity')
   })
 

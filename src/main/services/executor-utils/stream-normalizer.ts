@@ -424,9 +424,18 @@ export function* normalizeMessage(
 
   // ── tool_progress — elapsed time updates ──
   if (msg.type === 'tool_progress') {
+    // CLI 2.1.218: tool_use_id on heartbeat frames is a synthetic
+    // "<realId>-heartbeat-N" that matches neither the originating tool_use nor
+    // the tool_result. parent_tool_use_id carries the stable id. Correlating on
+    // the synthetic id makes every 30s tick look like a brand-new running tool.
+    const parentId = msg.parent_tool_use_id as string | undefined
+    const rawId = msg.tool_use_id as string | undefined
+    const stableId = parentId ?? rawId?.replace(/-heartbeat-\d+$/, '')
+    // Never emit an uncorrelatable progress frame — downstream would mint an id.
+    if (!stableId) return
     yield {
       type: 'tool_progress',
-      toolId: msg.tool_use_id as string,
+      toolId: stableId,
       toolName: msg.tool_name as string,
       elapsedSeconds: msg.elapsed_time_seconds as number,
       content: `${msg.elapsed_time_seconds}s`

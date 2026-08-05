@@ -66,15 +66,21 @@ function filterDocFiles(
 
 /**
  * Replicated auto-update feed URL construction logic.
+ *
+ * The drive source is NOT a file:// URL: electron-updater's generic provider
+ * fetches through electron.net, which only supports http:/https:. The folder is
+ * served over a loopback HTTP server instead (see update-feed-server.ts), and
+ * `feedServerUrl` is that server's base URL.
  */
 function buildFeedUrl(config: {
   source: 'github' | 'drive'
   drivePath?: string
+  feedServerUrl?: string
   githubOwner?: string
   githubRepo?: string
 }): string | null {
   if (config.source === 'drive' && config.drivePath) {
-    return `file://${config.drivePath}`
+    return config.feedServerUrl ?? null
   }
   if (config.source === 'github' && config.githubOwner && config.githubRepo) {
     return `https://github.com/${config.githubOwner}/${config.githubRepo}`
@@ -172,9 +178,22 @@ describe('Docs Service — file filtering', () => {
 })
 
 describe('Auto-Update — feed URL construction', () => {
-  test('drive_source_returns_file_url', () => {
+  test('drive_source_returns_loopback_http_url_not_file_url', () => {
+    const url = buildFeedUrl({
+      source: 'drive',
+      drivePath: '/network/updates',
+      feedServerUrl: 'http://127.0.0.1:51234/deadbeef/'
+    })
+    // Regression guard: a file:// feed throws "ClientRequest only supports
+    // http: and https: protocols" inside electron-updater.
+    assert.ok(url !== null)
+    assert.ok(url!.startsWith('http://127.0.0.1:'))
+    assert.ok(!url!.startsWith('file://'))
+  })
+
+  test('drive_source_without_feed_server_returns_null', () => {
     const url = buildFeedUrl({ source: 'drive', drivePath: '/network/updates' })
-    assert.equal(url, 'file:///network/updates')
+    assert.equal(url, null)
   })
 
   test('github_source_returns_github_url', () => {

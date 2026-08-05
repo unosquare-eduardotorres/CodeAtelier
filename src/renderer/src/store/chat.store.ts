@@ -20,7 +20,8 @@ import {
   createOptimisticUserMessage,
   createErrorMessage,
   parseBlockedByError,
-  emptyStreamState
+  emptyStreamState,
+  reconcileStopState
 } from './chat-action-utils'
 import type { PerConversationStreamState } from './chat-action-utils'
 import type {
@@ -765,6 +766,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       internals.clearSafetyTimer(activeConversation.id)
     }
     internals.resetAccumulator(activeConvId)
+
+    // WEDGE-RECOVERY: Stop must always be able to un-stick the input — see
+    // reconcileStopState for the rule (and its tests).
+    const reconciled = await reconcileStopState(
+      () => window.api.getStreamingState(),
+      () => get().sendingConversationIds,
+      activeConvId,
+      (error) => rendererLog.warn('[stopGeneration] Streaming-state reconcile failed:', error)
+    )
+    if (reconciled) set(reconciled)
   },
 
   sendMessage: async (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => {

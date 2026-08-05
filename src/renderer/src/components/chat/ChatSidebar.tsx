@@ -5,6 +5,7 @@ import { ChatItem, NewConversationModal } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 
 interface ChatSidebarProps {
   isCollapsed?: boolean
@@ -105,7 +106,7 @@ export default function ChatSidebar({
       const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER
       const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER
       if (aOrder !== bOrder) return aOrder - bOrder
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      return parseDbTimestamp(b.createdAt).getTime() - parseDbTimestamp(a.createdAt).getTime()
     })
 
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {

@@ -23,6 +23,8 @@ const TEST_FILES: string[] = [
   './preprocessing.test',
   './description-cache.test',
   './code-graph-logic.test',
+  './code-graph-typed-edges.test',
+  './rationale-miner.test',
   './is-excluded-path.test',
   './vector-search.test',
   './code-graph-db.test',
@@ -368,6 +370,9 @@ const TEST_FILES: string[] = [
   './local-embedding-provider.test',
   // ─── Process Manager MCP server (ring buffer, tool registry, mode gating) ───
   './process-manager.test',
+  './background-task-watcher.test',
+  '../../ipc/__tests__/process-ipc.test',
+  '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -380,6 +385,11 @@ const TEST_FILES: string[] = [
   './mcp-servers-pure.test',
   // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
   './mermaid-sanitizers.test',
+  // ─── Loopback update feed server (cloud-drive auto-update transport) ───
+  './update-feed-server.test',
+  // ─── Update feed publishing + failure surfacing ───
+  './feed-manifest-patch.test',
+  './auto-update-helpers.test',
   // ─── Phase 24: IPC Coverage Blitz — 16 new IPC test files ───
   '../../ipc/__tests__/ipc-bug-idea-events.test',
   '../../ipc/__tests__/ipc-specialist-skill.test',

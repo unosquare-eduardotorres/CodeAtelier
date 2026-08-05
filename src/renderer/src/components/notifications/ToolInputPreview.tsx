@@ -6,6 +6,7 @@
 
 import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 interface ToolInputPreviewProps {
   toolName: string
@@ -17,9 +18,11 @@ function CopyButton({ text }: { text: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = (): void => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+    copyTextToClipboard(text).then((ok) => {
+      if (ok) {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      }
     })
   }
 

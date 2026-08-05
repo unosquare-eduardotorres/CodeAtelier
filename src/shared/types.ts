@@ -267,6 +267,38 @@ export interface CompletionNotification {
   entityId?: string
 }
 
+/** A detached background process spawned by the process-manager MCP server. */
+export interface BackgroundProcessInfo {
+  pid: number
+  label: string
+  command: string
+  cwd: string
+  startedAt: number
+  uptimeMs: number
+  alive: boolean
+  workspaceId: string
+  /** True if an auto-resume is armed — the agent will be woken when it exits. */
+  watched: boolean
+}
+
+/**
+ * Result of stopping a background process.
+ *
+ * `reason: 'untracked'` means the PID was not in any workspace manifest, so no
+ * signal was sent — the app only ever signals processes it can prove it spawned.
+ */
+export interface ProcessStopResult {
+  stopped: boolean
+  alreadyExited: boolean
+  reason?: 'untracked'
+}
+
+/** Result of disarming the auto-resume for a background process. */
+export interface ProcessCancelWatchResult {
+  cancelled: boolean
+  reason?: 'untracked'
+}
+
 // ── Tool Activity ──
 export type ToolOperationType =
   | 'read'
@@ -1040,6 +1072,12 @@ export interface MemoryCaptureSettings {
   capturePlans: boolean
   captureGrill: boolean
   captureDocumentsOnAttach: boolean
+  /**
+   * Mine `// WHY:` / `// NOTE:` / `// HACK:` / `// GOTCHA:` comments and ADR/RFC
+   * citations into facts while the code graph indexes. Defaults to OFF — unlike
+   * the other sources this one fires on every file change, so it is opt-in.
+   */
+  captureRationales: boolean
   watcherGlobs: string[]
 }
 

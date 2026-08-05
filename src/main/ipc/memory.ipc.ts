@@ -233,6 +233,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         capturePlans: (settings as any).memoryCapturePlans !== false,
         captureGrill: (settings as any).memoryCaptureGrill !== false,
         captureDocumentsOnAttach: (settings as any).memoryCaptureDocumentsOnAttach !== false,
+        // Opt-in, so this one defaults to false rather than true
+        captureRationales: (settings as any).memoryCaptureRationales === true,
         watcherGlobs: (settings as any).memoryWatcherGlobs ?? ['docs/**/*.md', 'README.md', 'CLAUDE.md']
       }
       return memSettings
@@ -253,6 +255,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ...(args.settings.capturePlans !== undefined && { memoryCapturePlans: args.settings.capturePlans }),
         ...(args.settings.captureGrill !== undefined && { memoryCaptureGrill: args.settings.captureGrill }),
         ...(args.settings.captureDocumentsOnAttach !== undefined && { memoryCaptureDocumentsOnAttach: args.settings.captureDocumentsOnAttach }),
+        ...(args.settings.captureRationales !== undefined && { memoryCaptureRationales: args.settings.captureRationales }),
         ...(args.settings.watcherGlobs !== undefined && { memoryWatcherGlobs: args.settings.watcherGlobs })
       }
       workspaceRepository.updateSettings(args.workspaceId, updated)

@@ -1,5 +1,6 @@
 import { Settings, Trash2 } from 'lucide-react'
 import type { Workspace } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 import { useBackgroundSessionStore } from '@renderer/store'
 import WorkspaceStatusIndicator from './WorkspaceStatusIndicator'
 
@@ -11,7 +12,7 @@ interface WorkspaceItemProps {
 }
 
 function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseDbTimestamp(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)

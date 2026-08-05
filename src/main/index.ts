@@ -46,6 +46,7 @@ import { fileWatcherService } from './services/file-watcher.service'
 import { localEmbeddingProvider } from './services/local-embedding.provider'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 import { notificationService } from './services/notification.service'
+import { backgroundTaskWatcherService } from './services/background-task-watcher.service'
 import { memoryConsolidationService } from './services/memory-consolidation.service'
 
 // Augment PATH to include Homebrew and npm global bin directories
@@ -418,6 +419,10 @@ function createWindow(): void {
 
   // Initialize file watcher handler — connects fs.watch events to Code Graph + Semantic Search
   initFileWatcherHandler()
+
+  // Watch detached background processes so their exit can notify + wake the agent
+  backgroundTaskWatcherService.setMainWindow(mainWindow)
+  backgroundTaskWatcherService.start()
 
   // Initialize auto-updater (production only — dev uses electron-vite HMR)
   if (!is.dev) {
@@ -843,6 +848,21 @@ app.on('before-quit', async (event) => {
       localEmbeddingProvider.dispose()
     } catch (e) {
       log.debug('oMLX embedding dispose error (expected during quit):', e)
+    }
+
+    // Stop polling background processes (the processes themselves are detached
+    // and intentionally survive the app — they stay listed on next launch)
+    try {
+      backgroundTaskWatcherService.stop()
+    } catch (e) {
+      log.debug('Background task watcher stop error (expected during quit):', e)
+    }
+
+    // Release the loopback port used to serve cloud-drive update feeds
+    try {
+      await autoUpdateService.dispose()
+    } catch (e) {
+      log.debug('Auto-update dispose error (expected during quit):', e)
     }
 
     // Close database last — WAL checkpoint must happen while the process is alive

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { Send, Square, Lightbulb, Mic, MicOff } from 'lucide-react'
+import { Send, Square, Lightbulb, Mic, MicOff, Terminal } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -13,6 +13,7 @@ import {
 } from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
 import IdeaPopover from './IdeaPopover'
+import BackgroundTasksPopover from './BackgroundTasksPopover'
 import VoiceIndicator from './VoiceIndicator'
 import {
   SlashCommandDropdown,
@@ -147,6 +148,7 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [showRewindDialog, setShowRewindDialog] = useState(false)
   const [showIdeaPopover, setShowIdeaPopover] = useState(false)
+  const [showBackgroundTasks, setShowBackgroundTasks] = useState(false)
   const { stopGeneration, completeConversation, closeConversation } = useChatActions()
 
   const handleStopConfirm = useCallback(async () => {
@@ -187,6 +189,8 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
     setShowRewindDialog,
     showIdeaPopover,
     setShowIdeaPopover,
+    showBackgroundTasks,
+    setShowBackgroundTasks,
     handleStopConfirm,
     handleStopCancel: useCallback(() => setShowStopConfirm(false), []),
     conversationTitle: activeConversation?.title ?? 'Untitled',
@@ -488,8 +492,11 @@ export default function MessageInput({
           aria-label="Message input"
         />
 
-        {/* Stop button */}
-        {isStreaming && (
+        {/* Stop button — shown whenever the chat is non-idle, not just while
+            streaming. If `isSending` sticks with no stream behind it, the input
+            is disabled; without this the Stop button was hidden too and there
+            was no way out. CHAT_STOP in main is unconditional and always works. */}
+        {(isStreaming || isSending) && (
           <button
             onClick={() => dialogs.setShowStopConfirm(true)}
             className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
@@ -498,6 +505,20 @@ export default function MessageInput({
           >
             <Square size={18} />
           </button>
+        )}
+
+        {/* Background tasks */}
+        <button
+          onClick={() => dialogs.setShowBackgroundTasks(!dialogs.showBackgroundTasks)}
+          className="flex-shrink-0 p-2 rounded-lg text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors"
+          aria-label="Background tasks"
+          title="Background tasks"
+        >
+          <Terminal size={18} />
+        </button>
+
+        {dialogs.showBackgroundTasks && (
+          <BackgroundTasksPopover onClose={() => dialogs.setShowBackgroundTasks(false)} />
         )}
 
         {/* Idea capture button */}

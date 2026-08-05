@@ -1,10 +1,11 @@
 /**
  * ChatExecutionPanel — collapsible right-side panel for chat task execution.
  *
- * Three tabs:
- *   - Tasks: Phase progress cards + task rows grouped by phase
+ * Four tabs:
  *   - Plan: Structured plan JSON viewer from latest plan message
- *   - Todos: Simple checklist from useTodoStore
+ *   - Tasks: Phase progress cards + task rows grouped by phase
+ *   - History: Reverse-chronological list of all plan iterations
+ *   - Memories: Session-captured memory facts for this conversation
  *
  * Replicates BlueprintExecutionPanel patterns: drag-resize, tab bar, wave
  * accordions with auto-open/close behavior.
@@ -39,7 +40,7 @@ import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store
 import { useCouncilStore } from '@renderer/store/council.store'
 import { PHASE_STATUS_ICON, statusDotColor } from './plan-status-icons'
 import { remarkStripStrayBackticks } from './remark-plugins'
-import { PLAN_BLOCK_RE, BUILD_SUMMARY_RE } from './plan-detection'
+import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE, BUILD_SUMMARY_RE } from './plan-detection'
 import type { SectionKey } from './task-plan/TaskPlanSections'
 import { BuildActionBar, usePlanMemos, buildSectionMap } from './task-plan'
 import type { StructuredPlan, MemoryFact } from '../../../../shared/types'
@@ -760,6 +761,153 @@ function CompletedPlanBanner({
   )
 }
 
+// ── Plan History Tab ─────────────────────────────────────────────────────────
+
+function PlanHistoryTab({ conversationId: _conversationId }: { conversationId: string }): JSX.Element {
+  const messages = useChatStore((s) => s.messages)
+
+  const planMessages = useMemo(() => {
+    return messages
+      .filter(
+        (m) =>
+          m.role !== 'user' &&
+          m.contentMd &&
+          PLAN_BLOCK_RE.test(m.contentMd) &&
+          !BUILD_SUMMARY_RE.test(m.contentMd)
+      )
+      .map((m) => {
+        const match = PLAN_BLOCK_CAPTURE_RE.exec(m.contentMd)
+        let title = 'Plan'
+        if (match?.[1]) {
+          try {
+            const parsed = JSON.parse(match[1])
+            if (parsed.title) title = parsed.title
+          } catch {
+            /* use default */
+          }
+        }
+        return {
+          id: m.id,
+          title,
+          timestamp: m.createdAt,
+          action: m.planAction ?? null
+        }
+      })
+      .reverse() // newest first
+  }, [messages])
+
+  if (planMessages.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <History size={24} className="text-text-muted mx-auto mb-2" />
+        <p className="text-sm text-text-secondary mb-1">No plan history</p>
+        <p className="text-xs text-text-muted max-w-[220px] mx-auto">
+          Plan iterations will appear here as the agent generates them.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {planMessages.map((plan, i) => (
+        <div key={plan.id} className="rounded-lg border border-border-subtle p-3 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary truncate">{plan.title}</span>
+            {i === 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary-text">
+                Latest
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-text-muted">
+            <span>{new Date(plan.timestamp).toLocaleTimeString()}</span>
+            {plan.action && (
+              <span className="px-1.5 py-0.5 rounded bg-surface-overlay text-text-secondary capitalize">
+                {plan.action.replace('_', ' ')}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── Session Memories Tab ─────────────────────────────────────────────────────
+
+function SessionMemoriesTab({
+  conversationId
+}: {
+  conversationId: string
+}): JSX.Element {
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspace?.id)
+  const [memories, setMemories] = useState<MemoryFact[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    window.api
+      .memoryFactsList({ workspaceId })
+      .then((facts) => {
+        setMemories(facts.filter((f) => f.sourceRef === conversationId))
+      })
+      .catch(() => setMemories([]))
+      .finally(() => setLoading(false))
+  }, [workspaceId, conversationId])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 size={20} className="animate-spin text-text-muted" />
+      </div>
+    )
+  }
+
+  if (memories.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <Brain size={24} className="text-text-muted mx-auto mb-2" />
+        <p className="text-sm text-text-secondary mb-1">No memories yet</p>
+        <p className="text-xs text-text-muted max-w-[220px] mx-auto">
+          Memories captured by the agent during this chat will appear here.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {memories.map((fact) => (
+        <div key={fact.id} className="rounded-lg border border-border-subtle p-3 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary">{fact.title}</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded ${
+                fact.tier >= 2
+                  ? 'bg-success/20 text-success'
+                  : 'bg-surface-overlay text-text-muted'
+              }`}
+            >
+              T{fact.tier}
+            </span>
+          </div>
+          <p className="text-xs text-text-body leading-relaxed line-clamp-3">{fact.content}</p>
+          <div className="flex items-center gap-2 text-[10px] text-text-muted">
+            <span className="capitalize">{fact.category}</span>
+            <span>·</span>
+            <span>{new Date(fact.createdAt).toLocaleTimeString()}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Main Panel ─────────────────────────────────────────────────────────────
 
 type PanelTab = 'tasks' | 'plan' | 'history' | 'memories'
@@ -793,7 +941,6 @@ export default function ChatExecutionPanel({
       [conversationId]
     )
   )
-  const todos = useTodoStore((s) => s.todos[conversationId] ?? EMPTY_TODOS)
 
   // ── Resize drag handle ──
   const dragListenersRef = useRef<{ move: (ev: MouseEvent) => void; up: () => void } | null>(null)
@@ -836,7 +983,17 @@ export default function ChatExecutionPanel({
   // ── Stats ──
   const allTasks = execution?.phases.flatMap((p) => p.tasks) ?? []
   const totalDone = allTasks.filter((t) => t.status === 'complete' || t.status === 'skipped').length
-  const completedTodos = todos.filter((t) => t.completed).length
+  // Plan history count for tab badge
+  const messages = useChatStore((s) => s.messages)
+  const planMessageCount = useMemo(() => {
+    return messages.filter(
+      (m) =>
+        m.role !== 'user' &&
+        m.contentMd &&
+        PLAN_BLOCK_RE.test(m.contentMd) &&
+        !BUILD_SUMMARY_RE.test(m.contentMd)
+    ).length
+  }, [messages])
 
   // Completed phases for completion cards
   const completedPhases = execution?.phases.filter((p) => p.status === 'completed') ?? []
@@ -917,23 +1074,39 @@ export default function ChatExecutionPanel({
         <button
           type="button"
           role="tab"
-          id="exec-tab-todos"
-          aria-selected={activeTab === 'todos'}
-          data-testid="chat-execution-tab-todos"
-          onClick={() => setActiveTab('todos')}
+          id="exec-tab-history"
+          aria-selected={activeTab === 'history'}
+          data-testid="chat-execution-tab-history"
+          onClick={() => setActiveTab('history')}
           className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg transition-colors ${
-            activeTab === 'todos'
+            activeTab === 'history'
               ? 'bg-surface-raised text-text-primary border border-border-subtle border-b-transparent -mb-px'
               : 'text-text-muted hover:text-text-secondary'
           }`}
         >
-          <ClipboardCheck size={14} />
-          Todos
-          {todos.length > 0 && (
+          <History size={14} />
+          History
+          {planMessageCount > 0 && (
             <span className="text-[11px] font-mono text-text-muted">
-              {completedTodos}/{todos.length}
+              {planMessageCount}
             </span>
           )}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="exec-tab-memories"
+          aria-selected={activeTab === 'memories'}
+          data-testid="chat-execution-tab-memories"
+          onClick={() => setActiveTab('memories')}
+          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg transition-colors ${
+            activeTab === 'memories'
+              ? 'bg-surface-raised text-text-primary border border-border-subtle border-b-transparent -mb-px'
+              : 'text-text-muted hover:text-text-secondary'
+          }`}
+        >
+          <Brain size={14} />
+          Memories
         </button>
 
         {/* Close button — pushed to right */}
@@ -1011,41 +1184,14 @@ export default function ChatExecutionPanel({
           <PlanTabContent planContent={planContent} conversationId={conversationId} />
         )}
 
-        {/* ── Todos tab ── */}
-        {activeTab === 'todos' && (
-          <>
-            {todos.length > 0 ? (
-              <div className="space-y-1">
-                {todos.map((todo, i) => (
-                  <div
-                    key={`${todo.text}-${i}`}
-                    className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg hover:bg-surface-hover/30 transition-colors"
-                  >
-                    {todo.completed ? (
-                      <CheckCircle2 size={14} className="text-success flex-shrink-0" />
-                    ) : (
-                      <Circle size={14} className="text-text-muted flex-shrink-0" />
-                    )}
-                    <span
-                      className={todo.completed ? 'text-text-muted line-through' : 'text-text-body'}
-                    >
-                      {todo.text}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <div className="w-12 h-12 rounded-full bg-surface-inset mx-auto mb-3 flex items-center justify-center">
-                  <ClipboardCheck size={20} className="text-text-muted" />
-                </div>
-                <p className="text-sm font-medium text-text-secondary mb-1">No todos</p>
-                <p className="text-xs text-text-muted max-w-[220px] mx-auto">
-                  Todo items from agent output will appear here.
-                </p>
-              </div>
-            )}
-          </>
+        {/* ── History tab ── */}
+        {activeTab === 'history' && (
+          <PlanHistoryTab conversationId={conversationId} />
+        )}
+
+        {/* ── Memories tab ── */}
+        {activeTab === 'memories' && (
+          <SessionMemoriesTab conversationId={conversationId} />
         )}
       </div>
     </div>

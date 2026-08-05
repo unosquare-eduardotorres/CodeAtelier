@@ -97,8 +97,8 @@ describe('PROCESS_MANAGER MCP_TOOLS', () => {
     assert.equal(MCP_TOOLS.PROCESS_MANAGER._PREFIX, 'mcp__process-manager__')
   })
 
-  test('exports 4 tools', () => {
-    assert.equal(MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES.length, 4)
+  test('exports 5 tools', () => {
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES.length, 5)
   })
 
   test('run_background tool name follows convention', () => {
@@ -128,12 +128,18 @@ describe('PROCESS_MANAGER MCP_TOOLS', () => {
     )
   })
 
+  test('wait_process tool name follows convention', () => {
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.WAIT_PROCESS.name, 'mcp__process-manager__wait_process')
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.WAIT_PROCESS.tool, 'wait_process')
+  })
+
   test('all tool names are in ALL_NAMES', () => {
     const names = MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES
     assert.ok(names.includes('mcp__process-manager__run_background'))
     assert.ok(names.includes('mcp__process-manager__check_process'))
     assert.ok(names.includes('mcp__process-manager__stop_process'))
     assert.ok(names.includes('mcp__process-manager__list_processes'))
+    assert.ok(names.includes('mcp__process-manager__wait_process'))
   })
 })
 
@@ -145,7 +151,7 @@ describe('Process Manager mode gating', () => {
     // The process-manager tools should NOT appear in the allowedTools for plan mode.
     // We verify the MCP_TOOLS entry exists so the wiring can reference it.
     const allNames = MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES
-    assert.ok(allNames.length === 4, 'Should have exactly 4 process-manager tools')
+    assert.ok(allNames.length === 5, 'Should have exactly 5 process-manager tools')
   })
 
   test('display names follow "Process · tool_name" convention', () => {
@@ -153,6 +159,7 @@ describe('Process Manager mode gating', () => {
     assert.equal(MCP_TOOLS.PROCESS_MANAGER.CHECK_PROCESS.displayName, 'Process · check_process')
     assert.equal(MCP_TOOLS.PROCESS_MANAGER.STOP_PROCESS.displayName, 'Process · stop_process')
     assert.equal(MCP_TOOLS.PROCESS_MANAGER.LIST_PROCESSES.displayName, 'Process · list_processes')
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.WAIT_PROCESS.displayName, 'Process · wait_process')
   })
 })
 

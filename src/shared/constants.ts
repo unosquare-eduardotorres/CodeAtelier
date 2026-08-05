@@ -72,6 +72,16 @@ export const IPC_CHANNELS = {
   NOTIFICATION_NAVIGATE: 'notification:navigate',
   /** Renderer → Main: probe macOS notification support (unsigned build detection) */
   NOTIFICATION_PROBE: 'notification:probe',
+
+  // Background processes (process-manager MCP server)
+  /** Renderer → Main: list tracked background processes across all workspaces */
+  PROCESS_LIST: 'process:list',
+  /** Renderer → Main: stop a background process (SIGTERM → SIGKILL) */
+  PROCESS_STOP: 'process:stop',
+  /** Renderer → Main: cancel the auto-resume watch on a background process */
+  PROCESS_CANCEL_WATCH: 'process:cancelWatch',
+  /** Main → Renderer: background process list changed (started/exited/stopped) */
+  PROCESS_CHANGED: 'process:changed',
   /** Main → Renderer: navigate to workspace/page after tray menu click */
   TRAY_NAVIGATE: 'tray:navigate',
 
@@ -1806,7 +1816,8 @@ export const MCP_TOOLS = {
       'module_boundary_health',
       'Code Graph · module_boundary_health'
     ),
-    WIRING_CHECK: mcpTool('code-graph', 'wiring_check', 'Code Graph · wiring_check')
+    WIRING_CHECK: mcpTool('code-graph', 'wiring_check', 'Code Graph · wiring_check'),
+    SHORTEST_PATH: mcpTool('code-graph', 'shortest_path', 'Code Graph · shortest_path')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
     SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),
@@ -1891,7 +1902,8 @@ export const MCP_TOOLS = {
     RUN_BACKGROUND: mcpTool('process-manager', 'run_background', 'Process · run_background'),
     CHECK_PROCESS: mcpTool('process-manager', 'check_process', 'Process · check_process'),
     STOP_PROCESS: mcpTool('process-manager', 'stop_process', 'Process · stop_process'),
-    LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes')
+    LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes'),
+    WAIT_PROCESS: mcpTool('process-manager', 'wait_process', 'Process · wait_process')
   })
 } as const
 

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Trash2, Pencil, GripVertical, Compass, Hammer, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { Conversation, ConversationMode, ContextUsage } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 import ContextBadge from './ContextBadge'
 
 interface ChatItemProps {
@@ -52,7 +53,7 @@ const MODE_STYLES: Record<ConversationMode, {
 }
 
 function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseDbTimestamp(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)

@@ -4,6 +4,9 @@ import type {
   ConversationMode,
   Message,
   AgentStatus,
+  BackgroundProcessInfo,
+  ProcessStopResult,
+  ProcessCancelWatchResult,
   Specialist,
   ConversationSpecialist,
   Skill,
@@ -559,7 +562,7 @@ interface Api {
   onUpdateAvailable: (
     callback: (info: { version: string; releaseDate?: string; releaseNotes?: string }) => void
   ) => () => void
-  onUpdateNotAvailable: (callback: () => void) => () => void
+  onUpdateNotAvailable: (callback: (info: { currentVersion?: string }) => void) => () => void
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
   onUpdateProgress: (
     callback: (progress: {
@@ -1778,6 +1781,12 @@ interface Api {
     cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
   ) => () => void
   probeNotificationSupport: () => Promise<'granted' | 'denied' | 'unsupported'>
+
+  // Background Processes
+  processList: () => Promise<BackgroundProcessInfo[]>
+  processStop: (args: { pid: number }) => Promise<ProcessStopResult>
+  processCancelWatch: (args: { pid: number }) => Promise<ProcessCancelWatchResult>
+  onProcessChanged: (cb: () => void) => () => void
   onTrayNavigate: (
     cb: (data: { view: string; workspaceId?: string }) => void
   ) => () => void
@@ -1793,6 +1802,9 @@ interface Api {
   testingGetRunResults: (args: { runId: string }) => Promise<E2EResultSummary[]>
   testingGetResultDetail: (args: { resultId: string }) => Promise<E2EResultDetail | undefined>
   onTestingProgress: (cb: (data: E2EProgressEvent) => void) => () => void
+
+  // Clipboard
+  clipboardWriteText: (text: string) => void
 }
 
 declare global {

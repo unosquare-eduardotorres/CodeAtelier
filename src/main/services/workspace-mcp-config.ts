@@ -454,7 +454,8 @@ function buildClaudeProviderMcpConfig(opts: {
           MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name,
           MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name,
           MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name,
-          MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name
+          MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name,
+          MCP_TOOLS.CODE_GRAPH.SHORTEST_PATH.name
         ]
       : []),
     // Semantic search (workspace flag AND per-chat toggle)

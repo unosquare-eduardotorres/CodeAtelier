@@ -13,6 +13,7 @@
 
 import type { ContextWindowTier } from './context-management'
 import { messageRepository, conversationRepository } from '../db/repositories'
+import { parseDbTimestamp } from '../../shared/db-time'
 import { localPlanStateService } from './local-plan-state.service'
 import { chatAgentLogger } from '../logger'
 import { sanitizePromptInput } from './sanitize-prompt-input'
@@ -70,7 +71,7 @@ export class LocalContextReconstructor {
           try {
             const lastMsgTime = messageRepository.getLastMessageTimestamp(conversationId)
             if (lastMsgTime) {
-              const ageDays = (Date.now() - new Date(lastMsgTime).getTime()) / 86400000
+              const ageDays = (Date.now() - parseDbTimestamp(lastMsgTime).getTime()) / 86400000
               if (ageDays > 3) {
                 log.warn(
                   `[S12:stale-summary] conversationId=${conversationId} — injecting summary from ${Math.round(ageDays)}d-old conversation`

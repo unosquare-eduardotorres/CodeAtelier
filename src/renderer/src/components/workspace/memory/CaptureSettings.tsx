@@ -135,6 +135,12 @@ export default function CaptureSettings({
               checked={captureSettings.captureDocumentsOnAttach}
               onChange={(v) => onUpdateSettings(workspaceId, { captureDocumentsOnAttach: v })}
             />
+            <CaptureToggle
+              label="Code rationales"
+              description="Mine // WHY:, // NOTE:, // HACK:, // GOTCHA: comments and ADR/RFC citations while indexing (off by default)"
+              checked={captureSettings.captureRationales}
+              onChange={(v) => onUpdateSettings(workspaceId, { captureRationales: v })}
+            />
           </div>
         </SettingsCard>
       )}

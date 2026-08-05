@@ -9,7 +9,11 @@ import { codeGraphTagRepository } from '../db/repositories'
 import { codeGraphEdgeRepository } from '../db/repositories'
 import { codeGraphRankRepository } from '../db/repositories'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
+import type { EdgeType, EdgeResolution } from '../db/repositories/code-graph-edge.repository'
 import type { CodeGraphIndexingState } from '../../shared/types'
+import { extractTypedTags, releaseTypedParser } from './code-graph-tags'
+import { detectCommunities, findGodNodes } from './code-graph-communities'
+import type { Community, GodNode } from './code-graph-communities'
 import {
   CaseInsensitiveSet,
   isExcludedPath,
@@ -138,6 +142,101 @@ interface GraphEdge {
   from: string
   to: string
   name: string
+  edgeType: EdgeType
+  resolution: EdgeResolution
+  /** How many files defined this symbol name — 1 means the match was unambiguous. */
+  defFanout: number
+}
+
+/**
+ * Fan-out above which a name/definition match is flagged as a guess
+ * (`resolution: 'ambiguous'`). The edge is still stored — only labelled.
+ */
+export const AMBIGUOUS_FANOUT = 8
+
+/**
+ * Fan-out above which edges are not stored at all: a name defined in this many
+ * files (`handle`, `render`, `id`, …) is an identifier collision, and the
+ * ref×def cartesian product it generates is pure noise.
+ *
+ * Set to `Infinity` to disable dropping entirely. Both numbers come from measuring
+ * six real indexed workspaces with `scripts/codegraph-fanout-report.ts`:
+ *
+ *   - Fan-out >32 is where names stop being symbols and become noise: in the
+ *     largest workspace measured, 16 such names produced 71% of all edges
+ *     (`T` alone: fan-out 123 → 8,795 edges; then `type`, `apply`, `get`).
+ *   - Fan-out 17-32 still carries real relationships (query-builder methods like
+ *     `from`/`select`/`eq` in one workspace), so cutting lower loses recall —
+ *     at ≤16 that workspace lost 46% of its edges.
+ *   - This repo is barely affected either way: ≤8 already retains 99.5%.
+ */
+export const AMBIGUITY_THRESHOLD = 32
+
+/**
+ * Map a (reference subtype, definition subtype) pair to a typed edge.
+ * Pure — the truth table lives here and nowhere else.
+ *
+ * Only relationships the `.scm` queries actually encode unambiguously are typed:
+ *   - `reference.call` / `reference.send` / `reference.constructor` → `calls`
+ *   - `reference.implementation` / `reference.interface`           → `implements`
+ *   - `reference.module` onto a module definition                  → `imports`
+ *
+ * `extends` is deliberately never emitted: the only candidate signal,
+ * `reference.class`, is overloaded across grammars — Java uses it for both
+ * `(superclass)` and `(object_creation_expression)`, C# for base lists, `new`,
+ * generic constraints and variable types. A wrong edge type is worse than a
+ * generic one, so those collapse to `references`.
+ */
+export function deriveEdgeType(
+  refKind: string | null | undefined,
+  defKind: string | null | undefined
+): EdgeType {
+  switch (refKind) {
+    case 'call':
+    case 'send':
+    case 'constructor':
+      return 'calls'
+    case 'implementation':
+    case 'interface':
+      return 'implements'
+    case 'module':
+      return defKind === 'module' || defKind == null ? 'imports' : 'references'
+    default:
+      return 'references'
+  }
+}
+
+/**
+ * Priority order when one file uses the same name in several roles (e.g. calls
+ * `Foo()` and annotates `: Foo`). The most specific relationship wins so the
+ * edge is typed by the strongest evidence available.
+ */
+const KIND_PRIORITY = [
+  'call',
+  'send',
+  'constructor',
+  'implementation',
+  'interface',
+  'module',
+  'function',
+  'method',
+  'class',
+  'type'
+]
+
+function kindRank(kind: string | null | undefined): number {
+  if (kind == null) return KIND_PRIORITY.length + 1
+  const idx = KIND_PRIORITY.indexOf(kind)
+  return idx === -1 ? KIND_PRIORITY.length : idx
+}
+
+/** Collapse a file's several capture subtypes for one name into the strongest one. */
+function strongerKind(
+  current: string | null | undefined,
+  incoming: string | null | undefined
+): string | null {
+  if (current === undefined) return incoming ?? null
+  return kindRank(incoming) < kindRank(current) ? (incoming ?? null) : (current ?? null)
 }
 
 /**
@@ -145,27 +244,49 @@ interface GraphEdge {
  * Pure function: takes tags, returns edge list.
  * An edge is created from each reference file to each definition file for the same symbol,
  * excluding self-references (ref and def in same file).
+ *
+ * Each edge carries provenance:
+ *   - `resolution: 'extracted'` when exactly one file defines the name
+ *   - `resolution: 'inferred'`  when several files do (this edge is one of N guesses)
+ *   - `resolution: 'ambiguous'` above AMBIGUITY_THRESHOLD, where the name is almost
+ *     certainly a collision rather than a relationship
  */
-export function buildEdgesFromTags(tags: RepomapTag[]): GraphEdge[] {
-  const defines = new Map<string, Set<string>>()
-  const references = new Map<string, Set<string>>()
+export function buildEdgesFromTags(
+  tags: RepomapTag[],
+  ambiguityThreshold: number = AMBIGUITY_THRESHOLD
+): GraphEdge[] {
+  // name → (file → strongest capture subtype seen in that file)
+  const defines = new Map<string, Map<string, string | null>>()
+  const references = new Map<string, Map<string, string | null>>()
   for (const tag of tags) {
     const map = tag.kind === 'def' ? defines : references
-    let set = map.get(tag.name)
-    if (!set) {
-      set = new Set()
-      map.set(tag.name, set)
+    let byFile = map.get(tag.name)
+    if (!byFile) {
+      byFile = new Map()
+      map.set(tag.name, byFile)
     }
-    set.add(tag.relFname)
+    byFile.set(tag.relFname, strongerKind(byFile.get(tag.relFname), tag.symbolKind))
   }
 
   const edges: GraphEdge[] = []
   for (const [name, refFiles] of references) {
     const defFiles = defines.get(name)
     if (!defFiles) continue
-    for (const refFile of refFiles) {
-      for (const defFile of defFiles) {
-        if (refFile !== defFile) edges.push({ from: refFile, to: defFile, name })
+    const defFanout = defFiles.size
+    if (defFanout > ambiguityThreshold) continue
+    const resolution: EdgeResolution =
+      defFanout === 1 ? 'extracted' : defFanout <= AMBIGUOUS_FANOUT ? 'inferred' : 'ambiguous'
+    for (const [refFile, refKind] of refFiles) {
+      for (const [defFile, defKind] of defFiles) {
+        if (refFile === defFile) continue
+        edges.push({
+          from: refFile,
+          to: defFile,
+          name,
+          edgeType: deriveEdgeType(refKind, defKind),
+          resolution,
+          defFanout
+        })
       }
     }
   }
@@ -231,6 +352,13 @@ export function sortAndFilterByRank(
 class CodeGraphService extends EventEmitter {
   private indexingStates = new Map<string, CodeGraphIndexingState>()
 
+  /** Cached subsystem detection — recomputing per graph_map call is wasteful. */
+  private subsystemCache = new Map<
+    string,
+    { computedAt: number; communities: Community[]; godNodes: GodNode[] }
+  >()
+  private static readonly SUBSYSTEM_CACHE_MS = 5 * 60_000
+
   /** Track whether we've logged a diagnostic for this session */
   private diagnosticLogged = false
 
@@ -269,6 +397,31 @@ class CodeGraphService extends EventEmitter {
         this.diagnosticLogged = true
       }
       return []
+    }
+  }
+
+  /**
+   * Parse one file, preferring the subtype-preserving extractor.
+   *
+   * `extractTypedTags` returns `null` when typed extraction cannot run (grammar
+   * or query missing, WASM failure, kill switch) — in that case we fall back to
+   * repomap-mcp's `getTags`, which yields the same tags without `symbolKind`.
+   * Edges from untyped tags degrade to `edgeType: 'references'`, never to zero.
+   *
+   * `typed` reports which path ran so callers can count fallbacks: a silent
+   * 100% fallback rate is indistinguishable from success in the output alone.
+   */
+  private async parseFileTags(
+    getTags: typeof import('repomap-mcp/dist/tags.js').getTags,
+    fname: string,
+    relFname: string,
+    filenameToLang: (f: string) => string | null
+  ): Promise<{ tags: RepomapTag[]; typed: boolean }> {
+    const typed = await extractTypedTags(fname, relFname, filenameToLang)
+    if (typed !== null) return { tags: typed, typed: true }
+    return {
+      tags: await this.getTagsWithDiagnostics(getTags, fname, relFname, filenameToLang),
+      typed: false
     }
   }
 
@@ -358,7 +511,20 @@ class CodeGraphService extends EventEmitter {
       const allTags: RepomapTag[] = []
       const fileMtimes = new Map<string, number>()
 
+      // A v130 upgrade leaves every row with symbol_kind = NULL while mtimes still
+      // match, so the incremental cache would keep serving untyped tags forever.
+      // Detect that once and re-parse everything.
+      const forceReparse = codeGraphTagRepository.hasUntypedIndex(workspaceId)
+      if (forceReparse) {
+        log.info(
+          '[CodeGraph] Untyped index detected - re-parsing all files to populate symbol kinds'
+        )
+      }
+
       let markupDropped = 0
+      let filesParsed = 0
+      let typedFallbacks = 0
+      const changedFiles: string[] = []
       for (const fname of allFiles) {
         const relFname = toPosixRel(fname, workspacePath)
         state.currentFile = relFname
@@ -368,13 +534,21 @@ class CodeGraphService extends EventEmitter {
           const existingMtime = existingMtimes.get(relFname)
           fileMtimes.set(relFname, stat.mtimeMs)
 
-          if (existingMtime && stat.mtimeMs === existingMtime) {
+          if (existingMtime && stat.mtimeMs === existingMtime && !forceReparse) {
             // File unchanged — load cached tags from DB
             const cachedTags = codeGraphTagRepository.findByFile(workspaceId, relFname)
             allTags.push(...cachedTags)
           } else {
             // File changed or new — parse with Tree-sitter
-            const tags = await this.getTagsWithDiagnostics(getTags, fname, relFname, filenameToLang)
+            changedFiles.push(relFname)
+            const { tags, typed } = await this.parseFileTags(
+              getTags,
+              fname,
+              relFname,
+              filenameToLang
+            )
+            filesParsed++
+            if (!typed) typedFallbacks++
             // Generated markup (NUnit HTML docs, doxygen output) parses to zero
             // tags but still costs a node + mtime row per file. Drop it: it can
             // never contribute an edge, only bloat.
@@ -435,10 +609,22 @@ class CodeGraphService extends EventEmitter {
       // A completed full rebuild clears any prior degradation.
       state.degraded = false
       state.degradedReason = undefined
+      // Typed extraction failing wholesale still produces a usable index, just an
+      // untyped one, which looks identical from the outside. Say so out loud.
+      if (filesParsed > 0 && typedFallbacks === filesParsed) {
+        state.degraded = true
+        state.degradedReason =
+          'Typed tag extraction unavailable - edges fall back to untyped `references`. ' +
+          'Check the tree-sitter query pack in the packaged app.'
+      }
       log.info(
-        `[CodeGraph] Indexing complete: ${fileCount} files, ${tagCount} tags, ${totalEdges} edges`
+        `[CodeGraph] Indexing complete: ${fileCount} files, ${tagCount} tags, ${totalEdges} edges` +
+          (typedFallbacks > 0
+            ? `, ${typedFallbacks}/${filesParsed} file(s) fell back to untyped tags`
+            : '')
       )
       this.emitProgress(state)
+      this.mineRationales(workspaceId, workspacePath, changedFiles)
       this.postIndexCleanup(workspaceId)
     } catch (error) {
       state.status = 'error'
@@ -478,8 +664,10 @@ class CodeGraphService extends EventEmitter {
       sourceSymbol: e.name,
       targetFile: e.to,
       targetSymbol: e.name,
-      edgeType: 'references' as const,
-      pageRank: ranks.get(e.to) ?? 0
+      edgeType: e.edgeType,
+      pageRank: ranks.get(e.to) ?? 0,
+      resolution: e.resolution,
+      defFanout: e.defFanout
     }))
     await codeGraphEdgeRepository.upsertEdgesBatched(workspaceId, mappedEdges)
     codeGraphRankRepository.upsertRanks(workspaceId, ranks)
@@ -545,7 +733,7 @@ class CodeGraphService extends EventEmitter {
       try {
         const stat = statSync(absPath)
         fileMtimes.set(relPath, stat.mtimeMs)
-        const tags = await this.getTagsWithDiagnostics(getTags, absPath, relPath, filenameToLang)
+        const { tags } = await this.parseFileTags(getTags, absPath, relPath, filenameToLang)
         newTags.push(...tags)
       } catch (error) {
         const msg = (error as Error).message
@@ -608,8 +796,27 @@ class CodeGraphService extends EventEmitter {
 
     log.info(`[CodeGraph] Incremental: ${changedRelPaths.length} files, ${newTags.length} new tags`)
 
+    this.mineRationales(workspaceId, workspacePath, changedRelPaths)
+
     // Clean up after incremental reindex too
     this.postIndexCleanup(workspaceId)
+  }
+
+  /**
+   * Mine `// WHY:` / `// HACK:` / ADR citations out of the files we just parsed
+   * and hand them to the memory system. Fire-and-forget: indexing must never
+   * fail or stall because rationale capture did.
+   *
+   * The miner is imported lazily so the standalone code-graph MCP server, which
+   * loads this service, never pulls the memory engine into its process.
+   */
+  private mineRationales(workspaceId: string, workspacePath: string, relPaths: string[]): void {
+    if (relPaths.length === 0) return
+    void import('./rationale-miner.service')
+      .then(({ rationaleMinerService }) =>
+        rationaleMinerService.mineFiles(workspaceId, workspacePath, relPaths)
+      )
+      .catch((error) => log.warn(`[CodeGraph] Rationale mining failed: ${error.message}`))
   }
 
   /**
@@ -718,6 +925,23 @@ class CodeGraphService extends EventEmitter {
   }
 
   /**
+   * Detect subsystems (communities) and god nodes over the file dependency graph.
+   * Cached for five minutes — the graph only changes on re-index.
+   */
+  getSubsystems(workspaceId: string): { communities: Community[]; godNodes: GodNode[] } {
+    const cached = this.subsystemCache.get(workspaceId)
+    if (cached && Date.now() - cached.computedAt < CodeGraphService.SUBSYSTEM_CACHE_MS) {
+      return { communities: cached.communities, godNodes: cached.godNodes }
+    }
+
+    const pairs = codeGraphEdgeRepository.findFilePairs(workspaceId)
+    const communities = detectCommunities(pairs)
+    const godNodes = findGodNodes(pairs)
+    this.subsystemCache.set(workspaceId, { computedAt: Date.now(), communities, godNodes })
+    return { communities, godNodes }
+  }
+
+  /**
    * Search identifiers from DB — NO filesystem walk. Instant.
    */
   async searchIdentifiers(
@@ -728,6 +952,8 @@ class CodeGraphService extends EventEmitter {
       maxResults?: number
       includeDefinitions?: boolean
       includeReferences?: boolean
+      /** Restrict to Tree-sitter capture subtypes, e.g. ['function', 'method']. */
+      symbolKinds?: string[]
     }
   ): Promise<
     Array<{
@@ -735,6 +961,7 @@ class CodeGraphService extends EventEmitter {
       line: number
       name: string
       kind: 'def' | 'ref'
+      symbolKind: string | null
       context: string
     }>
   > {
@@ -744,7 +971,8 @@ class CodeGraphService extends EventEmitter {
     const matchingTags = codeGraphTagRepository.searchByName(workspaceId, query, {
       maxResults: options?.maxResults ?? 50,
       includeDefinitions: options?.includeDefinitions ?? true,
-      includeReferences: options?.includeReferences ?? true
+      includeReferences: options?.includeReferences ?? true,
+      symbolKinds: options?.symbolKinds
     })
 
     const results: Array<{
@@ -752,6 +980,7 @@ class CodeGraphService extends EventEmitter {
       line: number
       name: string
       kind: 'def' | 'ref'
+      symbolKind: string | null
       context: string
     }> = []
 
@@ -770,6 +999,7 @@ class CodeGraphService extends EventEmitter {
         line: tag.line,
         name: tag.name,
         kind: tag.kind,
+        symbolKind: tag.symbolKind ?? null,
         context
       })
     }
@@ -784,14 +1014,22 @@ class CodeGraphService extends EventEmitter {
   async findDeadCode(
     workspaceId: string,
     workspacePath: string,
-    options?: { path?: string; maxResults?: number }
-  ): Promise<Array<{ file: string; line: number; name: string; context: string }>> {
+    options?: { path?: string; maxResults?: number; excludeSymbolKinds?: string[] }
+  ): Promise<
+    Array<{ file: string; line: number; name: string; symbolKind: string | null; context: string }>
+  > {
     const { renderTreeContext } =
       (await import('repomap-mcp/dist/tree-context.js')) as typeof import('repomap-mcp/dist/tree-context.js')
 
     const deadDefs = codeGraphTagRepository.findDeadCode(workspaceId, options)
 
-    const results: Array<{ file: string; line: number; name: string; context: string }> = []
+    const results: Array<{
+      file: string
+      line: number
+      name: string
+      symbolKind: string | null
+      context: string
+    }> = []
 
     for (const tag of deadDefs) {
       const absPath = `${workspacePath}/${tag.relFname}`
@@ -807,6 +1045,7 @@ class CodeGraphService extends EventEmitter {
         file: tag.relFname,
         line: tag.line,
         name: tag.name,
+        symbolKind: tag.symbolKind ?? null,
         context
       })
     }
@@ -1235,17 +1474,21 @@ class CodeGraphService extends EventEmitter {
       }
     }, 30_000)
 
-    // 2. Release the tree-sitter WASM parser — it allocated memory outside
+    // 2. Subsystem detection is derived from the edge table — a rebuild invalidates it
+    this.subsystemCache.delete(workspaceId)
+
+    // 3. Release the tree-sitter WASM parser — it allocated memory outside
     //    V8's heap that the GC cannot see. Will be re-initialized on next index.
     initParserPromise = null
+    releaseTypedParser()
 
-    // 3. Shrink SQLite page cache after the heavy write burst
+    // 4. Shrink SQLite page cache after the heavy write burst
     try {
       const { getDatabase } = require('../db')
       getDatabase().pragma('shrink_memory')
     } catch { /* best-effort */ }
 
-    // 4. Nudge V8 GC (available when Electron runs with --expose-gc,
+    // 5. Nudge V8 GC (available when Electron runs with --expose-gc,
     //    already used by vector-search.service.ts)
     if (typeof global.gc === 'function') {
       global.gc()

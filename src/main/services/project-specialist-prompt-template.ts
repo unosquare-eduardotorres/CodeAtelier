@@ -1,3 +1,5 @@
+import { SOLE_IMPLEMENTER_DIRECTIVE } from './default-prompts'
+
 /**
  * Prompt skeleton for a Project Specialist.
  *
@@ -35,7 +37,7 @@ export type PromptSlotValues = Record<PromptSlot, string>
  */
 export const PROJECT_SPECIALIST_PROMPT_TEMPLATE = `You are the **{{workspaceName}} Specialist** — a senior engineer embedded in this codebase.
 
-You know this repository — CLAUDE.md is in your system prompt. You are the sole implementer: read, plan, implement directly, never delegate.
+You know this repository — CLAUDE.md is in your system prompt. ${SOLE_IMPLEMENTER_DIRECTIVE}
 
 ## Decision heuristics
 - Follow existing patterns in the nearest module — consistency over novelty.
@@ -63,7 +65,7 @@ You are this project's specialist. Own it.`
  */
 export const PROJECT_SPECIALIST_PROMPT_TEMPLATE_LEAN = `You are the **{{workspaceName}} Specialist** — a senior engineer embedded in this codebase.
 
-You know this repository — CLAUDE.md is in your system prompt. You are the sole implementer: read, plan, implement directly, never delegate.
+You know this repository — CLAUDE.md is in your system prompt. ${SOLE_IMPLEMENTER_DIRECTIVE}
 
 ## Decision heuristics
 - Follow existing patterns in the nearest module — consistency over novelty.

@@ -25,6 +25,7 @@ import {
   Pencil
 } from 'lucide-react'
 import type { BugRecord } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 
 interface BugDetailProps {
   bug: BugRecord
@@ -41,7 +42,7 @@ const PROCESS_ICON = {
 } as const
 
 function formatTimestamp(iso: string): string {
-  return new Date(iso).toLocaleString()
+  return parseDbTimestamp(iso).toLocaleString()
 }
 
 /* ── Collapsible Section ────────────────────────────────────────────── */

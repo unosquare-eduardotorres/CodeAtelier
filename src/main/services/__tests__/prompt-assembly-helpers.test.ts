@@ -6,7 +6,11 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembly-helpers'
+import {
+  appendMcpToolGuidance,
+  buildConditionalPrefix,
+  buildModeContextPrefix
+} from '../prompt-assembly-helpers'
 
 describe('appendMcpToolGuidance', () => {
   test('turn 2+ appends compact tool priority reminder for non-lean models with repomap', () => {
@@ -313,6 +317,67 @@ describe('buildConditionalPrefix', () => {
       })
       assert.ok(!/hand[\s-]?off/i.test(out), `handoff leaked for ${v.mode}@${v.turn}: ${out}`)
       assert.ok(!/delegat/i.test(out), `delegation leaked for ${v.mode}@${v.turn}`)
+    }
+  })
+})
+
+describe('buildModeContextPrefix', () => {
+  test('turn 1 includes full Mermaid diagram reference in plan mode', () => {
+    const out = buildModeContextPrefix('plan', undefined, 1)
+    assert.ok(out.includes('<mode-context>'), 'Should wrap in mode-context tags')
+    assert.ok(out.includes('classDef decision'), 'Should include full Mermaid classDef block')
+    assert.ok(out.includes('Icon reference:'), 'Should include icon reference')
+    assert.ok(out.includes('lucide:bot'), 'Should include example icons')
+  })
+
+  test('turn 2+ strips Mermaid diagram reference in plan mode', () => {
+    const out = buildModeContextPrefix('plan', undefined, 3, 'just a follow-up question')
+    assert.ok(out.includes('<mode-context>'), 'Should wrap in mode-context tags')
+    assert.ok(!out.includes('classDef decision'), 'Should NOT include full Mermaid classDef block')
+    assert.ok(!out.includes('Icon reference:'), 'Should NOT include icon reference')
+    assert.ok(
+      out.includes('See diagram reference from turn 1'),
+      'Should include compact diagram back-reference'
+    )
+  })
+
+  test('turn 2+ re-injects Mermaid when user message contains diagram keywords', () => {
+    const keywords = ['create a diagram', 'add a mermaid chart', 'draw a flowchart', 'stateDiagram']
+    for (const msg of keywords) {
+      const out = buildModeContextPrefix('plan', undefined, 5, msg)
+      assert.ok(
+        out.includes('classDef decision'),
+        `Diagram keyword "${msg}" should trigger full diagram block re-injection`
+      )
+    }
+  })
+
+  test('turn 2+ in build mode does NOT use compact (build has no diagram block)', () => {
+    const out = buildModeContextPrefix('build', undefined, 3, 'implement the feature')
+    assert.ok(out.includes('Mode: Build'), 'Should include build mode section')
+    // Build mode never had a diagram block, so compact is irrelevant
+    assert.ok(!out.includes('See diagram reference'), 'Build mode should not have diagram back-ref')
+  })
+
+  test('lean plan mode turn 2+ also strips Mermaid', () => {
+    const out = buildModeContextPrefix('plan', 'claude-opus-4-8', 2, 'continue please')
+    assert.ok(!out.includes('classDef decision'), 'Lean plan turn 2+ should strip diagram block')
+    assert.ok(
+      out.includes('See diagram reference from turn 1'),
+      'Should include compact back-reference'
+    )
+  })
+
+  test('unknown turnCount defaults to full mode context', () => {
+    const out = buildModeContextPrefix('plan')
+    assert.ok(out.includes('classDef decision'), 'Should include full diagram block by default')
+  })
+
+  test('all modes always wrapped in mode-context tags', () => {
+    for (const mode of ['plan', 'build', 'danger'] as const) {
+      const out = buildModeContextPrefix(mode, undefined, 1)
+      assert.ok(out.startsWith('<mode-context>'), `${mode} should start with mode-context tag`)
+      assert.ok(out.endsWith('</mode-context>'), `${mode} should end with mode-context tag`)
     }
   })
 })

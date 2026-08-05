@@ -47,7 +47,13 @@ import {
   PLAN_MODE_SECTION_LEAN,
   BUILD_MODE_SECTION_LEAN,
   DANGER_MODE_SECTION_LEAN,
-  MODE_CONTEXT_SECTIONS_LEAN
+  MODE_CONTEXT_SECTIONS_LEAN,
+  MERMAID_DIAGRAM_REFERENCE,
+  SOLE_IMPLEMENTER_DIRECTIVE,
+  PLAN_MODE_SECTION_COMPACT,
+  PLAN_MODE_SECTION_LEAN_COMPACT,
+  MODE_CONTEXT_SECTIONS_COMPACT,
+  MODE_CONTEXT_SECTIONS_LEAN_COMPACT
 } from '../default-prompts'
 
 describe('default-prompts — prompt constants', () => {
@@ -200,5 +206,83 @@ describe('default-prompts — MODE_CONTEXT_SECTIONS', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.length <= PLAN_MODE_SECTION.length)
     assert.ok(BUILD_MODE_SECTION_LEAN.length <= BUILD_MODE_SECTION.length)
     assert.ok(DANGER_MODE_SECTION_LEAN.length <= DANGER_MODE_SECTION.length)
+  })
+})
+
+describe('default-prompts — MERMAID_DIAGRAM_REFERENCE', () => {
+  test('is non-empty and contains classDef lines', () => {
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.length > 100)
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.includes('classDef decision'))
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.includes('classDef agent'))
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.includes('Icon reference:'))
+  })
+
+  test('is embedded in PLAN_MODE_SECTION', () => {
+    assert.ok(
+      PLAN_MODE_SECTION.includes('classDef decision'),
+      'Full plan mode section should contain diagram reference'
+    )
+  })
+
+  test('is embedded in PLAN_MODE_SECTION_LEAN', () => {
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN.includes('classDef decision'),
+      'Lean plan mode section should contain diagram reference'
+    )
+  })
+})
+
+describe('default-prompts — compact mode context sections', () => {
+  test('PLAN_MODE_SECTION_COMPACT strips diagram reference', () => {
+    assert.ok(!PLAN_MODE_SECTION_COMPACT.includes('classDef decision'))
+    assert.ok(PLAN_MODE_SECTION_COMPACT.includes('See diagram reference from turn 1'))
+  })
+
+  test('PLAN_MODE_SECTION_LEAN_COMPACT strips diagram reference', () => {
+    assert.ok(!PLAN_MODE_SECTION_LEAN_COMPACT.includes('classDef decision'))
+    assert.ok(PLAN_MODE_SECTION_LEAN_COMPACT.includes('See diagram reference from turn 1'))
+  })
+
+  test('compact sections are shorter than full sections', () => {
+    assert.ok(
+      PLAN_MODE_SECTION_COMPACT.length < PLAN_MODE_SECTION.length,
+      `Compact (${PLAN_MODE_SECTION_COMPACT.length}) should be < full (${PLAN_MODE_SECTION.length})`
+    )
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN_COMPACT.length < PLAN_MODE_SECTION_LEAN.length,
+      `Compact lean (${PLAN_MODE_SECTION_LEAN_COMPACT.length}) should be < full lean (${PLAN_MODE_SECTION_LEAN.length})`
+    )
+  })
+
+  test('compact sections preserve core behavioral rules', () => {
+    assert.ok(PLAN_MODE_SECTION_COMPACT.includes('emit_plan'), 'Missing emit_plan')
+    assert.ok(PLAN_MODE_SECTION_COMPACT.includes('read-only'), 'Missing read-only')
+    assert.ok(PLAN_MODE_SECTION_LEAN_COMPACT.includes('emit_plan'), 'Missing emit_plan (lean)')
+    assert.ok(PLAN_MODE_SECTION_LEAN_COMPACT.includes('read-only'), 'Missing read-only (lean)')
+  })
+
+  test('MODE_CONTEXT_SECTIONS_COMPACT has all modes', () => {
+    assert.ok('plan' in MODE_CONTEXT_SECTIONS_COMPACT)
+    assert.ok('build' in MODE_CONTEXT_SECTIONS_COMPACT)
+    assert.ok('danger' in MODE_CONTEXT_SECTIONS_COMPACT)
+  })
+
+  test('MODE_CONTEXT_SECTIONS_LEAN_COMPACT has all modes', () => {
+    assert.ok('plan' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
+    assert.ok('build' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
+    assert.ok('danger' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
+  })
+})
+
+describe('default-prompts — SOLE_IMPLEMENTER_DIRECTIVE', () => {
+  test('is a concise directive', () => {
+    assert.ok(SOLE_IMPLEMENTER_DIRECTIVE.includes('sole implementer'))
+    assert.ok(SOLE_IMPLEMENTER_DIRECTIVE.includes('never delegate'))
+    assert.ok(SOLE_IMPLEMENTER_DIRECTIVE.length < 200)
+  })
+
+  test('is embedded in lean identity prompt', () => {
+    const lean = buildSpecialistIdentityPromptLean('default')
+    assert.ok(lean.includes(SOLE_IMPLEMENTER_DIRECTIVE))
   })
 })

@@ -252,6 +252,37 @@ export function parseBlockedByError(
   return { errorMsg, blockedConvId, blockedConvTitle: blockedConv?.title }
 }
 
+// ── Stop reconciliation ──────────────────────────────────────
+
+/**
+ * WEDGE-RECOVERY: after a stop, reconcile the local send/stream flags against
+ * main.  `sendingConversationIds` is set before the send IPC and cleared in its
+ * finally — if that path is ever skipped the input stays disabled while nothing
+ * is actually running, and one Stop click must be enough to recover.
+ *
+ * Returns the state patch to apply, or `null` when nothing should change:
+ * either main is still streaming, or the query failed (in which case the local
+ * state is the only state we have and must not be clobbered).
+ */
+export async function reconcileStopState(
+  fetchStreamingState: () => Promise<{ isStreaming: boolean }>,
+  /** Read lazily — a send may have started during the IPC round-trip. */
+  readSendingConversationIds: () => Set<string>,
+  activeConversationId: string | null | undefined,
+  onError?: (error: unknown) => void
+): Promise<{ isStreaming: false; sendingConversationIds: Set<string> } | null> {
+  try {
+    const backendState = await fetchStreamingState()
+    if (backendState.isStreaming) return null
+    const remaining = new Set(readSendingConversationIds())
+    if (activeConversationId) remaining.delete(activeConversationId)
+    return { isStreaming: false, sendingConversationIds: remaining }
+  } catch (error) {
+    onError?.(error)
+    return null
+  }
+}
+
 // ── Message builders (continued) ────────────────────────────────────────
 
 /**

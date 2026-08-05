@@ -19,6 +19,7 @@ interface MigrationEnv {
   Database: typeof import('better-sqlite3')
   migrations: import('../../index').Migration[]
   SCHEMA_SQL: string
+  CURRENT_SCHEMA_VERSION: number
 }
 
 function trySetup(): MigrationEnv | null {
@@ -26,8 +27,8 @@ function trySetup(): MigrationEnv | null {
     process.env.NODE_ENV = 'test'
     const Database = require('better-sqlite3')
     new Database(':memory:').close()
-    const { migrations, SCHEMA_SQL } = require('../../index')
-    return { Database, migrations, SCHEMA_SQL }
+    const { migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION } = require('../../index')
+    return { Database, migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION }
   } catch (err) {
     console.log(
       `\n⚠ better-sqlite3 native module not available — migration-replay tests skipped.`
@@ -44,7 +45,7 @@ if (!env) {
     test('skipped', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { Database, migrations, SCHEMA_SQL } = env
+  const { Database, migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION } = env
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -643,7 +644,10 @@ if (!env) {
     })
 
     test('migration_count_matches_schema_version', () => {
-      assert.equal(migrations.length, 123)
+      // Compared against the declared version rather than a literal: the literal
+      // went stale on every migration, and the point of the invariant is that
+      // CURRENT_SCHEMA_VERSION was bumped together with a real migration entry.
+      assert.equal(migrations.length, CURRENT_SCHEMA_VERSION)
     })
   })
 }

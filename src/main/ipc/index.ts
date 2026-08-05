@@ -51,6 +51,7 @@ import { initSessionEventRouter } from '../services/session-event-router'
 import { registerStreamDiagnosticsIpc } from './chunk-router'
 import { registerTestingIpc } from './testing.ipc'
 import { registerHandoffIpc } from './handoff.ipc'
+import { registerProcessIpc } from './process.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   // Initialize session event router FIRST — other IPC handlers may need it
@@ -107,4 +108,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerStreamDiagnosticsIpc()
   registerTestingIpc(mainWindow)
   registerHandoffIpc()
+  registerProcessIpc()
 }

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
 import type {
   Workspace,
@@ -996,8 +996,13 @@ const api = {
     }
   },
 
-  onUpdateNotAvailable: (callback: () => void): (() => void) => {
-    const handler = (): void => callback()
+  onUpdateNotAvailable: (
+    callback: (info: { currentVersion?: string }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      info?: { currentVersion?: string }
+    ): void => callback(info ?? {})
     ipcRenderer.on(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
@@ -2591,6 +2596,31 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
   },
 
+  // ── Background Processes ──
+
+  /** List detached background processes the agent spawned, across all workspaces. */
+  processList: (): Promise<import('../shared/types').BackgroundProcessInfo[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROCESS_LIST),
+
+  /** Stop a background process (SIGTERM, 3s grace, then SIGKILL). */
+  processStop: (args: {
+    pid: number
+  }): Promise<import('../shared/types').ProcessStopResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROCESS_STOP, args),
+
+  /** Disarm the auto-resume for a process without killing it. */
+  processCancelWatch: (args: {
+    pid: number
+  }): Promise<import('../shared/types').ProcessCancelWatchResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROCESS_CANCEL_WATCH, args),
+
+  /** Listen for background process list changes (started / exited / stopped). */
+  onProcessChanged: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on(IPC_CHANNELS.PROCESS_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PROCESS_CHANGED, handler)
+  },
+
   /** Listen for tray context-menu navigate events. */
   onTrayNavigate: (
     cb: (data: { view: string; workspaceId?: string }) => void
@@ -3340,6 +3370,11 @@ const api = {
     const handler = (_: unknown, data: E2EProgressEvent): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.TESTING_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.TESTING_PROGRESS, handler)
+  },
+
+  // ── Clipboard ──
+  clipboardWriteText: (text: string): void => {
+    clipboard.writeText(text)
   }
 } as const
 

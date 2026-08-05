@@ -334,6 +334,11 @@ CREATE TABLE IF NOT EXISTS code_graph_edges (
   target_symbol TEXT NOT NULL,
   edge_type TEXT NOT NULL CHECK (edge_type IN ('calls', 'imports', 'extends', 'implements', 'references')),
   page_rank REAL DEFAULT 0,
+  -- Provenance: 'extracted' = exactly one definition matched, 'inferred' = several
+  -- candidates, 'ambiguous' = fan-out above threshold. Plain TEXT on purpose (the
+  -- v130 ALTER TABLE cannot add a CHECK); the enum lives in TypeScript.
+  resolution TEXT NOT NULL DEFAULT 'inferred',
+  def_fanout INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -350,6 +355,9 @@ CREATE TABLE IF NOT EXISTS code_graph_tags (
   line INTEGER NOT NULL,
   name TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('def', 'ref')),
+  -- Tree-sitter capture subtype: function|method|class|type|interface|enum|module|constant
+  -- for defs, call|type|class for refs. NULL when the grammar has no subtype.
+  symbol_kind TEXT DEFAULT NULL,
   file_mtime REAL NOT NULL,
   indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(workspace_id, rel_fname, line, name, kind)

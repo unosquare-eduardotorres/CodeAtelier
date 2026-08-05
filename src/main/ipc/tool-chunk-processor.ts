@@ -289,11 +289,14 @@ export function processToolChunk(
     return { type: 'tool_activity', toolActivity }
   }
 
-  // tool_progress
+  // tool_progress — update-only. A heartbeat must never mint a new activity row:
+  // an id synthesised here can never be closed by the tool_result (which carries
+  // the real id), leaving a phantom 'running' tool in the UI forever.
+  if (!chunk.toolId) return null
   return {
     type: 'tool_activity',
     toolActivity: {
-      id: generateToolId(chunk.toolId),
+      id: chunk.toolId,
       toolName: chunk.toolName ?? 'Unknown',
       status: 'running',
       startedAt: 0,

@@ -7,6 +7,7 @@ import { Copy, Check } from 'lucide-react'
 import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { MermaidDiagram } from '@renderer/components/common'
 import { useAppTheme } from '@renderer/store'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 /** Best-effort language detection for untagged code blocks */
 function detectLanguage(code: string): string {
@@ -115,12 +116,10 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
   const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(codeText)
+    const ok = await copyTextToClipboard(codeText)
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      console.error('Failed to copy to clipboard')
     }
   }, [codeText])
 

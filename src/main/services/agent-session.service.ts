@@ -30,6 +30,7 @@ import type {
 } from '../../shared/types'
 import type { AgentPromptInput } from './executor-types'
 import { EXTERNAL_MCP_INTEGRATIONS, resolveModelAction } from '../../shared/constants'
+import { parseDbTimestamp } from '../../shared/db-time'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
@@ -1315,7 +1316,10 @@ export class AgentSessionService extends AgentBaseService {
       try {
         const lastMsgTime = messageRepository.getLastMessageTimestamp(conversationId)
         if (lastMsgTime) {
-          const parsedTime = new Date(lastMsgTime).getTime()
+          // created_at is SQLite's naive-UTC "YYYY-MM-DD HH:MM:SS"; parsing it
+          // as local time skews the age by the machine's UTC offset — east of
+          // UTC that expires sessions hours early and drops --resume.
+          const parsedTime = parseDbTimestamp(lastMsgTime).getTime()
           if (Number.isNaN(parsedTime)) {
             this.log.warn(
               `[resolveSession] Malformed created_at for ${conversationId} — skipping staleness check: "${lastMsgTime.slice(0, 30)}"`
