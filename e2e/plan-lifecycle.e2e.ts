@@ -105,7 +105,7 @@ test.describe('Plan Lifecycle — Status Transitions & Cross-Modal', () => {
     if (!foundChatPlan) {
       // Any plan should have a source badge
       const firstText = await planCards.first().textContent()
-      const hasSource = /[💬🔥🔍🏛️🎯📘]|chat|grill|audit|council|goals|blueprint/i.test(
+      const hasSource = /💬|🔥|🔍|🏛️|🎯|📘|chat|grill|audit|council|goals|blueprint/iu.test(
         firstText ?? ''
       )
       expect(hasSource).toBeTruthy()

@@ -61,7 +61,7 @@ test.describe('Cross-Workspace Notifications', () => {
       // No background sessions are requesting permissions right now
       // Verify the notification stack mounting point exists
       const notificationStack = page.locator('[data-testid="notification-stack"]')
-      const hasStack = await notificationStack.isVisible({ timeout: 2_000 }).catch(() => false)
+      const _hasStack = await notificationStack.isVisible({ timeout: 2_000 }).catch(() => false)
 
       // Stack is only rendered when there are notifications — being absent is normal
       test.skip()
@@ -74,7 +74,7 @@ test.describe('Cross-Workspace Notifications', () => {
     const viewBtn = permissionModal.first().locator('[data-testid="permission-view"]')
 
     const hasApprove = await approveBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasDeny = await denyBtn.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _hasDeny = await denyBtn.isVisible({ timeout: 2_000 }).catch(() => false)
     const hasView = await viewBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // Either approve+deny (simple) or view (complex) — one pattern must be present

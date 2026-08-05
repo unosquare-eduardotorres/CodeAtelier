@@ -191,7 +191,9 @@ const TEST_FILES: string[] = [
   './blueprint-verify-adapter.test',
   './repo-service-pure.test',
   './repo-service-git.test',
+  '../../../renderer/src/store/__tests__/code-changes-errors.test',
   './file-diff-state.test',
+  './file-change-list-state.test',
   './opencode-config-writer-logic.test',
   './opencode-config-schema.test',
   './opencode-cli-check.test',
@@ -285,6 +287,7 @@ const TEST_FILES: string[] = [
   './memory-engine.test',
   './memory-retrieval.test',
   './memory-extraction.test',
+  './memory-extraction-cancel.test',
   './memory-doc-watcher.test',
   // ─── Memory Graph (knowledge graph edge derivation) ───
   './memory-graph.test',
@@ -322,6 +325,7 @@ const TEST_FILES: string[] = [
   './memory-bootstrap-doc-state.test',
   './memory-bootstrap-queue.test',
   './memory-bootstrap-control.test',
+  './memory-bootstrap-throughput.test',
   './instruction-sources.test',
   './scope-matcher.test',
   './memory-scope-activation.test',
@@ -389,6 +393,7 @@ const TEST_FILES: string[] = [
   '../../ipc/__tests__/process-ipc.test',
   '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../../renderer/src/store/__tests__/update-snooze.test',
+  '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -399,6 +404,8 @@ const TEST_FILES: string[] = [
   './chat-agent-executor-deep.test',
   './memory-ipc-workspace-ipc-deep.test',
   './mcp-servers-pure.test',
+  // ─── Recall MCP server (past plans: registry ∪ message scan, dedupe, windows) ───
+  './recall-server.test',
   // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
   './mermaid-sanitizers.test',
   // ─── Loopback update feed server (cloud-drive auto-update transport) ───

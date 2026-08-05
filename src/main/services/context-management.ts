@@ -22,9 +22,14 @@
  *   - CLAUDE_CODE_AUTO_COMPACT_WINDOW = effective window. 1M models MUST set
  *     1000000 here or the CLI falls back to its smaller model-default window
  *     (which inflates the context badge and triggers premature auto-compact).
- *   - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80 for 200K models (Opus<=4.7/Haiku), so
- *     auto-compact fires at ~80% of the usable window (~128-152K) instead of
- *     the usable-13K default. Honoured by claude-code >= 2.1.x.
+ *   - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75 for ALL models (200K and 1M), so
+ *     auto-compact fires at ~75% of the usable window instead of the
+ *     usable-13K default (~98%). Honoured by claude-code >= 2.1.x.
+ *
+ * Tier 3 nudges use the same uniform 0.6 / 0.75 ratios (COMPACTION_RATIOS in
+ * shared/constants.ts). Above 1.2x the auto threshold (90% of the window) the
+ * band machine escalates to `critical` regardless of auto-compact state, as a
+ * backstop for CLI builds that ignore the pct override.
  */
 
 // ── Context Window Tiers ─────────────────────────────────────────────

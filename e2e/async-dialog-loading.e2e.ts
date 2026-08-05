@@ -106,7 +106,7 @@ test.describe('Async Dialog Loading', () => {
     const insightsSummary = dialog.locator('[data-testid="insights-summary"]')
 
     const hasLoading = await insightsLoading.isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasSummary = await insightsSummary.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasSummary = await insightsSummary.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Either loading or loaded should appear (or neither if insights are null/failed)
     if (hasLoading) {

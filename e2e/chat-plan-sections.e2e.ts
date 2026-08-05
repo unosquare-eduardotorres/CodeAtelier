@@ -198,7 +198,7 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
   test('NewChatPopover: popover shows Plan and Build mode options', async ({
     electronPage: page
   }) => {
-    const chat = await ensureWorkspaceOpen(page)
+    const _chat = await ensureWorkspaceOpen(page)
 
     // We need to find the "new chat" button that opens the popover
     // It's typically in the sidebar header area

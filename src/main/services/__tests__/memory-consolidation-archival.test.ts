@@ -25,6 +25,16 @@ try {
   _setDatabaseForTesting = require('../../db/index')._setDatabaseForTesting
   memoryFactRepository =
     require('../../db/repositories/memory-fact.repository').memoryFactRepository
+  // An earlier file in the shared run (ipc/__tests__/ipc-handler-bodies.test)
+  // installs setup-full-mock's Module._load patch and loads memory.ipc, which
+  // transitively caches memory-consolidation.service with MOCKED repositories.
+  // restoreFullMock() un-patches the loader but cannot re-bind an already-cached
+  // module, so that cached copy's memoryFactRepository.getConfirmations() is a
+  // stub returning undefined — and hasRealEvidence() throws on `.some`.
+  // Drop just this one leaf service so it re-binds to the real repositories.
+  for (const key of Object.keys(require.cache)) {
+    if (key.includes('memory-consolidation.service')) delete require.cache[key]
+  }
   const consolidationMod = require('../memory-consolidation.service')
   selectStaleT0Facts = consolidationMod.selectStaleT0Facts
   hasRealEvidence = consolidationMod.hasRealEvidence

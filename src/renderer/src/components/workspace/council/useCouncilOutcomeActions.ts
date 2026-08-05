@@ -31,7 +31,7 @@ function buildUpdatePlanMessage(verdict: CouncilVerdict, currentGoal?: string): 
   }
   lines.push(
     '',
-    `Regenerate the plan incorporating these revisions${currentGoal ? ' and the goal above' : ', including an updated \`goal\` field that reflects the revised scope'}. ` +
+    `Regenerate the plan incorporating these revisions${currentGoal ? ' and the goal above' : ', including an updated `goal` field that reflects the revised scope'}. ` +
     'Output the updated plan in a ```plan``` block.'
   )
   return lines.join('\n')

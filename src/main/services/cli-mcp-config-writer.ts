@@ -190,6 +190,15 @@ export class CliMcpConfigWriter {
       }
     }
 
+    // ── Recall ── (past plans + surrounding conversation)
+    if (workspaceId) {
+      servers['recall'] = {
+        command: 'node',
+        args: [join(serverBasePath, 'recall-server.js')],
+        env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
+      }
+    }
+
     // ── Git Context ──
     servers['git-context'] = {
       command: 'node',

@@ -12,7 +12,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync } from './test-harness'
+import { test, describe, summaryAsync, runExclusive } from './test-harness'
 import { setupElectronStub } from './electron-stub'
 import type { MemoryFact } from '../../../shared/types'
 
@@ -101,6 +101,13 @@ if (loaded) {
     }
     return anyStub ? stubbed : originalEmb(ids)
   }
+
+  // The vector arm caches the embedding matrix per workspace and invalidates it
+  // on `getLastMutationAt`. Stubbed workspaces report a fresh stamp every call
+  // so a test that swaps its stub data is never served the previous snapshot.
+  const originalMutation = memoryFactRepository.getLastMutationAt.bind(memoryFactRepository)
+  memoryFactRepository.getLastMutationAt = (ws: string) =>
+    vectorsByWs.has(ws) || ftsByWs.has(ws) ? Date.now() : originalMutation(ws)
 
   const originalTouch = memoryFactRepository.touchFacts.bind(memoryFactRepository)
   memoryFactRepository.touchFacts = (ids: string[]) => {
@@ -395,6 +402,236 @@ const EVAL_CASES: Array<{ query: string; expect: string; facts: MemoryFact[] }> 
       }),
       makeFact('e-noise4', { title: 'Extraction budget', content: 'chunk budget for documents' })
     ]
+  },
+
+  // ── Established facts must outrank a better keyword match ──
+  //
+  // The expected fact is deliberately *second* in BM25 order in these cases.
+  // Only the tier multiplier lifts it, which is the property worth pinning:
+  // a confirmed convention should beat an incidental observation that happens
+  // to phrase the query back at you.
+  {
+    query: 'error handling convention for services',
+    expect: 'e-errors',
+    facts: [
+      makeFact('e-noise-errors', {
+        title: 'Error handling convention draft',
+        content: 'error handling convention for services was discussed',
+        tier: 0
+      }),
+      makeFact('e-errors', {
+        title: 'Service error handling',
+        content: 'error handling convention for services returns Result types',
+        tier: 3
+      })
+    ]
+  },
+  {
+    query: 'database transaction boundaries',
+    expect: 'e-tx',
+    facts: [
+      makeFact('e-noise-tx', {
+        title: 'Database transaction notes',
+        content: 'database transaction boundaries were unclear here',
+        tier: 0
+      }),
+      makeFact('e-tx', {
+        title: 'Transaction boundaries',
+        content: 'database transaction boundaries wrap one repository call',
+        tier: 3
+      })
+    ]
+  },
+  {
+    query: 'ipc channel naming scheme',
+    expect: 'e-ipc',
+    facts: [
+      makeFact('e-noise-ipc', {
+        title: 'Ipc channel naming question',
+        content: 'ipc channel naming scheme was asked about once',
+        tier: 0
+      }),
+      makeFact('e-ipc', {
+        title: 'Channel naming',
+        content: 'ipc channel naming scheme is domain colon action',
+        tier: 3
+      })
+    ]
+  },
+
+  // ── The precision gate must drop token-poor distractors ──
+  //
+  // BM25 ORs its terms, so a fact matching one common word arrives ranked
+  // first. The gate is the only thing stopping it taking the slot.
+  {
+    query: 'retry policy for failed background jobs',
+    expect: 'e-retry',
+    facts: [
+      makeFact('e-noise-retry', { title: 'Policy', content: 'policy' }),
+      makeFact('e-retry', {
+        title: 'Background job retries',
+        content: 'retry policy for failed background jobs is exponential backoff',
+        tier: 1
+      })
+    ]
+  },
+  {
+    query: 'where do we store user preferences',
+    expect: 'e-prefs',
+    facts: [
+      makeFact('e-noise-prefs', { title: 'Store', content: 'store' }),
+      makeFact('e-prefs', {
+        title: 'User preferences',
+        content: 'where do we store user preferences is the settings table',
+        tier: 1
+      })
+    ]
+  },
+  {
+    query: 'how are secrets injected into the build',
+    expect: 'e-secrets',
+    facts: [
+      makeFact('e-noise-secrets', { title: 'Build', content: 'build' }),
+      makeFact('e-secrets', {
+        title: 'Secret injection',
+        content: 'how are secrets injected into the build via environment variables',
+        tier: 2
+      })
+    ]
+  },
+
+  // ── Ordinary top-1 recall ──
+  {
+    query: 'test runner registration requirement',
+    expect: 'e-runner',
+    facts: [
+      makeFact('e-runner', {
+        title: 'Test runner registration',
+        content: 'every new test file needs registration in the test runner requirement',
+        tier: 2
+      }),
+      makeFact('e-noise-runner', { title: 'Runner speed', content: 'the suite runs concurrently' })
+    ]
+  },
+  {
+    query: 'schema migration must be idempotent',
+    expect: 'e-idem',
+    facts: [
+      makeFact('e-idem', {
+        title: 'Idempotent migrations',
+        content: 'every schema migration must be idempotent and re-runnable',
+        tier: 3
+      }),
+      makeFact('e-noise-idem', { title: 'Schema dump', content: 'the schema file is generated' })
+    ]
+  },
+  {
+    query: 'renderer must not import main process code',
+    expect: 'e-boundary',
+    facts: [
+      makeFact('e-boundary', {
+        title: 'Process boundary',
+        content: 'the renderer must not import main process code directly',
+        tier: 3
+      }),
+      makeFact('e-noise-boundary', { title: 'Renderer build', content: 'vite builds the renderer' })
+    ]
+  },
+  {
+    query: 'embedding model dimensions',
+    expect: 'e-dims',
+    facts: [
+      makeFact('e-dims', {
+        title: 'Embedding dimensions',
+        content: 'the embedding model produces 384 dimensions',
+        tier: 2
+      }),
+      makeFact('e-noise-dims', { title: 'Embedding queue', content: 'pending embeddings backfill' })
+    ]
+  },
+  {
+    query: 'what happens when the classifier is busy',
+    expect: 'e-classifier',
+    facts: [
+      makeFact('e-classifier', {
+        title: 'Classifier queue',
+        content: 'what happens when the classifier is busy is that writes queue',
+        tier: 2
+      }),
+      makeFact('e-noise-classifier', { title: 'Classifier model', content: 'a cheap local model' })
+    ]
+  },
+  {
+    query: 'capture caps per session',
+    expect: 'e-caps',
+    facts: [
+      makeFact('e-caps', {
+        title: 'Capture caps',
+        content: 'capture caps per session limit background writes to two facts',
+        tier: 2
+      }),
+      makeFact('e-noise-caps', { title: 'Session list', content: 'sessions are listed by date' })
+    ]
+  },
+  {
+    query: 'volatile facts update in place',
+    expect: 'e-volatile',
+    facts: [
+      makeFact('e-volatile', {
+        title: 'Volatile facts',
+        content: 'volatile facts update in place rather than accumulating',
+        tier: 3
+      }),
+      makeFact('e-noise-volatile', { title: 'Version numbers', content: 'versions change often' })
+    ]
+  },
+  {
+    query: 'scope paths restrict a fact to part of the tree',
+    expect: 'e-scope',
+    facts: [
+      makeFact('e-scope', {
+        title: 'Scope paths',
+        content: 'scope paths restrict a fact to part of the tree it governs',
+        tier: 2
+      }),
+      makeFact('e-noise-scope', { title: 'Path helpers', content: 'normalize path separators' })
+    ]
+  },
+  {
+    query: 'why is reflection opt in',
+    expect: 'e-reflection',
+    facts: [
+      makeFact('e-reflection', {
+        title: 'Reflection is opt-in',
+        content: 'why is reflection opt in because it spends money on a model',
+        tier: 2
+      }),
+      makeFact('e-noise-reflection', { title: 'Consolidation', content: 'decay and merge run idle' })
+    ]
+  },
+  {
+    query: 'contradiction resolution keeps the old fact',
+    expect: 'e-contra',
+    facts: [
+      makeFact('e-contra', {
+        title: 'Contradictions',
+        content: 'contradiction resolution keeps the old fact as superseded, never deleted',
+        tier: 3
+      }),
+      makeFact('e-noise-contra', { title: 'Conflict banner', content: 'the UI shows a banner' })
+    ]
+  },
+  {
+    query: 'bootstrap concurrency default value',
+    expect: 'e-concurrency',
+    facts: [
+      makeFact('e-concurrency', {
+        title: 'Bootstrap concurrency',
+        content: 'bootstrap concurrency default value is three parallel documents',
+        tier: 1
+      }),
+      makeFact('e-noise-concurrency', { title: 'Rate limits', content: 'the api rejects bursts' })
+    ]
   }
 ]
 
@@ -478,6 +715,185 @@ describe('retrieval eval set — RRF must not regress against legacy', () => {
       ftsByWs.delete(ws)
       vectorsByWs.delete(ws)
     }
+  })
+})
+
+// ── Embedding matrix cache ───────────────────────────────────────────
+
+/**
+ * `rankByVector` used to load every active fact *with its embedding BLOB* on
+ * every turn — order 10MB of reads and thousands of cosine computations per
+ * message — and then MMR re-read ~30 of the same vectors to diversify. These
+ * pin the snapshot behaviour that removed both.
+ */
+describe('embedding matrix cache', () => {
+  /**
+   * Run `body` with `findWithEmbeddings` counted and `getLastMutationAt`
+   * driven by `stamp`, so a test states cache invalidation directly.
+   *
+   * The cache is exercised through `getEmbeddingMatrix` / `rankByVector`
+   * rather than through `retrieve`, because the vector arm only runs when the
+   * local embedding provider is ready — which it never is under test. Going
+   * through `retrieve` would assert nothing at all.
+   *
+   * Exclusive: the harness runs async tests concurrently and this swaps
+   * methods on the shared repository singleton.
+   */
+  async function withCounters(
+    ws: string,
+    facts: Array<{ fact: MemoryFact; embedding: Float32Array }>,
+    body: (ctx: {
+      calls: () => number
+      asOfCalls: () => number
+      setStamp: (n: number) => void
+    }) => Promise<void>
+  ): Promise<void> {
+    return runExclusive(async () => {
+      const prevFind = memoryFactRepository.findWithEmbeddings
+      const prevMutation = memoryFactRepository.getLastMutationAt
+
+      let calls = 0
+      let asOfCalls = 0
+      let stamp = 1
+
+      memoryFactRepository.findWithEmbeddings = (id: string, asOf?: string) => {
+        if (id !== ws) return prevFind(id, asOf)
+        if (asOf) asOfCalls++
+        else calls++
+        return facts
+      }
+      memoryFactRepository.getLastMutationAt = (id: string) =>
+        id === ws ? stamp : prevMutation(id)
+
+      memoryRetrievalService.clearEmbeddingCache(ws)
+
+      try {
+        await body({
+          calls: () => calls,
+          asOfCalls: () => asOfCalls,
+          setStamp: (n) => (stamp = n)
+        })
+      } finally {
+        memoryFactRepository.findWithEmbeddings = prevFind
+        memoryFactRepository.getLastMutationAt = prevMutation
+        memoryRetrievalService.clearEmbeddingCache(ws)
+      }
+    })
+  }
+
+  /** The private vector arm, which is what actually consumes the snapshot. */
+  function rankByVector(ws: string, asOf?: string): MemoryFact[] {
+    return (memoryRetrievalService as any).rankByVector(ws, unitVec(0), undefined, asOf)
+  }
+
+  const corpus = (): Array<{ fact: MemoryFact; embedding: Float32Array }> => [
+    { fact: makeFact('f-c1', { title: 'caching rule' }), embedding: unitVec(0) },
+    { fact: makeFact('f-c2', { title: 'caching layers' }), embedding: unitVec(20) },
+    { fact: makeFact('f-c3', { title: 'unrelated billing' }), embedding: unitVec(80) }
+  ]
+
+  test('a second turn reuses the snapshot instead of re-reading every BLOB', async () => {
+    if (!loaded) return
+    await withCounters('ws-cache-reuse', corpus(), async ({ calls }) => {
+      const first = rankByVector('ws-cache-reuse')
+      assert.equal(calls(), 1, 'the first turn must actually load the corpus')
+      assert.ok(first.length > 0, 'and it must return the stubbed facts')
+
+      rankByVector('ws-cache-reuse')
+      assert.equal(calls(), 1, 'the second turn read nothing from the database')
+    })
+  })
+
+  test('a fact mutation invalidates the snapshot', async () => {
+    if (!loaded) return
+    await withCounters('ws-cache-invalidate', corpus(), async ({ calls, setStamp }) => {
+      rankByVector('ws-cache-invalidate')
+      assert.equal(calls(), 1)
+
+      // Something wrote a fact: getLastMutationAt moves, the snapshot is stale.
+      setStamp(2)
+      rankByVector('ws-cache-invalidate')
+      assert.equal(calls(), 2, 'a changed corpus must be reloaded')
+    })
+  })
+
+  test('MMR reuses the same snapshot rather than re-reading the page', async () => {
+    if (!loaded) return
+    await withCounters('ws-cache-mmr', corpus(), async ({ calls }) => {
+      let byIdCalls = 0
+      const prevByIds = memoryFactRepository.findEmbeddingsByIds
+      memoryFactRepository.findEmbeddingsByIds = (ids: string[]) => {
+        byIdCalls++
+        return prevByIds(ids)
+      }
+      try {
+        // Warm the snapshot the way a turn's vector arm would.
+        rankByVector('ws-cache-mmr')
+        assert.equal(calls(), 1)
+
+        const results = corpus().map(({ fact }, i) => ({ fact, score: 1 - i * 0.1 }))
+        const selected = (memoryRetrievalService as any).diversify(results, 2, 'ws-cache-mmr')
+
+        assert.equal(selected.length, 2)
+        assert.equal(byIdCalls, 0, 'MMR must not re-read vectors the vector arm just loaded')
+        assert.equal(calls(), 1, 'and it must not rebuild the snapshot either')
+      } finally {
+        memoryFactRepository.findEmbeddingsByIds = prevByIds
+      }
+    })
+  })
+
+  test('MMR still reads through for a fact the snapshot does not cover', async () => {
+    if (!loaded) return
+    await withCounters('ws-cache-mmr-miss', corpus(), async () => {
+      let requested: string[] = []
+      const prevByIds = memoryFactRepository.findEmbeddingsByIds
+      memoryFactRepository.findEmbeddingsByIds = (ids: string[]) => {
+        requested = ids
+        return new Map<string, Float32Array>()
+      }
+      try {
+        rankByVector('ws-cache-mmr-miss')
+
+        // 'f-newcomer' was written after the snapshot was taken.
+        const results = [
+          { fact: makeFact('f-c1'), score: 1 },
+          { fact: makeFact('f-newcomer'), score: 0.9 }
+        ]
+        ;(memoryRetrievalService as any).diversify(results, 2, 'ws-cache-mmr-miss')
+
+        assert.deepEqual(requested, ['f-newcomer'], 'only the uncovered fact is fetched')
+      } finally {
+        memoryFactRepository.findEmbeddingsByIds = prevByIds
+      }
+    })
+  })
+
+  test('clearEmbeddingCache forces a rebuild', async () => {
+    if (!loaded) return
+    await withCounters('ws-cache-clear', corpus(), async ({ calls }) => {
+      rankByVector('ws-cache-clear')
+      assert.equal(calls(), 1)
+
+      memoryRetrievalService.clearEmbeddingCache('ws-cache-clear')
+      rankByVector('ws-cache-clear')
+      assert.equal(calls(), 2)
+    })
+  })
+
+  test('a point-in-time query reads through and does not poison the snapshot', async () => {
+    if (!loaded) return
+    await withCounters('ws-cache-asof', corpus(), async ({ calls, asOfCalls }) => {
+      rankByVector('ws-cache-asof')
+      assert.equal(calls(), 1)
+
+      rankByVector('ws-cache-asof', '2026-01-01 00:00:00')
+      assert.equal(asOfCalls(), 1, 'asOf must not be answered from the current snapshot')
+
+      // And the current-view snapshot is still intact afterwards.
+      rankByVector('ws-cache-asof')
+      assert.equal(calls(), 1, 'the asOf read did not evict the current snapshot')
+    })
   })
 })
 

@@ -57,9 +57,19 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
  * (410 items ÷ the elapsed time of the 10 that really ran), and charging each
  * one a full EMA inflates the ETA. Both are projected through the observed
  * ratio of real work to settled items instead.
+ *
+ * The rate is measured against wall-clock time, not summed item durations:
+ * with a pool of N workers those durations overlap, so dividing by them would
+ * under-report the throughput N-fold and contradict the ETA displayed beside it.
+ *
+ * Exported for tests — nothing outside this module constructs one.
  */
-class Throughput {
+export class Throughput {
   private emaMs: number | null = null
+  /** Wall-clock start of this drain session — the rate's only honest denominator. */
+  private readonly startedAt: number
+  /** Injectable so the wall-clock rate can be asserted without real time passing. */
+  private readonly now: () => number
   /** Items that actually did work (not instant hash-gated skips). */
   private worked = 0
   /** Every item that left the queue, worked or skipped. */
@@ -68,6 +78,11 @@ class Throughput {
   private carriedMs = 0
   /** Active time accumulated in this process. */
   private sessionMs = 0
+
+  constructor(now: () => number = Date.now) {
+    this.now = now
+    this.startedAt = now()
+  }
 
   /** Seed the run's total elapsed time without polluting the rate estimate. */
   carry(ms: number): void {
@@ -93,8 +108,9 @@ class Throughput {
   }
 
   itemsPerMinute(): number | null {
-    if (this.sessionMs < 5000 || this.worked === 0) return null
-    return Math.round((this.worked / (this.sessionMs / 60_000)) * 10) / 10
+    const wallMs = this.now() - this.startedAt
+    if (wallMs < 5000 || this.worked === 0) return null
+    return Math.round((this.worked / (wallMs / 60_000)) * 10) / 10
   }
 }
 

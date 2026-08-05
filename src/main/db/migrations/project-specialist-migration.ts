@@ -62,7 +62,7 @@ function exportSpecialistsBackup(db: Database.Database): string | null {
     // Skip if the backup dir already contains a file for this migration.
     let userData: string
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
       userData = (require('electron') as typeof import('electron')).app.getPath('userData')
     } catch {
       // When running inside unit tests Electron's app is not available.

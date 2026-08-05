@@ -18,7 +18,6 @@
  */
 import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
-import { ChatPage } from './pages/chat-page'
 
 test.describe('New Conversation Modal', () => {
   async function ensureWorkspaceReady(

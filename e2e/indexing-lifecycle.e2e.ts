@@ -90,7 +90,7 @@ test.describe('Indexing & Embedding Lifecycle', () => {
 
     // Should show time estimate
     const estimateText = modal.getByText(/estimated|minutes|seconds/i)
-    const hasEstimate = await estimateText.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _hasEstimate = await estimateText.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // Should have confirm and cancel buttons
     const confirmBtn = modal.getByRole('button', { name: /start|confirm|index/i })

@@ -48,7 +48,8 @@ class AutofixPrService {
     if (!prNumber) {
       const branch = execSync('git rev-parse --abbrev-ref HEAD', {
         cwd: workspace.repoPath,
-        encoding: 'utf-8'
+        encoding: 'utf-8',
+        windowsHide: true
       }).trim()
 
       autofixLog.info(`[autofix-pr] Detecting PR for branch: ${branch}`)

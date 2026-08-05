@@ -225,7 +225,7 @@ export async function runCheckpointUntracked(ctx: E2EServiceContext): Promise<E2
       } else {
         // Fallback: manually clean
         const { execSync } = await import('child_process')
-        execSync('git clean -fd', { cwd: ctx.workspacePath, stdio: 'pipe' })
+        execSync('git clean -fd', { cwd: ctx.workspacePath, stdio: 'pipe', windowsHide: true })
         const fileGone = !existsSync(newFilePath)
         transcript.push(statusEntry(fileGone ? 'untracked_removed' : 'untracked_clean_failed'))
       }

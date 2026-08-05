@@ -26,6 +26,7 @@ import {
   formatInstructionSources,
   listWorkspaceFiles,
   readInstructionSource,
+  MAX_INSTRUCTION_LAYER_CHARS,
   type InstructionSource
 } from './instruction-sources.service'
 import { matchesAny } from './scope-matcher'
@@ -38,6 +39,21 @@ const MAX_INSTRUCTION_CACHE = 20
 
 /** Bound on rule files pulled in by user-configured globs. */
 const MAX_EXTRA_INSTRUCTION_FILES = 20
+
+/**
+ * Characters the instruction layer may spend, per budget tier.
+ *
+ * This layer is added to *every* prompt. On a repository with AGENTS.md, a
+ * `.cursor/rules/` directory and several nested CLAUDE.md files it happily
+ * reaches the full 12k (~3.4k tokens), which crowds out the actual
+ * conversation on a standard-tier turn. `full` keeps the old ceiling; the
+ * default tier gets a third of it.
+ */
+const INSTRUCTION_LAYER_BUDGET: Record<BudgetTier, number> = {
+  minimal: 0,
+  standard: 4_000,
+  full: MAX_INSTRUCTION_LAYER_CHARS
+}
 
 // ── Prompt Builder Types ──
 
@@ -237,7 +253,12 @@ export class PromptBuilder {
     // The minimal tier already assumes prior context carries the conventions.
     if (budgetTier === 'minimal') return ''
 
-    const cacheKey = `${workspacePath}::${extraGlobs?.join(',') ?? '*settings*'}`
+    const budget = INSTRUCTION_LAYER_BUDGET[budgetTier]
+
+    // The tier is part of the key: the layer is truncated to a tier-specific
+    // budget, so a cached `standard` layer must never be served to a `full`
+    // request (or the reverse, which would blow the budget it was capped for).
+    const cacheKey = `${workspacePath}::${budgetTier}::${extraGlobs?.join(',') ?? '*settings*'}`
     const cached = this.instructionCache.get(cacheKey)
     if (cached && Date.now() - cached.at < INSTRUCTION_CACHE_TTL_MS) return cached.layer
 
@@ -253,7 +274,17 @@ export class PromptBuilder {
         .filter((s) => s.path !== rootClaudeMd)
         .concat(this.readExtraInstructionSources(workspacePath, globs))
 
-      layer = formatInstructionSources(sources, workspacePath)
+      layer = formatInstructionSources(sources, workspacePath, budget)
+
+      // Logged because this cost is otherwise invisible: it is spent on every
+      // turn, and nobody attributes a slow chat to the rule files it silently
+      // prepends.
+      if (layer) {
+        log.debug(
+          `[prompt-builder] Instruction layer: ${layer.length}/${budget} chars ` +
+            `from ${sources.length} source(s) (tier=${budgetTier})`
+        )
+      }
     } catch (err) {
       log.debug('[prompt-builder] Instruction source discovery failed:', err)
       layer = ''

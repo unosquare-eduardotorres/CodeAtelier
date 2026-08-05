@@ -491,6 +491,69 @@ describe('listWorkspaceFiles', () => {
   })
 })
 
+// ── Walk bounds ─────────────────────────────────────────────────────
+
+/**
+ * Discovery runs on the prompt path behind a 60-second TTL, so the nested walk
+ * is bounded in work as well as depth — depth 4 of a monorepo is otherwise
+ * tens of thousands of stat calls per minute.
+ */
+describe('nested walk bounds', () => {
+  test('finds nested rule files within the depth limit', () => {
+    withRepo((root, write) => {
+      write('CLAUDE.md', '# root')
+      write(join('packages', 'api', 'CLAUDE.md'), '# api')
+      write(join('packages', 'api', 'src', 'AGENTS.md'), '# api src')
+
+      const refs = collectInstructionRefs(root)
+      const paths = refs.map((r) => r.path)
+      assert.ok(
+        paths.some((p) => p.endsWith(join('packages', 'api', 'CLAUDE.md'))),
+        'nested CLAUDE.md should be discovered'
+      )
+      assert.ok(
+        paths.some((p) => p.endsWith(join('packages', 'api', 'src', 'AGENTS.md'))),
+        'nested AGENTS.md should be discovered'
+      )
+    })
+  })
+
+  test('a wide tree does not stall discovery of the files that matter', () => {
+    withRepo((root, write) => {
+      write('CLAUDE.md', '# root')
+      write(join('pkg', 'CLAUDE.md'), '# pkg')
+
+      // A lot of uninteresting breadth alongside the real rule files.
+      for (let i = 0; i < 400; i++) {
+        write(join('noise', `dir${i}`, 'index.ts'), 'export {}')
+      }
+
+      const started = Date.now()
+      const refs = collectInstructionRefs(root)
+      const elapsed = Date.now() - started
+
+      assert.ok(
+        refs.some((r) => r.path.endsWith(join('pkg', 'CLAUDE.md'))),
+        'the real nested rule file is still found'
+      )
+      assert.ok(elapsed < 10_000, `discovery took ${elapsed}ms, expected to stay bounded`)
+    })
+  })
+
+  test('ignored directories are not descended into', () => {
+    withRepo((root, write) => {
+      write('CLAUDE.md', '# root')
+      write(join('node_modules', 'dep', 'CLAUDE.md'), '# should not be found')
+
+      const refs = collectInstructionRefs(root)
+      assert.ok(
+        !refs.some((r) => r.path.includes('node_modules')),
+        'node_modules must never contribute instructions'
+      )
+    })
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

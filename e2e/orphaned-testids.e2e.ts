@@ -181,7 +181,7 @@ test.describe('Orphaned TestID Coverage', () => {
     // Sidebar visibility should change (collapsed/expanded)
     if (sidebarVisibleBefore) {
       // After collapse, sidebar might be hidden or narrowed
-      const sidebarAfter = await sidebar.isVisible({ timeout: 2_000 }).catch(() => false)
+      const _sidebarAfter = await sidebar.isVisible({ timeout: 2_000 }).catch(() => false)
       // Either hidden or CSS class changed
       expect(true).toBeTruthy() // The button click succeeded
     }

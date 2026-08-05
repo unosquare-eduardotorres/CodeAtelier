@@ -294,7 +294,7 @@ export class AgentExecutorFactory {
     // The `claude` CLI controls its auto-compact window via env vars, not argv
     // flags. Without this, 1M models use the (smaller) model-default window —
     // inflating the context badge and triggering premature auto-compact.
-    const compactionEnv = resolveClaudeCompactionEnv(supports1M, effectiveContextWindow)
+    const compactionEnv = resolveClaudeCompactionEnv(effectiveContextWindow)
 
     // WRONG-EXECUTOR-03: Use the resolved per-conversation executor when provided,
     // not the cliExecutor getter which goes through _lastActiveConversationId.

@@ -99,6 +99,50 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
     return row?.created_at
   }
 
+  /**
+   * Scan a workspace's messages for embedded ```plan blocks, newest first.
+   *
+   * Used by the recall MCP server: the `plans` registry is frequently empty,
+   * but the plan text always survives in the message that rendered it.
+   * Selects only the columns needed so a workspace-wide scan never pulls
+   * tool_activities_json (which can be megabytes) into memory.
+   */
+  findPlanBlockMessages(
+    workspaceId: string,
+    limit = 50
+  ): Array<{
+    id: string
+    conversationId: string
+    conversationTitle: string | null
+    createdAt: string
+    contentMd: string
+  }> {
+    const rows = this.db()
+      .prepare(
+        `SELECT m.id, m.conversation_id, c.title AS conversation_title,
+                m.created_at, m.content_md
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.workspace_id = ? AND m.content_md LIKE '%' || ? || 'plan%'
+         ORDER BY m.created_at DESC
+         LIMIT ?`
+      )
+      .all(workspaceId, '```', limit) as Array<{
+      id: string
+      conversation_id: string
+      conversation_title: string | null
+      created_at: string
+      content_md: string
+    }>
+    return rows.map((row) => ({
+      id: row.id,
+      conversationId: row.conversation_id,
+      conversationTitle: row.conversation_title ?? null,
+      createdAt: row.created_at,
+      contentMd: row.content_md
+    }))
+  }
+
   findById(id: string): Message | undefined {
     const db = this.db()
     const stmt = db.prepare('SELECT * FROM messages WHERE id = ?')

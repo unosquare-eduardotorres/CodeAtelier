@@ -87,7 +87,7 @@ describe('resolveAssignment', () => {
 
   test('default_config_for_known_action', () => {
     const result = resolveAssignment({ action: 'specialist:build' })
-    assert.equal(result.modelId, 'claude-sonnet-5')
+    assert.equal(result.modelId, 'claude-opus-5')
     assert.equal(result.source, 'default')
     assert.equal(result.provider, 'claude')
   })

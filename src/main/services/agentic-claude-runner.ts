@@ -223,7 +223,8 @@ function spawnClaudeProcess(opts: SpawnOptions): Promise<AgenticRunnerResult> {
     const child: ChildProcess = spawn('claude', args, {
       cwd: workspacePath,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env
+      env,
+      windowsHide: true
     })
 
     runnerLog.info(`[runAgenticClaude] Spawned claude (model=${model}, maxTurns=${maxTurns}, allowedTools=${allowedTools.length})`)

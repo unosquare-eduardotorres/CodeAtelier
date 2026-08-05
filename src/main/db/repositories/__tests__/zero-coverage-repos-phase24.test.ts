@@ -36,7 +36,7 @@ if (!env) {
       test('createFact creates a fact and returns it', () => {
         const fact = memoryFactRepo.createFact({
           workspaceId: wsId,
-          category: 'architecture',
+          category: 'convention',
           title: 'Test Fact',
           content: 'This is a test fact for coverage.',
           tags: ['test', 'phase24'],
@@ -46,14 +46,14 @@ if (!env) {
         assert.ok(fact.id, 'Should have an id')
         assert.equal(fact.title, 'Test Fact')
         assert.equal(fact.content, 'This is a test fact for coverage.')
-        assert.equal(fact.category, 'architecture')
+        assert.equal(fact.category, 'convention')
       })
 
       test('search returns matching facts', () => {
         // Create a fact to search for
         memoryFactRepo.createFact({
           workspaceId: wsId,
-          category: 'testing',
+          category: 'reference',
           title: 'Search Target',
           content: 'Unique search target content for phase24',
           tags: ['searchtest'],
@@ -68,7 +68,7 @@ if (!env) {
       test('updateFact updates title and content', () => {
         const fact = memoryFactRepo.createFact({
           workspaceId: wsId,
-          category: 'architecture',
+          category: 'convention',
           title: 'Old Title',
           content: 'Old content',
           tags: [],
@@ -89,7 +89,7 @@ if (!env) {
       test('archiveFact marks fact as archived', () => {
         const fact = memoryFactRepo.createFact({
           workspaceId: wsId,
-          category: 'testing',
+          category: 'reference',
           title: 'To Archive',
           content: 'This will be archived',
           tags: [],
@@ -211,7 +211,9 @@ if (!env) {
   let e2eRunRepo: any = null
   try {
     e2eRunRepo = require('../../repositories').e2eTestRunRepository
-  } catch {}
+  } catch {
+    // Repository unavailable in this environment — the suite below is skipped.
+  }
 
   if (e2eRunRepo) {
     describe('e2e-test-run.repository — supplementary', () => {

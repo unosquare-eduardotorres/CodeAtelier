@@ -32,6 +32,7 @@ export default defineConfig({
             'src/main/mcp-servers/github-context-server.ts'
           ),
           'mcp-servers/memory-server': resolve('src/main/mcp-servers/memory-server.ts'),
+          'mcp-servers/recall-server': resolve('src/main/mcp-servers/recall-server.ts'),
           'mcp-servers/process-manager-server': resolve(
             'src/main/mcp-servers/process-manager-server.ts'
           )

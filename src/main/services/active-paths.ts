@@ -69,7 +69,8 @@ export function gitChangedPaths(workspacePath: string): string[] {
       cwd: workspacePath,
       encoding: 'utf-8',
       timeout: GIT_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024
+      maxBuffer: 1024 * 1024,
+      windowsHide: true
     })
     paths = parsePorcelain(output)
   } catch {

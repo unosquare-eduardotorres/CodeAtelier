@@ -10,6 +10,7 @@
 
 import type { ContextWindowTier } from './context-management'
 import { TIER_LIMITS } from './context-management'
+import { COMPACTION_RATIOS, AUTO_TO_CRITICAL_MULTIPLIER } from '../../shared/constants'
 
 // ── Compaction band classification ──────────────────────────────────────
 
@@ -47,7 +48,8 @@ export interface ClassifyCompactionResult {
  *   [0, 0.8·S)   → no event (resets debounce state)
  *   [0.8·S, S)   → `warning` (only while not already suggesting)
  *   [S, A)       → `suggest`, debounced: re-fires at most once every 3 turns
- *   [A, ∞)       → `auto-compact-pending` if auto-compact on, else `critical`
+ *   [A, C)       → `auto-compact-pending` if auto-compact on, else `critical`
+ *   [C, ∞)       → `critical` always, where C = A × AUTO_TO_CRITICAL_MULTIPLIER
  */
 export function classifyCompaction(input: ClassifyCompactionInput): ClassifyCompactionResult {
   const {
@@ -66,6 +68,19 @@ export function classifyCompaction(input: ClassifyCompactionInput): ClassifyComp
     level: null,
     nextSuggested: compactSuggested,
     nextTurns: turnsSinceCompactSuggestion
+  }
+
+  const criticalCeiling = autoThreshold * AUTO_TO_CRITICAL_MULTIPLIER
+
+  // Above the ceiling the CLI has had its chance and not acted — always surface
+  // the modal, even when auto-compact reports as enabled. Guards against the
+  // CLI ignoring CLAUDE_AUTOCOMPACT_PCT_OVERRIDE (older claude-code builds).
+  if (inputTokens >= criticalCeiling) {
+    return {
+      level: 'critical',
+      nextSuggested: compactSuggested,
+      nextTurns: turnsSinceCompactSuggestion
+    }
   }
 
   if (inputTokens >= autoThreshold) {
@@ -112,14 +127,12 @@ export interface CompactionThresholds {
 
 /**
  * Default app-level nudge thresholds derived from a Claude effective window.
- * 1M windows get later thresholds (0.7 / 0.85); ≤200K windows fire earlier
- * (0.6 / 0.75) since the absolute headroom is smaller.
+ * Uniform 0.6 / 0.75 ratios for every window size — see COMPACTION_RATIOS.
  */
 export function resolveCompactionThresholds(effectiveContextWindow: number): CompactionThresholds {
-  const isSmallWindow = effectiveContextWindow <= 200_000
   return {
-    suggest: Math.round(effectiveContextWindow * (isSmallWindow ? 0.6 : 0.7)),
-    auto: Math.round(effectiveContextWindow * (isSmallWindow ? 0.75 : 0.85))
+    suggest: Math.round(effectiveContextWindow * COMPACTION_RATIOS.suggest),
+    auto: Math.round(effectiveContextWindow * COMPACTION_RATIOS.auto)
   }
 }
 
@@ -167,25 +180,23 @@ export function resolveAppliedThresholds(
  *   - CLAUDE_CODE_AUTO_COMPACT_WINDOW = the effective window. 1M-capable models
  *     MUST set 1000000 here or the CLI uses its (smaller) model-default window,
  *     which inflates the context badge and triggers premature compaction.
- *   - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = 80 for ≤200K models, so auto-compact
- *     fires at ~80% of the usable window (~128-152K) rather than the
- *     usable-13K default. Honoured by claude-code ≥ 2.1.x.
+ *   - CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = COMPACTION_RATIOS.auto × 100, applied to
+ *     ALL models including 1M. Without it the CLI uses its `usable - 13K`
+ *     default (~98% of the window), leaving a large gap where the app has
+ *     stopped nudging but the CLI has not yet compacted. Honoured by
+ *     claude-code ≥ 2.1.x.
  *
  * Env vars only take effect at process spawn; on continueSession turns the
  * process is already running, so they're a no-op there (still returned for a
  * consistent option shape and testability).
  */
 export function resolveClaudeCompactionEnv(
-  supports1M: boolean,
   effectiveContextWindow: number
 ): Record<string, string> {
-  const env: Record<string, string> = {
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(effectiveContextWindow)
+  return {
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(effectiveContextWindow),
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(COMPACTION_RATIOS.auto * 100)
   }
-  if (!supports1M) {
-    env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '80'
-  }
-  return env
 }
 
 /**

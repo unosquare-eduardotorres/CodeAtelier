@@ -188,7 +188,7 @@ export default function BranchPicker({
       {/* Hint about workspace default */}
       {gitAutoBranch && mode === 'none' && (
         <p className="text-xs text-text-muted mt-1.5 ml-0.5">
-          Workspace has auto-branch enabled — override it here or leave as "No branch"
+          Workspace has auto-branch enabled — override it here or leave as &quot;No branch&quot;
         </p>
       )}
     </div>

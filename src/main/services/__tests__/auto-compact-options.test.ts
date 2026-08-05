@@ -89,23 +89,23 @@ function buildWith(
 }
 
 describe('buildCLIExecuteOptions — new-spawn path', () => {
-  test('1M model: auto-compact, full window, 1M beta, env window=1000000, no pct override', () => {
+  test('1M model: auto-compact, full window, 1M beta, env window=1000000, pct override=75', () => {
     const opts = buildWith('claude-opus-4-8', makeHost({ alive: false }), baseParams())
     assert.equal(opts.autoCompactEnabled, true)
     assert.equal(opts.continueSession, false)
     assert.equal(opts.contextWindowSize, 1_000_000)
     assert.ok(opts.betas?.includes(CONTEXT_1M_BETA), '1M beta should be present')
     assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
-    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined)
+    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 
-  test('200K model: auto-compact, window=160000, no 1M beta, pct override=80', () => {
+  test('200K model: auto-compact, window=160000, no 1M beta, pct override=75', () => {
     const opts = buildWith('claude-haiku-4-5', makeHost({ alive: false }), baseParams())
     assert.equal(opts.autoCompactEnabled, true)
     assert.equal(opts.contextWindowSize, 160_000)
     assert.equal(opts.betas, undefined, '200K model should not request the 1M beta')
     assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000')
-    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80')
+    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 })
 
@@ -120,6 +120,7 @@ describe('buildCLIExecuteOptions — continueSession fast path', () => {
     assert.equal(opts.autoCompactEnabled, true)
     assert.equal(opts.contextWindowSize, 1_000_000)
     assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
+    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 
   test('200K model on fast path shrinks window and sets pct override', () => {
@@ -130,7 +131,7 @@ describe('buildCLIExecuteOptions — continueSession fast path', () => {
     )
     assert.equal(opts.continueSession, true)
     assert.equal(opts.contextWindowSize, 160_000)
-    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80')
+    assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 })
 

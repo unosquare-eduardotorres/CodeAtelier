@@ -349,7 +349,7 @@ test.describe('Chat Sidebar — CRUD Operations', () => {
   test('new chat button creates a new conversation in sidebar', async ({
     electronPage: page
   }) => {
-    const { chat } = await ensureChatVisible(page)
+    await ensureChatVisible(page)
     await ensureSidebarExpanded(page)
 
     const beforeCount = await getConversationCount(page)

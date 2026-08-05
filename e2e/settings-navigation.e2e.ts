@@ -10,7 +10,6 @@
  * Uses CDP fixture (Electron 41+ compatible).
  */
 import { test, expect } from './helpers/electron-fixture'
-import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 

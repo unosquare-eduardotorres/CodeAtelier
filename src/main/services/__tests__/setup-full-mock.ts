@@ -325,7 +325,9 @@ function createOpencodeSdkMock(): any {
     createClient: createSpy(() => ({
       session: {
         create: createSpy(async () => ({ id: 'mock-session-id' })),
-        prompt: createSpy(async function* () {}),
+        prompt: createSpy(async function* () {
+          /* no-op: yields no events by default */
+        }),
         cancel: createSpy(async () => {}),
         list: createSpy(async () => [])
       },

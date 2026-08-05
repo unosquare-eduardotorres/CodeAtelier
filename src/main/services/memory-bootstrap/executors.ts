@@ -17,6 +17,7 @@ import type {
   BootstrapScope
 } from '../../../shared/types'
 import { memoryExtractionService } from '../memory-extraction.service'
+import type { ExtractContentOptions } from '../memory-extraction.service'
 import { memoryEngineService } from '../memory-engine.service'
 import { memoryFactRepository } from '../../db/repositories/memory-fact.repository'
 import { codeGraphService } from '../code-graph.service'
@@ -72,6 +73,29 @@ export interface ExecResult {
   error?: string
 }
 
+/**
+ * Every bootstrap extraction runs under the run's cancel signal and reports the
+ * extractor's own status. Centralised because a call site that forgets the
+ * signal keeps retrying — and keeps spending the user's tokens — for ~14s after
+ * they hit Cancel, and a call site that forgets onProgress makes a rate-limit
+ * backoff look like a freeze.
+ */
+function runExtraction(
+  ctx: ExecContext,
+  sourceRef: string,
+  content: string,
+  opts: Omit<ExtractContentOptions, 'signal'>
+): Promise<number> {
+  return memoryExtractionService.extractFromContent(
+    ctx.workspaceId,
+    ctx.workspacePath,
+    sourceRef,
+    content,
+    (p) => ctx.onMessage(p.message),
+    { ...opts, signal: ctx.signal }
+  )
+}
+
 // ── Docs / architecture files ───────────────────────────────────────────────
 
 /**
@@ -118,14 +142,18 @@ async function executeFile(ctx: ExecContext, tag: string): Promise<ExecResult> {
   // 15-year-old repository is very often not today. Recency scoring reads this.
   const observedAt = fileObservedAt(absPath)
 
-  const extractOpts = instructionFormat
+  const extractOpts: Omit<ExtractContentOptions, 'signal'> = instructionFormat
     ? {
-        sourceType: 'claude-md' as const,
+        sourceType: 'claude-md',
         tags: ['bootstrap', 'instructions', instructionFormat],
         scopePaths: instructionScopePaths(workspacePath, absPath, readResult.content),
         observedAt
       }
-    : { sourceType: 'bootstrap' as const, tags: ['bootstrap', tag], observedAt }
+    : {
+        sourceType: 'bootstrap',
+        tags: ['bootstrap', tag],
+        observedAt
+      }
 
   // Resume mid-file only when the content is byte-identical to what produced
   // the recorded chunk offset. If the file changed under us, the old offset
@@ -155,14 +183,10 @@ async function executeFile(ctx: ExecContext, tag: string): Promise<ExecResult> {
         ? `[Context: ${chunk.breadcrumb}]\n\n${chunk.content}`
         : chunk.content
 
-      facts += await memoryExtractionService.extractFromContent(
-        workspaceId,
-        workspacePath,
-        relPath,
-        contentWithContext,
-        undefined,
-        extractOpts
-      )
+      // A rate-limit backoff can hold a chunk for ~14s. runExtraction forwards
+      // the extractor's own status, so the panel says why rather than freezing
+      // on "chunk 3/12". The file name is already on the item line.
+      facts += await runExtraction(ctx, relPath, contentWithContext, extractOpts)
     } catch (err) {
       chunkErrors++
       exLog.warn(`[executeFile] Chunk ${i} failed for ${relPath}:`, err)
@@ -197,14 +221,10 @@ async function executeManifests(ctx: ExecContext): Promise<ExecResult> {
     return { facts: 0, status: 'skipped', error: 'no manifest files found' }
   }
 
-  const facts = await memoryExtractionService.extractFromContent(
-    ctx.workspaceId,
-    ctx.workspacePath,
-    'project-manifests',
-    content,
-    undefined,
-    { sourceType: 'bootstrap', tags: ['bootstrap', 'stack'] }
-  )
+  const facts = await runExtraction(ctx, 'project-manifests', content, {
+    sourceType: 'bootstrap',
+    tags: ['bootstrap', 'stack']
+  })
   return { facts, status: 'done' }
 }
 
@@ -268,7 +288,8 @@ async function executeCommits(ctx: ExecContext): Promise<ExecResult> {
       cwd: ctx.workspacePath,
       encoding: 'utf-8',
       timeout: 15_000,
-      maxBuffer: 2 * 1024 * 1024
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
     }).trim()
   } catch {
     return { facts: 0, status: 'skipped', error: 'not a git repo' }
@@ -276,12 +297,10 @@ async function executeCommits(ctx: ExecContext): Promise<ExecResult> {
 
   if (commitLog.length < 50) return { facts: 0, status: 'skipped' }
 
-  const facts = await memoryExtractionService.extractFromContent(
-    ctx.workspaceId,
-    ctx.workspacePath,
+  const facts = await runExtraction(
+    ctx,
     'recent-commits',
     `## Recent git commit messages and bodies:\n\n${commitLog.substring(0, 30000)}`,
-    undefined,
     {
       sourceType: 'commit',
       tags: ['bootstrap', 'history'],
@@ -307,7 +326,8 @@ function latestCommitDate(workspacePath: string): string | null {
     const out = execSync('git log -1 --format=%aI', {
       cwd: workspacePath,
       encoding: 'utf-8',
-      timeout: 5000
+      timeout: 5000,
+      windowsHide: true
     }).trim()
     return out || null
   } catch {

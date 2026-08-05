@@ -28,7 +28,7 @@ test.describe('Grill Evaluation', () => {
    */
   async function navigateToIdeas(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
-    const chrome = new AppChrome(page)
+    const _chrome = new AppChrome(page)
     const settings = new WorkspaceSettings(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()

@@ -131,6 +131,7 @@ describe('Plan-Tool-Recovery Timeout Watchdog', () => {
     // using a short timeout (50ms) and a never-yielding iterator
     const TIMEOUT_MS = 50
 
+    // eslint-disable-next-line require-yield -- deliberately never yields; it models a hung executor
     async function* neverYield(): AsyncGenerator<{ type: string }> {
       // Simulate a hanging executor — never yields, never returns
       await new Promise(() => {}) // hangs forever

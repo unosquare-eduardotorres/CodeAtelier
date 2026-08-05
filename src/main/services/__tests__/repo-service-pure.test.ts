@@ -9,13 +9,16 @@ import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 import {
+  assertNotOptionLike,
   assertWithinRepo,
   buildRefDiffArgs,
   changeTypeForStatus,
+  expandRenamePaths,
   isMissingPathError,
   gitlinkSideContent,
   isGitlinkEntry,
   isZeroSha,
+  mergeStatusEntries,
   mergeUntrackedIntoRefDiff,
   parseNameStatusZ,
   parseRawDiffEntry,
@@ -481,6 +484,131 @@ describe('mergeUntrackedIntoRefDiff', () => {
     const input = [...tracked]
     mergeUntrackedIntoRefDiff(input, ['x.ts'])
     assert.equal(input.length, 2)
+  })
+})
+
+describe('mergeStatusEntries', () => {
+  test('a_rename_with_an_edit_collapses_and_keeps_its_old_path', () => {
+    // simple-git reports `RM` in BOTH status.modified and status.renamed. Two rows
+    // survived, and the store's files.find() took the first — the one with no
+    // oldPath — so the rename rendered as a 100% addition all over again.
+    const merged = mergeStatusEntries([
+      { filePath: 'b.ts', changeType: 'modified', staged: false },
+      { filePath: 'b.ts', changeType: 'modified', staged: false, oldPath: 'a.ts' }
+    ])
+    assert.equal(merged.length, 1)
+    assert.equal(merged[0].oldPath, 'a.ts')
+    assert.equal(merged[0].changeType, 'modified')
+  })
+
+  test('an_added_then_edited_file_is_created_not_modified', () => {
+    // `AM` lands in both created and modified — badging it 'M' claims a HEAD side
+    // that does not exist.
+    const merged = mergeStatusEntries([
+      { filePath: 'new.ts', changeType: 'modified', staged: false },
+      { filePath: 'new.ts', changeType: 'created', staged: true }
+    ])
+    assert.equal(merged.length, 1)
+    assert.equal(merged[0].changeType, 'created')
+  })
+
+  test('staged_is_ored_across_the_duplicates', () => {
+    const merged = mergeStatusEntries([
+      { filePath: 'x.ts', changeType: 'modified', staged: false },
+      { filePath: 'x.ts', changeType: 'modified', staged: true, oldPath: 'y.ts' }
+    ])
+    assert.equal(merged[0].staged, true)
+  })
+
+  test('first_insertion_keeps_its_position', () => {
+    const merged = mergeStatusEntries([
+      { filePath: 'a.ts', changeType: 'modified', staged: false },
+      { filePath: 'b.ts', changeType: 'modified', staged: false },
+      { filePath: 'a.ts', changeType: 'modified', staged: false, oldPath: 'old-a.ts' }
+    ])
+    assert.deepEqual(
+      merged.map((e) => e.filePath),
+      ['a.ts', 'b.ts']
+    )
+  })
+
+  test('distinct_paths_pass_through_untouched', () => {
+    const input = [
+      { filePath: 'a.ts', changeType: 'modified' as const, staged: false },
+      { filePath: 'b.ts', changeType: 'deleted' as const, staged: true }
+    ]
+    assert.deepEqual(mergeStatusEntries(input), input)
+  })
+
+  test('does_not_mutate_the_input_entries', () => {
+    const first = { filePath: 'a.ts', changeType: 'modified' as const, staged: false }
+    mergeStatusEntries([first, { filePath: 'a.ts', changeType: 'created', staged: true }])
+    assert.equal(first.changeType, 'modified')
+    assert.equal(first.staged, false)
+  })
+})
+
+describe('assertNotOptionLike', () => {
+  test('a_flag_shaped_path_is_rejected_before_it_reaches_git', () => {
+    // '-A' passes assertWithinRepo (it resolves to <repo>/-A, escaping nothing)
+    // and would reach `git add -A`, staging the whole tree.
+    assert.throws(() => assertNotOptionLike('-A'), /must not start with/)
+  })
+
+  test('long_options_are_rejected_too', () => {
+    assert.throws(() => assertNotOptionLike('--all'), /must not start with/)
+  })
+
+  test('ordinary_paths_pass', () => {
+    assertNotOptionLike('src/app.ts')
+    assertNotOptionLike('weird-name.ts')
+    assertNotOptionLike('dir/-leading-dash-inside.ts')
+  })
+})
+
+describe('expandRenamePaths', () => {
+  test('committing_a_rename_destination_pulls_in_its_source', () => {
+    // Without the source, `git commit b.ts` ships BOTH files and leaves the
+    // staged deletion of a.ts behind.
+    assert.deepEqual(expandRenamePaths(['b.ts'], [{ from: 'a.ts', to: 'b.ts' }]), ['b.ts', 'a.ts'])
+  })
+
+  test('renames_not_being_committed_are_left_alone', () => {
+    assert.deepEqual(expandRenamePaths(['x.ts'], [{ from: 'a.ts', to: 'b.ts' }]), ['x.ts'])
+  })
+
+  test('no_renames_is_a_pass_through', () => {
+    assert.deepEqual(expandRenamePaths(['a.ts', 'b.ts'], []), ['a.ts', 'b.ts'])
+  })
+
+  test('a_source_already_requested_is_not_duplicated', () => {
+    assert.deepEqual(expandRenamePaths(['b.ts', 'a.ts'], [{ from: 'a.ts', to: 'b.ts' }]), [
+      'b.ts',
+      'a.ts'
+    ])
+  })
+
+  test('duplicate_input_paths_collapse', () => {
+    assert.deepEqual(expandRenamePaths(['a.ts', 'a.ts'], []), ['a.ts'])
+  })
+
+  test('several_renames_each_contribute_their_source_in_order', () => {
+    assert.deepEqual(
+      expandRenamePaths(
+        ['b.ts', 'd.ts'],
+        [
+          { from: 'a.ts', to: 'b.ts' },
+          { from: 'c.ts', to: 'd.ts' }
+        ]
+      ),
+      ['b.ts', 'd.ts', 'a.ts', 'c.ts']
+    )
+  })
+
+  test('does_not_mutate_the_caller_array', () => {
+    const input = ['b.ts']
+    expandRenamePaths(input, [{ from: 'a.ts', to: 'b.ts' }])
+    assert.deepEqual(input, ['b.ts'])
   })
 })
 

@@ -1162,6 +1162,16 @@ export interface MemoryCaptureSettings {
    */
   reflectionEnabled: boolean
   /**
+   * Mirror the fact database to `.agentstudio/memory/*.md` after a Feed Brain
+   * run, so the result is reviewable in a diff rather than only in the app.
+   *
+   * Defaults to OFF because it writes files into the user's working tree. Left
+   * on unconditionally it produces untracked files with no warning, which then
+   * show up in `git status` — and in at least one release PR. Turning it on is
+   * a deliberate choice about whether `.agentstudio/` is committed or ignored.
+   */
+  projectionEnabled: boolean
+  /**
    * Documents extracted in parallel during Feed Brain. Each one is a Claude CLI
    * spawn, so raising this is the main throughput lever — and the main way to
    * hit an API rate limit. Range 1–6, default 3.

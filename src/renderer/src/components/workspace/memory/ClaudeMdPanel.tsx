@@ -243,7 +243,9 @@ export default function ClaudeMdPanel(): React.JSX.Element {
         <div className="text-center py-16 text-text-muted border border-border-default border-dashed rounded-lg">
           <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
           <p className="text-sm">No CLAUDE.md exists in this workspace</p>
-          <p className="text-xs mt-1">Click "Regenerate CLAUDE.md" to create one from your memories</p>
+          <p className="text-xs mt-1">
+            Click &quot;Regenerate CLAUDE.md&quot; to create one from your memories
+          </p>
         </div>
       )}
 

@@ -167,7 +167,7 @@ test.describe('Message Rendering', () => {
 
     // Look for action buttons that appear on hover
     const copyBtn = lastMessage.locator('button[aria-label*="opy"], button[title*="opy"]')
-    const retryBtn = lastMessage.locator('button[aria-label*="etry"], button[title*="etry"]')
+    const _retryBtn = lastMessage.locator('button[aria-label*="etry"], button[title*="etry"]')
     const anyActions = lastMessage.locator('button')
 
     // At least some action buttons should appear on hover

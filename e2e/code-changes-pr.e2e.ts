@@ -145,7 +145,7 @@ test.describe('Code Changes & PR', () => {
     if (!hasSelectAll) { test.skip(); return }
 
     // Click select all to toggle
-    const initialText = await selectAllBtn.textContent()
+    const _initialText = await selectAllBtn.textContent()
     await selectAllBtn.click()
     await page.waitForTimeout(500)
 

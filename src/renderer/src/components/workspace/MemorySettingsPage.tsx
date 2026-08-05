@@ -23,7 +23,8 @@ import {
   IngestDocuments,
   GraphView,
   BootstrapKnowledge,
-  ClaudeMdPanel
+  ClaudeMdPanel,
+  ReflectionReview
 } from './memory'
 import type {
   MemoryEmbeddingStatus,
@@ -242,6 +243,15 @@ export default function MemorySettingsPage(): React.JSX.Element {
             onFeedDocument={handleFeedDocument}
             onUpdateSettings={updateCaptureSettings}
             workspaceId={workspaceId}
+            workspacePath={activeWorkspace?.repoPath ?? ''}
+          />
+
+          <div className="border-t border-border-default" />
+
+          <ReflectionReview
+            workspaceId={workspaceId}
+            workspacePath={activeWorkspace?.repoPath ?? ''}
+            enabled={captureSettings?.reflectionEnabled ?? false}
           />
         </div>
       )}

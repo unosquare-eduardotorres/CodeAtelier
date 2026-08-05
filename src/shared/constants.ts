@@ -972,6 +972,31 @@ export const CLAUDE_DEFAULT_CONTEXT_WINDOW = 200_000
 export const CLAUDE_1M_CONTEXT_WINDOW = 1_000_000
 
 /**
+ * Context-compaction band ratios, as a fraction of the effective context window.
+ * Uniform across all Claude window sizes (200K and 1M) — attention degrades on
+ * proportion of window filled, not absolute token count, so a 1M model at 85%
+ * is no healthier than a 200K model at 85%.
+ *
+ * Consumed by compaction-policy.ts (thresholds + CLI env), ipc/context-usage-level.ts
+ * (badge colour), and the renderer's processContextUsageUpdate. Keep them in sync
+ * by importing from here — do NOT re-hardcode.
+ */
+export const COMPACTION_RATIOS = {
+  /** Badge turns yellow. Matches classifyCompaction's internal 0.8 × suggest. */
+  warn: 0.48,
+  /** Modal offers Extract Nuance / Quick Compact. */
+  suggest: 0.6,
+  /** App auto band + the CLI's own auto-compact trigger. */
+  auto: 0.75,
+  /** Safety net: CLI demonstrably failed to compact — force the modal. */
+  critical: 0.9
+} as const
+
+/** critical ÷ auto — lets classifyCompaction derive the ceiling without new state. */
+export const AUTO_TO_CRITICAL_MULTIPLIER =
+  COMPACTION_RATIOS.critical / COMPACTION_RATIOS.auto // 1.2
+
+/**
  * Check whether a model supports 1M context.
  * Matches exact IDs from CONTEXT_1M_SUPPORTED_MODELS, any `claude-sonnet-*` prefix,
  * or Opus 4.8+ (native 1M at standard pricing).
@@ -1912,6 +1937,11 @@ export const MCP_TOOLS = {
     MEMORY_RECORD: mcpTool('memory', 'memory_record', 'Memory · memory_record'),
     MEMORY_FLAG: mcpTool('memory', 'memory_flag', 'Memory · memory_flag')
   }),
+  RECALL: mcpServer('recall', {
+    RECALL_PLANS: mcpTool('recall', 'recall_plans', 'Recall · recall_plans'),
+    RECALL_PLAN: mcpTool('recall', 'recall_plan', 'Recall · recall_plan'),
+    RECALL_CONVERSATION: mcpTool('recall', 'recall_conversation', 'Recall · recall_conversation')
+  }),
   PROCESS_MANAGER: mcpServer('process-manager', {
     RUN_BACKGROUND: mcpTool('process-manager', 'run_background', 'Process · run_background'),
     CHECK_PROCESS: mcpTool('process-manager', 'check_process', 'Process · check_process'),
@@ -2006,6 +2036,16 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
     icon: 'BarChart3',
     tokenImpact: 'low',
     toolCount: 8,
+    featureFlagKey: null,
+    defaultEnabled: true
+  },
+  {
+    id: 'recall',
+    displayName: 'Recall',
+    description: 'Search past plans and the conversation around them',
+    icon: 'History',
+    tokenImpact: 'low',
+    toolCount: 3,
     featureFlagKey: null,
     defaultEnabled: true
   }

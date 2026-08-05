@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
 import { useWorkspaceStore } from './workspace.store'
+import { bootstrapSnapshotPatch } from './memory-store-utils'
 import type {
   MemoryFact,
   MemoryContradiction,
@@ -544,17 +545,20 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   loadBootstrapSnapshot: async (workspaceId) => {
     try {
       const snap = await window.api.memoryBootstrapSnapshot({ workspaceId })
-      set({
-        bootstrapLatestRun: snap.latestRun,
-        bootstrapResumableRunId: snap.resumableRunId
-      })
+
       if (snap.progress) {
         const { bootstrapByWorkspace } = useMemoryStore.getState()
         set({
-          bootstrap: snap.progress,
           bootstrapByWorkspace: { ...bootstrapByWorkspace, [workspaceId]: snap.progress }
         })
       }
+
+      // The page-level fields only ever describe the workspace on screen, and
+      // `bootstrap` is cleared when that workspace has no live run — see
+      // bootstrapSnapshotPatch.
+      const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id ?? null
+      const patch = bootstrapSnapshotPatch(snap, workspaceId, viewedWsId)
+      if (patch) set(patch)
     } catch (error) {
       rendererLog.error('Load bootstrap snapshot failed:', error)
     }

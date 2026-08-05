@@ -54,6 +54,7 @@ export default function CodeChangesPanel({
   const targetBranch = useCodeChangesStore((s) => s.targetBranch)
   const availableBranches = useCodeChangesStore((s) => s.availableBranches)
   const isFetching = useCodeChangesStore((s) => s.isFetching)
+  const filesError = useCodeChangesStore((s) => s.filesError)
 
   const {
     loadFiles,
@@ -105,6 +106,7 @@ export default function CodeChangesPanel({
   }, [activeWorkspace?.id, conversationId, fetchAndRefresh])
 
   const currentBranch = repoInfo?.currentBranch ?? ''
+  const hasRemote = repoInfo?.hasRemote ?? false
   // Comparison modes only need *some* other ref to compare against — a local
   // branch target works end to end, so a remote-less repo must not be blocked.
   const hasComparisonTarget =
@@ -136,7 +138,10 @@ export default function CodeChangesPanel({
         <div className="flex rounded-md border border-border-default overflow-hidden">
           {MODE_CONFIG.map(({ mode, label, icon: Icon, tooltip }) => {
             const isActive = comparisonMode === mode
-            const isDisabled = mode !== 'uncommitted' && !hasComparisonTarget
+            // A repo whose remote was just configured has no remote-tracking refs
+            // yet — and the Fetch button only exists inside a comparison mode, so
+            // disabling here would leave no way to ever fetch origin/master.
+            const isDisabled = mode !== 'uncommitted' && !hasComparisonTarget && !hasRemote
 
             return (
               <button
@@ -144,7 +149,13 @@ export default function CodeChangesPanel({
                 type="button"
                 onClick={() => handleModeChange(mode)}
                 disabled={isDisabled}
-                title={isDisabled ? 'No other branch to compare against' : tooltip}
+                title={
+                  isDisabled
+                    ? 'No other branch to compare against'
+                    : !hasComparisonTarget && hasRemote && mode !== 'uncommitted'
+                      ? 'Fetch from origin to compare'
+                      : tooltip
+                }
                 className={`
                   inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors
                   ${isActive ? 'bg-primary text-white' : 'bg-surface-float text-text-secondary hover:bg-surface-overlay hover:text-text-primary'}
@@ -218,6 +229,7 @@ export default function CodeChangesPanel({
           onSelectAll={selectAll}
           onDeselectAll={deselectAll}
           isLoading={isLoadingFiles}
+          error={filesError}
           isGitConfigured={repoInfo?.isRepo ?? false}
           onNavigateToSettings={onNavigateToSettings}
           comparisonMode={comparisonMode}

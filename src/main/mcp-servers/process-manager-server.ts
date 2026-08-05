@@ -31,6 +31,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { detachedHiddenSpawnOptions } from '../../shared/spawn-options'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 
@@ -69,7 +70,7 @@ function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void 
   if (process.platform === 'win32') {
     try {
       const forceFlag = signal === 'SIGKILL' ? ' /F' : ''
-      execSync(`taskkill /PID ${pid} /T${forceFlag}`, { stdio: 'ignore' })
+      execSync(`taskkill /PID ${pid} /T${forceFlag}`, { stdio: 'ignore', windowsHide: true })
     } catch {
       /* process may already be dead */
     }
@@ -93,7 +94,7 @@ function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void 
 function isProcessAlive(pid: number): boolean {
   try {
     if (process.platform === 'win32') {
-      execSync(`tasklist /FI "PID eq ${pid}" /NH`, { stdio: 'ignore' })
+      execSync(`tasklist /FI "PID eq ${pid}" /NH`, { stdio: 'ignore', windowsHide: true })
       return true
     }
     process.kill(-pid, 0)
@@ -577,7 +578,10 @@ server.tool(
     const child = spawn(command, {
       shell: true,
       cwd: workingDir,
-      detached: true, // own process group — survives MCP server exit
+      // detached on POSIX only — own process group survives MCP server exit.
+      // On Windows DETACHED_PROCESS suppresses windowsHide (nodejs/node#21825),
+      // and children already outlive the parent; teardown uses `taskkill /T`.
+      ...detachedHiddenSpawnOptions,
       stdio: ['ignore', logFd, logFd] // stdout+stderr → log file
     })
 

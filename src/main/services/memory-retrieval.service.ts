@@ -99,7 +99,90 @@ type ContextTier = keyof typeof TIER_BUDGETS
 /** Facts at or above this tier bypass per-session injection dedupe. */
 const RE_INJECTABLE_TIER = 2
 
+/**
+ * Workspaces whose embedding matrix is held in memory at once.
+ *
+ * Each matrix is the whole active corpus with its vectors — order 10MB on a
+ * mature workspace — so this is deliberately small. Two covers the realistic
+ * case of alternating between a project and a scratch workspace.
+ */
+const EMBEDDING_CACHE_MAX_WORKSPACES = 2
+
+/** A workspace's active facts and their vectors, as of a known mutation point. */
+interface EmbeddingMatrix {
+  /** `getLastMutationAt` value this snapshot was built from. */
+  mutationAt: number
+  entries: Array<{ fact: MemoryFact; embedding: Float32Array }>
+  byId: Map<string, Float32Array>
+}
+
 class MemoryRetrievalService {
+  /**
+   * Cached embedding matrices, keyed by workspace.
+   *
+   * `rankByVector` ran `findWithEmbeddings` on every single turn, which reads
+   * every active fact *with its BLOB* out of SQLite before computing one
+   * cosine per fact. The read is the expensive half and the corpus rarely
+   * changes between turns, so it is snapshotted and reused until something
+   * actually mutates a fact.
+   *
+   * `getLastMutationAt` reads MAX(updated_at), which `touchFacts` does not
+   * bump — so ordinary retrieval, the thing that runs every turn, does not
+   * invalidate the snapshot it just used.
+   */
+  private embeddingCache = new Map<string, EmbeddingMatrix>()
+
+  /**
+   * The workspace's embedding matrix, rebuilt only when a fact has changed.
+   *
+   * Only ever holds the *current* view. A point-in-time (`asOf`) query asks a
+   * different question and is rare, so it reads through to the database rather
+   * than polluting this with per-timestamp snapshots.
+   */
+  private getEmbeddingMatrix(workspaceId: string): EmbeddingMatrix {
+    let mutationAt: number
+    try {
+      mutationAt = memoryFactRepository.getLastMutationAt(workspaceId)
+    } catch {
+      // Without a liveness signal a cached matrix cannot be trusted.
+      return this.buildEmbeddingMatrix(workspaceId, -1, false)
+    }
+
+    const cached = this.embeddingCache.get(workspaceId)
+    if (cached && cached.mutationAt === mutationAt) return cached
+
+    return this.buildEmbeddingMatrix(workspaceId, mutationAt, true)
+  }
+
+  private buildEmbeddingMatrix(
+    workspaceId: string,
+    mutationAt: number,
+    store: boolean
+  ): EmbeddingMatrix {
+    const entries = memoryFactRepository.findWithEmbeddings(workspaceId)
+    const byId = new Map(entries.map((e) => [e.fact.id, e.embedding]))
+    const matrix: EmbeddingMatrix = { mutationAt, entries, byId }
+
+    if (!store) return matrix
+
+    // Evict by insertion order before growing past the cap. These snapshots are
+    // large enough that an unbounded map is a leak, not a cache.
+    if (
+      !this.embeddingCache.has(workspaceId) &&
+      this.embeddingCache.size >= EMBEDDING_CACHE_MAX_WORKSPACES
+    ) {
+      const oldest = this.embeddingCache.keys().next().value
+      if (oldest !== undefined) this.embeddingCache.delete(oldest)
+    }
+    this.embeddingCache.set(workspaceId, matrix)
+    return matrix
+  }
+
+  /** Drop cached vectors. Exposed for tests and for memory-pressure handling. */
+  clearEmbeddingCache(workspaceId?: string): void {
+    if (workspaceId) this.embeddingCache.delete(workspaceId)
+    else this.embeddingCache.clear()
+  }
   // ── Per-turn injection ──────────────────────────────────────────────────
 
   /**
@@ -147,7 +230,7 @@ class MemoryRetrievalService {
       // Diversify. Ranking by one blended score reliably returns ten
       // paraphrases of the same convention, which wastes the whole budget
       // saying one thing.
-      const selected = this.diversify(fresh, MMR_SELECTION_SIZE)
+      const selected = this.diversify(fresh, MMR_SELECTION_SIZE, workspaceId)
 
       // Budget-cap the output
       const budget = TIER_BUDGETS[contextTier]
@@ -195,6 +278,17 @@ class MemoryRetrievalService {
     if (queryTokens.length === 0 && paths.length === 0) return []
 
     const scorer = opts?.scorer ?? defaultScorer()
+
+    if (scorer === 'legacy' && opts?.asOf) {
+      // The legacy scorer has no validity-window predicate anywhere in its
+      // candidate gathering. Answering a point-in-time question with today's
+      // facts and no signal is worse than answering it slowly, so say so.
+      log.warn(
+        `[MemoryRetrieval] asOf=${opts.asOf} ignored: the legacy scorer cannot ` +
+          `answer point-in-time queries. Results reflect current facts.`
+      )
+    }
+
     return scorer === 'legacy'
       ? this.retrieveLegacy(workspaceId, query, queryTokens, limit, category, paths)
       : this.retrieveRrf(workspaceId, query, queryTokens, limit, category, paths, opts?.asOf)
@@ -216,13 +310,28 @@ class MemoryRetrievalService {
    */
   private diversify(
     results: MemoryRetrievalResult[],
-    count: number
+    count: number,
+    workspaceId?: string
   ): MemoryRetrievalResult[] {
     if (results.length <= 1 || count <= 1) return results.slice(0, count)
 
     let embeddings: Map<string, Float32Array>
     try {
-      embeddings = memoryFactRepository.findEmbeddingsByIds(results.map((r) => r.fact.id))
+      // The vector arm has just loaded every one of these vectors. Re-reading
+      // the same ~30 rows out of SQLite to re-rank them was pure duplicate IO.
+      const cached = workspaceId ? this.getEmbeddingMatrix(workspaceId).byId : null
+      const missing = cached
+        ? results.filter((r) => !cached.has(r.fact.id)).map((r) => r.fact.id)
+        : results.map((r) => r.fact.id)
+
+      if (cached && missing.length === 0) {
+        embeddings = cached
+      } else {
+        // Facts the snapshot does not cover (an `asOf` result, or one written
+        // since it was built) still need a read.
+        const fetched = memoryFactRepository.findEmbeddingsByIds(missing)
+        embeddings = cached ? new Map([...cached, ...fetched]) : fetched
+      }
     } catch (err) {
       log.debug('[MemoryRetrieval] Embedding lookup for MMR failed:', err)
       return results.slice(0, count)
@@ -361,8 +470,13 @@ class MemoryRetrievalService {
   ): MemoryFact[] {
     if (!queryVec) return []
 
+    // `asOf` reads through: it is a different result set and a rare query.
+    const source = asOf
+      ? memoryFactRepository.findWithEmbeddings(workspaceId, asOf)
+      : this.getEmbeddingMatrix(workspaceId).entries
+
     const scored: Array<{ fact: MemoryFact; cosine: number }> = []
-    for (const { fact, embedding } of memoryFactRepository.findWithEmbeddings(workspaceId, asOf)) {
+    for (const { fact, embedding } of source) {
       if (category && fact.category !== category) continue
       const cosine = cosineSimilarity(queryVec, embedding)
       if (cosine >= COSINE_FLOOR) scored.push({ fact, cosine })

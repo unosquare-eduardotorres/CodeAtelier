@@ -35,13 +35,15 @@ export function createExperimentCheckpoint(workspacePath: string): GitCheckpoint
   const head = execSync('git rev-parse HEAD', {
     cwd: workspacePath,
     encoding: 'utf-8',
-    timeout: 10_000
+    timeout: 10_000,
+    windowsHide: true
   }).trim()
 
   const branch = execSync('git rev-parse --abbrev-ref HEAD', {
     cwd: workspacePath,
     encoding: 'utf-8',
-    timeout: 10_000
+    timeout: 10_000,
+    windowsHide: true
   }).trim()
 
   sandboxLog.info(`[checkpoint] Created checkpoint: ${branch}:${head.slice(0, 8)}`)
@@ -71,21 +73,24 @@ export function resetToCheckpoint(workspacePath: string, checkpoint: GitCheckpoi
   execSync(`git checkout -f ${branch}`, {
     cwd: workspacePath,
     encoding: 'utf-8',
-    timeout: 15_000
+    timeout: 15_000,
+    windowsHide: true
   })
 
   // Hard reset to the checkpoint commit
   execSync(`git reset --hard ${head}`, {
     cwd: workspacePath,
     encoding: 'utf-8',
-    timeout: 15_000
+    timeout: 15_000,
+    windowsHide: true
   })
 
   // Clean untracked files and directories (coverage output, temp files, etc.)
   execSync('git clean -fd', {
     cwd: workspacePath,
     encoding: 'utf-8',
-    timeout: 15_000
+    timeout: 15_000,
+    windowsHide: true
   })
 
   sandboxLog.info('[reset] Workspace restored to checkpoint')
@@ -108,7 +113,8 @@ export function getExperimentDiffStats(
     const stat = execSync(`git diff --shortstat ${diffRef}`, {
       cwd: workspacePath,
       encoding: 'utf-8',
-      timeout: 10_000
+      timeout: 10_000,
+      windowsHide: true
     }).trim()
 
     if (!stat) {
@@ -145,7 +151,8 @@ export function cleanupBuildArtifacts(workspacePath: string): void {
       {
         cwd: workspacePath,
         encoding: 'utf-8',
-        timeout: 10_000
+        timeout: 10_000,
+        windowsHide: true
       }
     )
     sandboxLog.info('[cleanup] Build artifacts removed')

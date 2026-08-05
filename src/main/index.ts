@@ -679,6 +679,7 @@ app.whenReady().then(() => {
     const reResolved = resolveOpencodePath()
     if (!reResolved) {
       // Resolution failed - log to bug tracker
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
       const { bugRepository } = require('./db/repositories/bug.repository')
       bugRepository.upsertBug({
         process: 'main' as const,
@@ -698,6 +699,7 @@ app.whenReady().then(() => {
   } catch (error) {
     // Log resolution failure to bug tracker
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
       const { bugRepository } = require('./db/repositories/bug.repository')
       bugRepository.upsertBug({
         process: 'main' as const,

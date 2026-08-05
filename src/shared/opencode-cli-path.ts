@@ -50,6 +50,7 @@ export function resolveOpencodePath(): string | null {
     const whichResult = spawnSync('which', ['opencode'], {
       encoding: 'utf-8',
       timeout: 5000,
+      windowsHide: true,
     })
 
     if (whichResult.stdout?.trim()) {
@@ -67,6 +68,7 @@ export function resolveOpencodePath(): string | null {
     const npmPrefixResult = spawnSync('npm', ['config', 'get', 'prefix'], {
       encoding: 'utf-8',
       timeout: 5000,
+      windowsHide: true,
     })
 
     if (npmPrefixResult.stdout?.trim()) {
@@ -165,7 +167,11 @@ export async function locateOpenCodeCli(): Promise<OpenCodeCliCheckResult> {
   if (opencodePath) {
     // Try to get version (confirms it's executable)
     try {
-      const version = execSync('opencode --version', { timeout: 5000, encoding: 'utf-8' }).trim()
+      const version = execSync('opencode --version', {
+        timeout: 5000,
+        encoding: 'utf-8',
+        windowsHide: true,
+      }).trim()
       return {
         available: true,
         path: opencodePath,
@@ -202,7 +208,11 @@ export function checkOpenCodeCliSync(): { available: boolean; path?: string; err
 
   if (opencodePath) {
     // Quick test - verify executable
-    const result = spawnSync(opencodePath, ['--version'], { timeout: 3000, stdio: 'pipe' })
+    const result = spawnSync(opencodePath, ['--version'], {
+      timeout: 3000,
+      stdio: 'pipe',
+      windowsHide: true,
+    })
     if (!result.error) {
       // Also ensure path is in PATH
       ensureOpencodePathInEnv()

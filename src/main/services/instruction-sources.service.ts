@@ -60,6 +60,17 @@ const IGNORE_DIRS = new Set([
 /** How deep to search for nested AGENTS.md / CLAUDE.md below the root. */
 const MAX_NESTED_DEPTH = 4
 
+/**
+ * Directory entries the nested walk may stat before giving up.
+ *
+ * Depth alone is not a bound: depth 4 of a large monorepo is tens of
+ * thousands of `statSync` calls, and this runs on the prompt path behind a
+ * 60-second TTL. Rule files live near the top of a tree, so a walk that has
+ * looked at this many entries without finishing is not about to find
+ * something worth the remaining cost.
+ */
+const MAX_NESTED_ENTRIES = 20_000
+
 /** Hard cap so a pathological monorepo cannot stall discovery. */
 const MAX_SOURCES = 300
 
@@ -303,7 +314,16 @@ export function collectInstructionRefs(workspacePath: string): InstructionRef[] 
     }
   }
 
-  collectNested(workspacePath, 0, add)
+  // Bounded in work as well as depth, and stops early once the source cap is
+  // already reached — further walking cannot add anything.
+  const budget: WalkBudget = { entriesLeft: MAX_NESTED_ENTRIES, isFull: () => found.length >= MAX_SOURCES }
+  collectNested(workspacePath, 0, add, budget)
+  if (budget.entriesLeft <= 0) {
+    isLog.debug(
+      `[collectInstructionRefs] Nested walk hit its ${MAX_NESTED_ENTRIES}-entry budget in ` +
+        `${workspacePath}; deeper rule files were not discovered.`
+    )
+  }
 
   found.sort((a, b) => {
     const byScope = SCOPE_ORDER[a.scope] - SCOPE_ORDER[b.scope]
@@ -377,13 +397,21 @@ export function readInstructionSource(
   }
 }
 
+/** Remaining work allowance for the nested walk. */
+interface WalkBudget {
+  entriesLeft: number
+  isFull: () => boolean
+}
+
 /** Nested per-directory CLAUDE.md / AGENTS.md below the workspace root. */
 function collectNested(
   dir: string,
   depth: number,
-  add: (path: string, format: InstructionFormat, scope: InstructionScope) => void
+  add: (path: string, format: InstructionFormat, scope: InstructionScope) => void,
+  budget: WalkBudget
 ): void {
   if (depth > MAX_NESTED_DEPTH) return
+  if (budget.entriesLeft <= 0 || budget.isFull()) return
 
   let entries: string[]
   try {
@@ -393,6 +421,9 @@ function collectNested(
   }
 
   for (const entry of entries) {
+    if (budget.entriesLeft <= 0 || budget.isFull()) return
+    budget.entriesLeft--
+
     const abs = join(dir, entry)
     let stat: ReturnType<typeof statSync>
     try {
@@ -403,7 +434,7 @@ function collectNested(
 
     if (stat.isDirectory()) {
       if (IGNORE_DIRS.has(entry.toLowerCase())) continue
-      collectNested(abs, depth + 1, add)
+      collectNested(abs, depth + 1, add, budget)
       continue
     }
 
@@ -656,6 +687,20 @@ export const MAX_INSTRUCTION_LAYER_CHARS = 12_000
 const MAX_INSTRUCTION_FILE_CHARS = 4_000
 
 /**
+ * Per-file cap for a given total budget.
+ *
+ * A fixed per-file cap breaks down once the total is tightened: with a 4k
+ * budget and a 4k per-file cap, the very first rule file overflows the budget,
+ * gets dropped, and the layer comes out empty — silently losing every
+ * instruction rather than shortening them. Scaling the cap keeps roughly three
+ * files in view at any budget. At the default 12k this evaluates to exactly
+ * MAX_INSTRUCTION_FILE_CHARS, so the full-tier layer is unchanged.
+ */
+function perFileCap(budget: number): number {
+  return Math.min(MAX_INSTRUCTION_FILE_CHARS, Math.max(500, Math.floor(budget / 3)))
+}
+
+/**
  * Render rule files as a single prompt layer.
  *
  * Sources arrive in precedence order and are emitted in that order, so a
@@ -673,6 +718,7 @@ export function formatInstructionSources(
   const blocks: string[] = []
   let used = 0
   const seen = new Set<string>()
+  const fileCap = perFileCap(budget)
 
   for (const source of sources) {
     if (seen.has(source.path)) continue
@@ -681,7 +727,7 @@ export function formatInstructionSources(
     const label = displayPath(workspacePath, source.path)
     const scopeNote =
       source.globs.length > 0 ? ` (applies to: ${source.globs.slice(0, 5).join(', ')})` : ''
-    const body = source.content.slice(0, MAX_INSTRUCTION_FILE_CHARS)
+    const body = source.content.slice(0, fileCap)
     const block = `### ${label}${scopeNote}\n\n${body}`
 
     if (used + block.length > budget) break

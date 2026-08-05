@@ -156,7 +156,7 @@ test.describe('Blueprint Wave Tasks', () => {
 
     // Task should show wave label
     const waveLabel = firstTask.getByText(/wave\s+\d+/i)
-    const hasWaveLabel = await waveLabel.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasWaveLabel = await waveLabel.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // At least icon or text should be present
     expect(hasIcon || (taskText?.length ?? 0) > 0).toBeTruthy()
@@ -195,7 +195,7 @@ test.describe('Blueprint Wave Tasks', () => {
       // Check SVG classes for status indicators
       const firstSvg = svgs.first()
       const classes = await firstSvg.getAttribute('class')
-      const parentClasses = await task.getAttribute('class')
+      const _parentClasses = await task.getAttribute('class')
 
       // Green check = completed
       if (classes?.includes('text-success') || classes?.includes('text-green')) {
@@ -271,7 +271,7 @@ test.describe('Blueprint Wave Tasks', () => {
 
     // Look for expanded content (file list, subtasks, or description)
     const expandedContent = page.getByText(/files?|subtask|description|output/i)
-    const hasExpanded = await expandedContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasExpanded = await expandedContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Alternatively, check if task row expanded (more content visible)
     const taskText = await taskItems.first().textContent()

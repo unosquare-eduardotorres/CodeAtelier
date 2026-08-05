@@ -170,7 +170,7 @@ test.describe('Specialist Management', () => {
 
     // Prompt content should be visible (text area or code block)
     const promptContent = page.locator('pre, code, [class*="font-mono"]').first()
-    const hasPrompt = await promptContent.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasPrompt = await promptContent.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // There should be some content in the prompt tab
     const tabContent = page.getByRole('dialog').first()

@@ -255,7 +255,7 @@ test.describe('Chat Interactions', () => {
 
     // Should have PR description textarea
     const prDescription = page.locator('#pr-description')
-    const hasDescription = await prDescription.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasDescription = await prDescription.isVisible({ timeout: 3_000 }).catch(() => false)
     // PR description may still be generating
 
     // Cancel button should be present

@@ -29,7 +29,8 @@ function git(args: string[]): string {
     cwd: WORKSPACE_PATH,
     encoding: 'utf-8',
     timeout: 10_000,
-    maxBuffer: 1024 * 1024 // 1MB
+    maxBuffer: 1024 * 1024, // 1MB
+    windowsHide: true
   })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(result.stderr || `git exited with code ${result.status}`)

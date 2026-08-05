@@ -3,7 +3,7 @@ import Database from 'better-sqlite3'
 // where `electron` is not available. The `app` object is only needed when
 // DB_PATH is not set (i.e., inside the Electron main process).
 function getElectronApp(): typeof import('electron').app {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
   return require('electron').app
 }
 import { join } from 'node:path'
@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 137
+export const CURRENT_SCHEMA_VERSION = 138
 
 export interface Migration {
   version: number
@@ -3899,6 +3899,45 @@ export const migrations: Migration[] = [
         db.prepare('SELECT count(*) AS n FROM memory_edges').get() as { n: number }
       ).n
       dbLogger.info(`[migration-137] ✓ Created memory_edges (${edges} edge(s) backfilled)`)
+    }
+  },
+
+  // ── Migration 138: Narrow the FTS update trigger to indexed columns ──
+  {
+    version: 138,
+    name: 'memory-facts-fts-narrow-update-trigger',
+    up: (db) => {
+      // Migration 135 created `memory_facts_fts_au` as AFTER UPDATE ON
+      // memory_facts — every column. That put a DELETE + INSERT into the FTS
+      // index on the *read* path: `touchFacts` writes `last_accessed_at` for
+      // up to ten facts on every single retrieval, and `decayFacts`,
+      // `confirmFact`, `setEmbedding`, `setVolatile` and `reopenValidity` all
+      // fire it too. None of them change indexed text, so every one of those
+      // rewrites reindexed identical strings and dirtied the WAL.
+      //
+      // Two guards, because they catch different things:
+      //   UPDATE OF — skips statements that never mention the indexed columns
+      //               (the touch/decay/confirm paths).
+      //   WHEN      — skips statements that do mention them but write the same
+      //               value (updateFactInPlace re-writing an identical title).
+      //
+      // `IS NOT` rather than `<>` so a NULL on either side compares correctly;
+      // `tags` is nullable and `<>` would silently never fire for it.
+      db.exec(`DROP TRIGGER IF EXISTS memory_facts_fts_au;`)
+      db.exec(`
+        CREATE TRIGGER memory_facts_fts_au
+        AFTER UPDATE OF title, content, tags ON memory_facts
+        WHEN old.title   IS NOT new.title
+          OR old.content IS NOT new.content
+          OR old.tags    IS NOT new.tags
+        BEGIN
+          DELETE FROM memory_facts_fts WHERE fact_id = old.id;
+          INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+          VALUES (new.id, new.title, new.content, new.tags);
+        END;
+      `)
+
+      dbLogger.info('[migration-138] ✓ Narrowed memory_facts_fts_au to title/content/tags changes')
     }
   }
 ]

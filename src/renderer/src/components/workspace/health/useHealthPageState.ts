@@ -6,14 +6,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuditStore } from '@renderer/store'
 import { AUDIT_TRACKS } from '../../../../../shared/constants'
-import type {
-  AuditMode,
-  AuditTrackId,
-  AuditFinding,
-  AuditRun,
-  AuditSelectedSkills,
-  LLMProvider
-} from '../../../../../shared/types'
+import type { AuditMode, AuditTrackId } from '../../../../../shared/types'
 import { useHealthPlanActions } from './useHealthPlanActions'
 import { useAuditViewNavigation } from './useAuditViewNavigation'
 import { useAuditActionCallbacks } from './useAuditActionCallbacks'

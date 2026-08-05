@@ -203,7 +203,7 @@ class OmlxManagerService {
         // Check for oMLX CLI or .app bundle
         const result = execSync(
           'which omlx 2>/dev/null || (test -d "/Applications/oMLX.app" && echo "/Applications/oMLX.app")',
-          { encoding: 'utf8', timeout: 3000 }
+          { encoding: 'utf8', timeout: 3000, windowsHide: true }
         ).trim()
         if (result) {
           status.installed = true

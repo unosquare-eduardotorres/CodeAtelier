@@ -1237,7 +1237,8 @@ class CodeGraphService extends EventEmitter {
         cwd: workspacePath,
         encoding: 'utf-8',
         timeout: 15_000,
-        maxBuffer: 5 * 1024 * 1024
+        maxBuffer: 5 * 1024 * 1024,
+        windowsHide: true
       }).trim()
     } catch {
       return []
@@ -1324,7 +1325,13 @@ class CodeGraphService extends EventEmitter {
     try {
       const churnOutput = execSync(
         `git log --format= --name-only -n 500 | sort | uniq -c | sort -rn | head -200`,
-        { cwd: workspacePath, encoding: 'utf-8', timeout: 15_000, maxBuffer: 2 * 1024 * 1024 }
+        {
+          cwd: workspacePath,
+          encoding: 'utf-8',
+          timeout: 15_000,
+          maxBuffer: 2 * 1024 * 1024,
+          windowsHide: true
+        }
       ).trim()
 
       for (const line of churnOutput.split('\n')) {
@@ -1484,6 +1491,7 @@ class CodeGraphService extends EventEmitter {
 
     // 4. Shrink SQLite page cache after the heavy write burst
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
       const { getDatabase } = require('../db')
       getDatabase().pragma('shrink_memory')
     } catch { /* best-effort */ }

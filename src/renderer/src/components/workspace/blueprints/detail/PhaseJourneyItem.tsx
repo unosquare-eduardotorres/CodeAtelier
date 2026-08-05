@@ -67,10 +67,11 @@ export function PhaseJourneyItemContent({ phase, tasks }: PhaseJourneyItemConten
     case 'review': return <ReviewDeliverable phase={phase} duration={duration} />
     case 'build': return <BuildDeliverable phase={phase} duration={duration} tasks={tasks} />
     case 'verify': return <VerifyDeliverable phase={phase} duration={duration} />
-    default:
+    default: {
       // Fallback: show any markdown artifact
       const mdArt = phase.artifactsJson?.find((a) => a.contentMd)
       if (mdArt?.contentMd) return <CappedMarkdown content={mdArt.contentMd} />
       return <p className="text-xs text-text-muted italic">No content available.</p>
+    }
   }
 }

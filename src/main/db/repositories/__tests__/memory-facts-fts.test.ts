@@ -240,6 +240,98 @@ if (!env) {
       }
     })
 
+    test('a status-only update does not touch the index', () => {
+      // Migration 138. The trigger used to fire on any UPDATE, so the read path
+      // rewrote the index constantly for text that had not changed.
+      const db = createSchemaDb()
+      try {
+        const id = insertFact(db, { title: 'Statusonlyfact', content: 'body' })
+        const before = db
+          .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
+          .get(id) as { rowid: number }
+
+        db.prepare("UPDATE memory_facts SET status = 'superseded' WHERE id = ?").run(id)
+
+        const after = db
+          .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
+          .get(id) as { rowid: number }
+        assert.equal(after.rowid, before.rowid, 'row was not deleted and reinserted')
+      } finally {
+        db.close()
+      }
+    })
+
+    test('touching last_accessed_at does not rewrite the index', () => {
+      // The specific hot path: `touchFacts` runs on every retrieval for up to
+      // ten facts and writes nothing the index cares about.
+      const db = createSchemaDb()
+      try {
+        const id = insertFact(db, { title: 'Touchablefact', content: 'body' })
+        const before = db
+          .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
+          .get(id) as { rowid: number }
+
+        db.prepare("UPDATE memory_facts SET last_accessed_at = datetime('now') WHERE id = ?").run(id)
+
+        const after = db
+          .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
+          .get(id) as { rowid: number }
+        assert.equal(after.rowid, before.rowid, 'retrieval must not dirty the FTS index')
+        assert.equal(ftsRowsFor(db, id), 1)
+        assert.deepEqual(matchIds(db, '"touchablefact"'), [id], 'and it is still searchable')
+      } finally {
+        db.close()
+      }
+    })
+
+    test('rewriting a title with an identical value does not reindex', () => {
+      // updateFactInPlace writes title and content together; a dedup merge can
+      // leave one of them unchanged. The WHEN clause catches that.
+      const db = createSchemaDb()
+      try {
+        const id = insertFact(db, { title: 'Identicalfact', content: 'body' })
+        const before = db
+          .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
+          .get(id) as { rowid: number }
+
+        db.prepare("UPDATE memory_facts SET title = 'Identicalfact' WHERE id = ?").run(id)
+
+        const after = db
+          .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
+          .get(id) as { rowid: number }
+        assert.equal(after.rowid, before.rowid)
+      } finally {
+        db.close()
+      }
+    })
+
+    test('a real content change still reindexes after the trigger was narrowed', () => {
+      const db = createSchemaDb()
+      try {
+        const id = insertFact(db, { title: 'Narrowedfact', content: 'oldbodyterm' })
+        db.prepare("UPDATE memory_facts SET content = 'newbodyterm' WHERE id = ?").run(id)
+
+        assert.deepEqual(matchIds(db, '"newbodyterm"'), [id])
+        assert.deepEqual(matchIds(db, '"oldbodyterm"'), [], 'stale term is gone')
+        assert.equal(ftsRowsFor(db, id), 1)
+      } finally {
+        db.close()
+      }
+    })
+
+    test('a tags-only change reindexes', () => {
+      const db = createSchemaDb()
+      try {
+        const id = insertFact(db, { title: 'Tagchangefact', content: 'body', tags: '["oldtagterm"]' })
+        db.prepare(`UPDATE memory_facts SET tags = '["newtagterm"]' WHERE id = ?`).run(id)
+
+        assert.deepEqual(matchIds(db, '"newtagterm"'), [id])
+        assert.deepEqual(matchIds(db, '"oldtagterm"'), [])
+      } finally {
+        db.close()
+      }
+    })
+
     test('a bulk update reindexes every affected row', () => {
       const db = createSchemaDb()
       try {

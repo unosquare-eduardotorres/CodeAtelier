@@ -10,6 +10,7 @@ import {
   useAppPreferenceActions
 } from '@renderer/store'
 import type { ConversationPhase, ContextUsageLevel, ToolActivity } from '../../../shared/types'
+import { COMPACTION_RATIOS } from '../../../shared/constants'
 import { rendererLog } from '@renderer/utils/logger'
 import { useTodoStore } from '@renderer/store/todo.store'
 import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
@@ -146,14 +147,10 @@ function processContextUsageUpdate(
 ): void {
   // Use the same algorithm as resolveContextLevel (context-usage-level.ts)
   const pct = update.percentage
-  const isSmallWindow = update.contextWindowSize <= 200_000
-  const warnPct = isSmallWindow ? 48 : 56
-  const suggestPct = isSmallWindow ? 60 : 70
-  const autoPct = isSmallWindow ? 75 : 85
   const level: ContextUsageLevel =
-    pct >= autoPct ? 'critical'
-    : pct >= suggestPct ? 'red'
-    : pct >= warnPct ? 'yellow'
+    pct >= COMPACTION_RATIOS.auto * 100 ? 'critical'
+    : pct >= COMPACTION_RATIOS.suggest * 100 ? 'red'
+    : pct >= COMPACTION_RATIOS.warn * 100 ? 'yellow'
     : 'green'
 
   useChatStore.setState((state) => ({

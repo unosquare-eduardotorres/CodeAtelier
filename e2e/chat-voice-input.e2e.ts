@@ -103,7 +103,7 @@ test.describe('Chat Voice Input', () => {
 
     // Before enabling: voice mic button should NOT be visible
     const voiceMicBefore = page.getByRole('button', { name: /hold to speak/i })
-    const hasMicBefore = await voiceMicBefore.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasMicBefore = await voiceMicBefore.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Enable voice via slash command
     const voiceEnabled = await enableVoice(page, chat)
@@ -222,7 +222,7 @@ test.describe('Chat Voice Input', () => {
 
     // After release, the listening indicator should disappear
     if (hasListening) {
-      const stillListening = await listeningIndicator
+      const _stillListening = await listeningIndicator
         .isVisible({ timeout: 3_000 })
         .catch(() => false)
       // May still be visible briefly — or error may show if mic permission denied

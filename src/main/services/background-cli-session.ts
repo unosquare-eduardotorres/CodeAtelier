@@ -332,7 +332,8 @@ export class BackgroundCliSession {
         this.process = spawn('claude', args, {
           stdio: ['pipe', 'pipe', 'pipe'],
           env,
-          detached: false
+          detached: false,
+          windowsHide: true
         })
       }
     } catch (err) {

@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile, chmod, mkdir, unlink } from 'node:fs/promises'
+import { appendFile, mkdtemp, rm, writeFile, chmod, mkdir, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import simpleGit from 'simple-git'
@@ -69,6 +69,58 @@ describe('RepoService × real git — uncommitted mode', () => {
         assert.equal(diff.oldContent, 'stable content\n')
         assert.equal(diff.newContent, 'stable content\n')
         assert.equal(diff.identicalReason, 'rename-only')
+      })
+    },
+    skip
+  )
+
+  test(
+    'a_rename_that_was_also_edited_appears_once_and_still_carries_its_source_path',
+    async () => {
+      await withRepo(async (git, dir) => {
+        await writeFile(join(dir, 'a.txt'), 'stable content\n')
+        await commitAll(git, 'add a.txt')
+        await git.mv('a.txt', 'b.txt')
+        // RM — git status reports this path as renamed AND modified, so the list
+        // used to contain two rows for it and the first one had no oldPath.
+        await appendFile(join(dir, 'b.txt'), 'edited after the move\n')
+
+        const files = await repoService.getUncommittedFileDetails(dir)
+        const rows = files.filter((f) => f.filePath === 'b.txt')
+        assert.equal(rows.length, 1, 'a renamed+edited file must produce exactly one row')
+        assert.equal(rows[0].changeType, 'modified')
+        assert.equal(rows[0].oldPath, 'a.txt')
+
+        const diff = await repoService.getFileDiff(dir, 'b.txt', rows[0].oldPath)
+        assert.equal(diff.oldContent, 'stable content\n')
+        assert.equal(diff.newContent, 'stable content\nedited after the move\n')
+        assert.equal(diff.identicalReason, undefined)
+      })
+    },
+    skip
+  )
+
+  test(
+    'a_staged_add_that_was_then_edited_appears_once_and_is_badged_as_created',
+    async () => {
+      await withRepo(async (git, dir) => {
+        await writeFile(join(dir, 'seed.txt'), 'seed\n')
+        await commitAll(git, 'seed')
+
+        await writeFile(join(dir, 'fresh.txt'), 'first draft\n')
+        await git.add('fresh.txt')
+        // AM — lands in both created and modified; the stale 'M' row claimed a HEAD
+        // side for a file that has never been committed.
+        await appendFile(join(dir, 'fresh.txt'), 'second thought\n')
+
+        const files = await repoService.getUncommittedFileDetails(dir)
+        const rows = files.filter((f) => f.filePath === 'fresh.txt')
+        assert.equal(rows.length, 1, 'an added+edited file must produce exactly one row')
+        assert.equal(rows[0].changeType, 'created')
+
+        const diff = await repoService.getFileDiff(dir, 'fresh.txt')
+        assert.equal(diff.oldContent, '')
+        assert.equal(diff.newContent, 'first draft\nsecond thought\n')
       })
     },
     skip
@@ -195,6 +247,39 @@ describe('RepoService × real git — ref comparison modes', () => {
         // labelled "all changes" would omit it entirely.
         assert.deepEqual(paths, ['brand-new.txt', 'tracked.txt'])
         assert.equal(files.find((f) => f.filePath === 'brand-new.txt')?.changeType, 'created')
+      })
+    },
+    skip
+  )
+
+  test(
+    'committing_a_rename_ships_one_move_not_both_sides_of_it',
+    async () => {
+      await withRepo(async (git, dir) => {
+        await writeFile(join(dir, 'a.txt'), 'stable content\n')
+        await commitAll(git, 'add a.txt')
+        await git.mv('a.txt', 'b.txt')
+
+        // The panel only ever knows a rename by its destination.
+        await repoService.commitFiles(dir, ['b.txt'], 'move a to b')
+
+        const nameStatus = await git.raw(['show', '--name-status', '--format=', 'HEAD'])
+        assert.match(
+          nameStatus,
+          /^R\d*\s+a\.txt\s+b\.txt$/m,
+          `expected one rename, got: ${nameStatus}`
+        )
+
+        // `git commit <pathspec>` ignores the index, so the old path used to
+        // survive into HEAD alongside the new one.
+        const tree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
+        const paths = tree.split('\n').filter(Boolean)
+        assert.deepEqual(paths, ['b.txt'])
+
+        // And the staged deletion used to be left behind, so the panel
+        // immediately re-listed "a.txt — deleted".
+        const left = await repoService.getUncommittedFileDetails(dir)
+        assert.deepEqual(left, [], `working tree must be clean, got: ${JSON.stringify(left)}`)
       })
     },
     skip

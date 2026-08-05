@@ -267,7 +267,7 @@ test.describe('Integration Persistence', () => {
     }
 
     // Record the initial badge text
-    const initialText = hasBadge
+    const _initialText = hasBadge
       ? await impactBadge.textContent()
       : await tokenText.textContent()
 
@@ -277,7 +277,7 @@ test.describe('Integration Persistence', () => {
 
     // After toggle, check if visual state changed
     // The card appearance should change based on enabled/disabled state
-    const cardClassesAfter = await card.getAttribute('class')
+    const _cardClassesAfter = await card.getAttribute('class')
     const toggleClassesAfter = await toggle.getAttribute('class')
 
     // Verify the toggle state visually changed

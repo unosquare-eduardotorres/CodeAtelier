@@ -218,7 +218,7 @@ test.describe('Plans Hub', () => {
     // Should have a source badge (prefer testid, fall back to text)
     const sourceBadge = firstCard.locator('[data-testid^="plan-source-"]')
     const hasSourceBadge = await sourceBadge.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasSourceEmoji = /[💬🔥🔍🏛️🎯📘]/.test(text ?? '')
+    const hasSourceEmoji = /💬|🔥|🔍|🏛️|🎯|📘/u.test(text ?? '')
     const hasSourceLabel = /chat|grill|audit|council|goals|blueprint/i.test(text ?? '')
 
     expect(hasSourceBadge || hasSourceEmoji || hasSourceLabel).toBeTruthy()
@@ -257,11 +257,11 @@ test.describe('Plans Hub', () => {
     }
 
     // Check all cards for metrics (phases, risks, files)
-    let foundMetrics = false
+    let _foundMetrics = false
     for (let i = 0; i < Math.min(count, 5); i++) {
       const text = await planCards.nth(i).textContent()
       if (/\d+\s*phase|risk|file/i.test(text ?? '')) {
-        foundMetrics = true
+        _foundMetrics = true
         break
       }
     }

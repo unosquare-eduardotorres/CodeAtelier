@@ -167,7 +167,7 @@ test.describe('Tool Activity', () => {
 
     // After clicking copy, the check icon should appear briefly
     const checkIcon = copyBtn.locator('.text-emerald-400')
-    const hasCheck = await checkIcon.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _hasCheck = await checkIcon.isVisible({ timeout: 2_000 }).catch(() => false)
     // Check icon is transient, so just verify the button was clickable
     expect(hasCopy).toBeTruthy()
   })

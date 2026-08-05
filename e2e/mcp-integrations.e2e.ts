@@ -245,7 +245,7 @@ test.describe('MCP Integrations', () => {
       // MCP section only renders when integrations or local MCPs are available
       // Check for the "MCP Tools" text anywhere
       const mcpText = page.getByText(/mcp tools/i).first()
-      const hasText = await mcpText.isVisible({ timeout: 3_000 }).catch(() => false)
+      const _hasText = await mcpText.isVisible({ timeout: 3_000 }).catch(() => false)
       // Either MCP section visible or no MCPs configured — both valid
       expect(true).toBeTruthy()
       return

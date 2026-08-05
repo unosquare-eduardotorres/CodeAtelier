@@ -559,9 +559,10 @@ export class AgentSessionService extends AgentBaseService {
     // Capture HEAD sha for memory extraction
     this.currentStartSha = undefined
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred: only needed on this rare path
       const { execSync } = require('node:child_process')
       this.currentStartSha = (execSync('git rev-parse HEAD 2>/dev/null || true', {
-        cwd: workspacePath, encoding: 'utf-8', timeout: 2000
+        cwd: workspacePath, encoding: 'utf-8', timeout: 2000, windowsHide: true
       }) as string).trim() || undefined
     } catch { /* no git — fine */ }
 

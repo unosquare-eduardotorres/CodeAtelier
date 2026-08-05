@@ -12,7 +12,7 @@
 // MCP server child processes load transitively. `safeStorage` is only called
 // from the Electron main process, never from standalone servers.
 function getSafeStorage(): typeof import('electron').safeStorage {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
   return require('electron').safeStorage
 }
 
@@ -52,7 +52,7 @@ export function decryptSettingsKey(
   if (isEncrypted) {
     try {
       return getSafeStorage().decryptString(Buffer.from(value, 'base64'))
-    } catch (err) {
+    } catch (_err) {
       // SEC-04b: Decryption failed — the flag/value pair is inconsistent.
       // This happens when:
       //   1. The value was stored as plaintext but the flag was set to true

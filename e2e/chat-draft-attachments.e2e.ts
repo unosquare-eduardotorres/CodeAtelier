@@ -96,7 +96,7 @@ test.describe('Chat Drafts & Attachments', () => {
 
     // Click the second conversation in the sidebar to switch
     const sidebarItems = page.locator('[data-testid^="chat-item-"]')
-    const firstConvText = await sidebarItems.first().textContent()
+    const _firstConvText = await sidebarItems.first().textContent()
     await sidebarItems.nth(1).click()
     await page.waitForTimeout(1_000)
 
@@ -263,7 +263,7 @@ test.describe('Chat Drafts & Attachments', () => {
       // Button may not appear if messages fit in viewport
       // Just verify messages are visible — scroll works implicitly
       const lastMessage = messages.last()
-      const isLastVisible = await lastMessage.isVisible({ timeout: 3_000 }).catch(() => false)
+      const _isLastVisible = await lastMessage.isVisible({ timeout: 3_000 }).catch(() => false)
 
       // With scroll at top, last message may not be visible
       expect(true).toBeTruthy() // Valid state — not enough content to scroll
@@ -279,7 +279,7 @@ test.describe('Chat Drafts & Attachments', () => {
     await expect(lastMessage).toBeVisible({ timeout: 5_000 })
 
     // ScrollToBottomButton should disappear after scroll
-    const btnStillVisible = await scrollBtn.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _btnStillVisible = await scrollBtn.isVisible({ timeout: 2_000 }).catch(() => false)
     // Button may hide immediately or with animation — both valid
     expect(true).toBeTruthy()
   })

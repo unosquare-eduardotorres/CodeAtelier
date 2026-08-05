@@ -296,6 +296,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         instructionSources: (settings as any).memoryInstructionSources ?? [],
         // Opt-in: reflection is the only consolidation step that spends money.
         reflectionEnabled: (settings as any).memoryReflectionEnabled === true,
+        // Opt-in: this one writes files into the user's working tree.
+        projectionEnabled: (settings as any).memoryProjectionEnabled === true,
         bootstrapConcurrency: Number((settings as any).memoryBootstrapConcurrency) || 3
       }
       return memSettings
@@ -323,6 +325,9 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         }),
         ...(args.settings.reflectionEnabled !== undefined && {
           memoryReflectionEnabled: args.settings.reflectionEnabled
+        }),
+        ...(args.settings.projectionEnabled !== undefined && {
+          memoryProjectionEnabled: args.settings.projectionEnabled
         }),
         ...(args.settings.bootstrapConcurrency !== undefined && {
           memoryBootstrapConcurrency: Math.min(6, Math.max(1, Math.floor(args.settings.bootstrapConcurrency)))

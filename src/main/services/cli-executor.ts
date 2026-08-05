@@ -780,7 +780,8 @@ export class CLIExecutor {
         cwd: options.cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-        detached: false
+        detached: false,
+        windowsHide: true
       })
       // Arm before any handler can fire, so an immediate spawn failure still
       // has a signal to reject.

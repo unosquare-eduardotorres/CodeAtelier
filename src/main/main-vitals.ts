@@ -43,7 +43,7 @@ let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 let vitalsFd: number | undefined
 let vitalsPath: string | undefined
 let lastRss = 0
-let processStartTime = Date.now()
+const processStartTime = Date.now()
 let initialised = false // one-time setup (file, signals, exit handler)
 let running = false     // heartbeat is actively ticking
 

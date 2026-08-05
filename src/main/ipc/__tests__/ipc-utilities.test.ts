@@ -14,38 +14,38 @@ const { formatToolErrorMessage } = require('../tool-error-reporter') as any
 describe('resolveContextLevel — large window (1M)', () => {
   const LARGE = 1_000_000
 
-  test('< 56% → green / excellent', () => {
-    const result = resolveContextLevel(55, LARGE)
+  test('< 48% → green / excellent', () => {
+    const result = resolveContextLevel(47, LARGE)
     assert.equal(result.level, 'green')
     assert.equal(result.qualityLevel, 'excellent')
   })
 
-  test('exactly 56% → yellow / good (at warn threshold)', () => {
-    const result = resolveContextLevel(56, LARGE)
+  test('exactly 48% → yellow / good (at warn threshold)', () => {
+    const result = resolveContextLevel(48, LARGE)
     assert.equal(result.level, 'yellow')
     assert.equal(result.qualityLevel, 'good')
   })
 
-  test('69% → yellow / good', () => {
-    const result = resolveContextLevel(69, LARGE)
+  test('59% → yellow / good', () => {
+    const result = resolveContextLevel(59, LARGE)
     assert.equal(result.level, 'yellow')
     assert.equal(result.qualityLevel, 'good')
   })
 
-  test('exactly 70% → red / moderate (at suggest threshold)', () => {
-    const result = resolveContextLevel(70, LARGE)
+  test('exactly 60% → red / moderate (at suggest threshold)', () => {
+    const result = resolveContextLevel(60, LARGE)
     assert.equal(result.level, 'red')
     assert.equal(result.qualityLevel, 'moderate')
   })
 
-  test('84% → red / moderate', () => {
-    const result = resolveContextLevel(84, LARGE)
+  test('74% → red / moderate', () => {
+    const result = resolveContextLevel(74, LARGE)
     assert.equal(result.level, 'red')
     assert.equal(result.qualityLevel, 'moderate')
   })
 
-  test('exactly 85% → critical / low (at auto-compact threshold)', () => {
-    const result = resolveContextLevel(85, LARGE)
+  test('exactly 75% → critical / low (at auto-compact threshold)', () => {
+    const result = resolveContextLevel(75, LARGE)
     assert.equal(result.level, 'critical')
     assert.equal(result.qualityLevel, 'low')
   })
@@ -108,14 +108,15 @@ describe('resolveContextLevel — small window (128K)', () => {
 // ── resolveContextLevel — boundary (200K window) ────────────────────────────
 
 describe('resolveContextLevel — 200K window boundary', () => {
-  test('200K is classified as small', () => {
-    const result = resolveContextLevel(48, 200_000)
-    assert.equal(result.level, 'yellow') // small threshold: 48%
+  test('200K and 200001 classify identically — bands are window-independent', () => {
+    assert.deepEqual(resolveContextLevel(48, 200_000), resolveContextLevel(48, 200_001))
+    assert.equal(resolveContextLevel(48, 200_001).level, 'yellow') // uniform warn: 48%
   })
 
-  test('200001 is classified as large', () => {
-    const result = resolveContextLevel(48, 200_001)
-    assert.equal(result.level, 'green') // large threshold: 56%
+  test('the window argument does not affect any band', () => {
+    for (const pct of [0, 47, 48, 59, 60, 74, 75, 99]) {
+      assert.deepEqual(resolveContextLevel(pct, 128_000), resolveContextLevel(pct, 1_000_000))
+    }
   })
 })
 

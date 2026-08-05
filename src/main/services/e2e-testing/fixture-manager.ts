@@ -251,14 +251,15 @@ export class FixtureManager {
         GIT_COMMITTER_EMAIL: 'e2e@test.local'
       }
       try {
-        execSync('git init', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
-        execSync('git add .', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
+        execSync('git init', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
+        execSync('git add .', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
         execSync('git commit -m "Initial fixture setup"', {
           cwd: fixturePath,
           stdio: 'pipe',
           env: gitEnv,
           timeout: GIT_EXEC_TIMEOUT_MS,
-          killSignal: 'SIGKILL'
+          killSignal: 'SIGKILL',
+          windowsHide: true
         })
 
         // Second commit: add tasks module so git_log has ≥2 entries
@@ -268,13 +269,14 @@ export class FixtureManager {
           `# Testing Environment\n\nThis is a fixture repository used by E2E tests.\nIt is automatically managed — do not edit manually.\n\n## Modules\n\n- \`src/hello.ts\` — greeting module\n- \`src/tasks.ts\` — task management module\n`,
           'utf-8'
         )
-        execSync('git add .', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
+        execSync('git add .', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
         execSync('git commit -m "Add tasks module and update README"', {
           cwd: fixturePath,
           stdio: 'pipe',
           env: gitEnv,
           timeout: GIT_EXEC_TIMEOUT_MS,
-          killSignal: 'SIGKILL'
+          killSignal: 'SIGKILL',
+          windowsHide: true
         })
       } catch (err) {
         log.error(`Fixture git init failed: ${(err as Error).message}`)
@@ -298,15 +300,15 @@ export class FixtureManager {
 
     try {
       const gitEnv = buildEnvWithPath()
-      execSync('git reset --hard HEAD', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
-      execSync(`git clean -fdx -e ${FIXTURE_VERSION_FILE}`, { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
+      execSync('git reset --hard HEAD', { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
+      execSync(`git clean -fdx -e ${FIXTURE_VERSION_FILE}`, { cwd: fixturePath, stdio: 'pipe', env: gitEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
       log.info('Fixture reset to clean state')
     } catch (err) {
       log.warn(`Fixture reset failed, retrying git clean once: ${(err as Error).message}`)
       try {
         const retryEnv = buildEnvWithPath()
-        execSync('git reset --hard HEAD', { cwd: fixturePath, stdio: 'pipe', env: retryEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
-        execSync(`git clean -fdx -e ${FIXTURE_VERSION_FILE}`, { cwd: fixturePath, stdio: 'pipe', env: retryEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL' })
+        execSync('git reset --hard HEAD', { cwd: fixturePath, stdio: 'pipe', env: retryEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
+        execSync(`git clean -fdx -e ${FIXTURE_VERSION_FILE}`, { cwd: fixturePath, stdio: 'pipe', env: retryEnv, timeout: GIT_EXEC_TIMEOUT_MS, killSignal: 'SIGKILL', windowsHide: true })
         return
       } catch {
         log.warn('Git reset still failing — recreating fixture from scratch')

@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Check,
   FileCode,
   FileMinus,
@@ -11,6 +12,7 @@ import {
   Settings
 } from 'lucide-react'
 import type { FileChangeDetail } from '@renderer/store'
+import { resolveFileListState } from './file-change-list-state'
 import type { DiffComparisonMode } from '../../../../shared/types'
 
 interface FileChangeListProps {
@@ -22,6 +24,12 @@ interface FileChangeListProps {
   onSelectAll: () => void
   onDeselectAll: () => void
   isLoading: boolean
+  /**
+   * Listing failure ONLY — an empty list after one of these means "unknown", not
+   * "clean". A push/fetch/commit failure must never arrive here; it would claim
+   * the listing failed when it succeeded.
+   */
+  error?: string | null
   isGitConfigured?: boolean
   onNavigateToSettings?: () => void
   comparisonMode?: DiffComparisonMode
@@ -59,6 +67,7 @@ export default function FileChangeList({
   onSelectAll,
   onDeselectAll,
   isLoading,
+  error = null,
   isGitConfigured = true,
   onNavigateToSettings,
   comparisonMode = 'uncommitted',
@@ -68,32 +77,62 @@ export default function FileChangeList({
   const allChecked = files.length > 0 && checkedFiles.size === files.length
   const someChecked = checkedFiles.size > 0 && checkedFiles.size < files.length
 
-  if (files.length === 0 && !isLoading) {
-    // State A — No git repo
-    if (!isGitConfigured) {
-      return (
-        <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
-          <div className="w-12 h-12 rounded-full bg-warning-muted flex items-center justify-center mb-3">
-            <GitBranch size={24} className="text-warning" />
-          </div>
-          <p className="text-sm font-medium text-text-primary mb-1">Git is not configured</p>
-          <p className="text-xs text-text-secondary mb-3">
-            Set up a repository to track your changes
-          </p>
-          {onNavigateToSettings && (
-            <button
-              onClick={onNavigateToSettings}
-              className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-white hover:brightness-110 transition-colors"
-            >
-              <Settings size={12} />
-              Set up Repository
-            </button>
-          )}
-        </div>
-      )
-    }
+  const listState = resolveFileListState({
+    isGitConfigured,
+    isLoading,
+    fileCount: files.length,
+    error
+  })
 
-    // State B — Git configured, no changes
+  // State A — No git repo
+  if (listState === 'git-missing') {
+    return (
+      <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
+        <div className="w-12 h-12 rounded-full bg-warning-muted flex items-center justify-center mb-3">
+          <GitBranch size={24} className="text-warning" />
+        </div>
+        <p className="text-sm font-medium text-text-primary mb-1">Git is not configured</p>
+        <p className="text-xs text-text-secondary mb-3">
+          Set up a repository to track your changes
+        </p>
+        {onNavigateToSettings && (
+          <button
+            onClick={onNavigateToSettings}
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-white hover:brightness-110 transition-colors"
+          >
+            <Settings size={12} />
+            Set up Repository
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  // State D — Loading
+  if (listState === 'loading') {
+    return (
+      <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex items-center justify-center">
+        <Loader2 size={20} className="text-text-muted animate-spin" />
+      </div>
+    )
+  }
+
+  // State B — the listing failed. Rendering the green "no changes" state here
+  // tells the user nothing will ship when we simply don't know what would.
+  if (listState === 'list-failed') {
+    return (
+      <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
+        <div className="w-12 h-12 rounded-full bg-danger-muted flex items-center justify-center mb-3">
+          <AlertTriangle size={24} className="text-danger" />
+        </div>
+        <p className="text-sm font-medium text-text-primary mb-1">Could not list changes</p>
+        <p className="text-xs text-text-secondary break-words">{error}</p>
+      </div>
+    )
+  }
+
+  // State C — Git configured, no changes
+  if (listState === 'empty') {
     const emptyMessage =
       comparisonMode === 'uncommitted'
         ? 'No uncommitted changes'
@@ -116,15 +155,6 @@ export default function FileChangeList({
     )
   }
 
-  // State C — Loading
-  if (isLoading) {
-    return (
-      <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex items-center justify-center">
-        <Loader2 size={20} className="text-text-muted animate-spin" />
-      </div>
-    )
-  }
-
   return (
     <div data-testid="file-change-list" className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col min-h-0">
       {/* Header with select all */}
@@ -132,6 +162,7 @@ export default function FileChangeList({
         {comparisonMode === 'uncommitted' ? (
           <button
             type="button"
+            data-testid="file-change-select-all"
             onClick={allChecked ? onDeselectAll : onSelectAll}
             className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
           >
@@ -167,6 +198,7 @@ export default function FileChangeList({
           return (
             <div
               key={file.filePath}
+              data-testid={`file-change-item-${file.filePath}`}
               className={`
                 flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors
                 border-b border-border-subtle/30

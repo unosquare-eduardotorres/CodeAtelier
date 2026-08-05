@@ -94,7 +94,7 @@ test.describe('GrillQuestionCard Deep', () => {
 
     // Click first option
     const firstOption = options.first()
-    const role = await firstOption.getAttribute('role')
+    const _role = await firstOption.getAttribute('role')
 
     await firstOption.click()
     await page.waitForTimeout(300)

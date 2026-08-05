@@ -331,7 +331,7 @@ test.describe('Cross-Area Plan Flows', () => {
     }
 
     // Get plan title for later verification
-    const planTitle = await targetCard.locator('.font-semibold, .font-medium').first().textContent()
+    const _planTitle = await targetCard.locator('.font-semibold, .font-medium').first().textContent()
 
     // Click "Start Goal"
     const startGoalBtn = targetCard

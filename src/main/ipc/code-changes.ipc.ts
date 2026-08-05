@@ -8,7 +8,7 @@ import { runOneShotClaude } from '../services/one-shot-claude'
 import { modelConfigService } from '../services/model-config.service'
 import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
 import { validateSender } from './validate-sender'
-import { requireObject, requireString, optionalString } from './validate-args'
+import { requireObject, requireString, requireStringArray, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
 
@@ -18,6 +18,7 @@ function validateRef(ref: string, channel: string): void {
   if (ref.startsWith('-')) {
     throw new Error(`${channel}: invalid ref — must not start with "-"`)
   }
+  // eslint-disable-next-line no-control-regex -- NUL is exactly what this guard must reject
   if (/[\x00\n\r]/.test(ref)) {
     throw new Error(`${channel}: invalid ref — contains control characters`)
   }
@@ -89,10 +90,7 @@ export function registerCodeChangesIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.REPO_COMMIT_FILES)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_COMMIT_FILES)
     const message = requireString(args, 'message', IPC_CHANNELS.REPO_COMMIT_FILES)
-    const filePaths = args.filePaths as string[]
-    if (!Array.isArray(filePaths) || filePaths.length === 0) {
-      throw new Error(`${IPC_CHANNELS.REPO_COMMIT_FILES}: filePaths must be a non-empty array`)
-    }
+    const filePaths = requireStringArray(args, 'filePaths', IPC_CHANNELS.REPO_COMMIT_FILES)
 
     const { repoPath, workspaceId } = resolveRepoPath(conversationId)
 
@@ -138,12 +136,11 @@ export function registerCodeChangesIpc(): void {
       'conversationId',
       IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE
     )
-    const filePaths = args.filePaths as string[]
-    if (!Array.isArray(filePaths) || filePaths.length === 0) {
-      throw new Error(
-        `${IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE}: filePaths must be a non-empty array`
-      )
-    }
+    const filePaths = requireStringArray(
+      args,
+      'filePaths',
+      IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE
+    )
 
     const messages = messageRepository
       .findByConversation(conversationId)

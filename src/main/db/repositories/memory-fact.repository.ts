@@ -8,6 +8,7 @@
 
 import { BaseRepository } from '../base-repository'
 import { safeParseJSON } from '../json-utils'
+import { dbLogger } from '../../logger'
 import type {
   MemoryFact,
   MemoryFactCategory,
@@ -306,6 +307,17 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       // Either a MATCH expression this sanitiser did not anticipate, or a DB
       // that has not reached migration 135 yet. Both are recoverable: fall back
       // to the LIKE scan so retrieval degrades in quality rather than failing.
+      //
+      // The LIKE scan has no validity predicate, so a point-in-time query
+      // silently becomes a current-facts query. Degraded ranking is an
+      // acceptable fallback; a wrong answer to "what did we believe in March"
+      // is not, so it is logged rather than hidden.
+      if (asOf) {
+        dbLogger.warn(
+          `[MemoryFactRepository] searchFts fell back to LIKE scan; asOf=${asOf} cannot be ` +
+            `honoured on that path. Results reflect current facts.`
+        )
+      }
       return this.search(workspaceId, query, limit).map((fact, rank) => ({ fact, rank }))
     }
 

@@ -77,7 +77,7 @@ test.describe('Mermaid Diagrams', () => {
 
     // Should contain rendered SVG
     const svgElement = firstDiagram.locator('svg')
-    const hasSvg = await svgElement.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const _hasSvg = await svgElement.first().isVisible({ timeout: 5_000 }).catch(() => false)
 
     // May have SVG or still be loading — just verify the container is there
     expect(true).toBeTruthy()

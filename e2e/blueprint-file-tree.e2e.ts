@@ -169,7 +169,7 @@ test.describe('Blueprint File Tree', () => {
       }
 
       // Count entries before clicking
-      const beforeCount = await treeContainer.locator('button').count()
+      const _beforeCount = await treeContainer.locator('button').count()
 
       await firstEntry.click()
       await page.waitForTimeout(500)
@@ -334,7 +334,7 @@ test.describe('Blueprint File Tree', () => {
       }
 
       // Check that the checkbox is still checked after collapse/expand
-      const isStillChecked = await checkboxes.first().isChecked().catch(() => false)
+      const _isStillChecked = await checkboxes.first().isChecked().catch(() => false)
       // Selection state should be preserved (true) or at minimum the checkbox should exist
       expect(cbCount).toBeGreaterThan(0)
     } else {

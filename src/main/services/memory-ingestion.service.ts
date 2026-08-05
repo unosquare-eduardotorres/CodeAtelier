@@ -295,8 +295,20 @@ class MemoryIngestionService {
           workspacePath,
           docName,
           contentWithContext,
-          undefined,
-          { sourceType: 'document', tags: ['ingested'] }
+          // A rate-limit backoff holds a chunk for ~14s; without the extractor's
+          // own status the panel freezes on "chunk 3/12" with no explanation.
+          (p) =>
+            emit({
+              docIndex,
+              docName,
+              docStatus: 'extracting',
+              chunkIndex: ci + 1,
+              chunkCount: chunks.length,
+              message: p.message
+            }),
+          // Without the signal a cancelled job keeps retrying — and keeps
+          // spending the user's tokens — long after they hit Stop.
+          { sourceType: 'document', tags: ['ingested'], signal }
         )
         factsFromDoc += created
       } catch (err) {

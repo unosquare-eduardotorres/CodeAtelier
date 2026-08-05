@@ -227,7 +227,8 @@ export function getChangedFilesSinceCommit(
       cwd: workspacePath,
       encoding: 'utf-8',
       timeout: 10_000,
-      maxBuffer: 2 * 1024 * 1024
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
     }).trim()
 
     return new Set(output.split('\n').filter(Boolean))
@@ -242,7 +243,8 @@ export function readHeadSha(workspacePath: string): string | null {
     return execSync('git rev-parse HEAD', {
       cwd: workspacePath,
       encoding: 'utf-8',
-      timeout: 5000
+      timeout: 5000,
+      windowsHide: true
     }).trim()
   } catch {
     return null

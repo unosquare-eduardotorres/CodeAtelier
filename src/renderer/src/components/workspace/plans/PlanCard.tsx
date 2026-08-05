@@ -99,7 +99,6 @@ export default function PlanCard({
       </div>
 
       {/* Action buttons — config-driven (stop click propagation so card onClick isn't triggered) */}
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
       <div onClick={(e) => e.stopPropagation()}>
       <PlanCardActions
         status={plan.status}

@@ -4,7 +4,10 @@
  *
  * Replaces `memory-feed.service.ts`. Uses the proven `spawnSummarizer` pattern
  * with model from `modelConfigService.getModel(path, 'memoryFeed')`.
- * Serialized single-in-flight queue prevents concurrent Haiku calls.
+ * `enqueue` serializes the jobs that go through it, but Feed Brain calls
+ * `extractFromContent` directly from a concurrent drain pool, so several
+ * summarizer children can be alive at once — per-spawn state must stay local
+ * to the spawn (see `liveAbortControllers`).
  *
  * Retained: `regenerateClaudeMd` for CLAUDE.md generation.
  */
@@ -23,6 +26,7 @@ import { runAgenticClaude, parseSentinelBlock, SENTINELS } from './agentic-claud
 import type {
   MemoryFactCategory,
   MemoryFeedProgress,
+  MemorySourceType,
   DiscoveredAgent,
   DiscoveredSkill
 } from '../../shared/types'
@@ -39,13 +43,72 @@ const EXTRACTION_RETRY_BASE_MS = 2000
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /**
+ * Backoff that gives up the moment the run is cancelled. Sleeping through a
+ * cancel would spend Claude spawns — and the user's tokens — on a run they have
+ * already stopped, and would delay a pause by the full retry schedule.
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms)
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, ms)
+    signal.addEventListener('abort', finish, { once: true })
+  })
+}
+
+/** Failure shapes already logged — a storm must not repeat the same line 400 times. */
+const loggedFailureShapes = new Set<string>()
+const MAX_LOGGED_FAILURE_SHAPES = 5
+
+/**
+ * Collapse the volatile parts of a failure message (exit codes, pids, timings)
+ * so that retries of the same fault dedupe onto one slot. A single one-shot
+ * boolean was spent by whatever failed first — on a machine without the CLI on
+ * PATH that is `command not found`, and the real 429 then logged nothing.
+ */
+function failureShape(msg: string): string {
+  return msg.replace(/\d+/g, '#').slice(0, 120)
+}
+
+/**
  * Rate limits and upstream overloads are transient — the same prompt succeeds
  * a few seconds later. Everything else (missing CLI, bad prompt, timeout) is
  * not worth retrying.
+ *
+ * Exported for tests: the patterns below are an assumption about what the
+ * Claude CLI prints, and an assumption worth pinning.
  */
-function isRetryableExtractionError(err: unknown): boolean {
+export function isRetryableExtractionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
   return /\b(429|503|529)\b|rate.?limit|overloaded|too many requests/i.test(msg)
+}
+
+/** Options accepted by `extractFromContent`. */
+export interface ExtractContentOptions {
+  sourceType?: MemorySourceType
+  tags?: string[]
+  /**
+   * Scope paths applied to facts the model did not scope itself. Rule files
+   * declare the part of the tree they govern in their own frontmatter, so that
+   * is far better than guessing from the source ref.
+   */
+  scopePaths?: string[]
+  /**
+   * When the source stated this — a commit date, a file mtime. Drives recency,
+   * so history-mined facts are not all dated "today".
+   */
+  observedAt?: string | null
+  /**
+   * The caller's cancel signal. Only the retry backoff observes it: an
+   * already-spawned summarizer runs to completion, but a cancelled run stops
+   * paying for further attempts.
+   */
+  signal?: AbortSignal
 }
 
 /** Structured fact from Haiku extraction. */
@@ -60,7 +123,13 @@ interface ExtractedFact {
 type ProgressCallback = (event: MemoryFeedProgress) => void
 
 class MemoryExtractionService {
-  private currentAbortController: AbortController | null = null
+  /**
+   * Every summarizer child currently in flight. A single field cannot work
+   * here: the bootstrap drain runs 3-6 extractions at once, so one spawn's
+   * timeout would abort a different spawn's process, and shutdown would kill
+   * only the most recently started child.
+   */
+  private liveAbortControllers = new Set<AbortController>()
   private isBusy = false
   private queue: Array<() => Promise<void>> = []
   private processing = false
@@ -133,7 +202,13 @@ class MemoryExtractionService {
       try {
         const gitLog = execSync(
           `git log --stat ${startSha}..HEAD 2>/dev/null || true`,
-          { cwd: workspacePath, timeout: 5000, encoding: 'utf-8', maxBuffer: 10_000 }
+          {
+            cwd: workspacePath,
+            timeout: 5000,
+            encoding: 'utf-8',
+            maxBuffer: 10_000,
+            windowsHide: true
+          }
         ).trim()
         if (gitLog) {
           parts.push(`## Git Changes Since Session Start\n${gitLog.slice(0, 3000)}`)
@@ -191,21 +266,7 @@ class MemoryExtractionService {
     sourceRef: string,
     content: string,
     onProgress?: ProgressCallback,
-    opts?: {
-      sourceType?: import('../../shared/types').MemorySourceType
-      tags?: string[]
-      /**
-       * Scope paths applied to facts the model did not scope itself. Rule files
-       * declare the part of the tree they govern in their own frontmatter, so
-       * that is far better than guessing from the source ref.
-       */
-      scopePaths?: string[]
-      /**
-       * When the source stated this — a commit date, a file mtime. Drives
-       * recency, so history-mined facts are not all dated "today".
-       */
-      observedAt?: string | null
-    }
+    opts?: ExtractContentOptions
   ): Promise<number> {
     const sourceType = opts?.sourceType ?? 'document'
     const emit = (msg: string, status: MemoryFeedProgress['status'] = 'running'): void => {
@@ -231,7 +292,13 @@ class MemoryExtractionService {
     let lastWriteError: unknown = null
 
     try {
-      const result = await this.spawnSummarizerWithRetry(prompt, workspacePath, workspaceId, emit)
+      const result = await this.spawnSummarizerWithRetry(
+        prompt,
+        workspacePath,
+        workspaceId,
+        emit,
+        opts?.signal
+      )
       const facts = parseExtractedFacts(result, budget)
       factCount = facts.length
 
@@ -337,14 +404,26 @@ class MemoryExtractionService {
     try {
       const diffStat = execSync(
         `git diff --stat ${startSha}..${endSha} 2>/dev/null || true`,
-        { cwd: workspacePath, timeout: 5000, encoding: 'utf-8', maxBuffer: 20_000 }
+        {
+          cwd: workspacePath,
+          timeout: 5000,
+          encoding: 'utf-8',
+          maxBuffer: 20_000,
+          windowsHide: true
+        }
       ).trim()
 
       if (!diffStat || diffStat.length < 20) return
 
       const logOutput = execSync(
         `git log --oneline ${startSha}..${endSha} 2>/dev/null || true`,
-        { cwd: workspacePath, timeout: 5000, encoding: 'utf-8', maxBuffer: 10_000 }
+        {
+          cwd: workspacePath,
+          timeout: 5000,
+          encoding: 'utf-8',
+          maxBuffer: 10_000,
+          windowsHide: true
+        }
       ).trim()
 
       // Extract touched file paths from diff stat
@@ -820,12 +899,16 @@ class MemoryExtractionService {
    * the file fails, its doc-state hash is not written, and the next run redoes
    * the whole thing at the same concurrency — amplifying the storm instead of
    * damping it.
+   *
+   * `signal` is the run's cancel/pause signal: retrying (or sleeping) after the
+   * user stopped the run spends tokens on work that will be thrown away.
    */
   private async spawnSummarizerWithRetry(
     prompt: string,
     workspacePath: string | undefined,
     workspaceId: string | undefined,
-    emit: (msg: string, status?: MemoryFeedProgress['status']) => void
+    emit: (msg: string, status?: MemoryFeedProgress['status']) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     let lastErr: unknown
     for (let attempt = 0; attempt <= EXTRACTION_MAX_RETRIES; attempt++) {
@@ -833,7 +916,29 @@ class MemoryExtractionService {
         return await this.spawnSummarizer(prompt, workspacePath, workspaceId)
       } catch (err) {
         lastErr = err
-        if (!isRetryableExtractionError(err) || attempt === EXTRACTION_MAX_RETRIES) break
+        const retryable = isRetryableExtractionError(err)
+
+        // The classifier matches text the Claude CLI is *assumed* to write on a
+        // 429. Log the raw failure so that assumption can be checked against a
+        // real rate limit instead of trusted blind — if the backoff never fires
+        // during a storm, this line says why. One line per distinct failure
+        // shape, capped, so each *kind* of fault gets recorded exactly once.
+        if (!retryable) {
+          const rawMsg = err instanceof Error ? err.message : String(err)
+          const shape = failureShape(rawMsg)
+          if (
+            !loggedFailureShapes.has(shape) &&
+            loggedFailureShapes.size < MAX_LOGGED_FAILURE_SHAPES
+          ) {
+            loggedFailureShapes.add(shape)
+            log.warn(
+              '[MemoryExtraction] Non-retryable extraction failure — raw text the retry ' +
+                `classifier was matched against (first occurrence of this shape): ${rawMsg.slice(0, 1000)}`
+            )
+          }
+        }
+
+        if (!retryable || attempt === EXTRACTION_MAX_RETRIES || signal?.aborted) break
         const delayMs = EXTRACTION_RETRY_BASE_MS * 2 ** attempt
         log.warn(
           `[MemoryExtraction] Transient extraction failure (attempt ${attempt + 1}/${
@@ -842,7 +947,8 @@ class MemoryExtractionService {
           err
         )
         emit(`Rate limited — retrying in ${Math.round(delayMs / 1000)}s…`)
-        await sleep(delayMs)
+        await abortableSleep(delayMs, signal)
+        if (signal?.aborted) break
       }
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
@@ -854,7 +960,7 @@ class MemoryExtractionService {
     if (workspaceId && workspacePath) {
       const assignment = resolveAssignment({ action: 'memoryFeed', ...buildResolveOpts(workspaceId) })
       if (assignment.provider === 'local-llm') {
-        // A3: Local path does not wire this.currentAbortController — bounded by
+        // A3: Local path does not wire an abort controller — bounded by
         // runOneShotLocal's internal 10s timeout (LOCAL_REQUEST_TIMEOUT_MS).
         const localCfg = modelConfigService.getLocalLLMConfig(workspacePath)
         const result = await runOneShotLocal({
@@ -874,13 +980,16 @@ class MemoryExtractionService {
     }
 
     return new Promise((resolve, reject) => {
-      this.currentAbortController = new AbortController()
-      const { signal } = this.currentAbortController
+      // Scoped to this spawn, not to the service: concurrent extractions each
+      // need to time out (and be killed) independently.
+      const controller = new AbortController()
+      const { signal } = controller
+      this.liveAbortControllers.add(controller)
 
       const TIMEOUT_MS = 5 * 60 * 1000
       const timer = setTimeout(() => {
         log.warn('Extraction summarizer timed out after 5 minutes')
-        this.currentAbortController?.abort()
+        controller.abort()
       }, TIMEOUT_MS)
 
       const env = buildEnvWithPath()
@@ -890,7 +999,7 @@ class MemoryExtractionService {
       const child = spawn(
         'claude',
         ['-p', prompt, '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
-        { stdio: ['ignore', 'pipe', 'pipe'], env, signal }
+        { stdio: ['ignore', 'pipe', 'pipe'], env, signal, windowsHide: true }
       )
 
       log.info(`Extraction summarizer spawned (prompt length: ${prompt.length} chars)`)
@@ -910,7 +1019,7 @@ class MemoryExtractionService {
 
       child.on('exit', (code) => {
         clearTimeout(timer)
-        this.currentAbortController = null
+        this.liveAbortControllers.delete(controller)
         if (code === 0 && stdout.trim()) {
           resolve(stdout.trim())
         } else {
@@ -921,7 +1030,7 @@ class MemoryExtractionService {
 
       child.on('error', (err) => {
         clearTimeout(timer)
-        this.currentAbortController = null
+        this.liveAbortControllers.delete(controller)
         reject(new Error(`Failed to spawn extraction summarizer: ${err.message}`))
       })
     })
@@ -970,10 +1079,8 @@ class MemoryExtractionService {
   }
 
   shutdown(): void {
-    if (this.currentAbortController) {
-      this.currentAbortController.abort()
-      this.currentAbortController = null
-    }
+    for (const controller of this.liveAbortControllers) controller.abort()
+    this.liveAbortControllers.clear()
     this.isBusy = false
   }
 }

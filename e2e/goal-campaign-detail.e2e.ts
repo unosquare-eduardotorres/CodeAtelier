@@ -174,7 +174,7 @@ test.describe('Goal Campaign Detail', () => {
     const hasStartBtn = await startCampaignBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // The panel should have step indicators or navigation
-    const stepIndicators = panel.locator('[class*="step"], [class*="circle"]')
+    const _stepIndicators = panel.locator('[class*="step"], [class*="circle"]')
     await expect(panel).toBeVisible()
 
     if (hasStartBtn) {

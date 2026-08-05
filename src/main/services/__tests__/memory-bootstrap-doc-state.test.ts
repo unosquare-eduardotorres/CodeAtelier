@@ -11,13 +11,16 @@
  *   - A clean run still writes the hash, and a matching hash short-circuits.
  *   - The Deep Scan circuit breaker treats a `lastMutationAt` bump as progress
  *     (dedupe-merges confirm existing facts without raising the active count).
+ *   - Every bootstrap extraction is handed the run's cancel signal, so a
+ *     cancelled run stops paying for retry backoffs instead of sleeping
+ *     through ~14s of them per in-flight chunk.
  *
  * NOTE: the harness runs async tests concurrently, so the singleton stubs are
  * installed once and dispatch per file path instead of being swapped per test.
  */
 
 import assert from 'node:assert/strict'
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, basename } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -94,6 +97,10 @@ interface Scenario {
   onChunk: () => Promise<number>
   chunkCalls: number
   upserts: number
+  /** `opts` the executor passed to the extractor on the most recent call. */
+  lastOpts?: any
+  /** `onProgress` the executor passed on the most recent call. */
+  lastOnProgress?: unknown
 }
 
 /** Keyed by file basename — both absolute and relative paths resolve to it. */
@@ -111,11 +118,16 @@ if (loaded) {
   memoryExtractionService.extractFromContent = async (
     _ws: string,
     _wsPath: string,
-    relPath: string
+    relPath: string,
+    _content: string,
+    onProgress?: unknown,
+    opts?: any
   ) => {
     const s = scenarios.get(basename(relPath))
     if (!s) return 0
     s.chunkCalls++
+    s.lastOpts = opts
+    s.lastOnProgress = onProgress
     return s.onChunk()
   }
 }
@@ -355,6 +367,114 @@ describe('bootstrap executor — doc-state hash gating', () => {
   })
 })
 
+// ── Cancel-signal wiring ────────────────────────────────────────────────────
+
+/**
+ * A cancelled run must not keep paying for retry backoffs. `extractFromContent`
+ * only stops retrying when it is handed the run's signal, so a call site that
+ * forgets it burns ~14s of sleeps and up to three extra Claude spawns per
+ * in-flight chunk after the user hits Cancel.
+ *
+ * Under the old code the `manifests` case below saw `opts.signal === undefined`
+ * and the doc case saw a signal only because that one site wired it by hand.
+ */
+describe('bootstrap executors — cancel signal reaches the extractor', () => {
+  test('doc items pass the run signal through to extractFromContent', async () => {
+    if (!loaded) return
+    const name = 'signal-doc.md'
+    const controller = new AbortController()
+    const { path, state } = setupDoc(name, { onChunk: async () => 1 })
+    try {
+      await callExtract(path, controller.signal)
+      assert.equal(state.lastOpts?.signal, controller.signal, 'the run signal must be forwarded')
+      assert.equal(state.lastOpts.signal.aborted, false)
+      controller.abort()
+      assert.equal(
+        state.lastOpts.signal.aborted,
+        true,
+        'it is the live signal, not a detached copy'
+      )
+      assert.equal(typeof state.lastOnProgress, 'function', 'extractor status is forwarded')
+    } finally {
+      teardownDoc(name, path)
+    }
+  })
+
+  test('manifests items pass the run signal through to extractFromContent', async () => {
+    if (!loaded) return
+    const controller = new AbortController()
+    mkdirSync(TMP_ROOT, { recursive: true })
+    const manifestPath = join(TMP_ROOT, 'package.json')
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({ name: 'fixture', version: '1.0.0', dependencies: { react: '^19.0.0' } }),
+      'utf-8'
+    )
+    const state: Scenario = { onChunk: async () => 3, chunkCalls: 0, upserts: 0 }
+    scenarios.set('project-manifests', state)
+
+    try {
+      const outcome = await executeItem({
+        workspaceId: 'ws-test',
+        workspacePath: TMP_ROOT,
+        scope: 'changed',
+        signal: controller.signal,
+        item: {
+          id: 'item-m',
+          runId: 'run-1',
+          phase: 'stack',
+          kind: 'manifests',
+          sourceRef: 'project-manifests',
+          contentHash: null,
+          priority: 100,
+          chunkTotal: 0,
+          chunkDone: 0,
+          status: 'running',
+          factsCreated: 0,
+          error: null,
+          updatedAt: ''
+        },
+        lastCommit: null,
+        isPaused: () => false,
+        onChunk: () => {},
+        onHashChanged: () => {},
+        onMessage: () => {}
+      })
+
+      assert.equal(state.chunkCalls, 1, 'the manifest fixture must actually reach the extractor')
+      assert.equal(outcome.status, 'done')
+      assert.equal(
+        state.lastOpts?.signal,
+        controller.signal,
+        'this site passed no signal at all before the fix'
+      )
+      assert.equal(typeof state.lastOnProgress, 'function', 'this site passed undefined before')
+    } finally {
+      scenarios.delete('project-manifests')
+      rmSync(manifestPath, { force: true })
+    }
+  })
+
+  test('every extractor call in executors.ts goes through the single wrapper', () => {
+    // `commits` needs a real git repo to drive, so the remaining call site is
+    // guarded structurally: exactly one textual call, the one inside
+    // runExtraction. Blunt, but it fails the moment a fourth unwired call site
+    // appears — which is precisely the regression.
+    const source = readFileSync(join(__dirname, '..', 'memory-bootstrap', 'executors.ts'), 'utf-8')
+    const calls = source.match(/memoryExtractionService\.extractFromContent\(/g) ?? []
+    assert.equal(
+      calls.length,
+      1,
+      'executors must call extractFromContent only via runExtraction, which attaches ctx.signal'
+    )
+    assert.match(
+      source,
+      /function runExtraction[\s\S]*?signal: ctx\.signal/,
+      'runExtraction must attach the run signal'
+    )
+  })
+})
+
 // ── Circuit breaker progress signal ─────────────────────────────────────────
 
 /**
@@ -404,4 +524,8 @@ describe('memoryFactRepository — doc-state surface', () => {
   })
 })
 
-void summaryAsync()
+// summaryAsync calls process.exit — unguarded it kills the whole suite when this
+// file is imported by a runner, taking every later test file with it.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

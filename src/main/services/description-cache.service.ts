@@ -141,7 +141,8 @@ class DescriptionCacheService {
       const proc = spawn('claude', args, {
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 30_000
+        timeout: 30_000,
+        windowsHide: true
       })
 
       let stdout = ''

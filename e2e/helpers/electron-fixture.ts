@@ -167,6 +167,7 @@ export const test = base.extend<ElectronFixtures>({
         })
 
         // Provide the ready page to the test
+        // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright's fixture `use` callback, not React's `use` hook
         await use(page)
       } finally {
         // ── Teardown ─────────────────────────────────────────────

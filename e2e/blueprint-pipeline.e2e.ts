@@ -18,7 +18,6 @@
  * Uses CDP fixture (Electron 41+ compatible).
  */
 import { test, expect } from './helpers/electron-fixture'
-import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 import { pinSequentialBuild } from './helpers/electron-app'
@@ -224,7 +223,7 @@ test.describe('Blueprint Pipeline', () => {
       await page.waitForTimeout(1_000)
 
       // Landing should no longer be visible (navigated to detail)
-      const landingStillVisible = await landing.isVisible({ timeout: 3_000 }).catch(() => false)
+      const _landingStillVisible = await landing.isVisible({ timeout: 3_000 }).catch(() => false)
       // Either landed on detail or timeline
       expect(true).toBeTruthy() // Navigation occurred
     }
@@ -263,7 +262,7 @@ test.describe('Blueprint Pipeline', () => {
     }
 
     // Pipeline should stop — landing or saved state should appear
-    const backToLanding = await page
+    const _backToLanding = await page
       .locator('[data-testid="blueprint-landing"]')
       .isVisible({ timeout: 5_000 })
       .catch(() => false)

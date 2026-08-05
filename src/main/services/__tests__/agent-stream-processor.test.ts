@@ -114,11 +114,11 @@ describe('AgentStreamProcessor.resolveCompactionThresholds', () => {
     assert.deepEqual(proc.resolveCompactionThresholds(200_000), { suggest: 120_000, auto: 150_000 })
   })
 
-  test('1M window uses the later 0.7/0.85 ratios', () => {
+  test('1M window uses the same 0.6/0.75 ratios', () => {
     const proc = new AgentStreamProcessor(makeHost())
     assert.deepEqual(proc.resolveCompactionThresholds(1_000_000), {
-      suggest: 700_000,
-      auto: 850_000
+      suggest: 600_000,
+      auto: 750_000
     })
   })
 })
@@ -287,12 +287,12 @@ describe('AgentStreamProcessor.resolveCompactionThresholds — window sizes', ()
     assert.equal(result.auto, 64_000 * 0.75)
   })
 
-  test('500K window (mid-range: transitions between ≤200K and 1M)', () => {
+  test('500K window (mid-range) uses the same uniform ratios', () => {
     const proc = new AgentStreamProcessor(makeHost())
     const result = proc.resolveCompactionThresholds(500_000)
-    // Between the two tiers, the policy interpolates
-    assert.ok(result.suggest > 0)
-    assert.ok(result.auto > result.suggest)
+    // Ratios are window-size independent — no tiering, no interpolation.
+    assert.equal(result.suggest, 500_000 * 0.6)
+    assert.equal(result.auto, 500_000 * 0.75)
   })
 
   test('0 window → both thresholds are 0', () => {

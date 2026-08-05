@@ -52,8 +52,16 @@ function createFakeProcess(): {
   stdin: { written: string[] }
   emitExit: (code?: number, signal?: string) => void
 } {
-  const stdout = new Readable({ read() {} })
-  const stderr = new Readable({ read() {} })
+  const stdout = new Readable({
+    read() {
+      /* no-op: data is pushed manually by the test */
+    }
+  })
+  const stderr = new Readable({
+    read() {
+      /* no-op: data is pushed manually by the test */
+    }
+  })
   const stdinWrites: string[] = []
   const stdin = new Writable({
     write(chunk, _enc, cb) {

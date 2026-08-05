@@ -105,7 +105,7 @@ test.describe('Help View', () => {
 
     // Get the initial article text
     const articleArea = page.locator('[role="main"]')
-    const initialText = await articleArea.textContent().catch(() => '')
+    const _initialText = await articleArea.textContent().catch(() => '')
 
     // Find and click a different section (Models)
     const modelsBtn = tocNav.locator('button').filter({ hasText: /^Models$/i }).first()

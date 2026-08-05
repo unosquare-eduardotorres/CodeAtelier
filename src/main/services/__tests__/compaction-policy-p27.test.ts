@@ -81,6 +81,13 @@ describe('classifyCompaction — band classification', () => {
     assert.equal(result.nextTurns, 0) // reset
   })
 
+  test('at/above the critical ceiling (1.2×auto) → critical despite auto-compact', () => {
+    const result = classifyCompaction(
+      baseInput({ inputTokens: 180_000, isAutoCompactEnabled: true })
+    )
+    assert.equal(result.level, 'critical')
+  })
+
   test('above autoThreshold with auto-compact → auto-compact-pending', () => {
     const result = classifyCompaction(
       baseInput({ inputTokens: 160_000, isAutoCompactEnabled: true })
@@ -126,16 +133,18 @@ describe('resolveCompactionThresholds — window-based thresholds', () => {
     assert.equal(result.auto, 150_000) // 200K * 0.75
   })
 
-  test('large window (>200K) uses 0.7/0.85 ratios', () => {
+  test('large window (>200K) uses the same 0.6/0.75 ratios', () => {
     const result = resolveCompactionThresholds(1_000_000)
-    assert.equal(result.suggest, 700_000) // 1M * 0.7
-    assert.equal(result.auto, 850_000) // 1M * 0.85
+    assert.equal(result.suggest, 600_000) // 1M * 0.6
+    assert.equal(result.auto, 750_000) // 1M * 0.75
   })
 
-  test('boundary at 200_001 → uses large window ratios', () => {
-    const result = resolveCompactionThresholds(200_001)
-    assert.equal(result.suggest, Math.round(200_001 * 0.7))
-    assert.equal(result.auto, Math.round(200_001 * 0.85))
+  test('no branch at the 200K boundary — 200_000 and 200_001 use identical ratios', () => {
+    const large = resolveCompactionThresholds(200_001)
+    // Same ratios on both sides of the old branch point (±1 token from rounding).
+    assert.equal(large.suggest, Math.round(200_001 * 0.6))
+    assert.equal(large.auto, Math.round(200_001 * 0.75))
+    assert.ok(Math.abs(large.suggest - resolveCompactionThresholds(200_000).suggest) <= 1)
   })
 
   test('100K window → small ratios', () => {
@@ -192,24 +201,24 @@ describe('resolveAppliedThresholds — local vs Claude', () => {
       isLocal: false,
       effectiveContextWindow: 1_000_000
     })
-    assert.equal(result.suggest, 700_000) // 1M * 0.7
-    assert.equal(result.auto, 850_000) // 1M * 0.85
+    assert.equal(result.suggest, 600_000) // 1M * 0.6
+    assert.equal(result.auto, 750_000) // 1M * 0.75
   })
 })
 
 // ── resolveClaudeCompactionEnv ──
 
 describe('resolveClaudeCompactionEnv — env var generation', () => {
-  test('1M model sets window without PCT override', () => {
-    const env = resolveClaudeCompactionEnv(true, 1_000_000)
+  test('1M model sets window + 75% PCT override', () => {
+    const env = resolveClaudeCompactionEnv(1_000_000)
     assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
-    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined)
+    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 
-  test('non-1M model sets window + 80% PCT override', () => {
-    const env = resolveClaudeCompactionEnv(false, 200_000)
+  test('non-1M model sets window + 75% PCT override', () => {
+    const env = resolveClaudeCompactionEnv(200_000)
     assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000')
-    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80')
+    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 })
 

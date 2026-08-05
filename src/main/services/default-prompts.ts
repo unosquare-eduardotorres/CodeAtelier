@@ -45,6 +45,13 @@ Tools: mcp__memory__memory_search (topic lookup), mcp__memory__memory_record (sa
 export const MEMORY_PROTOCOL_PROMPT = MEMORY_TOOLS_PROMPT
 export const MEMORY_PROTOCOL_PROMPT_LEAN = MEMORY_TOOLS_PROMPT
 
+export const RECALL_TOOLS_PROMPT = `## Recall Protocol
+When the user references past work — "that plan", "revisit", "the one about X", "earlier you said" — call mcp__recall__recall_plans BEFORE stating you cannot recover it. Never claim past plans are unrecoverable without searching first.
+Use mcp__recall__recall_plan for the full plan, mcp__recall__recall_conversation for the discussion around it.
+Entries marked [superseded] are older revisions — prefer the current one.`
+
+export const RECALL_TOOLS_PROMPT_LEAN = RECALL_TOOLS_PROMPT
+
 export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph
 Prefer mcp__code-graph__search_identifiers or mcp__code-graph__graph_map as your first step for codebase questions.
 mcp__code-graph__file_outline before Read on large files.
@@ -244,6 +251,7 @@ ${styleDirective}
 - **emit_plan**: for plans, proposals, investigation findings
 - **ask_user**: for clarifying questions
 - **mcp__memory__memory_search / mcp__memory__memory_record / mcp__memory__memory_flag**: search, record, and manage workspace knowledge
+- **mcp__recall__recall_plans / mcp__recall__recall_plan / mcp__recall__recall_conversation**: find past plans and the conversation around them — use before saying past work can't be recovered
 `
 }
 
@@ -278,6 +286,7 @@ ${styleDirective}
 - **emit_plan**: plans, proposals, investigation findings
 - **ask_user**: clarifying questions
 - **mcp__memory__memory_search / mcp__memory__memory_record / mcp__memory__memory_flag**: workspace knowledge tools
+- **mcp__recall__recall_plans / mcp__recall__recall_plan / mcp__recall__recall_conversation**: past plans + their surrounding conversation
 `
 }
 

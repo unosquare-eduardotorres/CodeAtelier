@@ -198,7 +198,8 @@ class QualityGateRunnerService {
             timeout: GATE_TIMEOUT_MS,
             maxBuffer: 2 * 1024 * 1024, // 2MB output buffer
             env: { ...process.env, CI: 'true', FORCE_COLOR: '0' },
-            shell: process.platform === 'win32' // npx needs shell on Windows
+            shell: process.platform === 'win32', // npx needs shell on Windows
+            windowsHide: true
           },
           (error, stdout, stderr) => {
             if (error) {

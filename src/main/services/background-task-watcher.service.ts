@@ -177,7 +177,10 @@ export function killProcessTree(pid: number, signal: NodeJS.Signals): void {
   }
   if (process.platform === 'win32') {
     try {
-      execSync(`taskkill /PID ${pid} /T${signal === 'SIGKILL' ? ' /F' : ''}`, { stdio: 'ignore' })
+      execSync(`taskkill /PID ${pid} /T${signal === 'SIGKILL' ? ' /F' : ''}`, {
+        stdio: 'ignore',
+        windowsHide: true
+      })
     } catch {
       /* already dead */
     }

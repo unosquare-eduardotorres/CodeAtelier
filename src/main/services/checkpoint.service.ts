@@ -194,7 +194,8 @@ class CheckpointService {
       const statusResult = spawnSync('git', ['status', '--porcelain'], {
         cwd: workspacePath,
         encoding: 'utf-8',
-        timeout: 5000
+        timeout: 5000,
+        windowsHide: true
       })
       const status = statusResult.stdout?.trim() ?? ''
 
@@ -203,7 +204,7 @@ class CheckpointService {
         const stashResult = spawnSync(
           'git',
           ['stash', 'push', '-m', 'checkpoint-restore-auto-stash'],
-          { cwd: workspacePath, encoding: 'utf-8', timeout: 10000 }
+          { cwd: workspacePath, encoding: 'utf-8', timeout: 10000, windowsHide: true }
         )
         if (stashResult.status !== 0) {
           throw new Error(stashResult.stderr || 'git stash failed')
@@ -214,7 +215,8 @@ class CheckpointService {
       const resetResult = spawnSync('git', ['reset', '--hard', checkpoint.gitCommitSha], {
         cwd: workspacePath,
         encoding: 'utf-8',
-        timeout: 10000
+        timeout: 10000,
+        windowsHide: true
       })
       if (resetResult.status !== 0) {
         throw new Error(resetResult.stderr || `git reset failed with code ${resetResult.status}`)

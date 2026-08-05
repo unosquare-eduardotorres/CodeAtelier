@@ -526,13 +526,30 @@ class MemoryBootstrapService {
 
     // Project the database to markdown so the run's output is reviewable in a
     // diff rather than only visible through the app.
+    //
+    // Opt-in. This writes files into the user's repository, and doing that
+    // unasked leaves untracked `.agentstudio/memory/*.md` in their working
+    // tree — which also feeds back into `resolveActivePaths` via
+    // `git status --porcelain`. Users who want the diff turn it on.
+    if (this.isProjectionEnabled(workspaceId)) {
+      try {
+        const result = memoryProjectionService.project(workspaceId, workspacePath)
+        bsLog.info(
+          `[phaseFinalize] Projected ${result.factsProjected} fact(s) to ${result.indexPath}`
+        )
+      } catch (err) {
+        bsLog.warn('[phaseFinalize] Memory projection failed:', err)
+      }
+    }
+  }
+
+  /** Whether this workspace has opted in to writing `.agentstudio/memory/`. */
+  private isProjectionEnabled(workspaceId: string): boolean {
     try {
-      const result = memoryProjectionService.project(workspaceId, workspacePath)
-      bsLog.info(
-        `[phaseFinalize] Projected ${result.factsProjected} fact(s) to ${result.indexPath}`
-      )
-    } catch (err) {
-      bsLog.warn('[phaseFinalize] Memory projection failed:', err)
+      const settings = workspaceRepository.getSettings(workspaceId) as Record<string, unknown>
+      return settings?.memoryProjectionEnabled === true
+    } catch {
+      return false
     }
   }
 }

@@ -64,13 +64,14 @@ describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
 
   test('expected server count is correct', () => {
     const servers = new Set(EXPECTED_MCP_TOOLS.map((n) => n.split('__')[1]))
-    // code-graph, semantic-search, git-context, checkpoint-context, github-context, code-analysis, memory, process-manager
-    assert.equal(servers.size, 8, `Expected 8 MCP servers, got ${servers.size}`)
+    // code-graph, semantic-search, git-context, checkpoint-context, github-context,
+    // code-analysis, memory, recall, process-manager
+    assert.equal(servers.size, 9, `Expected 9 MCP servers, got ${servers.size}`)
   })
 
-  test('registry includes all 8 MCP servers (including control-actions)', () => {
+  test('registry includes all 9 MCP servers (including control-actions)', () => {
     const allServers = new Set(ALL_MCP_TOOL_NAMES.map((n) => n.split('__')[1]))
-    assert.equal(allServers.size, 9, `Expected 9 MCP servers, got ${allServers.size}`)
+    assert.equal(allServers.size, 10, `Expected 10 MCP servers, got ${allServers.size}`)
   })
 })
 

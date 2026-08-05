@@ -139,21 +139,21 @@ describe('fixIconSyntax', () => {
   })
 
   test('unwraps form:-first bracket-wrapped node', () => {
-    const input = '  A["@{ form: circle, icon: \"lucide:home\" }"]'
+    const input = '  A["@{ form: circle, icon: "lucide:home" }"]'
     const result = fixIconSyntax(input)
     assert.ok(result.includes('A@{'), 'should unwrap brackets with form: first')
     assert.ok(result.includes('form: circle'), 'should preserve form: property')
   })
 
   test('unwraps bracket-wrapped node after arrow (mid-line)', () => {
-    const input = '  X --> A["@{ icon: \"lucide:home\" }"]'
+    const input = '  X --> A["@{ icon: "lucide:home" }"]'
     const result = fixIconSyntax(input)
     assert.ok(result.includes('A@{'), 'should unwrap mid-line bracket-wrapped node')
     assert.ok(!result.includes('["'), 'brackets should be removed')
   })
 
   test('unwraps two concatenated bracket-wrapped nodes', () => {
-    const input = '  A["@{ icon: \"lucide:home\" }"]B["@{ icon: \"lucide:star\" }"]'
+    const input = '  A["@{ icon: "lucide:home" }"]B["@{ icon: "lucide:star" }"]'
     const result = fixIconSyntax(input)
     assert.ok(result.includes('A@{'), 'first node should be unwrapped')
     assert.ok(result.includes('B@{'), 'second node should be unwrapped')
@@ -234,7 +234,7 @@ describe('sanitizeMermaid', () => {
   })
 
   test('full pipeline: bracket-wrapped + concatenated nodes', () => {
-    const input = '  A["@{ icon: \"lucide:home\" }"]B["@{ icon: \"lucide:star\" }"]'
+    const input = '  A["@{ icon: "lucide:home" }"]B["@{ icon: "lucide:star" }"]'
     const result = sanitizeMermaid(input)
     const lines = result
       .split('\n')

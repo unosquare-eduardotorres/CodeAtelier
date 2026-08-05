@@ -200,7 +200,7 @@ test.describe('MPA Campaign', () => {
 
     // Check for history section
     const historySection = page.getByText(/history|previous|past/i).first()
-    const hasHistory = await historySection.isVisible({ timeout: 5_000 }).catch(() => false)
+    const _hasHistory = await historySection.isVisible({ timeout: 5_000 }).catch(() => false)
 
     // History may or may not exist depending on workspace state
     // Just verify the page renders without crashing

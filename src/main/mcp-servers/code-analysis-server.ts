@@ -51,7 +51,8 @@ function resolveEslintStrategy(): EslintStrategy {
       cwd: WORKSPACE_PATH,
       timeout: 15_000,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     })
     hasEslint = true
   } catch {
@@ -61,7 +62,8 @@ function resolveEslintStrategy(): EslintStrategy {
         cwd: WORKSPACE_PATH,
         timeout: 30_000,
         encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true
       })
       hasEslint = true
     } catch {
@@ -580,6 +582,7 @@ function _runEslintWithStrategy(
       maxBuffer: 4 * 1024 * 1024,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
       env: { ...process.env, ...extraEnv }
     })
     return { stdout, exitCode: 0 }
@@ -628,14 +631,16 @@ function getGitChangedFiles(cwd: string): string[] {
       cwd,
       timeout: 10_000,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     })
     // Also include staged files
     const stagedOutput = execSync('git diff --name-only --cached', {
       cwd,
       timeout: 10_000,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     })
     const allFiles = `${diffOutput}\n${stagedOutput}`
     const unique = [...new Set(
@@ -859,7 +864,8 @@ function resolveTargetFile(filePath?: string): string {
       cwd: WORKSPACE_PATH,
       timeout: 5_000,
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     }).trim()
     return found || 'src/index.ts'
   } catch {

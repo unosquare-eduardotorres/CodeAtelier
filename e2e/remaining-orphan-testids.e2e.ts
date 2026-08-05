@@ -121,7 +121,7 @@ test.describe('Remaining Orphan Testids', () => {
     // Something should happen — either a popover, navigation, or modal
     // The button creates an idea instead of starting a conversation
     const ideaFeedback = page.getByText(/idea|saved|created/i).first()
-    const hasFeedback = await ideaFeedback.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasFeedback = await ideaFeedback.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // The action was triggered successfully if we reach here without error
     expect(true).toBeTruthy()

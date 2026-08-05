@@ -82,18 +82,20 @@ export async function runRepoCommit(ctx: E2EServiceContext): Promise<E2ETranscri
       GIT_COMMITTER_EMAIL: 'e2e@test.local'
     }
 
-    execSync('git add .', { cwd: ctx.workspacePath, stdio: 'pipe', env: { ...process.env, ...gitEnv } })
+    execSync('git add .', { cwd: ctx.workspacePath, stdio: 'pipe', env: { ...process.env, ...gitEnv }, windowsHide: true })
     execSync('git commit -m "E2E: test commit for workspace-ops"', {
       cwd: ctx.workspacePath,
       stdio: 'pipe',
-      env: { ...process.env, ...gitEnv }
+      env: { ...process.env, ...gitEnv },
+      windowsHide: true
     })
 
     // Verify git log head
     const logOutput = execSync('git log --oneline -1', {
       cwd: ctx.workspacePath,
       stdio: 'pipe',
-      encoding: 'utf-8'
+      encoding: 'utf-8',
+      windowsHide: true
     }).trim()
 
     const commitOk = logOutput.includes('E2E: test commit')

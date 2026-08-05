@@ -313,6 +313,80 @@ export function mergeUntrackedIntoRefDiff(
 }
 
 /**
+ * Collapse the several `git status` buckets one path can land in into one entry.
+ * simple-git's parser pushes `RM` into BOTH `renamed` and `modified`, and `AM`
+ * into BOTH `created` and `modified` — so a renamed-then-edited file arrived twice,
+ * and the store's `files.find(...)` picked the copy WITHOUT `oldPath`, making the
+ * rename render as a 100% addition again. Duplicate rows also collide on React keys.
+ *
+ * First insertion keeps its position; 'created' wins over 'modified' (the file is
+ * not in HEAD at all), any `oldPath` is carried over, and `staged` ORs.
+ */
+export function mergeStatusEntries(entries: FileDetailEntry[]): FileDetailEntry[] {
+  const byPath = new Map<string, FileDetailEntry>()
+
+  for (const entry of entries) {
+    const existing = byPath.get(entry.filePath)
+    if (!existing) {
+      byPath.set(entry.filePath, { ...entry })
+      continue
+    }
+    // 'deleted' and 'created' are stronger claims than 'modified' — a path can't be
+    // both, and git only reports the pair when the weaker one is the stale half.
+    if (existing.changeType === 'modified' && entry.changeType !== 'modified') {
+      existing.changeType = entry.changeType
+    }
+    if (!existing.oldPath && entry.oldPath) existing.oldPath = entry.oldPath
+    existing.staged = existing.staged || entry.staged
+  }
+
+  return [...byPath.values()]
+}
+
+/**
+ * Reject paths git would read as options rather than files.
+ * `'-A'` survives assertWithinRepo (it resolves to `<repo>/-A`, which escapes
+ * nothing) but reaches `git add -A` and stages the entire tree. Mirrors the
+ * leading-`-` rule validateRef applies to refs.
+ */
+export function assertNotOptionLike(filePath: string): void {
+  if (filePath.startsWith('-')) {
+    throw new Error(`Invalid path — must not start with "-": ${filePath}`)
+  }
+}
+
+/**
+ * Add the source path of every rename whose destination is being committed.
+ *
+ * `git commit <pathspec>` commits the contents matching the pathspec and IGNORES
+ * what is already staged, so committing only `b.ts` after `git mv a.ts b.ts`
+ * lands a commit containing BOTH files and leaves the staged deletion of `a.ts`
+ * behind — the panel then immediately re-lists "a.ts — deleted". Renames are only
+ * ever surfaced to callers by their destination, so the source has to be added back.
+ *
+ * De-duplicated, order-stable, sources appended after the caller's own paths.
+ */
+export function expandRenamePaths(
+  filePaths: string[],
+  renames: { from: string; to: string }[]
+): string[] {
+  const seen = new Set<string>()
+  const expanded: string[] = []
+  const push = (p: string): void => {
+    if (seen.has(p)) return
+    seen.add(p)
+    expanded.push(p)
+  }
+
+  filePaths.forEach(push)
+  const requested = new Set(filePaths)
+  for (const { from, to } of renames) {
+    if (requested.has(to)) push(from)
+  }
+  return expanded
+}
+
+/**
  * Build `git diff --name-status` args for an already-resolved base ref.
  * Never emits the three-dot form — the base is resolved up-front so the file
  * *list* and the file *content* always share one comparison base.
@@ -486,7 +560,8 @@ export class RepoService {
         })
       }
 
-      return entries
+      // One path lands in several status buckets (RM, AM) — collapse before returning.
+      return mergeStatusEntries(entries)
     } catch (e) {
       // Returning [] here renders as "No uncommitted changes" — a silent under-report
       // is the dangerous direction, so the failure has to reach the user.
@@ -537,6 +612,21 @@ export class RepoService {
   }
 
   /**
+   * Renames git currently reports, or `[]` when status is unavailable.
+   * A failure here must not block the commit — it only costs the expansion.
+   */
+  private async listRenames(
+    git: ReturnType<typeof simpleGit>
+  ): Promise<{ from: string; to: string }[]> {
+    try {
+      return (await git.status()).renamed.map((r) => ({ from: r.from, to: r.to }))
+    } catch (e) {
+      logger.warn('Could not read rename status before commit:', e)
+      return []
+    }
+  }
+
+  /**
    * Stage specific files and commit.
    */
   async commitFiles(
@@ -546,13 +636,28 @@ export class RepoService {
   ): Promise<{ commitHash: string }> {
     if (filePaths.length === 0) throw new Error('No files to commit')
     if (!message.trim()) throw new Error('Commit message is required')
-    filePaths.forEach((fp) => assertWithinRepo(repoPath, fp))
+    filePaths.forEach((fp) => {
+      assertNotOptionLike(fp)
+      assertWithinRepo(repoPath, fp)
+    })
 
     const git = simpleGit(repoPath)
     const fullMessage = appendAttribution(message)
+
+    // Callers only ever know a rename by its destination, and `git commit
+    // <pathspec>` ignores the index — so committing just `b.ts` after a
+    // `git mv a.ts b.ts` writes BOTH files into the commit and leaves the staged
+    // deletion of `a.ts` behind. The source has to be in the commit pathspec.
+    //
+    // Only the commit pathspec: git status reports a rename only once it is
+    // staged, which means the source is already gone from the worktree AND the
+    // index, so `git add <source>` fails with "did not match any files".
+    const renames = await this.listRenames(git)
+    const commitPaths = expandRenamePaths(filePaths, renames)
+
     await git.add(filePaths)
-    const result = await git.commit(fullMessage, filePaths)
-    logger.info(`Committed ${filePaths.length} files: ${result.commit}`)
+    const result = await git.commit(fullMessage, commitPaths)
+    logger.info(`Committed ${commitPaths.length} files: ${result.commit}`)
     return { commitHash: result.commit }
   }
 
@@ -717,7 +822,9 @@ export class RepoService {
         })
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : ''
+      // String(e), not '' — a non-Error throw would otherwise reach the UI as a
+      // bare `DIFF_LIST_FAILED: ` and render an empty parenthesis.
+      const msg = e instanceof Error ? e.message : String(e)
       if (msg.includes('unknown revision') || msg.includes('bad revision')) {
         throw new Error(`REF_NOT_FOUND: ${fromRef} or ${toRef} does not exist`)
       }
@@ -783,7 +890,6 @@ export class RepoService {
     path: string,
     warnings: string[]
   ): Promise<string> {
-    if (ref === 'WORKING_TREE') return ''
     try {
       return await git.show([`${ref}:${path}`])
     } catch (e) {

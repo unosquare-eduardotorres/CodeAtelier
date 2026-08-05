@@ -344,7 +344,11 @@ function buildLocalProviderMcpConfig(opts: {
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PHASE_PROGRESS.name,
     // Memory tools — always on (all tiers, ~1-2K tokens of schemas)
-    ...MCP_TOOLS.MEMORY._ALL_NAMES
+    ...MCP_TOOLS.MEMORY._ALL_NAMES,
+    // Recall tools — past plans + surrounding conversation (workspace-scoped)
+    ...(workspaceId && isLocalMcpEnabled('recall', localActive)
+      ? MCP_TOOLS.RECALL._ALL_NAMES
+      : [])
   ]
   const localAllowed = resolveToolAllowlist(baseAllowed, conditionalTools)
 
@@ -493,7 +497,11 @@ function buildClaudeProviderMcpConfig(opts: {
     MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
     MCP_TOOLS.CONTROL_ACTIONS.EMIT_PHASE_PROGRESS.name,
     // Memory tools — always on (all tiers)
-    ...MCP_TOOLS.MEMORY._ALL_NAMES
+    ...MCP_TOOLS.MEMORY._ALL_NAMES,
+    // Recall tools — past plans + surrounding conversation (workspace-scoped)
+    ...(workspaceId && isLocalMcpEnabled('recall', localActive)
+      ? MCP_TOOLS.RECALL._ALL_NAMES
+      : [])
   ]
   const allowedTools = resolveToolAllowlist(claudeBaseAllowed, conditionalTools)
 

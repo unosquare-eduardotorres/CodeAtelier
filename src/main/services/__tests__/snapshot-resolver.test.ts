@@ -365,12 +365,12 @@ describe('resolveOpenCodeProviderFromSnapshot', () => {
     }
 
     // Plan mode should use plan assignment
-    const planAssignment = false ? snapshot.build : snapshot.plan
+    const planAssignment = snapshot.plan
     assert.equal(planAssignment.modelId, 'claude-opus-4-8')
     assert.equal(planAssignment.provider, 'claude')
 
     // Build mode should use build assignment
-    const buildAssignment = true ? snapshot.build : snapshot.plan
+    const buildAssignment = snapshot.build
     assert.equal(buildAssignment.modelId, 'gemma-3')
     assert.equal(buildAssignment.provider, 'local-llm')
     assert.equal(buildAssignment.localBackend, 'omlx')

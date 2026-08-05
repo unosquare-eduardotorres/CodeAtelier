@@ -13,26 +13,31 @@ import { resolveContextLevel } from '../../ipc/context-usage-level'
 describe('resolveContextLevel — large window (1M)', () => {
   const W = 1_000_000
 
+  test('bands are identical to a 200K window (uniform ratios)', () => {
+    assert.deepEqual(resolveContextLevel(60, W), resolveContextLevel(60, 200_000))
+    assert.deepEqual(resolveContextLevel(75, W), resolveContextLevel(75, 200_000))
+  })
+
   test('fresh 1M session at 42% is green / excellent (regression: was Low/red)', () => {
     const { level, qualityLevel } = resolveContextLevel(42, W)
     assert.equal(level, 'green')
     assert.equal(qualityLevel, 'excellent')
   })
 
-  test('56% (warning threshold) flips to yellow / good', () => {
-    assert.deepEqual(resolveContextLevel(56, W), { level: 'yellow', qualityLevel: 'good' })
+  test('48% (warning threshold) flips to yellow / good', () => {
+    assert.deepEqual(resolveContextLevel(48, W), { level: 'yellow', qualityLevel: 'good' })
   })
 
-  test('just below warning (55%) stays green / excellent', () => {
-    assert.deepEqual(resolveContextLevel(55, W), { level: 'green', qualityLevel: 'excellent' })
+  test('just below warning (47%) stays green / excellent', () => {
+    assert.deepEqual(resolveContextLevel(47, W), { level: 'green', qualityLevel: 'excellent' })
   })
 
-  test('70% (suggest threshold) is red / moderate', () => {
-    assert.deepEqual(resolveContextLevel(70, W), { level: 'red', qualityLevel: 'moderate' })
+  test('60% (suggest threshold) is red / moderate', () => {
+    assert.deepEqual(resolveContextLevel(60, W), { level: 'red', qualityLevel: 'moderate' })
   })
 
-  test('85% (auto threshold) is critical / low', () => {
-    assert.deepEqual(resolveContextLevel(85, W), { level: 'critical', qualityLevel: 'low' })
+  test('75% (auto threshold) is critical / low', () => {
+    assert.deepEqual(resolveContextLevel(75, W), { level: 'critical', qualityLevel: 'low' })
   })
 })
 

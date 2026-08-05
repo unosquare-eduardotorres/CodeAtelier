@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
+import { describeLoadFilesError } from './code-changes-errors'
 import type { DiffComparisonMode, FileDiffResult } from '../../../shared/types'
 
 export interface FileChangeDetail {
@@ -41,8 +42,12 @@ interface CodeChangesState {
   // Fetch
   isFetching: boolean
 
-  // Error
+  // Error — commit / push / fetch / generate / diff. Deliberately NOT the file
+  // listing: a failed push must not make the left pane claim it can't list what
+  // will ship.
   error: string | null
+  /** Listing failure only — the one error an empty file list may be explained by. */
+  filesError: string | null
 }
 
 interface CodeChangesActions {
@@ -82,7 +87,8 @@ const initialState: CodeChangesState = {
   pushStatus: null,
   isPushing: false,
   isFetching: false,
-  error: null
+  error: null,
+  filesError: null
 }
 
 const TARGET_BRANCH_KEY_PREFIX = 'codeChanges.targetBranch.'
@@ -114,7 +120,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
 
   loadFiles: async (conversationId: string): Promise<void> => {
     const requestId = ++filesRequestId
-    set({ isLoadingFiles: true, error: null })
+    set({ isLoadingFiles: true, filesError: null })
     try {
       const { comparisonMode, targetBranch } = get()
       let files: FileChangeDetail[]
@@ -140,23 +146,9 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load file details'
       if (requestId !== filesRequestId) return
-      if (msg.startsWith('REF_NOT_FOUND:')) {
-        set({
-          isLoadingFiles: false,
-          error: `Branch not found — if it is a remote branch, has it been pushed? (${msg.replace('REF_NOT_FOUND: ', '')})`
-        })
-      } else if (msg.includes('DIFF_LIST_FAILED:')) {
-        rendererLog.error('loadFiles failed:', msg)
-        const detail = msg.slice(msg.indexOf('DIFF_LIST_FAILED:')).replace('DIFF_LIST_FAILED: ', '')
-        set({
-          files: [],
-          isLoadingFiles: false,
-          error: `Could not list changes — the comparison is incomplete, do not trust this list. (${detail})`
-        })
-      } else {
-        rendererLog.error('loadFiles failed:', msg)
-        set({ isLoadingFiles: false, error: msg })
-      }
+      rendererLog.error('loadFiles failed:', msg)
+      const { error, clearFiles } = describeLoadFilesError(msg)
+      set({ isLoadingFiles: false, filesError: error, ...(clearFiles ? { files: [] } : {}) })
     }
   },
 
@@ -165,7 +157,9 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
     set({ selectedFile: filePath, currentDiff: null })
     if (!filePath) return
 
-    set({ isLoadingDiff: true })
+    // Clear like every other operation does on start — loadFiles no longer owns
+    // this bucket, so a stale diff error would otherwise never go away.
+    set({ isLoadingDiff: true, error: null })
     try {
       const { comparisonMode, targetBranch, files } = get()
       let diff: FileDiffResult
@@ -392,6 +386,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
       checkedFiles: new Set(),
       files: [],
       error: null,
+      filesError: null,
       pushStatus: null,
       commitMessage: '',
       isGeneratingMessage: false

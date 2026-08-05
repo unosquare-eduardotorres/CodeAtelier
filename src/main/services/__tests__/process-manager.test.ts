@@ -403,14 +403,26 @@ describe('PID liveness check', () => {
 
 describe('Process group kill (-pid)', () => {
   test('negative PID kills the entire process group', async () => {
+    // process.kill(-pid) is a POSIX process-group concept; on Windows the
+    // equivalent path is killProcessTree()'s `taskkill /T`, covered elsewhere.
+    if (process.platform === 'win32') return
+
     const { spawn } = require('node:child_process')
 
-    // Spawn a shell that starts two background sleeps — all in one process group
-    const child = spawn('sleep 999 & sleep 999 & wait', {
-      shell: true,
-      detached: true,
-      stdio: 'ignore'
-    })
+    // Spawn a real subprocess (no shell, no external `sleep` binary) that stays
+    // alive on an idle timer, plus a child of its own so the group has 2 members.
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1<<30)'],{stdio:'ignore'});setInterval(()=>{},1<<30)"
+      ],
+      {
+        stdio: 'ignore',
+        detached: true, // POSIX only — needed for PGID == PID
+        windowsHide: true
+      }
+    )
     child.unref()
 
     const pid = child.pid

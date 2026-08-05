@@ -89,6 +89,24 @@ export default function RunProgressPanel({
   const memoriesPerItem =
     progress.itemsDone > 0 ? (progress.factsCreated / progress.itemsDone).toFixed(1) : '—'
 
+  const itemLabel = progress.currentItem
+    ? progress.currentItem.chunkTotal > 1
+      ? `${progress.currentItem.sourceRef} — chunk ${progress.currentItem.chunkDone}/${progress.currentItem.chunkTotal}`
+      : progress.currentItem.sourceRef
+    : null
+
+  // While an item is in flight the chunk counter owns the main line, so the
+  // extractor's own status ("Rate limited — retrying in 4s…") has nowhere to go
+  // and a long backoff looks like a freeze. Show it underneath instead — unless
+  // it is just repeating the item line.
+  const detail =
+    itemLabel &&
+    progress.message &&
+    progress.message !== itemLabel &&
+    progress.message !== progress.currentItem?.sourceRef
+      ? progress.message
+      : null
+
   return (
     <div className="space-y-3">
       {/* Phase stepper with real per-phase counts */}
@@ -104,13 +122,7 @@ export default function RunProgressPanel({
           <span className="text-text-secondary truncate flex items-center gap-1.5 min-w-0">
             {isPaused && <PauseCircle className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
             {isError && <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
-            <span className="truncate">
-              {progress.currentItem
-                ? progress.currentItem.chunkTotal > 1
-                  ? `${progress.currentItem.sourceRef} — chunk ${progress.currentItem.chunkDone}/${progress.currentItem.chunkTotal}`
-                  : progress.currentItem.sourceRef
-                : progress.message}
-            </span>
+            <span className="truncate">{itemLabel ?? progress.message}</span>
           </span>
           <span className="text-text-muted font-mono shrink-0 tabular-nums">
             {settled}/{progress.itemsTotal} · {percent}%
@@ -123,6 +135,8 @@ export default function RunProgressPanel({
             style={{ width: `${percent}%` }}
           />
         </div>
+
+        {detail && <div className="text-[11px] text-text-muted truncate">{detail}</div>}
       </div>
 
       {/* Live metrics */}

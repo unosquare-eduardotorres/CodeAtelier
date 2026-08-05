@@ -25,6 +25,16 @@ import { workspaceRepository } from '../db/repositories'
 import { runAgenticClaude } from './agentic-claude-runner'
 import type { MemoryFact, MemoryFactCategory } from '../../shared/types'
 
+/**
+ * The one call synthesis makes to the outside world.
+ *
+ * Injectable for the same reason `findClusters` takes `input`: the real
+ * implementation spawns a CLI, and the behaviour worth testing here is what
+ * happens to the database *after* it returns — including the case where the
+ * write resolves to an existing fact.
+ */
+export type SynthesisRunner = typeof runAgenticClaude
+
 const rLog = log.scope('memory-reflection')
 
 // ── Configuration ───────────────────────────────────────────────────────────
@@ -57,7 +67,7 @@ export interface ReflectionResult {
   errors: number
 }
 
-interface Cluster {
+export interface Cluster {
   facts: MemoryFact[]
   meanSimilarity: number
 }
@@ -209,15 +219,16 @@ class MemoryReflectionService {
    * Ask a cheap model for the one convention a cluster implies, and record it
    * as an unreviewed proposal linked to its sources.
    */
-  private async synthesizeCluster(
+  async synthesizeCluster(
     workspaceId: string,
     workspacePath: string,
-    cluster: Cluster
+    cluster: Cluster,
+    runner: SynthesisRunner = runAgenticClaude
   ): Promise<boolean> {
     const facts = cluster.facts.slice(0, MAX_FACTS_PER_PROMPT)
     const prompt = buildSynthesisPrompt(facts)
 
-    const result = await runAgenticClaude({
+    const result = await runner({
       workspaceId,
       workspacePath,
       prompt,
@@ -235,6 +246,13 @@ class MemoryReflectionService {
 
     // Written archived: a proposal must not reach a prompt before a human has
     // agreed it is true. Approval flips it to active.
+    //
+    // `skipSimilarity` is load-bearing, not an optimisation. A synthesised
+    // parent is near its children by construction — their similarity is what
+    // formed the cluster — so the dedup pipeline would almost always resolve
+    // this write to one of those children and hand it back as "the fact". The
+    // archive and the edges below would then land on a legitimate, possibly
+    // long-established fact.
     const parent = await memoryEngineService.writeFact({
       workspaceId,
       category: parsed.category,
@@ -244,10 +262,28 @@ class MemoryReflectionService {
       scopePaths: mergeScopePaths(facts),
       sourceType: 'manual',
       sourceRef: 'reflection',
-      workspacePath
+      workspacePath,
+      skipSimilarity: true
     })
 
     if (!parent) return false
+
+    // Defence in depth. `skipSimilarity` should guarantee a fresh row, but the
+    // next two statements archive a fact and rewrite its edges — if the write
+    // path ever resolves to an existing fact again, refusing here costs one
+    // skipped proposal, while proceeding costs real knowledge.
+    const isFreshProposal =
+      parent.tags.includes(SYNTHESIS_TAG) &&
+      parent.tags.includes(PENDING_REVIEW_TAG) &&
+      !facts.some((f) => f.id === parent.id)
+
+    if (!isFreshProposal) {
+      rLog.error(
+        `[synthesizeCluster] Write resolved to existing fact ${parent.id} instead of a new ` +
+          `proposal — refusing to archive it. Cluster left untouched.`
+      )
+      return false
+    }
 
     memoryFactRepository.archiveFact(parent.id)
 

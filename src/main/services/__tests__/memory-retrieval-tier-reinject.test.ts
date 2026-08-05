@@ -156,4 +156,8 @@ describe('getContextForTurn — session dedupe', () => {
   })
 })
 
-void summaryAsync()
+// summaryAsync calls process.exit — unguarded it kills the whole suite when this
+// file is imported by a runner, taking every later test file with it.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

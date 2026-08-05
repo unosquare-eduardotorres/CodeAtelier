@@ -36,7 +36,7 @@ test.describe('Audit Lifecycle', () => {
     page: import('@playwright/test').Page
   ): Promise<{ health: HealthPage; settings: WorkspaceSettings }> {
     const welcomePage = new WelcomePage(page)
-    const chrome = new AppChrome(page)
+    const _chrome = new AppChrome(page)
     const settings = new WorkspaceSettings(page)
     const health = new HealthPage(page)
 

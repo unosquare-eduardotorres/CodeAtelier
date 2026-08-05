@@ -18,6 +18,7 @@ import {
   MAESTRO_GUIDANCE_PROMPT,
   MEMORY_PROTOCOL_PROMPT,
   PROCESS_MANAGER_GUIDANCE_PROMPT,
+  RECALL_TOOLS_PROMPT,
   REPOMAP_GUIDANCE_PROMPT,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT,
   // Guidance blocks that still differ between full/lean
@@ -40,6 +41,14 @@ import { promptBuilder } from './prompt-builder'
 import { chatAgentLogger } from '../logger'
 
 const log = chatAgentLogger
+
+/**
+ * Phrases that reference past work — "that plan", "revisit", "you said earlier".
+ * Gates the recall protocol reminder so the agent searches history instead of
+ * asserting that earlier plans are unrecoverable.
+ */
+const RECALL_TRIGGER_RE =
+  /\b(that plan|the plan (we|you|i)\b|previous plan|prior plan|past plan|earlier plan|old plan|last plan|revisit|recover the|remind me|we (discussed|talked about)|you (said|proposed|suggested) (earlier|before)|earlier you|from (yesterday|last week|earlier))\b/i
 
 /** Feature flags that affect prompt assembly (same shape used by both roles). */
 export interface PromptFeatureFlags {
@@ -164,6 +173,15 @@ export function buildConditionalPrefix(opts: {
     sections.push(MEMORY_PROTOCOL_PROMPT) // unified: full === lean
   }
 
+  // Recall protocol — injected on ANY turn the user references past work.
+  // Unlike the memory protocol this isn't turn-gated: "revisit that plan from
+  // last week" typically arrives mid-session, and without the reminder the
+  // agent confidently answers "that context is unrecoverable".
+  const isRecallRequest = RECALL_TRIGGER_RE.test(message)
+  if (isRecallRequest) {
+    sections.push(RECALL_TOOLS_PROMPT)
+  }
+
   if (conditionalSections.includeImageAttachmentsPrompt) {
     sections.push(IMAGE_ATTACHMENTS_PROMPT) // unified: full === lean
   }
@@ -197,7 +215,7 @@ export function buildConditionalPrefix(opts: {
   }
 
   log.info(
-    `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} planReminder=${planReminderInjected}`
+    `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} recall=${isRecallRequest} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} planReminder=${planReminderInjected}`
   )
 
   return sections.length > 0

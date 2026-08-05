@@ -123,7 +123,7 @@ test.describe('Repository & Auth Settings', () => {
 
   test('auth settings tab renders with mode toggle', async ({ electronPage: page }) => {
     // Auth settings may be under a different tab name — try common options
-    const settings = await openSettingsTab(page, 'models')
+    const _settings = await openSettingsTab(page, 'models')
 
     // Auth settings may be embedded or as a separate sub-section
     const authTab = page.locator('[data-testid="auth-settings-tab"]')

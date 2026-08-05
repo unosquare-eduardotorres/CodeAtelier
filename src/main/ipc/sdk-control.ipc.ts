@@ -158,7 +158,11 @@ export function registerSdkControlIpc(): void {
         '--output-format',
         'json'
       ]
-      const result = execFileSync('claude', cliArgs, { encoding: 'utf-8', timeout: 10_000 })
+      const result = execFileSync('claude', cliArgs, {
+        encoding: 'utf-8',
+        timeout: 10_000,
+        windowsHide: true
+      })
       return JSON.parse(result.trim())
     } catch (err) {
       log.warn(`[${channel}] Fork failed for ${sessionId}:`, err)

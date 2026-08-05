@@ -190,6 +190,7 @@ export class OpenCodeExecutor {
       const versionOutput = execSync('opencode --version', {
         encoding: 'utf-8',
         timeout: 5000,
+        windowsHide: true
       }).trim()
 
       openCodeLog.info(
@@ -333,7 +334,8 @@ export class OpenCodeExecutor {
                 execSync(`npm install ${npmPkg} --prefix "${opencodeDir}"`, {
                   timeout: 30_000,
                   stdio: 'pipe',
-                  cwd: opencodeDir
+                  cwd: opencodeDir,
+                  windowsHide: true
                 })
                 openCodeLog.info(`[opencode] Pre-installed ${npmPkg} successfully`)
               } catch (err) {
@@ -1521,7 +1523,7 @@ Troubleshooting:
       // lsof finds PIDs listening on our port; awk extracts the PID column
       const output = execSync(
         `lsof -ti :${OPENCODE_SERVER_PORT} 2>/dev/null`,
-        { encoding: 'utf-8', timeout: 3000 }
+        { encoding: 'utf-8', timeout: 3000, windowsHide: true }
       ).trim()
       if (output) {
         const pids = output.split('\n').filter(Boolean)

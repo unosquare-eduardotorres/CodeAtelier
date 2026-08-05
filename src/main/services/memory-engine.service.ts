@@ -78,6 +78,20 @@ export interface WriteFactParams {
    * Without it a convention mined from a 2011 commit scores as brand new.
    */
   observedAt?: string | null
+  /**
+   * Insert unconditionally, skipping dedup/contradiction classification.
+   *
+   * Exists for synthesis. A synthesised parent is by construction near its
+   * children — that is why they clustered — so the similarity pipeline would
+   * reliably return one of those children as a "duplicate". The caller then
+   * believes it holds a new fact and acts on it (archives it, hangs edges off
+   * it), damaging a legitimate fact instead.
+   *
+   * Only use this when the caller has already established the write is novel
+   * by some means other than cosine distance. Everything else must go through
+   * the pipeline.
+   */
+  skipSimilarity?: boolean
 }
 
 // ── Capture cap tracking ────────────────────────────────────────────────────
@@ -188,7 +202,7 @@ class MemoryEngineService {
     //    Similarity pipeline runs BEFORE the capture cap so that dedup confirms,
     //    updates, and contradiction records succeed even on busy days. The cap
     //    only gates brand-new fact inserts (step 4).
-    if (embedding && workspaceId) {
+    if (embedding && workspaceId && !params.skipSimilarity) {
       const result = await this.runSimilarityPipeline(
         workspaceId,
         params,
@@ -207,7 +221,7 @@ class MemoryEngineService {
     // 3b. Fallback dedup when embedding pipeline was skipped:
     //     Normalized title match against existing active facts.
     //     Prevents duplicate avalanche when embedding provider isn't ready.
-    if (!embedding && workspaceId) {
+    if (!embedding && workspaceId && !params.skipSimilarity) {
       const existingMatch = this.titleFallbackDedup(workspaceId, params.title, params.category)
       if (existingMatch) {
         log.info(`[MemoryEngine] Title-fallback dedup: "${params.title}" matches existing ${existingMatch.id}`)
@@ -970,7 +984,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
       const child = spawn(
         'claude',
         ['-p', prompt, '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
-        { stdio: ['ignore', 'pipe', 'pipe'], env, signal: controller.signal }
+        { stdio: ['ignore', 'pipe', 'pipe'], env, signal: controller.signal, windowsHide: true }
       )
 
       let stdout = ''

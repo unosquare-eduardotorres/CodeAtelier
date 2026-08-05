@@ -189,7 +189,8 @@ export async function captureLoginShellEnv(): Promise<Set<string>> {
         execFile(shell, ['-ilc', 'printenv'], {
           encoding: 'utf-8',
           timeout: 5000,
-          env: { ...process.env }
+          env: { ...process.env },
+          windowsHide: true
         }, (err, stdout) => {
           if (err) reject(err)
           else resolve(stdout)
@@ -304,7 +305,8 @@ export function runProbeAsync(
           timeout: PROBE_BUDGET_MS,
           cwd: cwd || undefined,
           shell: process.platform === 'win32', // A8: .cmd shim resolution
-          stdio: 'pipe'
+          stdio: 'pipe',
+          windowsHide: true
         } as Parameters<typeof execFile>[2],
         (err, stdout, _stderr) => {
           if (err) {
@@ -342,7 +344,8 @@ export function runProbe(probe: { cmd: string; args: string[] }): { ok: boolean;
       encoding: 'utf-8',
       timeout: 5000,
       stdio: 'pipe',
-      shell: process.platform === 'win32'
+      shell: process.platform === 'win32',
+      windowsHide: true
     })
     if (result.error) {
       return { ok: false, output: result.error.message }

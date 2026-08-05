@@ -288,7 +288,7 @@ test.describe('Grill Sidebar & Decisions', () => {
     const fullBtn = docPanel.getByRole('button', { name: /full/i })
     const condensedBtn = docPanel.getByRole('button', { name: /condensed/i })
 
-    const hasToggle =
+    const _hasToggle =
       (await fullBtn.isVisible({ timeout: 3_000 }).catch(() => false)) ||
       (await condensedBtn.isVisible({ timeout: 3_000 }).catch(() => false))
 

@@ -100,7 +100,7 @@ test.describe('Grill Session Lifecycle', () => {
 
     // Look for a session identifier — title, track name, or score
     const sessionTitle = page.locator('.font-semibold, .font-medium, h2, h3').first()
-    const titleText = await sessionTitle.textContent().catch(() => '')
+    const _titleText = await sessionTitle.textContent().catch(() => '')
 
     // Navigate away to a different tab
     const settings = new WorkspaceSettings(page)
@@ -214,12 +214,10 @@ test.describe('Grill Session Lifecycle', () => {
       // Wait for plan generation to complete
       // Look for success indicators: "Plan Generated", toast, or redirect
       const planSuccess = page.getByText(/plan generated|plan saved|plan created/i).first()
-      const hasSuccess = await planSuccess.isVisible({ timeout: 30_000 }).catch(() => false)
-
-      // If plan generation succeeded, navigate to Plans tab to verify
-      if (hasSuccess || true) {
-        // Plan may have been saved regardless of visible success message
-      }
+      // Awaited for its settling effect only — the plan may have been saved
+      // regardless of whether a success message is visible, so the Plans tab
+      // below is checked unconditionally.
+      await planSuccess.isVisible({ timeout: 30_000 }).catch(() => false)
     }
 
     // Navigate to Plans tab

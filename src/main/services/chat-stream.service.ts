@@ -130,7 +130,7 @@ export class ChatStreamService {
   private injectedFactIds = new Map<string, Set<string>>()
 
   /** Per-stream identity — set at stream() start, cleared on cleanup. */
-  private currentStreamingRole: 'specialist' = 'specialist'
+  private currentStreamingRole = 'specialist' as const
 
   /**
    * Keepalive timer — sends periodic IPC events to the renderer during streaming.
@@ -1706,10 +1706,11 @@ export class ChatStreamService {
     const wpPath = chatAgentService.getWorkspacePath()
     if (wpPath) {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred: only needed on this rare path
         const { exec } = require('node:child_process')
         startSha = await new Promise<string | undefined>((resolve) => {
           exec('git rev-parse HEAD 2>/dev/null || true', {
-            cwd: wpPath, encoding: 'utf-8', timeout: 2000
+            cwd: wpPath, encoding: 'utf-8', timeout: 2000, windowsHide: true
           }, (err: Error | null, stdout: string) => {
             resolve(err ? undefined : (stdout?.trim() || undefined))
           })

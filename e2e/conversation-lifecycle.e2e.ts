@@ -116,7 +116,7 @@ test.describe('Conversation Lifecycle', () => {
 
     // Count messages before
     const messages = chat.getMessages()
-    const beforeCount = await messages.count()
+    const _beforeCount = await messages.count()
 
     // Type and send
     await chat.messageInput.fill('E2E lifecycle test message')
@@ -137,7 +137,7 @@ test.describe('Conversation Lifecycle', () => {
     if (itemCount === 0) { test.skip(); return }
 
     const firstItem = chatItems.first()
-    const originalTitle = await firstItem.textContent()
+    const _originalTitle = await firstItem.textContent()
 
     // Double-click to trigger rename (or look for edit button)
     const titleDiv = firstItem.locator('div[title="Double-click to rename"]')
@@ -177,7 +177,7 @@ test.describe('Conversation Lifecycle', () => {
     await chatItems.first().click()
     await page.waitForTimeout(1_500)
 
-    const firstActive = await chatItems.first().getAttribute('class')
+    const _firstActive = await chatItems.first().getAttribute('class')
 
     // Click second conversation
     await chatItems.nth(1).click()

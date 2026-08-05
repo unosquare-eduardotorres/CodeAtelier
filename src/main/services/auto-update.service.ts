@@ -166,9 +166,11 @@ class AutoUpdateService {
    * Returns the local sync path or null if not found.
    */
   private detectOneDrivePath(): string | null {
+    /* eslint-disable @typescript-eslint/no-require-imports -- deferred: only needed on this rare path */
     const { platform, homedir } = require('node:os')
     const { readdirSync, existsSync } = require('node:fs')
     const { join } = require('node:path')
+    /* eslint-enable @typescript-eslint/no-require-imports */
     const home = homedir()
     const targetFolder = 'Code Atelier'
 

@@ -765,7 +765,8 @@ export class BlueprintVerifyService extends EventEmitter {
         timeout: timeoutMs,
         encoding: 'utf-8',
         maxBuffer: 5 * 1024 * 1024, // 5MB
-        env: { ...process.env, CI: '1', NODE_ENV: 'test' }
+        env: { ...process.env, CI: '1', NODE_ENV: 'test' },
+        windowsHide: true
       }, (error, stdout, stderr) => {
         if (error && (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
           reject(new Error(`Gate timed out after ${timeoutMs}ms`))
