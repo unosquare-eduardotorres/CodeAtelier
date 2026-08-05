@@ -30,6 +30,8 @@ import './code-graph-repos.test'
 
 // ─── Phase 15: Track 6: Migration Suite ───
 import './migration-suite.test'
+import './memory-source-type-guard.test'
+import './memory-facts-fts.test'
 
 // ─── Phase 16: Track 1 + Track 6: Migration replay + branch coverage ───
 import './migration-replay.test'
@@ -49,6 +51,9 @@ import './upsert-edges-batched.test'
 
 // ─── Phase 24: Zero-coverage repository tests ───
 import './zero-coverage-repos-phase24.test'
+
+// ─── Feed Brain: durable ingestion queue (migration 133) ───
+import './memory-bootstrap.repository.test'
 
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 

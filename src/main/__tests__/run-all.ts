@@ -90,6 +90,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/project-specialist-adapter.test',
   '../services/__tests__/stack-drift-detector.test',
   '../services/__tests__/tech-stack-detector.test',
+  '../services/__tests__/specialist-ingestion-gate.test',
   '../services/__tests__/specialist-builder-meta-prompt.test',
   // Run 6d — Phase 4 cleanup
   '../services/__tests__/layer2-rename-migration.test',
@@ -224,6 +225,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-build-adapter.test',
   '../services/__tests__/blueprint-verify-adapter.test',
   '../services/__tests__/repo-service-pure.test',
+  '../services/__tests__/file-diff-state.test',
   '../services/__tests__/opencode-config-writer-logic.test',
   '../services/__tests__/opencode-config-schema.test',
   '../services/__tests__/opencode-cli-check.test',
@@ -262,6 +264,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/update-feed-server.test',
   '../services/__tests__/feed-manifest-patch.test',
   '../services/__tests__/auto-update-helpers.test',
+  '../services/__tests__/auto-update-service.test',
   // ─── Phase 15: Coverage Mega-Push — pure function tests ───
   '../services/__tests__/default-prompts-constants.test',
   '../services/__tests__/preprocessing-pure.test',
@@ -345,6 +348,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/memory-ingestion.test',
   '../services/__tests__/memory-bootstrap.test',
   '../services/__tests__/memory-bootstrap-doc-state.test',
+  '../services/__tests__/memory-bootstrap-queue.test',
+  '../services/__tests__/memory-bootstrap-control.test',
+  '../services/__tests__/instruction-sources.test',
+  '../services/__tests__/scope-matcher.test',
+  '../services/__tests__/memory-scope-activation.test',
+  '../services/__tests__/memory-projection.test',
   '../services/__tests__/memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   '../services/__tests__/local-plan-state-fk-guard.test',
@@ -610,6 +619,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/background-task-watcher.test',
   '../ipc/__tests__/process-ipc.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
+  '../../renderer/src/store/__tests__/update-snooze.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
   '../services/__tests__/repo-service-utils.test',
@@ -656,6 +666,8 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/remaining-repos.test',
   '../db/repositories/__tests__/code-graph-repos.test',
   '../db/repositories/__tests__/migration-suite.test',
+  '../db/repositories/__tests__/memory-source-type-guard.test',
+  '../db/repositories/__tests__/memory-facts-fts.test',
   // ─── Phase 16: Track 1 + Track 6 ───
   '../db/repositories/__tests__/migration-replay.test',
   '../db/repositories/__tests__/repo-branch-coverage.test',
@@ -667,6 +679,7 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/upsert-edges-batched.test',
   // ─── Phase 24: Zero-coverage repository tests ───
   '../db/repositories/__tests__/zero-coverage-repos-phase24.test',
+  '../db/repositories/__tests__/memory-bootstrap.repository.test',
   // ─── R009: Orphan sweep (FR-031/SC-009) — 16 on-disk repository tests
   // never registered here (see full explanation in SERVICE_TEST_FILES above).
   '../db/repositories/__tests__/agent-session.repository.test',

@@ -55,6 +55,7 @@ const TEST_FILES: string[] = [
   './project-specialist-adapter.test',
   './stack-drift-detector.test',
   './tech-stack-detector.test',
+  './specialist-ingestion-gate.test',
   './specialist-builder-meta-prompt.test',
   // Run 6d — Phase 4 cleanup
   './layer2-rename-migration.test',
@@ -188,6 +189,7 @@ const TEST_FILES: string[] = [
   './blueprint-build-adapter.test',
   './blueprint-verify-adapter.test',
   './repo-service-pure.test',
+  './file-diff-state.test',
   './opencode-config-writer-logic.test',
   './opencode-config-schema.test',
   './opencode-cli-check.test',
@@ -316,6 +318,12 @@ const TEST_FILES: string[] = [
   './memory-ingestion.test',
   './memory-bootstrap.test',
   './memory-bootstrap-doc-state.test',
+  './memory-bootstrap-queue.test',
+  './memory-bootstrap-control.test',
+  './instruction-sources.test',
+  './scope-matcher.test',
+  './memory-scope-activation.test',
+  './memory-projection.test',
   './memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   './local-plan-state-fk-guard.test',
@@ -376,6 +384,7 @@ const TEST_FILES: string[] = [
   './background-task-watcher.test',
   '../../ipc/__tests__/process-ipc.test',
   '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
+  '../../../renderer/src/store/__tests__/update-snooze.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -393,6 +402,7 @@ const TEST_FILES: string[] = [
   // ─── Update feed publishing + failure surfacing ───
   './feed-manifest-patch.test',
   './auto-update-helpers.test',
+  './auto-update-service.test',
   // ─── Phase 24: IPC Coverage Blitz — 16 new IPC test files ───
   '../../ipc/__tests__/ipc-bug-idea-events.test',
   '../../ipc/__tests__/ipc-specialist-skill.test',

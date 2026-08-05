@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { UpdateConfig, UpdateSourceProvider } from '../../../shared/types'
 import { useToastStore } from './toast.store'
+import { nextSnooze, isSnoozed, LATER_MUTES, DISMISS_MUTES } from './update-store-utils'
 
 type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
 
@@ -10,10 +11,26 @@ interface UpdateState {
   releaseNotes: string | null
   releaseDate: string | null
   downloadProgress: number
+  /** Bytes/second reported by electron-updater, 0 before the first tick. */
+  downloadSpeed: number
+  downloadTransferred: number
+  downloadTotal: number
   errorMessage: string | null
 
   // Modal visibility
   showModal: boolean
+
+  /**
+   * "Later" mutes the auto-popup for one version. Without this, hourly checks
+   * would re-open the modal on every tick for an update the user declined.
+   */
+  snoozedVersion: string | null
+  snoozeUntil: number
+
+  /** The download was confirmed in the modal, so install without asking again. */
+  autoInstall: boolean
+  /** Seconds left before the automatic restart, or null when not counting down. */
+  installCountdown: number | null
 
   // Update config
   config: UpdateConfig
@@ -23,6 +40,7 @@ interface UpdateState {
   checkForUpdates: () => void
   downloadUpdate: () => void
   installUpdate: () => void
+  cancelAutoInstall: () => void
   dismiss: () => void
 
   // Config actions
@@ -37,7 +55,12 @@ interface UpdateState {
   setAvailable: (version: string, releaseNotes?: string, releaseDate?: string) => void
   setNotAvailable: (currentVersion?: string) => void
   setDownloaded: (version: string) => void
-  setProgress: (percent: number) => void
+  setProgress: (
+    percent: number,
+    bytesPerSecond?: number,
+    transferred?: number,
+    total?: number
+  ) => void
   setError: (message: string) => void
 }
 
@@ -62,19 +85,40 @@ function clearWatchdog(): void {
   }
 }
 
+/** Seconds of grace before an auto-confirmed update restarts the app. */
+const INSTALL_COUNTDOWN_SECONDS = 3
+
+let installTimer: ReturnType<typeof setInterval> | null = null
+
+function clearInstallTimer(): void {
+  if (installTimer !== null) {
+    clearInterval(installTimer)
+    installTimer = null
+  }
+}
+
 export const useUpdateStore = create<UpdateState>((set) => ({
   status: 'idle',
   availableVersion: null,
   releaseNotes: null,
   releaseDate: null,
   downloadProgress: 0,
+  downloadSpeed: 0,
+  downloadTransferred: 0,
+  downloadTotal: 0,
   errorMessage: null,
   showModal: false,
+  snoozedVersion: null,
+  snoozeUntil: 0,
+  autoInstall: false,
+  installCountdown: null,
   config: { ...DEFAULT_CONFIG },
   configLoaded: false,
 
   checkForUpdates: () => {
-    set({ status: 'checking', errorMessage: null })
+    // A check the user asked for must be able to surface its result, so it
+    // clears any snooze left over from a previous "Later".
+    set({ status: 'checking', errorMessage: null, snoozedVersion: null, snoozeUntil: 0 })
     clearWatchdog()
     checkWatchdog = setTimeout(() => {
       checkWatchdog = null
@@ -89,16 +133,48 @@ export const useUpdateStore = create<UpdateState>((set) => ({
   },
 
   downloadUpdate: () => {
-    set({ status: 'downloading', downloadProgress: 0 })
+    // Always show the modal: the download was confirmed here, so its progress
+    // belongs here too — whichever button started it.
+    set({
+      status: 'downloading',
+      downloadProgress: 0,
+      downloadSpeed: 0,
+      downloadTransferred: 0,
+      downloadTotal: 0,
+      showModal: true,
+      autoInstall: true,
+      // Downloading is re-engagement: a live snooze on this version would
+      // otherwise hide the "ready to install" banner the download produces.
+      snoozedVersion: null,
+      snoozeUntil: 0
+    })
     window.api.downloadUpdate()
   },
 
   installUpdate: () => {
+    clearInstallTimer()
     window.api.installUpdate()
   },
 
+  cancelAutoInstall: () => {
+    clearInstallTimer()
+    set({ installCountdown: null, autoInstall: false })
+  },
+
   dismiss: () => {
-    set({ status: 'idle', showModal: false })
+    clearInstallTimer()
+    // Snooze like "Later" does: without it the next hourly check calls
+    // setAvailable() and re-opens the modal on an update just waved away.
+    set((s) => ({
+      // A downloaded update is not gone just because the banner was dismissed —
+      // it still installs on quit and Settings must keep offering it. Only the
+      // nag is silenced; the banner honours the snooze.
+      status: s.status === 'ready' ? 'ready' : 'idle',
+      showModal: false,
+      installCountdown: null,
+      autoInstall: false,
+      ...nextSnooze(s, DISMISS_MUTES)
+    }))
   },
 
   // Config actions
@@ -128,17 +204,21 @@ export const useUpdateStore = create<UpdateState>((set) => ({
 
   openModal: () => set({ showModal: true }),
 
-  closeModal: () => set({ showModal: false }),
+  closeModal: () => set((s) => ({ showModal: false, ...nextSnooze(s, LATER_MUTES) })),
 
   // Internal setters
   setAvailable: (version, releaseNotes, releaseDate) => {
     clearWatchdog()
+    const { snoozedVersion, snoozeUntil } = useUpdateStore.getState()
+    // Snoozed — the badge in Settings and the banner still show it; only the
+    // interruption is suppressed.
+    const snoozed = isSnoozed(version, snoozedVersion, snoozeUntil)
     set({
       status: 'available',
       availableVersion: version,
       releaseNotes: releaseNotes ?? null,
       releaseDate: releaseDate ?? null,
-      showModal: true // Automatically show modal when update detected
+      showModal: !snoozed
     })
   },
 
@@ -158,11 +238,32 @@ export const useUpdateStore = create<UpdateState>((set) => ({
 
   setDownloaded: (version) => {
     clearWatchdog()
-    set({ status: 'ready', availableVersion: version })
+    set({ status: 'ready', availableVersion: version, downloadProgress: 100 })
+
+    // The user already confirmed this update when they pressed "Update Now" —
+    // asking a second time is the "why do I have an Install button?" complaint.
+    if (!useUpdateStore.getState().autoInstall) return
+    clearInstallTimer()
+    set({ showModal: true, installCountdown: INSTALL_COUNTDOWN_SECONDS })
+    installTimer = setInterval(() => {
+      const remaining = (useUpdateStore.getState().installCountdown ?? 0) - 1
+      if (remaining > 0) {
+        set({ installCountdown: remaining })
+        return
+      }
+      clearInstallTimer()
+      set({ installCountdown: 0 })
+      useUpdateStore.getState().installUpdate()
+    }, 1000)
   },
 
-  setProgress: (percent) => {
-    set({ downloadProgress: percent })
+  setProgress: (percent, bytesPerSecond, transferred, total) => {
+    set({
+      downloadProgress: percent,
+      downloadSpeed: bytesPerSecond ?? 0,
+      downloadTransferred: transferred ?? 0,
+      downloadTotal: total ?? 0
+    })
   },
 
   setError: (message) => {

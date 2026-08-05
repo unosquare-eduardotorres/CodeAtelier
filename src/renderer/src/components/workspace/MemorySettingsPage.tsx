@@ -82,6 +82,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
     confirmFact,
     deleteFact,
     toggleScope,
+    updateFact,
     loadContradictions,
     resolveContradiction,
     autoResolveDuplicates,
@@ -155,10 +156,16 @@ export default function MemorySettingsPage(): React.JSX.Element {
     const filePath = await window.api.memorySelectDocument()
     if (!filePath) return
     startFeed('document')
-    await window.api.memoryFeedDocument({
-      workspacePath: activeWorkspace.repoPath,
-      filePath
-    })
+    try {
+      await window.api.memoryFeedDocument({
+        workspacePath: activeWorkspace.repoPath,
+        filePath
+      })
+    } catch {
+      // The failure has already been reported through the feed progress
+      // channel, which is what drives the panel; swallow the rejection so it
+      // does not surface as an unhandled promise.
+    }
     if (workspaceId) loadFacts(workspaceId)
   }, [activeWorkspace, workspaceId])
 
@@ -263,6 +270,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
             onScopeToggle={(fact) =>
               toggleScope(fact.id, !!fact.workspaceId, fact.workspaceId ? undefined : workspaceId)
             }
+            onScopePathsChange={(id, scopePaths) => updateFact(id, { scopePaths })}
           />
 
           {/* Collapsible Search Playground */}
@@ -423,6 +431,7 @@ interface FactsTabProps {
   onArchive: (id: string) => void
   onDelete: (id: string) => void
   onScopeToggle: (fact: MemoryFact) => void
+  onScopePathsChange: (id: string, paths: string[]) => void
 }
 
 function FactsTab({
@@ -443,7 +452,8 @@ function FactsTab({
   onConfirm,
   onArchive,
   onDelete,
-  onScopeToggle
+  onScopeToggle,
+  onScopePathsChange
 }: FactsTabProps): React.JSX.Element {
   // ── Stats ──
   const tierCounts = useMemo(() => {
@@ -519,9 +529,10 @@ function FactsTab({
         onArchive={() => onArchive(fact.id)}
         onDelete={() => onDelete(fact.id)}
         onScopeToggle={() => onScopeToggle(fact)}
+        onScopePathsChange={(paths) => onScopePathsChange(fact.id, paths)}
       />
     ),
-    [onConfirm, onArchive, onDelete, onScopeToggle]
+    [onConfirm, onArchive, onDelete, onScopeToggle, onScopePathsChange]
   )
 
   const remaining = filteredAndSorted.length - visibleCount

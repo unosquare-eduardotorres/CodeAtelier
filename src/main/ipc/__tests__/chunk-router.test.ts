@@ -10,7 +10,13 @@
 import assert from 'node:assert/strict'
 import type { BrowserWindow } from 'electron'
 import { test, describe, summaryAsync, createSpy } from './../../services/__tests__/test-harness'
-import { routeChunk, getAndClearToolActivities, type ChunkRouterContext } from '../chunk-router'
+import {
+  routeChunk,
+  getAndClearToolActivities,
+  capEditDiffBudget,
+  type ChunkRouterContext
+} from '../chunk-router'
+import type { ToolActivity } from '../../../shared/types'
 import type { StreamChunk } from '../../services'
 import { IPC_CHANNELS } from '../../../shared/constants'
 import { trySetupTestDb, seedConversation } from '../../db/repositories/__tests__/db-test-helper'
@@ -677,6 +683,50 @@ describe('chunk-router › handlePhaseProgress', () => {
     })
   })
 }
+
+describe('chunk-router › capEditDiffBudget', () => {
+  function activity(id: string, diffChars: number): ToolActivity {
+    const half = 'x'.repeat(diffChars / 2)
+    return {
+      id,
+      toolName: 'Edit',
+      status: 'completed',
+      startedAt: 0,
+      editDiffs: [{ oldString: half, newString: half }]
+    }
+  }
+
+  test('under budget keeps every diff', () => {
+    const out = capEditDiffBudget([activity('a', 100), activity('b', 100)], 1_000)
+    assert.equal(out[0].editDiffs?.length, 1)
+    assert.equal(out[1].editDiffs?.length, 1)
+  })
+
+  test('over budget drops the OLDEST diffs and records the omission', () => {
+    const out = capEditDiffBudget([activity('old', 100), activity('new', 100)], 150)
+    assert.equal(out[0].editDiffs, undefined, 'oldest activity loses its diffs')
+    assert.equal(out[0].editDiffsOmitted, 1)
+    assert.equal(out[1].editDiffs?.length, 1, 'newest activity keeps its diffs')
+  })
+
+  test('activity rows themselves are never dropped', () => {
+    const out = capEditDiffBudget([activity('a', 100), activity('b', 100)], 0)
+    assert.equal(out.length, 2)
+    assert.equal(out[0].toolName, 'Edit')
+  })
+
+  test('accumulates an existing editDiffsOmitted count', () => {
+    const a = { ...activity('a', 100), editDiffsOmitted: 3 }
+    const out = capEditDiffBudget([a], 0)
+    assert.equal(out[0].editDiffsOmitted, 4)
+  })
+
+  test('activities without diffs pass through untouched', () => {
+    const plain: ToolActivity = { id: 'p', toolName: 'Read', status: 'completed', startedAt: 0 }
+    const out = capEditDiffBudget([plain], 0)
+    assert.deepEqual(out[0], plain)
+  })
+})
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()

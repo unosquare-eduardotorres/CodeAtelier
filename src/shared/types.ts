@@ -258,11 +258,11 @@ export interface PermissionResponse {
 export interface CompletionNotification {
   workspaceId: string
   workspaceName: string
-  service: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprint' | 'council'
+  service: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprint' | 'council' | 'memory'
   status: 'completed' | 'failed' | 'needs_input'
   summary: string
   /** Target page for click-to-navigate from OS notification */
-  targetPage?: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprints' | 'council'
+  targetPage?: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprints' | 'council' | 'memory'
   /** Entity ID for deep navigation (blueprintId, sessionId, etc.) */
   entityId?: string
 }
@@ -1002,8 +1002,21 @@ export type MemoryFactTier = 0 | 1 | 2 | 3
 /** Lifecycle status — superseded facts are never deleted. */
 export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
 
-/** How the fact was originally captured. */
-export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill' | 'bootstrap'
+/**
+ * How the fact was originally captured.
+ *
+ * MUST stay in sync with the `source_type` CHECK constraint on `memory_facts`
+ * (see migration 132). A value present here but missing from the CHECK makes
+ * every write of that kind fail at the DB layer — which is exactly how the
+ * whole bootstrap pipeline silently produced zero facts.
+ * `memory-source-type-guard.test.ts` enforces the match.
+ */
+export const MEMORY_SOURCE_TYPES = [
+  'session', 'commit', 'document', 'tool', 'manual',
+  'claude-md', 'blueprint', 'grill', 'bootstrap'
+] as const
+
+export type MemorySourceType = (typeof MEMORY_SOURCE_TYPES)[number]
 
 export interface MemoryFact {
   id: string
@@ -1044,8 +1057,15 @@ export interface MemoryContradiction {
   resolvedAt: string | null
 }
 
-/** How a confirmation was earned. */
-export type ConfirmationSourceType = 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap'
+/**
+ * How a confirmation was earned.
+ * MUST stay in sync with the `source_type` CHECK on `memory_confirmations`.
+ */
+export const CONFIRMATION_SOURCE_TYPES = [
+  'auto_dedup', 'human', 'tool', 'extraction', 'bootstrap'
+] as const
+
+export type ConfirmationSourceType = (typeof CONFIRMATION_SOURCE_TYPES)[number]
 
 /** Individual confirmation event (replaces bare counter for evidence-based promotion). */
 export interface MemoryConfirmation {
@@ -1091,6 +1111,20 @@ export interface MemoryCaptureSettings {
    */
   captureRationales: boolean
   watcherGlobs: string[]
+  /**
+   * Extra globs for agent rule files to load into the prompt alongside
+   * CLAUDE.md — e.g. `packages/*\/AGENTS.md`. The standard locations
+   * (AGENTS.md, .cursor/rules, .github/copilot-instructions.md, .clinerules,
+   * .windsurfrules, nested CLAUDE.md) are discovered automatically; this is for
+   * layouts that put them somewhere else. Empty by default.
+   */
+  instructionSources: string[]
+  /**
+   * Documents extracted in parallel during Feed Brain. Each one is a Claude CLI
+   * spawn, so raising this is the main throughput lever — and the main way to
+   * hit an API rate limit. Range 1–6, default 3.
+   */
+  bootstrapConcurrency: number
 }
 
 /** Bootstrap mode for project knowledge generation. */
@@ -1107,9 +1141,61 @@ export type BootstrapPhaseLabel =
   | 'agent-exploration'
   | 'finalize'
 
+/**
+ * How much of the workspace a run should re-read.
+ *
+ * `changed` honours the memory_doc_state hash gate (only new/edited files);
+ * the others selectively drop that gate so a phase can be genuinely re-ingested
+ * without the all-or-nothing "force" flag that used to wipe every hash.
+ */
+export type BootstrapScope = 'changed' | 'docs' | 'deep-scan' | 'full'
+
+/** Lifecycle of a durable bootstrap run (memory_bootstrap_runs.status). */
+export type BootstrapRunStatus =
+  | 'planning'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+
+/** Lifecycle of a single queued work item (memory_bootstrap_items.status). */
+export type BootstrapItemStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed'
+
+/** What a queued item represents — selects the executor that drains it. */
+export type BootstrapItemKind =
+  | 'doc'
+  | 'arch-file'
+  | 'manifests'
+  | 'commits'
+  | 'hotspots'
+  | 'cochange'
+  | 'cycles'
+  | 'agent'
+
+/** The item currently being drained, for "what is it doing right now" display. */
+export interface BootstrapCurrentItem {
+  sourceRef: string
+  phase: BootstrapPhaseLabel
+  chunkDone: number
+  chunkTotal: number
+  factsCreated: number
+}
+
+/** Per-phase rollup so the stepper can show real done/total counts. */
+export interface BootstrapPhaseStats {
+  total: number
+  done: number
+  facts: number
+}
+
 /** Progress event for project knowledge bootstrap. */
 export interface BootstrapProgress {
   jobId: string
+  /** Durable run id (memory_bootstrap_runs.id) — survives app restarts */
+  runId: string
+  /** Workspace the run belongs to, so background runs can be attributed */
+  workspaceId: string
   /** Current phase (0-based index) */
   phaseIndex: number
   /** Total phases in this run */
@@ -1121,9 +1207,58 @@ export interface BootstrapProgress {
   /** Message for display */
   message: string
   /** Overall job status */
-  jobStatus: 'running' | 'done' | 'cancelled' | 'error'
+  jobStatus: 'planning' | 'running' | 'paused' | 'done' | 'cancelled' | 'error'
   /** Bootstrap mode */
   mode: BootstrapMode
+  /** Total queued items — known up front because planning precedes draining */
+  itemsTotal: number
+  itemsDone: number
+  itemsSkipped: number
+  itemsFailed: number
+  /** Item being processed right now, or null between items */
+  currentItem: BootstrapCurrentItem | null
+  /** Keyed by BootstrapPhaseLabel */
+  perPhase: Record<string, BootstrapPhaseStats>
+  /** Estimate from active (non-paused) throughput; null until measurable */
+  etaSeconds: number | null
+  itemsPerMinute: number | null
+}
+
+/** A durable run row plus its per-phase breakdown. */
+export interface BootstrapRunSummary {
+  id: string
+  workspaceId: string
+  mode: BootstrapMode
+  scope: BootstrapScope
+  status: BootstrapRunStatus
+  currentPhase: BootstrapPhaseLabel | null
+  itemsTotal: number
+  itemsDone: number
+  itemsSkipped: number
+  itemsFailed: number
+  factsCreated: number
+  activeMs: number
+  error: string | null
+  createdAt: string
+  finishedAt: string | null
+  perPhase: Record<string, BootstrapPhaseStats>
+}
+
+/** A queued item as rendered in the per-document list. */
+export interface BootstrapItemView {
+  id: string
+  runId: string
+  phase: BootstrapPhaseLabel
+  kind: BootstrapItemKind
+  sourceRef: string
+  contentHash: string | null
+  priority: number
+  chunkTotal: number
+  chunkDone: number
+  status: BootstrapItemStatus
+  factsCreated: number
+  error: string | null
+  updatedAt: string
 }
 
 /** Progress event for document ingestion jobs. */
@@ -1278,6 +1413,17 @@ export interface RepoInfo {
 
 export type DiffComparisonMode = 'uncommitted' | 'branch-vs-target' | 'all-vs-target'
 
+/**
+ * Why both sides of a diff came back identical. `unexplained` means git reported
+ * differing blobs yet we resolved equal content — an app bug, never a quiet state.
+ */
+export type DiffIdenticalReason =
+  | 'mode-change'
+  | 'rename-only'
+  | 'empty-file'
+  | 'no-diff-entry'
+  | 'unexplained'
+
 export interface FileDiffResult {
   oldContent: string
   newContent: string
@@ -1288,6 +1434,10 @@ export interface FileDiffResult {
   warning?: string
   /** Short SHA of the resolved comparison base, for labelling. */
   baseSha?: string
+  /** Set only when oldContent === newContent — explains why nothing is shown. */
+  identicalReason?: DiffIdenticalReason
+  /** File-mode transition (e.g. 100644 → 100755) behind a `mode-change` reason. */
+  modeChange?: { from: string; to: string }
 }
 
 // ── AI Subscriptions ──

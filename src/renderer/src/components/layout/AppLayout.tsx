@@ -44,6 +44,7 @@ import {
   useNavigationHandlers
 } from './hooks'
 import { useBlueprintStatusBar } from './hooks/useBlueprintStatusBar'
+import { useBootstrapStatusBar } from './hooks/useBootstrapStatusBar'
 
 import { isMacPlatform as isMac } from '@renderer/utils/platform'
 
@@ -267,6 +268,7 @@ export default function AppLayout(): React.JSX.Element {
 
   // Blueprint status for StatusBar indicator
   const blueprintStatus = useBlueprintStatusBar()
+  const bootstrapStatus = useBootstrapStatusBar()
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
 
   // ── Workspace transition animation ──
@@ -303,6 +305,20 @@ export default function AppLayout(): React.JSX.Element {
       await openWorkspace(workspaceId)
       setSidebarView('settings')
       setWorkspaceSettingsTab('blueprints')
+    },
+    [openWorkspace]
+  )
+
+  const handleNavigateToMemory = useCallback(() => {
+    guardedSetSidebarView('settings')
+    guardedSetTab('memory')
+  }, [guardedSetSidebarView, guardedSetTab])
+
+  const handleSwitchToWorkspaceMemory = useCallback(
+    async (workspaceId: string) => {
+      await openWorkspace(workspaceId)
+      setSidebarView('settings')
+      setWorkspaceSettingsTab('memory')
     },
     [openWorkspace]
   )
@@ -509,6 +525,7 @@ export default function AppLayout(): React.JSX.Element {
         lastAuditScore={lastAuditScore}
         grillStatus={grillStatus}
         blueprintStatus={blueprintStatus}
+        bootstrapStatus={bootstrapStatus}
         indexingState={indexingState}
         sidebarView={sidebarView}
         onNavigateToSettings={(tab) => {
@@ -529,6 +546,8 @@ export default function AppLayout(): React.JSX.Element {
         onNavigateToGrill={handleNavigateToGrill}
         onNavigateToBlueprint={handleNavigateToBlueprint}
         onSwitchToWorkspaceBlueprint={handleSwitchToWorkspaceBlueprint}
+        onNavigateToMemory={handleNavigateToMemory}
+        onSwitchToWorkspaceMemory={handleSwitchToWorkspaceMemory}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomReset={handleZoomReset}

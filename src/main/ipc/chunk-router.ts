@@ -74,6 +74,44 @@ export function recordExternalToolActivity(
 }
 
 /**
+ * Whole-message budget for inline edit diffs. tool-chunk-processor caps each
+ * ACTIVITY at 16KB, but a build turn with 40 Edit calls would still put ~640KB
+ * of JSON into a single `messages` row, re-parsed on every conversation open.
+ */
+export const MAX_MESSAGE_EDIT_DIFF_CHARS = 128_000
+
+/**
+ * Enforce the per-message editDiffs budget. Walks newest-first so the most
+ * recent edits (the ones the user is actually looking at) are kept, and strips
+ * diffs off older activities once the budget is spent — the activity itself and
+ * its `editDiffsOmitted` count survive, so the UI still shows what was dropped.
+ */
+export function capEditDiffBudget(
+  activities: ToolActivity[],
+  budget: number = MAX_MESSAGE_EDIT_DIFF_CHARS
+): ToolActivity[] {
+  const out = [...activities]
+  let used = 0
+
+  for (let i = out.length - 1; i >= 0; i--) {
+    const activity = out[i]
+    const diffs = activity.editDiffs
+    if (!diffs || diffs.length === 0) continue
+
+    const size = diffs.reduce((n, d) => n + d.oldString.length + d.newString.length, 0)
+    if (used + size <= budget) {
+      used += size
+      continue
+    }
+
+    const { editDiffs: _dropped, ...rest } = activity
+    out[i] = { ...rest, editDiffsOmitted: (activity.editDiffsOmitted ?? 0) + diffs.length }
+  }
+
+  return out
+}
+
+/**
  * Retrieve and clear accumulated tool activities for a conversation.
  * Called during finalize to persist tool activities to the DB.
  * Returns all activities including 'running' ones (e.g. subagents interrupted mid-execution).
@@ -86,7 +124,7 @@ export function getAndClearToolActivities(conversationId: string): ToolActivity[
   const convMap = toolActivityStore.get(conversationId)
   toolActivityStore.delete(conversationId)
   if (!convMap) return []
-  return [...convMap.values()]
+  return capEditDiffBudget([...convMap.values()])
 }
 
 // ── Shared context passed to all handlers ──

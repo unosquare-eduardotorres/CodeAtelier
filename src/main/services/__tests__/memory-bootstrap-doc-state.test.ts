@@ -1,10 +1,13 @@
 /**
  * memory-bootstrap-doc-state.test.ts
  *
- * Regression coverage for the Deep Scan yield fixes:
- *   - extractFromFile must NOT write the doc-state hash when a chunk throws
+ * Regression coverage for the Deep Scan yield fixes, now asserted against the
+ * queue executor (`executeItem`) that replaced the service's private
+ * extractFromFile:
+ *   - a chunk failure must NOT write the doc-state hash
  *     (a poisoned hash permanently locks the file out of every future scan).
- *   - extractFromFile must NOT write the doc-state hash when the run aborts.
+ *   - an aborted/paused run must NOT write the doc-state hash, and must leave
+ *     the item `pending` so it is re-queued rather than marked failed.
  *   - A clean run still writes the hash, and a matching hash short-circuits.
  *   - The Deep Scan circuit breaker treats a `lastMutationAt` bump as progress
  *     (dedupe-merges confirm existing facts without raising the active count).
@@ -25,7 +28,7 @@ setupElectronStub()
 
 // ── Graceful module loading ─────────────────────────────────────────────────
 
-let memoryBootstrapService: any
+let executeItem: any
 let memoryFactRepository: any
 let memoryExtractionService: any
 let loaded = false
@@ -38,18 +41,18 @@ try {
   memoryFactRepository =
     require('../../db/repositories/memory-fact.repository').memoryFactRepository
 
-  // Load a private instance of the service. Other files in the shared runner
-  // may have already cached memory-bootstrap.service while setup-full-mock was
-  // active, in which case its `memoryFactRepository` is a mock object and the
-  // stubs installed below would land on a different instance. Re-requiring it
-  // with the real repository already cached guarantees a matching identity;
-  // the original cache entry is restored so later files are unaffected.
-  const svcPath = require.resolve('../memory-bootstrap.service')
-  const previous = require.cache[svcPath]
-  delete require.cache[svcPath]
-  memoryBootstrapService = require(svcPath).memoryBootstrapService
-  if (previous) require.cache[svcPath] = previous
-  else delete require.cache[svcPath]
+  // Load a private instance of the executors module. Other files in the shared
+  // runner may have already cached it while setup-full-mock was active, in
+  // which case its `memoryFactRepository` is a mock object and the stubs
+  // installed below would land on a different instance. Re-requiring it with
+  // the real repository already cached guarantees a matching identity; the
+  // original cache entry is restored so later files are unaffected.
+  const execPath = require.resolve('../memory-bootstrap/executors')
+  const previous = require.cache[execPath]
+  delete require.cache[execPath]
+  executeItem = require(execPath).executeItem
+  if (previous) require.cache[execPath] = previous
+  else delete require.cache[execPath]
 
   loaded = true
 } catch (err) {
@@ -135,26 +138,44 @@ function teardownDoc(name: string, path: string): void {
   rmSync(path, { force: true })
 }
 
-/** Invoke the private extractFromFile with a docs-phase config. */
+/** Drain a synthetic docs-phase queue item through the real executor. */
 function callExtract(
   path: string,
   signal: AbortSignal
 ): Promise<{ facts: number; status: string }> {
-  return (memoryBootstrapService as any).extractFromFile(
-    'ws-test',
-    TMP_ROOT,
-    path,
+  return executeItem({
+    workspaceId: 'ws-test',
+    workspacePath: TMP_ROOT,
+    scope: 'changed',
     signal,
-    { sourceType: 'bootstrap', tags: ['bootstrap', 'docs'] }
-  )
+    item: {
+      id: 'item-1',
+      runId: 'run-1',
+      phase: 'docs',
+      kind: 'doc',
+      sourceRef: basename(path),
+      contentHash: null,
+      priority: 100,
+      chunkTotal: 0,
+      chunkDone: 0,
+      status: 'running',
+      factsCreated: 0,
+      error: null,
+      updatedAt: ''
+    },
+    lastCommit: null,
+    isPaused: () => false,
+    onChunk: () => {},
+    onMessage: () => {}
+  })
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-describe('extractFromFile — doc-state hash gating', () => {
+describe('bootstrap executor — doc-state hash gating', () => {
   test('modules loaded (guards against vacuous passes below)', () => {
-    assert.equal(loaded, true, 'memory-bootstrap.service must be requireable')
-    assert.equal(typeof memoryBootstrapService?.startBootstrap, 'function')
+    assert.equal(loaded, true, 'memory-bootstrap/executors must be requireable')
+    assert.equal(typeof executeItem, 'function')
   })
 
   test('fixture produces multiple chunks (precondition for the abort case)', () => {
@@ -169,7 +190,7 @@ describe('extractFromFile — doc-state hash gating', () => {
     const { path, state } = setupDoc(name, { onChunk: async () => 2 })
     try {
       const outcome = await callExtract(path, new AbortController().signal)
-      assert.equal(outcome.status, 'extracted')
+      assert.equal(outcome.status, 'done')
       assert.ok(outcome.facts > 0, 'clean run should report facts')
       assert.equal(state.upserts, 1, 'clean run writes the doc-state hash')
     } finally {
@@ -211,7 +232,11 @@ describe('extractFromFile — doc-state hash gating', () => {
     })
     try {
       const outcome = await callExtract(path, controller.signal)
-      assert.equal(outcome.status, 'failed')
+      assert.equal(
+        outcome.status,
+        'pending',
+        'an interrupted item is re-queued, not failed — that is what makes resume lossless'
+      )
       assert.equal(state.chunkCalls, 1, 'loop stops at the first chunk after abort')
       assert.equal(state.upserts, 0, 'a cancelled run must not poison the hash')
     } finally {
@@ -228,7 +253,7 @@ describe('extractFromFile — doc-state hash gating', () => {
     })
     try {
       const outcome = await callExtract(path, new AbortController().signal)
-      assert.equal(outcome.status, 'unchanged')
+      assert.equal(outcome.status, 'skipped')
       assert.equal(outcome.facts, 0)
       assert.equal(state.chunkCalls, 0, 'unchanged files skip extraction entirely')
       assert.equal(state.upserts, 0)

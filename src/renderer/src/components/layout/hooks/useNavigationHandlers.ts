@@ -152,6 +152,17 @@ export function useNavigationHandlers(
     return () => window.removeEventListener('navigate-to-health', handler)
   }, [setSidebarView, setWorkspaceSettingsTab])
 
+  // Listen for 'navigate-to-memory' custom events (e.g. from the Specialist
+  // ingestion gate, which routes the user to Brain → Bootstrap).
+  useEffect(() => {
+    const handler = (): void => {
+      setSidebarView('settings')
+      setWorkspaceSettingsTab('memory')
+    }
+    window.addEventListener('navigate-to-memory', handler)
+    return () => window.removeEventListener('navigate-to-memory', handler)
+  }, [setSidebarView, setWorkspaceSettingsTab])
+
   return {
     handleGoHome,
     handleNavigateToChat,

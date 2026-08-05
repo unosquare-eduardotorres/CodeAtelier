@@ -21,6 +21,26 @@ import type {
   MemoryDocState
 } from '../../../shared/types'
 
+/**
+ * Turn arbitrary user text into a safe FTS5 MATCH expression.
+ *
+ * FTS5 treats `-`, `"`, `*`, `:`, `(`, `^` and `NEAR`/`AND`/`OR`/`NOT` as
+ * syntax, so passing a raw prompt through would throw on perfectly ordinary
+ * input like `why does foo-bar break?`. Every token is stripped to word
+ * characters and quoted, then joined with OR: a fact matching more terms
+ * simply ranks higher under BM25.
+ */
+function toFtsQuery(query: string): string {
+  return query
+    .slice(0, 500)
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 1)
+    .slice(0, 32)
+    .map((token) => `"${token}"`)
+    .join(' OR ')
+}
+
 // ── Row shapes ──────────────────────────────────────────────────────────────
 
 interface MemoryFactRow {
@@ -204,6 +224,49 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       )
       .all(workspaceId, like, like, like, limit) as MemoryFactRow[]
     return rows.map(mapFactRow)
+  }
+
+  /**
+   * Rank-ordered keyword search over the FTS5 index.
+   *
+   * Replaces the `LIKE '%q%'` scan for retrieval. `LIKE` cannot rank and cannot
+   * use an index, so the old path scanned every active fact on every turn and
+   * then ordered by tier — which tells you nothing about how well a fact
+   * matches the query. BM25 orders by term rarity and density, which is what a
+   * keyword arm has to contribute to rank fusion.
+   *
+   * Facts are returned with their 0-based rank so a caller can fuse this list
+   * with the vector list without re-deriving positions.
+   */
+  searchFts(
+    workspaceId: string,
+    query: string,
+    limit = 50
+  ): Array<{ fact: MemoryFact; rank: number }> {
+    const match = toFtsQuery(query)
+    if (!match) return []
+
+    let rows: MemoryFactRow[]
+    try {
+      rows = this.db()
+        .prepare(
+          `SELECT f.* FROM memory_facts_fts fts
+             JOIN memory_facts f ON f.id = fts.fact_id
+            WHERE memory_facts_fts MATCH ?
+              AND (f.workspace_id = ? OR f.workspace_id IS NULL)
+              AND f.status = 'active'
+            ORDER BY rank
+            LIMIT ?`
+        )
+        .all(match, workspaceId, limit) as MemoryFactRow[]
+    } catch {
+      // Either a MATCH expression this sanitiser did not anticipate, or a DB
+      // that has not reached migration 135 yet. Both are recoverable: fall back
+      // to the LIKE scan so retrieval degrades in quality rather than failing.
+      return this.search(workspaceId, query, limit).map((fact, rank) => ({ fact, rank }))
+    }
+
+    return rows.map((row, rank) => ({ fact: mapFactRow(row), rank }))
   }
 
   // ── Write ───────────────────────────────────────────────────────────────

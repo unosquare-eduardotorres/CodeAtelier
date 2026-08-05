@@ -19,7 +19,10 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
-test.describe('Plans Page', () => {
+// nav hidden — the 'plans' entry is marked `hidden: true` in SETTINGS_MENU, so
+// navigateToSettingsTab('plans') can no longer find a button. The page and its
+// route are intact; unhide the entry to restore this coverage.
+test.describe.skip('Plans Page', () => {
   async function ensureWorkspaceReady(
     page: import('@playwright/test').Page
   ): Promise<boolean> {

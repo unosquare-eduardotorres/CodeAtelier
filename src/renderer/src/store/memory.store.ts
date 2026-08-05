@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
+import { useWorkspaceStore } from './workspace.store'
 import type {
   MemoryFact,
   MemoryContradiction,
@@ -11,6 +12,10 @@ import type {
   IngestionProgress,
   BootstrapProgress,
   BootstrapMode,
+  BootstrapScope,
+  BootstrapItemStatus,
+  BootstrapItemView,
+  BootstrapRunSummary,
   ContradictionStatus
 } from '../../../shared/types'
 
@@ -35,7 +40,6 @@ interface MemoryState {
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
-  bootstrapWorkspaceId: string | null
 
   // CLAUDE.md state
   claudeMdContent: string | null
@@ -102,16 +106,32 @@ interface MemoryState {
 
   // Bootstrap state
   bootstrap: BootstrapProgress | null
-  bootstrapCleanup: (() => void) | null
+  /** Live progress for every workspace, so the status bar sees background runs. */
+  bootstrapByWorkspace: Record<string, BootstrapProgress>
+  bootstrapLatestRun: BootstrapRunSummary | null
+  bootstrapResumableRunId: string | null
+  bootstrapItems: BootstrapItemView[]
+  bootstrapItemsTotal: number
+  bootstrapItemFilter: BootstrapItemStatus | 'all'
   startBootstrap: (
     workspaceId: string,
     workspacePath: string,
     mode?: BootstrapMode,
-    force?: boolean
+    force?: boolean,
+    scope?: BootstrapScope
   ) => Promise<void>
+  pauseBootstrap: (workspaceId: string) => Promise<void>
+  resumeBootstrap: (runId: string, workspacePath: string) => Promise<void>
   cancelBootstrap: () => void
-  dismissBootstrap: () => void
+  dismissBootstrap: (workspaceId?: string) => void
   onBootstrapProgress: (progress: BootstrapProgress) => void
+  seedBootstrapProgress: (progress: BootstrapProgress) => void
+  loadBootstrapSnapshot: (workspaceId: string) => Promise<void>
+  loadBootstrapItems: (
+    runId: string,
+    options?: { status?: BootstrapItemStatus | 'all'; offset?: number; limit?: number }
+  ) => Promise<void>
+  setBootstrapItemFilter: (filter: BootstrapItemStatus | 'all') => void
 }
 
 export const useMemoryStore = create<MemoryState>((set) => ({
@@ -125,7 +145,6 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
-  bootstrapWorkspaceId: null,
   claudeMdContent: null,
   claudeMdPath: null,
   claudeMdLoading: false,
@@ -136,7 +155,12 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   ingestion: null,
   ingestionCleanup: null,
   bootstrap: null,
-  bootstrapCleanup: null,
+  bootstrapByWorkspace: {},
+  bootstrapLatestRun: null,
+  bootstrapResumableRunId: null,
+  bootstrapItems: [],
+  bootstrapItemsTotal: 0,
+  bootstrapItemFilter: 'all',
 
   // ── Fact actions ──
 
@@ -446,15 +470,16 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   // ── Project Knowledge Bootstrap ──
 
-  startBootstrap: async (workspaceId, workspacePath, mode = 'full', force = false) => {
-    // Subscribe to progress events
-    const cleanup = window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
-      useMemoryStore.getState().onBootstrapProgress(progress)
-    })
-    set({ bootstrapCleanup: cleanup, bootstrapWorkspaceId: workspaceId })
-
+  startBootstrap: async (workspaceId, workspacePath, mode = 'full', force = false, scope) => {
     try {
-      await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode, force })
+      const { runId } = await window.api.memoryBootstrapStart({
+        workspaceId,
+        workspacePath,
+        mode,
+        force,
+        scope
+      })
+      await useMemoryStore.getState().loadBootstrapItems(runId)
     } catch (error) {
       rendererLog.error('Bootstrap failed:', error)
     }
@@ -463,33 +488,147 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     await useMemoryStore.getState().loadFacts(workspaceId)
   },
 
-  onBootstrapProgress: (progress) => {
-    set({ bootstrap: progress })
-    if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
-      const { bootstrapCleanup, bootstrapWorkspaceId } = useMemoryStore.getState()
-      bootstrapCleanup?.()
-      set({ bootstrapCleanup: null })
+  pauseBootstrap: async (workspaceId) => {
+    try {
+      await window.api.memoryBootstrapPause({ workspaceId })
+    } catch (error) {
+      rendererLog.error('Pause bootstrap failed:', error)
+    }
+  },
 
-      // Reload facts so the tab count updates immediately
-      if (progress.jobStatus === 'done' && bootstrapWorkspaceId) {
-        useMemoryStore.getState().loadFacts(bootstrapWorkspaceId)
+  resumeBootstrap: async (runId, workspacePath) => {
+    try {
+      await window.api.memoryBootstrapResume({ runId, workspacePath })
+    } catch (error) {
+      rendererLog.error('Resume bootstrap failed:', error)
+    }
+    const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id
+    if (viewedWsId) await useMemoryStore.getState().loadFacts(viewedWsId)
+  },
+
+  onBootstrapProgress: (progress) => {
+    const { bootstrapByWorkspace } = useMemoryStore.getState()
+
+    set({
+      bootstrapByWorkspace: { ...bootstrapByWorkspace, [progress.workspaceId]: progress }
+    })
+
+    // Only drive the page-level view with the workspace the user is looking at;
+    // background workspaces still update bootstrapByWorkspace for the status bar.
+    // Scoped off the active workspace rather than "wherever Start was last
+    // clicked" — the latter is null until the user starts a run in this session
+    // (letting any workspace's events drive the page) and goes stale the moment
+    // they switch workspaces.
+    const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id ?? null
+    if (progress.workspaceId === viewedWsId) {
+      set({ bootstrap: progress })
+    }
+
+    const terminal =
+      progress.jobStatus === 'done' ||
+      progress.jobStatus === 'cancelled' ||
+      progress.jobStatus === 'error' ||
+      progress.jobStatus === 'paused'
+
+    if (terminal) {
+      useMemoryStore.getState().loadBootstrapSnapshot(progress.workspaceId)
+      useMemoryStore.getState().loadBootstrapItems(progress.runId)
+
+      if (progress.jobStatus === 'done') {
+        useMemoryStore.getState().loadFacts(progress.workspaceId)
         useMemoryStore.getState().loadContradictions()
       }
     }
   },
 
+  loadBootstrapSnapshot: async (workspaceId) => {
+    try {
+      const snap = await window.api.memoryBootstrapSnapshot({ workspaceId })
+      set({
+        bootstrapLatestRun: snap.latestRun,
+        bootstrapResumableRunId: snap.resumableRunId
+      })
+      if (snap.progress) {
+        const { bootstrapByWorkspace } = useMemoryStore.getState()
+        set({
+          bootstrap: snap.progress,
+          bootstrapByWorkspace: { ...bootstrapByWorkspace, [workspaceId]: snap.progress }
+        })
+      }
+    } catch (error) {
+      rendererLog.error('Load bootstrap snapshot failed:', error)
+    }
+  },
+
+  loadBootstrapItems: async (runId, options = {}) => {
+    try {
+      const filter = options.status ?? useMemoryStore.getState().bootstrapItemFilter
+      const { items, total } = await window.api.memoryBootstrapListItems({
+        runId,
+        status: filter === 'all' ? undefined : filter,
+        limit: options.limit ?? 200,
+        offset: options.offset ?? 0
+      })
+      set({ bootstrapItems: items, bootstrapItemsTotal: total })
+    } catch (error) {
+      rendererLog.error('Load bootstrap items failed:', error)
+    }
+  },
+
+  setBootstrapItemFilter: (filter) => {
+    set({ bootstrapItemFilter: filter })
+    const { bootstrap, bootstrapLatestRun } = useMemoryStore.getState()
+    const runId = bootstrap?.runId ?? bootstrapLatestRun?.id
+    if (runId) useMemoryStore.getState().loadBootstrapItems(runId, { status: filter })
+  },
+
   cancelBootstrap: () => {
-    const { bootstrap, bootstrapCleanup } = useMemoryStore.getState()
+    const { bootstrap } = useMemoryStore.getState()
     if (bootstrap?.jobId) {
       window.api.memoryBootstrapCancel({ jobId: bootstrap.jobId }).catch(() => {})
     }
-    bootstrapCleanup?.()
-    set({ bootstrap: null, bootstrapCleanup: null })
   },
 
-  dismissBootstrap: () => {
-    const { bootstrapCleanup } = useMemoryStore.getState()
-    bootstrapCleanup?.()
-    set({ bootstrap: null, bootstrapCleanup: null })
+  /**
+   * Seed a workspace's live state from a snapshot, for runs that were already
+   * in flight before anything subscribed. Live events always win, so this never
+   * overwrites an entry that the progress channel is already driving.
+   */
+  seedBootstrapProgress: (progress) => {
+    const { bootstrapByWorkspace } = useMemoryStore.getState()
+    if (bootstrapByWorkspace[progress.workspaceId]) return
+    set({
+      bootstrapByWorkspace: { ...bootstrapByWorkspace, [progress.workspaceId]: progress }
+    })
+  },
+
+  dismissBootstrap: (workspaceId) => {
+    const { bootstrap, bootstrapByWorkspace } = useMemoryStore.getState()
+    const id = workspaceId ?? bootstrap?.workspaceId
+    if (!id) {
+      set({ bootstrap: null })
+      return
+    }
+    // Clearing only `bootstrap` left the entry in the per-workspace map, so a
+    // failed run kept the status-bar Brain indicator red until the next app
+    // restart. Dismiss has to drop both.
+    const next = { ...bootstrapByWorkspace }
+    delete next[id]
+    set({ bootstrap: null, bootstrapByWorkspace: next })
   }
 }))
+
+/**
+ * Module-level progress subscription.
+ *
+ * Deliberately NOT created inside `startBootstrap`. Subscribing there meant a
+ * run was only observable while the user sat on the page that started it —
+ * navigating away made an in-flight ingestion invisible, and a run started in
+ * another workspace was never seen at all. One subscription for the app's
+ * lifetime is what lets the status bar report background runs.
+ */
+if (typeof window !== 'undefined' && window.api?.onMemoryBootstrapProgress) {
+  window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
+    useMemoryStore.getState().onBootstrapProgress(progress)
+  })
+}

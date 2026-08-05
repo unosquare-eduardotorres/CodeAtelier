@@ -77,6 +77,11 @@ import type {
   IngestionProgress,
   BootstrapProgress,
   BootstrapMode,
+  BootstrapScope,
+  BootstrapItemStatus,
+  BootstrapItemView,
+  BootstrapPhaseLabel,
+  BootstrapRunSummary,
   ContradictionStatus,
   E2EScenarioSummary,
   E2EPreflightResult,
@@ -402,8 +407,13 @@ interface Api {
   onMemoryIngestProgress: (callback: (data: IngestionProgress) => void) => () => void
 
   // Memory Bootstrap
-  memoryBootstrapStart: (args: { workspaceId: string; workspacePath: string; mode?: BootstrapMode; force?: boolean }) => Promise<{ jobId: string; factsCreated: number }>
+  memoryBootstrapStart: (args: { workspaceId: string; workspacePath: string; mode?: BootstrapMode; force?: boolean; scope?: BootstrapScope }) => Promise<{ jobId: string; runId: string; factsCreated: number }>
   memoryBootstrapCancel: (args: { jobId: string }) => Promise<boolean>
+  memoryBootstrapPause: (args: { workspaceId: string }) => Promise<boolean>
+  memoryBootstrapResume: (args: { runId: string; workspacePath: string }) => Promise<{ jobId: string; runId: string; factsCreated: number }>
+  memoryBootstrapSnapshot: (args: { workspaceId: string }) => Promise<{ progress: BootstrapProgress | null; latestRun: BootstrapRunSummary | null; resumableRunId: string | null }>
+  memoryBootstrapListRuns: (args: { workspaceId: string; limit?: number }) => Promise<BootstrapRunSummary[]>
+  memoryBootstrapListItems: (args: { runId: string; status?: BootstrapItemStatus; phase?: BootstrapPhaseLabel; limit?: number; offset?: number }) => Promise<{ items: BootstrapItemView[]; total: number }>
   onMemoryBootstrapProgress: (callback: (data: BootstrapProgress) => void) => () => void
 
   // Memory Feed (retained)
@@ -413,6 +423,16 @@ interface Api {
     workspacePath: string
     workspaceId: string
   }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
+  memoryProjectExport: (args: {
+    workspaceId: string
+    workspacePath: string
+  }) => Promise<{
+    indexPath: string
+    topicPaths: string[]
+    factsProjected: number
+    factsPruned: number
+    warnings: string[]
+  }>
   memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
@@ -613,13 +633,19 @@ interface Api {
     fromRef: string
     toRef: string
   }) => Promise<
-    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
   >
   getRefFileDiff: (args: {
     conversationId: string
     filePath: string
     fromRef: string
     toRef: string
+    oldPath?: string
   }) => Promise<FileDiffResult>
   fetchOrigin: (args: {
     conversationId: string

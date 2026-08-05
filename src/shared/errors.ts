@@ -34,3 +34,24 @@ export class BudgetExceededError extends Error {
     this.scope = params.scope
   }
 }
+
+/**
+ * Thrown when a Project Specialist build is attempted before the workspace's
+ * knowledge bootstrap (Brain → Bootstrap Project Knowledge) has produced any
+ * facts.
+ *
+ * Tailoring without ingested knowledge degrades to the template skeleton, which
+ * previously looked identical to a real build in the UI. Failing loudly here is
+ * the point: the user gets an actionable message instead of a generic persona.
+ */
+export class SpecialistIngestionRequiredError extends Error {
+  readonly workspaceId: string
+
+  constructor(workspaceId: string) {
+    super(
+      'Deep Ingestion required — run Brain → Bootstrap Project Knowledge before building this specialist.'
+    )
+    this.name = 'SpecialistIngestionRequiredError'
+    this.workspaceId = workspaceId
+  }
+}

@@ -5,7 +5,7 @@
  *   - Update modal renders with version number and "Update Available" title
  *   - Release notes section shows when notes are present
  *   - "Update Now" button triggers download
- *   - Downloading state shows progress bar with percentage
+ *   - Downloading state shows the circular progress ring with percentage
  *   - Ready state shows "Restart & Install" button
  *   - Error state shows error message with Retry and Dismiss buttons
  *
@@ -103,7 +103,7 @@ test.describe('Update Modal', () => {
     await expect(downloadIcon).toBeVisible()
   })
 
-  test('downloading state shows progress bar with percentage', async ({
+  test('downloading state shows progress ring with percentage', async ({
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
@@ -120,12 +120,12 @@ test.describe('Update Modal', () => {
 
     if (!hasDownloading) { test.skip(); return }
 
-    // Should show a progress bar
-    const progressBar = modal.locator('.bg-primary.rounded-full')
-    const hasProgress = await progressBar.isVisible({ timeout: 2_000 }).catch(() => false)
+    // Should show the circular progress ring
+    const progressRing = modal.locator('[data-testid="update-progress-ring"]')
+    const hasProgress = await progressRing.isVisible({ timeout: 2_000 }).catch(() => false)
 
     if (hasProgress) {
-      await expect(progressBar).toBeVisible()
+      await expect(progressRing).toBeVisible()
     }
 
     // Should show percentage text

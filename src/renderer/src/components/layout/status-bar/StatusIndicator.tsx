@@ -11,7 +11,7 @@ export interface StatusIndicatorProps {
   icon: React.ElementType
   label?: string
   state: IndicatorState
-  activeColor?: 'danger' | 'cyan' | 'purple'
+  activeColor?: 'danger' | 'cyan' | 'purple' | 'teal'
   title: string
   onClick: () => void
   badge?: string | number | null
@@ -21,10 +21,11 @@ export interface StatusIndicatorProps {
 
 // ── Color tables ─────────────────────────────────────────────────────────────
 
-const ACTIVE_COLORS: Record<'danger' | 'cyan' | 'purple', string> = {
+const ACTIVE_COLORS: Record<'danger' | 'cyan' | 'purple' | 'teal', string> = {
   danger: 'text-danger bg-danger/10 hover:bg-danger/20',
   cyan: 'text-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20',
-  purple: 'text-purple-400 bg-purple-400/10 hover:bg-purple-400/20'
+  purple: 'text-purple-400 bg-purple-400/10 hover:bg-purple-400/20',
+  teal: 'text-teal bg-teal/10 hover:bg-teal/20'
 }
 
 const STATE_COLORS: Record<'attention' | 'idle' | 'error', string> = {

@@ -8,6 +8,8 @@
 const capturedHandlers = new Map()
 const capturedOnHandlers = new Map()
 const sentEvents = []
+/** powerMonitor listeners, so tests can fire 'resume'/'suspend' synthetically. */
+const powerMonitorListeners = new Map()
 
 const noop = function () {
   /* no-op mock method */
@@ -167,6 +169,32 @@ module.exports = {
   screen: {
     getPrimaryDisplay: function () {
       return { workAreaSize: { width: 1920, height: 1080 } }
+    }
+  },
+  powerMonitor: {
+    on: function (event, fn) {
+      if (!powerMonitorListeners.has(event)) powerMonitorListeners.set(event, [])
+      powerMonitorListeners.get(event).push(fn)
+      return this
+    },
+    removeListener: function (event, fn) {
+      const list = powerMonitorListeners.get(event)
+      if (list) {
+        const i = list.indexOf(fn)
+        if (i >= 0) list.splice(i, 1)
+      }
+      return this
+    }
+  },
+  __powerMonitorMock: {
+    emit: function (event) {
+      for (const fn of powerMonitorListeners.get(event) || []) fn()
+    },
+    listenerCount: function (event) {
+      return (powerMonitorListeners.get(event) || []).length
+    },
+    reset: function () {
+      powerMonitorListeners.clear()
     }
   },
   Notification: MockNotification,

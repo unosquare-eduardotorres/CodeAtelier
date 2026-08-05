@@ -61,7 +61,7 @@ export default function CommitBar({
             <span>
               Showing differences: <span className="font-medium text-text-secondary">{currentBranch || 'HEAD'}</span>
               {' → '}
-              <span className="font-medium text-text-secondary">origin/{targetBranch}</span>
+              <span className="font-medium text-text-secondary">{targetBranch}</span>
               {fileCount > 0 && (
                 <span className="text-text-muted ml-1">· {fileCount} file{fileCount !== 1 ? 's' : ''} changed</span>
               )}

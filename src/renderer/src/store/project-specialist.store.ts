@@ -19,6 +19,18 @@ export interface SkillRecommendation {
   rationale: string
 }
 
+/** Which build path produced the persisted prompt (specialists.build_method). */
+export type SpecialistBuildMethod = 'agentic' | 'oneshot' | 'skeleton'
+
+/** Live knowledge-bootstrap state for the workspace. */
+export interface SpecialistIngestionState {
+  /** True when the latest run completed AND produced facts. */
+  satisfied: boolean
+  status: string | null
+  factsCreated: number
+  finishedAt: string | null
+}
+
 export interface ProjectSpecialist {
   id: string
   workspaceId: string
@@ -31,6 +43,15 @@ export interface ProjectSpecialist {
   stackFingerprint: string | null
   detectedTechs: string[]
   lastBuiltAt: string | null
+  /**
+   * How the prompt was produced. `null` on rows built before provenance was
+   * recorded; `'skeleton'` means tailoring degraded to the generic template.
+   */
+  buildMethod: SpecialistBuildMethod | null
+  /** The bootstrap run that informed the last build, if any. */
+  ingestionRunId: string | null
+  /** Live ingestion state — null when it could not be read. */
+  ingestion: SpecialistIngestionState | null
   createdAt: string
   updatedAt: string
   /** Skills attached to this specialist (with per-specialist is_enabled state). */

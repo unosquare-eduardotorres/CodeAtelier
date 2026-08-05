@@ -36,7 +36,8 @@ const GROUP_MAP: Record<string, string> = {
   audit: 'code-atelier-audit',
   mpa: 'code-atelier-mpa',
   blueprint: 'code-atelier-blueprint',
-  council: 'code-atelier-council'
+  council: 'code-atelier-council',
+  memory: 'code-atelier-memory'
 }
 
 // ── Service Labels ────────────────────────────────────────────────────────

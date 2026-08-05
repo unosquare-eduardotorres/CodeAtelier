@@ -32,6 +32,7 @@ import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
 import { memoryExtractionService } from './services/memory-extraction.service'
 import { memoryEngineService } from './services/memory-engine.service'
+import { memoryBootstrapService } from './services/memory-bootstrap.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
 import { grillAgentService } from './services/grill-agent.service'
@@ -429,6 +430,9 @@ function createWindow(): void {
     autoUpdateService.init(mainWindow)
     // Check for updates shortly after launch to avoid blocking startup
     setTimeout(() => autoUpdateService.checkForUpdates(), 5000)
+    // ...then keep checking: a session left open for hours must still notice a
+    // release published after launch.
+    autoUpdateService.startPeriodicChecks()
   }
 
   // HMR for renderer based on electron-vite cli.
@@ -512,6 +516,15 @@ app.whenReady().then(() => {
     memoryEngineService.runDecaySweepIfDue()
   } catch (e) {
     log.debug('Memory decay sweep error (non-fatal):', e)
+  }
+
+  // ── Feed Brain: demote crash-orphaned runs to `paused` so they resume ──
+  // A force-quit leaves rows claiming to be `running` with no process behind
+  // them; without this they would block new runs forever.
+  try {
+    memoryBootstrapService.recoverOrphanedRuns()
+  } catch (e) {
+    log.debug('Bootstrap orphan recovery error (non-fatal):', e)
   }
 
   // ── Memory Consolidation: idle job starts when a workspace is opened ──
@@ -882,6 +895,13 @@ app.on('before-quit', async (event) => {
   } catch (e) {
     log.warn('[before-quit] Cleanup threw:', e)
   }
+
+  // Outside cleanup() on purpose: cleanup is raced against the 4s timeout above,
+  // so a slow shutdown (live sessions still winding down) would fall through to
+  // app.exit(0) and skip the install entirely. Synchronous — the 5s failsafe
+  // still has headroom. Re-entry is safe: `isQuitting` is already true, so a
+  // before-quit triggered by quitAndInstall() returns immediately.
+  autoUpdateService.installOnQuitIfReady()
 
   // Force-exit: app.exit(0) terminates all child processes (renderer, GPU,
   // utility) immediately — bypasses the cooperative window-close ack that

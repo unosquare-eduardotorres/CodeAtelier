@@ -636,12 +636,41 @@ const api = {
       workspacePath: string
       mode?: import('../shared/types').BootstrapMode
       force?: boolean
+      scope?: import('../shared/types').BootstrapScope
     }
-  ): Promise<{ jobId: string; factsCreated: number }> =>
+  ): Promise<{ jobId: string; runId: string; factsCreated: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_START, args),
 
   memoryBootstrapCancel: (args: { jobId: string }): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_CANCEL, args),
+
+  memoryBootstrapPause: (args: { workspaceId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_PAUSE, args),
+
+  memoryBootstrapResume: (
+    args: { runId: string; workspacePath: string }
+  ): Promise<{ jobId: string; runId: string; factsCreated: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_RESUME, args),
+
+  memoryBootstrapSnapshot: (args: { workspaceId: string }): Promise<{
+    progress: import('../shared/types').BootstrapProgress | null
+    latestRun: import('../shared/types').BootstrapRunSummary | null
+    resumableRunId: string | null
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_SNAPSHOT, args),
+
+  memoryBootstrapListRuns: (
+    args: { workspaceId: string; limit?: number }
+  ): Promise<import('../shared/types').BootstrapRunSummary[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_LIST_RUNS, args),
+
+  memoryBootstrapListItems: (args: {
+    runId: string
+    status?: import('../shared/types').BootstrapItemStatus
+    phase?: import('../shared/types').BootstrapPhaseLabel
+    limit?: number
+    offset?: number
+  }): Promise<{ items: import('../shared/types').BootstrapItemView[]; total: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_LIST_ITEMS, args),
 
   onMemoryBootstrapProgress: (callback: (data: import('../shared/types').BootstrapProgress) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any): void => callback(data)
@@ -662,6 +691,17 @@ const api = {
     workspaceId: string
   }): Promise<{ success: boolean; content: string; existing: string | null; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD, args),
+
+  memoryProjectExport: (args: {
+    workspaceId: string
+    workspacePath: string
+  }): Promise<{
+    indexPath: string
+    topicPaths: string[]
+    factsProjected: number
+    factsPruned: number
+    warnings: string[]
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_PROJECT_EXPORT, args),
 
   memoryFeedDocument: (args: {
     workspacePath: string
@@ -1110,7 +1150,12 @@ const api = {
     fromRef: string
     toRef: string
   }): Promise<
-    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
   > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS, args),
 
   getRefFileDiff: (args: {
@@ -1118,6 +1163,7 @@ const api = {
     filePath: string
     fromRef: string
     toRef: string
+    oldPath?: string
   }): Promise<FileDiffResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, args),
 

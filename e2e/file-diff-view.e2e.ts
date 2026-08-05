@@ -97,6 +97,18 @@ test.describe('File Diff View', () => {
     const diffView = await findFileDiffView(page)
     if (!diffView) { test.skip(); return }
 
+    // When both sides match, FileDiffView renders an explicit empty state INSTEAD of
+    // ReactDiffViewer — that's correct behaviour, not a failure.
+    const identical = diffView.locator('[data-testid="file-diff-identical"]')
+    if (await identical.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      // The pane always names its cause — either the generic wording or a concrete
+      // reason (mode change, rename, stale list).
+      await expect(identical).toContainText(
+        /no differences|file mode|was moved|no longer differs/i
+      )
+      return
+    }
+
     // ReactDiffViewer renders in split view — look for left/right titles
     const leftTitle = diffView.locator('text=Previous (HEAD)')
     const rightTitle = diffView.locator('text=Current (Working Tree)')

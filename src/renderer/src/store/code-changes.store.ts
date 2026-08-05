@@ -6,6 +6,8 @@ export interface FileChangeDetail {
   filePath: string
   changeType: 'created' | 'modified' | 'deleted'
   staged: boolean
+  /** Rename source — the old side lives at this path, not at filePath. */
+  oldPath?: string
 }
 
 interface CodeChangesState {
@@ -21,6 +23,7 @@ interface CodeChangesState {
 
   // Comparison mode
   comparisonMode: DiffComparisonMode
+  /** Fully-qualified comparison ref — `origin/<b>` for remotes, `<b>` for local branches. */
   targetBranch: string
   availableBranches: { local: string[]; remote: string[] }
 
@@ -68,7 +71,7 @@ const initialState: CodeChangesState = {
   currentDiff: null,
   isLoadingDiff: false,
   comparisonMode: 'uncommitted',
-  targetBranch: 'main',
+  targetBranch: 'origin/main',
   availableBranches: { local: [], remote: [] },
   commitMessage: '',
   isCommitting: false,
@@ -91,7 +94,8 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
       if (comparisonMode === 'uncommitted') {
         files = await window.api.getFileDetails({ conversationId })
       } else {
-        const fromRef = `origin/${targetBranch}`
+        // targetBranch is already fully qualified — local branches carry no prefix.
+        const fromRef = targetBranch
         const toRef = comparisonMode === 'branch-vs-target' ? 'HEAD' : 'WORKING_TREE'
         files = await window.api.getRefFileDetails({ conversationId, fromRef, toRef })
       }
@@ -107,7 +111,10 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load file details'
       if (msg.startsWith('REF_NOT_FOUND:')) {
-        set({ isLoadingFiles: false, error: `Remote branch not found — has it been pushed? (${msg.replace('REF_NOT_FOUND: ', '')})` })
+        set({
+          isLoadingFiles: false,
+          error: `Branch not found — if it is a remote branch, has it been pushed? (${msg.replace('REF_NOT_FOUND: ', '')})`
+        })
       } else {
         rendererLog.error('loadFiles failed:', msg)
         set({ isLoadingFiles: false, error: msg })
@@ -121,15 +128,24 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
 
     set({ isLoadingDiff: true })
     try {
-      const { comparisonMode, targetBranch } = get()
+      const { comparisonMode, targetBranch, files } = get()
       let diff: FileDiffResult
 
       if (comparisonMode === 'uncommitted') {
         diff = await window.api.getFileDiff({ conversationId, filePath })
       } else {
-        const fromRef = `origin/${targetBranch}`
+        const fromRef = targetBranch
         const toRef = comparisonMode === 'branch-vs-target' ? 'HEAD' : 'WORKING_TREE'
-        diff = await window.api.getRefFileDiff({ conversationId, filePath, fromRef, toRef })
+        // Renamed files need their source path, or the old side is looked up at the
+        // new path, comes back empty, and the file renders as a 100% addition.
+        const oldPath = files.find((f) => f.filePath === filePath)?.oldPath
+        diff = await window.api.getRefFileDiff({
+          conversationId,
+          filePath,
+          fromRef,
+          toRef,
+          oldPath
+        })
       }
 
       set({ currentDiff: diff, isLoadingDiff: false })
@@ -270,17 +286,19 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
       const result = await window.api.listBranches({ workspaceId })
       set({ availableBranches: { local: result.local, remote: result.remote } })
 
-      // Auto-detect target branch: if remote has 'main' or 'master', use that
+      // targetBranch is stored fully qualified so a local branch can be a target too.
+      const qualifiedRemotes = result.remote.map((b) => `origin/${b}`)
+      const known = new Set([...qualifiedRemotes, ...result.local])
       const { targetBranch } = get()
-      if (result.remote.length > 0) {
-        if (result.remote.includes('main') && targetBranch !== 'main') {
-          set({ targetBranch: 'main' })
-        } else if (!result.remote.includes('main') && result.remote.includes('master')) {
-          set({ targetBranch: 'master' })
-        } else if (!result.remote.includes(targetBranch) && result.remote.length > 0) {
-          // Current target doesn't exist on remote, pick first available
-          set({ targetBranch: result.remote[0] })
-        }
+      // Only auto-pick when the current target isn't a real ref — re-running this
+      // (mount, post-fetch) must not clobber a target the user chose.
+      if (!known.has(targetBranch) && known.size > 0) {
+        const preferred = known.has('origin/main')
+          ? 'origin/main'
+          : known.has('origin/master')
+            ? 'origin/master'
+            : (qualifiedRemotes[0] ?? result.local[0])
+        set({ targetBranch: preferred })
       }
     } catch (e) {
       rendererLog.error('loadBranches failed:', e)
@@ -314,7 +332,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
   resetComparison: (): void => {
     set({
       comparisonMode: 'uncommitted',
-      targetBranch: 'main',
+      targetBranch: 'origin/main',
       availableBranches: { local: [], remote: [] },
       selectedFile: null,
       currentDiff: null,

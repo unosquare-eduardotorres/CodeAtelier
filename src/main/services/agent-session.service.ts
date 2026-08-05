@@ -743,11 +743,19 @@ export class AgentSessionService extends AgentBaseService {
     try {
       if (this.workspaceId) {
         const { memoryRetrievalService } = await import('./memory-retrieval.service')
+        const { resolveActivePaths } = await import('./active-paths')
+        // Facts scoped to a file this session is working on are on-topic even
+        // when the message never names it ("fix this bug").
+        const activePaths = resolveActivePaths(
+          this.workspacePath,
+          this.toolActivityAccumulator.getExploredFiles()
+        )
         const memoryContext = await memoryRetrievalService.getContextForTurn(
           this.workspaceId,
           enrichedMessage,
           contextTier ?? 'medium',
-          this.injectedFactIds
+          this.injectedFactIds,
+          activePaths
         )
         if (memoryContext) {
           enrichedMessage = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${enrichedMessage}`

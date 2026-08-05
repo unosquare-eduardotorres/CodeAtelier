@@ -95,29 +95,41 @@ class MemoryEngineService {
   }> = []
   private classifyProcessing = false
   private draining = false
+  /** Tail of the serialised writeFact chain — see writeFact(). */
+  private writeChain: Promise<void> = Promise.resolve()
 
   private captureCounts: CaptureCounts = {
     session: new Map(),
     commit: new Map()
   }
 
-  /** True while a bootstrap / Deep Scan job is running. */
-  private bootstrapActive = false
+  /**
+   * Number of bootstrap / Deep Scan jobs currently in flight.
+   *
+   * A refcount rather than a boolean because runs are per-workspace and several
+   * can overlap. With a flag, the first workspace to finish would switch the
+   * relaxed threshold off underneath everyone still extracting, silently
+   * discarding facts they had every right to write.
+   */
+  private bootstrapDepth = 0
 
   /**
    * Toggled by MemoryBootstrapService around a bootstrap job. While active,
    * agent-recorded ('tool') facts get the same relaxed dedup threshold as
    * 'bootstrap' facts — a large legacy corpus produces many genuinely distinct
    * facts that still sit above 0.90 cosine.
+   *
+   * Must be called exactly once with `true` on entry and once with `false` on
+   * exit (a `finally` block) per job.
    */
   setBootstrapActive(active: boolean): void {
-    this.bootstrapActive = active
+    this.bootstrapDepth = active ? this.bootstrapDepth + 1 : Math.max(0, this.bootstrapDepth - 1)
   }
 
   /** Dedup threshold for a source type, relaxed during bootstrap jobs. */
   private resolveDupThreshold(sourceType: MemorySourceType): number {
     if (sourceType === 'bootstrap') return BOOTSTRAP_DUPLICATE_THRESHOLD
-    if (sourceType === 'tool' && this.bootstrapActive) return BOOTSTRAP_DUPLICATE_THRESHOLD
+    if (sourceType === 'tool' && this.bootstrapDepth > 0) return BOOTSTRAP_DUPLICATE_THRESHOLD
     return DUPLICATE_THRESHOLD
   }
 
@@ -126,8 +138,26 @@ class MemoryEngineService {
   /**
    * Main entry point: write a fact through the dedup/contradiction pipeline.
    * Returns the created or confirmed fact, or null if capped/deduped as NOOP.
+   *
+   * Serialised. The pipeline reads existing facts, decides duplicate vs. new,
+   * then writes — a read-modify-write that is only correct with one writer.
+   * Bootstrap now extracts several documents in parallel, so without this lock
+   * two near-identical facts could both pass the cosine check and land twice.
    */
   async writeFact(params: WriteFactParams): Promise<MemoryFact | null> {
+    const run = this.writeChain.then(
+      () => this.writeFactExclusive(params),
+      () => this.writeFactExclusive(params)
+    )
+    // Keep the chain alive regardless of this call's outcome.
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  private async writeFactExclusive(params: WriteFactParams): Promise<MemoryFact | null> {
     const { workspaceId } = params
     const factText = `${params.title}\n${params.content}`
 

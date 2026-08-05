@@ -10,6 +10,7 @@ import type {
 import type { ContextWindowTier } from './context-management'
 import { promptBuilderLogger } from '../logger'
 import { coreAgentPromptRepository } from '../db/repositories/core-agent-prompt.repository'
+import { workspaceRepository } from '../db/repositories/workspace.repository'
 import {
   DEFAULT_PROMPTS,
   TONE_STYLE_DIRECTIVES,
@@ -20,6 +21,23 @@ import {
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { SkillPromptComposer } from './skill-prompt-composer'
 import { sanitizePromptInput } from './sanitize-prompt-input'
+import {
+  discoverInstructionSources,
+  formatInstructionSources,
+  listWorkspaceFiles,
+  readInstructionSource,
+  type InstructionSource
+} from './instruction-sources.service'
+import { matchesAny } from './scope-matcher'
+
+/** How long an assembled instruction layer stays usable before rediscovery. */
+const INSTRUCTION_CACHE_TTL_MS = 60_000
+
+/** Bound on the per-workspace instruction layer cache. */
+const MAX_INSTRUCTION_CACHE = 20
+
+/** Bound on rule files pulled in by user-configured globs. */
+const MAX_EXTRA_INSTRUCTION_FILES = 20
 
 // ── Prompt Builder Types ──
 
@@ -75,6 +93,16 @@ export class PromptBuilder {
    * Eliminates disk I/O on every turn — reads once and re-reads only when the file changes.
    */
   private claudeMdCache: Map<string, { content: string; mtimeMs: number }> = new Map()
+
+  /**
+   * Assembled non-CLAUDE.md instruction layer, per workspace.
+   *
+   * Unlike CLAUDE.md this cannot be mtime-keyed — there is no single file, and
+   * re-walking the tree for `.cursor/rules` and nested AGENTS.md on every turn
+   * would be far more expensive than the disk read it saves. A short TTL keeps
+   * edits visible within seconds without paying that cost per turn.
+   */
+  private instructionCache: Map<string, { layer: string; at: number }> = new Map()
 
   /** Delegated skill composition (extracted for testability + reduced complexity) */
   private skillComposer = new SkillPromptComposer()
@@ -167,12 +195,107 @@ export class PromptBuilder {
   buildClaudeMdLayer(
     workspacePath: string,
     mode: ConversationMode,
-    budgetTier: BudgetTier = 'standard'
+    budgetTier: BudgetTier = 'standard',
+    extraInstructionGlobs?: string[]
   ): string {
     if (!workspacePath) return ''
+
+    const blocks: string[] = []
+
     const projectContext = this.readProjectContext(workspacePath, mode, budgetTier)
-    if (!projectContext) return ''
-    return `## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`
+    if (projectContext) {
+      blocks.push(
+        `## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`
+      )
+    }
+
+    // Rule files this project already has for other agents — AGENTS.md,
+    // .cursor/rules, copilot-instructions and friends. A long-lived repository
+    // usually has several, and reading only CLAUDE.md threw all of them away.
+    const instructions = this.buildInstructionSourcesLayer(
+      workspacePath,
+      budgetTier,
+      extraInstructionGlobs
+    )
+    if (instructions) blocks.push(instructions)
+
+    return blocks.join('\n\n')
+  }
+
+  /**
+   * Concatenate every non-CLAUDE.md rule file, in precedence order.
+   *
+   * Root CLAUDE.md is skipped: `readProjectContext` already injects a
+   * heading-filtered slice of it, and repeating it whole would both duplicate
+   * content and undo that filtering.
+   */
+  private buildInstructionSourcesLayer(
+    workspacePath: string,
+    budgetTier: BudgetTier,
+    extraGlobs: string[] | undefined
+  ): string {
+    // The minimal tier already assumes prior context carries the conventions.
+    if (budgetTier === 'minimal') return ''
+
+    const cacheKey = `${workspacePath}::${extraGlobs?.join(',') ?? '*settings*'}`
+    const cached = this.instructionCache.get(cacheKey)
+    if (cached && Date.now() - cached.at < INSTRUCTION_CACHE_TTL_MS) return cached.layer
+
+    let layer = ''
+    try {
+      // Callers that do not pass globs get the workspace's configured ones.
+      // Resolving here rather than at each call site keeps the setting
+      // effective everywhere, and the TTL cache means one lookup per minute.
+      const globs = extraGlobs ?? this.readConfiguredInstructionGlobs(workspacePath)
+
+      const rootClaudeMd = join(workspacePath, 'CLAUDE.md')
+      const sources = discoverInstructionSources(workspacePath, { expand: true })
+        .filter((s) => s.path !== rootClaudeMd)
+        .concat(this.readExtraInstructionSources(workspacePath, globs))
+
+      layer = formatInstructionSources(sources, workspacePath)
+    } catch (err) {
+      log.debug('[prompt-builder] Instruction source discovery failed:', err)
+      layer = ''
+    }
+
+    if (this.instructionCache.size >= MAX_INSTRUCTION_CACHE) this.instructionCache.clear()
+    this.instructionCache.set(cacheKey, { layer, at: Date.now() })
+    return layer
+  }
+
+  /**
+   * Rule files matched by user-configured globs.
+   *
+   * Standard locations are found automatically; this covers layouts that put
+   * them somewhere else, e.g. `packages/*\/AGENTS.md`.
+   */
+  /** `instructionSources` from the workspace's memory capture settings. */
+  private readConfiguredInstructionGlobs(workspacePath: string): string[] {
+    try {
+      const workspace = workspaceRepository.findByPath(workspacePath)
+      const configured = (workspace?.settings as Record<string, unknown> | undefined)
+        ?.memoryInstructionSources
+      return Array.isArray(configured) ? configured.map(String) : []
+    } catch {
+      return []
+    }
+  }
+
+  private readExtraInstructionSources(
+    workspacePath: string,
+    globs: string[]
+  ): InstructionSource[] {
+    if (globs.length === 0) return []
+
+    const out: InstructionSource[] = []
+    for (const rel of listWorkspaceFiles(workspacePath)) {
+      if (out.length >= MAX_EXTRA_INSTRUCTION_FILES) break
+      if (!matchesAny(rel, globs)) continue
+      const source = readInstructionSource(join(workspacePath, rel), 'agents-md', 'nested')
+      if (source) out.push(source)
+    }
+    return out
   }
 
   /**
@@ -225,14 +348,8 @@ export class PromptBuilder {
   ): void {
     if (!options.workspacePath) return
 
-    const projectContext = this.readProjectContext(
-      options.workspacePath,
-      options.mode,
-      budgetTier
-    )
-    if (projectContext) {
-      layers.push(`## Workspace Project Context (from CLAUDE.md)\n\n${sanitizePromptInput(projectContext)}`)
-    }
+    const layer = this.buildClaudeMdLayer(options.workspacePath, options.mode, budgetTier)
+    if (layer) layers.push(layer)
   }
 
   // ── Private layer builders ──

@@ -14,6 +14,11 @@ export { AgentSessionRepository, agentSessionRepository } from './agent-session.
 export type { AgentSession, TokenSummary } from './agent-session.repository'
 export { IdeaRepository, ideaRepository } from './idea.repository'
 export { MemoryFactRepository, memoryFactRepository } from './memory-fact.repository'
+export {
+  MemoryBootstrapRepository,
+  memoryBootstrapRepository
+} from './memory-bootstrap.repository'
+export type { PlannedItem, CreateRunInput } from './memory-bootstrap.repository'
 export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
 export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'
 export {

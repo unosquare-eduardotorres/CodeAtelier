@@ -4,15 +4,23 @@
  *
  * Phase 2 of the Project Specialist refactor. The builder runs:
  *
- *   1. detectTechStack(workspacePath) to snapshot the tech stack + compute a
- *      SHA-256 fingerprint.
- *   2. Read CLAUDE.md + package.json (best effort) for the prompt digest slot.
+ *   0. HARD GATE — refuse to build unless the workspace's knowledge bootstrap
+ *      (Brain → Bootstrap Project Knowledge) has completed with facts. Without
+ *      ingested knowledge the tailoring step has nothing project-specific to
+ *      work from and silently degrades to the generic template.
+ *   1. detectTechStack(workspacePath, workspaceId) to snapshot the tech stack +
+ *      compute a SHA-256 fingerprint.
+ *   2. Read CLAUDE.md + bootstrap memory facts for the meta-prompt context.
  *   3. Render the template skeleton with the slot values.
- *   4. OPTIONAL — one-shot Claude CLI build call (`claude -p`) to tailor the
- *      prompt for this project. Falls back to the unhydrated skeleton on
- *      failure so the specialist is always usable.
+ *   4. Tailor via an AGENTIC Claude run (read-only, with code-graph + memory
+ *      MCP tools) so the persona is written from real code and real facts.
+ *      Degrades to a blind one-shot call, then to the skeleton.
  *   5. Persist the result to the specialists row (prompt, stack_fingerprint,
- *      detected_techs, last_built_at, build_status='ready').
+ *      detected_techs, last_built_at, build_status='ready', build_method,
+ *      ingestion_run_id).
+ *
+ * `build_method` records which of those three paths actually produced the
+ * prompt, so a silent fallback can never render as a healthy "Ready" again.
  *
  * MCP availability is decided at runtime by `buildWorkspaceMcpConfig` based
  * on workspace-level feature flags — not persisted per-specialist.
@@ -34,9 +42,52 @@ import { modelConfigService } from './model-config.service'
 import { resolvePromptVerbosity } from '../../shared/constants'
 import { skillEnrichmentService } from './skill-enrichment.service'
 import type { SkillEnrichment } from './skill-enrichment.service'
-import { skillRepository } from '../db/repositories'
+import {
+  skillRepository,
+  memoryBootstrapRepository,
+  memoryFactRepository
+} from '../db/repositories'
+import { runAgenticClaude } from './agentic-claude-runner'
+import { SpecialistIngestionRequiredError } from '../../shared/errors'
+import type { BootstrapRunSummary, MemoryFact } from '../../shared/types'
 
 const buildLog = log.scope('specialist-builder')
+
+/** Which path actually produced the persisted prompt. */
+export type SpecialistBuildMethod = 'agentic' | 'oneshot' | 'skeleton'
+
+/** Sentinels the agentic run wraps its final prompt in. */
+const PROMPT_BEGIN = '===SPECIALIST_PROMPT_BEGIN==='
+const PROMPT_END = '===SPECIALIST_PROMPT_END==='
+
+/** Character budget for bootstrap facts injected into the meta-prompt. */
+const FACTS_BUDGET_CHARS = 8_000
+
+/** Agentic tailoring gets a longer leash than the old blind one-shot. */
+const AGENTIC_TIMEOUT_MS = 5 * 60 * 1000
+
+/**
+ * Read-only tool whitelist for the agentic build. No Write/Edit/Bash — this run
+ * inspects the project to describe it, it never changes it.
+ */
+const AGENTIC_SPECIALIST_TOOLS = ['Read', 'Glob', 'Grep', 'mcp__code-graph__*', 'mcp__memory__*']
+
+/**
+ * Pull the final prompt out of an agentic run's stdout. Prefers the sentinel
+ * block; falls back to the whole stdout so a model that ignored the wrapper
+ * instruction still yields a usable prompt (the caller length-checks it).
+ *
+ * Exported for unit tests.
+ */
+export function extractPromptBlock(stdout: string): string | null {
+  const begin = stdout.indexOf(PROMPT_BEGIN)
+  const end = stdout.indexOf(PROMPT_END)
+  if (begin !== -1 && end > begin) {
+    return stdout.slice(begin + PROMPT_BEGIN.length, end).trim()
+  }
+  const trimmed = stdout.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
 
 export interface BuildResult {
   specialistId: string
@@ -44,12 +95,16 @@ export interface BuildResult {
   detectedTechs: string[]
   promptLength: number
   usedLLM: boolean
+  /** Which path produced the prompt — persisted to specialists.build_method. */
+  buildMethod: SpecialistBuildMethod
+  /** The bootstrap run that informed this build, when one did. */
+  ingestionRunId: string | null
 }
 
 export interface BuildOptions {
-  /** When false, skip the Claude CLI call and write only the skeleton. */
+  /** When false, skip the LLM entirely and write only the skeleton. */
   useLLM?: boolean
-  /** Override the CLI timeout (ms). Defaults to 60s. */
+  /** Override the CLI timeout (ms). Defaults to 5min agentic / 60s one-shot. */
   llmTimeoutMs?: number
 }
 
@@ -72,6 +127,60 @@ interface WorkspaceRow {
   id: string
   name: string
   repo_path: string
+}
+
+/** Sentinel returned by readClaudeMd when the repo has no CLAUDE.md. */
+const NO_CLAUDE_MD = '(no CLAUDE.md found in this repo)'
+
+// ── Ingestion gate ────────────────────────────────────────────────
+
+/**
+ * A bootstrap run only counts as "ingested" when it completed AND produced
+ * facts — a completed run with zero facts leaves the specialist just as blind
+ * as no run at all.
+ *
+ * Exported for unit tests.
+ */
+export function isIngestionSatisfied(run: BootstrapRunSummary | null | undefined): boolean {
+  return run?.status === 'completed' && run.factsCreated > 0
+}
+
+/**
+ * Resolve the bootstrap run that will inform this build, or throw.
+ * Exported for unit tests.
+ */
+export function requireIngestionRun(workspaceId: string): BootstrapRunSummary {
+  const latest = memoryBootstrapRepository.getLatestRun(workspaceId) ?? null
+  if (!isIngestionSatisfied(latest)) {
+    buildLog.warn(
+      `[gate] Specialist build blocked for workspace ${workspaceId} — latest bootstrap run: ${
+        latest ? `${latest.status} (${latest.factsCreated} facts)` : 'none'
+      }`
+    )
+    throw new SpecialistIngestionRequiredError(workspaceId)
+  }
+  return latest as BootstrapRunSummary
+}
+
+// ── Skeleton augmentation ──────────────────────────────────────────
+
+/**
+ * The skeleton defers all stack knowledge to CLAUDE.md. When the repo has no
+ * CLAUDE.md that deferral leaves the specialist with zero stack awareness
+ * anywhere, so name the detected stack inline instead.
+ *
+ * Exported for unit tests.
+ */
+export function augmentSkeleton(
+  skeleton: string,
+  techResult: TechStackResult,
+  hasClaudeMd: boolean
+): string {
+  if (hasClaudeMd || techResult.detectedTechs.length === 0) return skeleton
+  return skeleton.replace(
+    '## Decision heuristics',
+    `## Stack\nThis project uses: ${techResult.detectedTechs.join(', ')}. There is no CLAUDE.md — verify against the code before assuming conventions.\n\n## Decision heuristics`
+  )
 }
 
 export class SpecialistBuilderService {
@@ -162,49 +271,47 @@ export class SpecialistBuilderService {
     const db = getDatabase()
     const mode = options.mode ?? 'full'
 
+    // 0. HARD GATE — checked before build_status is touched, so a gated build
+    //    leaves the specialist in its existing state rather than 'failed'.
+    const ingestionRun = mode === 'skills-only' ? null : requireIngestionRun(workspace.id)
+
     // Flag building
     db.prepare(
       `UPDATE specialists SET build_status = 'building', updated_at = datetime('now') WHERE id = ?`
     ).run(specialist.id)
 
     try {
-      // 1. Detect tech stack
-      const techResult = detectTechStack(workspace.repo_path)
+      // 1. Detect tech stack — workspace id enables the code-graph evidence source.
+      const techResult = detectTechStack(workspace.repo_path, workspace.id)
       const fingerprint = this.fingerprintStack(techResult)
 
       // 2. Optionally rebuild prompt
       let newPrompt = specialist.prompt ?? ''
-      let usedLLM = false
+      let buildMethod: SpecialistBuildMethod = 'skeleton'
       if (mode !== 'skills-only') {
-        const slots = this.buildSlotValues(specialist, workspace, techResult)
-        const skeleton = renderTemplate(slots)
+        const claudeMd = this.readClaudeMd(workspace.repo_path, 5_000)
+        const hasClaudeMd = claudeMd !== NO_CLAUDE_MD
+        const slots = this.buildSlotValues(specialist, workspace)
+        const skeleton = augmentSkeleton(renderTemplate(slots), techResult, hasClaudeMd)
+        newPrompt = skeleton
+
         if (options.useLLM !== false) {
-          try {
-            const tailored = await this.invokeLLM(
-              skeleton,
-              workspace.repo_path,
-              workspace.name,
-              techResult.detectedTechs,
-              options.llmTimeoutMs ?? 60_000,
-              workspace.id
-            )
-            if (tailored && tailored.trim().length > skeleton.length * 0.5) {
-              newPrompt = tailored
-              usedLLM = true
-            } else {
-              // LLM produced something too short — fall back to skeleton.
-              newPrompt = skeleton
-            }
-          } catch (err) {
-            buildLog.warn('LLM prompt build failed — falling back to skeleton:', err)
-            newPrompt = skeleton
+          const tailored = await this.tailorPrompt({
+            skeleton,
+            claudeMd,
+            hasClaudeMd,
+            workspace,
+            techResult,
+            timeoutMs: options.llmTimeoutMs
+          })
+          if (tailored) {
+            newPrompt = tailored.prompt
+            buildMethod = tailored.method
           }
-        } else {
-          newPrompt = skeleton
         }
       }
 
-      // 3. Persist
+      // 3. Persist — including how the prompt was actually produced.
       db.prepare(
         `UPDATE specialists
             SET prompt = ?,
@@ -212,12 +319,21 @@ export class SpecialistBuilderService {
                 detected_techs = ?,
                 last_built_at = datetime('now'),
                 build_status = 'ready',
+                build_method = ?,
+                ingestion_run_id = ?,
                 updated_at = datetime('now')
           WHERE id = ?`
-      ).run(newPrompt, fingerprint, JSON.stringify(techResult.detectedTechs), specialist.id)
+      ).run(
+        newPrompt,
+        fingerprint,
+        JSON.stringify(techResult.detectedTechs),
+        mode === 'skills-only' ? null : buildMethod,
+        ingestionRun?.id ?? null,
+        specialist.id
+      )
 
       buildLog.info(
-        `✓ Built Project Specialist ${specialist.id} (workspace=${workspace.name}, techs=${techResult.detectedTechs.length}, usedLLM=${usedLLM})`
+        `✓ Built Project Specialist ${specialist.id} (workspace=${workspace.name}, techs=${techResult.detectedTechs.length}, method=${buildMethod}, ingestionRun=${ingestionRun?.id ?? 'n/a'})`
       )
 
       // 4. Refresh skill recommendations if stale (non-blocking)
@@ -232,7 +348,9 @@ export class SpecialistBuilderService {
         stackFingerprint: fingerprint,
         detectedTechs: techResult.detectedTechs,
         promptLength: newPrompt.length,
-        usedLLM
+        usedLLM: buildMethod !== 'skeleton',
+        buildMethod,
+        ingestionRunId: ingestionRun?.id ?? null
       }
     } catch (err) {
       db.prepare(
@@ -340,8 +458,7 @@ export class SpecialistBuilderService {
 
   private buildSlotValues(
     specialist: SpecialistRow,
-    workspace: WorkspaceRow,
-    _techResult: TechStackResult
+    workspace: WorkspaceRow
   ): Partial<PromptSlotValues> {
     const enabledSkills = this.readEnabledSkills(specialist.id)
     return {
@@ -421,33 +538,84 @@ export class SpecialistBuilderService {
     return createHash('sha256').update(sorted.join('|')).digest('hex').slice(0, 16)
   }
 
-  /** Build the meta-prompt sent to `claude -p` for persona tailoring. Exposed for tests. */
+  /** Build the meta-prompt sent to Claude for persona tailoring. Exposed for tests. */
   buildMetaPrompt(params: {
     workspaceName: string
     detectedTechs: string[]
     claudeMdReference: string
+    /**
+     * When false, the "CLAUDE.md covers that" deferrals are unsafe and are
+     * dropped. Defaults to true — the historical assumption.
+     */
+    hasClaudeMd?: boolean
     skeleton: string
     /** When 'lean', instructs the builder to produce a shorter identity (~250 words) */
     verbosity?: 'full' | 'lean'
+    /** Ingested bootstrap knowledge — present on the agentic path. */
+    ingestedFacts?: string
+    /** When true, prepend tool-driven investigation steps and require sentinels. */
+    agentic?: boolean
   }): string {
     const techList =
       params.detectedTechs.length > 0 ? params.detectedTechs.join(', ') : '(none detected)'
+    const hasClaudeMd = params.hasClaudeMd !== false
+
+    // Deferring stack/structure/conventions to CLAUDE.md is only sound when
+    // CLAUDE.md actually exists. Without it the same rules would strip the
+    // specialist of every concrete fact about the project.
+    const layeringContext = hasClaudeMd
+      ? [
+          `CRITICAL LAYERING CONTEXT:`,
+          `At runtime, your output is sandwiched between two other prompt layers the model already sees:`,
+          `- BEFORE yours: a Mode Section with operational rules (tool budgets, plan/build constraints).`,
+          `- AFTER yours: the project's full CLAUDE.md — conventions, project structure, tech stack,`,
+          `  anti-patterns, key commands, and error handling patterns.`,
+          ``,
+          `Your prompt MUST NOT repeat ANY fact from CLAUDE.md. No tech stack lists, no directory trees,`,
+          `no convention rules, no command references. Those are already in context. Repeating them wastes`,
+          `tokens and dilutes your signal.`
+        ]
+      : [
+          `CRITICAL LAYERING CONTEXT:`,
+          `At runtime, your output is preceded by a Mode Section with operational rules.`,
+          `This project has NO CLAUDE.md — nothing downstream will supply the stack, structure or`,
+          `conventions. You are the ONLY layer carrying project facts, so state the stack and the`,
+          `key architectural boundaries explicitly and concisely.`
+        ]
+
+    const factsSection =
+      params.ingestedFacts && params.ingestedFacts.length > 0
+        ? [
+            '',
+            `INGESTED PROJECT KNOWLEDGE (from this workspace's knowledge bootstrap — these are`,
+            `verified facts about THIS repo; ground your heuristics in them):`,
+            `---`,
+            params.ingestedFacts,
+            `---`
+          ]
+        : []
+
+    const investigation = params.agentic
+      ? [
+          '',
+          `BEFORE WRITING, INVESTIGATE. You have read-only tools — use them:`,
+          `- mcp__code-graph__* to map the real module layout, entry points and hot spots.`,
+          `- mcp__memory__* to read the ingested facts above in full where a summary is not enough.`,
+          `- Read to confirm specific patterns you intend to encode as heuristics.`,
+          `Spend your turns on evidence, then write. A heuristic you cannot point at real code for`,
+          `does not belong in the output.`
+        ]
+      : []
 
     return [
       `You are writing the system prompt for a "Project Specialist" — an opinionated senior engineer`,
       `persona who will work on "${params.workspaceName}".`,
       '',
       `DETECTED STACK: ${techList}`,
+      ...factsSection,
+      ...investigation,
       '',
-      `CRITICAL LAYERING CONTEXT:`,
-      `At runtime, your output is sandwiched between two other prompt layers the model already sees:`,
-      `- BEFORE yours: a Mode Section with operational rules (tool budgets, plan/build constraints).`,
-      `- AFTER yours: the project's full CLAUDE.md — conventions, project structure, tech stack,`,
-      `  anti-patterns, key commands, and error handling patterns.`,
-      ``,
-      `Your prompt MUST NOT repeat ANY fact from CLAUDE.md. No tech stack lists, no directory trees,`,
-      `no convention rules, no command references. Those are already in context. Repeating them wastes`,
-      `tokens and dilutes your signal.`,
+      ...layeringContext,
       ``,
       `YOUR JOB: Write the JUDGMENT layer — how this engineer THINKS about this codebase.`,
       `Encode decision-making instincts, priority ordering, trade-off preferences, and architectural`,
@@ -496,14 +664,26 @@ export class SpecialistBuilderService {
       `- For questions (why/what/how), answer directly in text.`,
       '',
       `HARD RULES:`,
-      `- DO NOT list technologies, frameworks, or versions — CLAUDE.md covers that.`,
-      `- DO NOT describe project structure or directory layout — CLAUDE.md covers that.`,
-      `- DO NOT state conventions or anti-patterns as bullet lists — CLAUDE.md covers that.`,
+      ...(hasClaudeMd
+        ? [
+            `- DO NOT list technologies, frameworks, or versions — CLAUDE.md covers that.`,
+            `- DO NOT describe project structure or directory layout — CLAUDE.md covers that.`,
+            `- DO NOT state conventions or anti-patterns as bullet lists — CLAUDE.md covers that.`
+          ]
+        : [
+            `- DO name the stack and the main architectural boundaries — no CLAUDE.md will supply them.`,
+            `- Keep it to what a new engineer needs to make good calls; still no directory trees.`
+          ]),
       `- No directory trees, no command transcripts, no bulleted lists of agents or skills.`,
       `- Under ${params.verbosity === 'lean' ? '250' : '400'} words total.`,
       `- FIRST PERSON throughout ("I", "my", "I prefer", "I check").`,
       `- Every heuristic bullet must be SPECIFIC to this project — delete any that could apply to any codebase.`,
       `- Return the FINAL prompt only — no preamble, no fences, no trailing commentary.`,
+      ...(params.agentic
+        ? [
+            `- Wrap the final prompt — and nothing else — between ${PROMPT_BEGIN} and ${PROMPT_END}.`
+          ]
+        : []),
       '',
       `SKELETON (fallback only, if you truly cannot produce a better version):`,
       `---`,
@@ -514,11 +694,124 @@ export class SpecialistBuilderService {
     ].join('\n')
   }
 
+  /**
+   * Read the highest-signal bootstrap facts for this workspace, budgeted.
+   * Facts arrive tier/confidence-ordered from the repository, so a simple
+   * prefix scan keeps the best ones.
+   *
+   * Exposed for tests.
+   */
+  readBootstrapFacts(workspaceId: string, budgetChars = FACTS_BUDGET_CHARS): string {
+    let facts: MemoryFact[]
+    try {
+      facts = memoryFactRepository.findByWorkspace(workspaceId)
+    } catch (err) {
+      buildLog.warn('Could not read bootstrap facts:', err)
+      return '(no ingested project knowledge available)'
+    }
+
+    const bootstrapped = facts.filter(
+      (f) => f.sourceType === 'bootstrap' || f.tags.includes('bootstrap')
+    )
+    const pool = bootstrapped.length > 0 ? bootstrapped : facts
+    if (pool.length === 0) return '(no ingested project knowledge available)'
+
+    const lines: string[] = []
+    let total = 0
+    for (const fact of pool) {
+      const line = `- [${fact.category}] ${fact.title}: ${fact.content}`
+      if (total + line.length > budgetChars && lines.length > 0) break
+      lines.push(line)
+      total += line.length + 1
+    }
+    buildLog.info(
+      `[facts] ${lines.length}/${pool.length} bootstrap facts injected (${total} chars) for ${workspaceId}`
+    )
+    return lines.join('\n')
+  }
+
+  /**
+   * Tailor the skeleton into a project-specific persona.
+   *
+   * Preference order, each recorded distinctly so the UI can show what really
+   * happened: agentic (reads code + ingested facts) → blind one-shot → null
+   * (caller keeps the skeleton).
+   */
+  private async tailorPrompt(params: {
+    skeleton: string
+    claudeMd: string
+    hasClaudeMd: boolean
+    workspace: WorkspaceRow
+    techResult: TechStackResult
+    timeoutMs?: number
+  }): Promise<{ prompt: string; method: SpecialistBuildMethod } | null> {
+    const { skeleton, claudeMd, hasClaudeMd, workspace, techResult } = params
+    const resolvedModel = modelConfigService.getModel(workspace.repo_path, 'specialist:plan')
+    const verbosity = resolvePromptVerbosity(resolvedModel)
+    const acceptable = (text: string): boolean =>
+      text.trim().length > skeleton.length * 0.5 && text.trim() !== skeleton.trim()
+
+    // ── 1. Agentic — the specialist is written from real code and real facts.
+    try {
+      const metaPrompt = this.buildMetaPrompt({
+        workspaceName: workspace.name,
+        detectedTechs: techResult.detectedTechs,
+        claudeMdReference: claudeMd,
+        hasClaudeMd,
+        skeleton,
+        verbosity,
+        ingestedFacts: this.readBootstrapFacts(workspace.id),
+        agentic: true
+      })
+      const { stdout } = await runAgenticClaude({
+        workspaceId: workspace.id,
+        workspacePath: workspace.repo_path,
+        prompt: metaPrompt,
+        model: resolvedModel,
+        allowedTools: AGENTIC_SPECIALIST_TOOLS,
+        mcpServers: ['memory', 'code-graph'],
+        maxTurns: 20,
+        timeoutMs: params.timeoutMs ?? AGENTIC_TIMEOUT_MS
+      })
+      const extracted = extractPromptBlock(stdout)
+      if (extracted && acceptable(extracted)) {
+        return { prompt: extracted, method: 'agentic' }
+      }
+      buildLog.warn(
+        `[tailor] Agentic run produced an unusable prompt (${extracted?.length ?? 0} chars) — falling back to one-shot`
+      )
+    } catch (err) {
+      buildLog.warn('[tailor] Agentic prompt build failed — falling back to one-shot:', err)
+    }
+
+    // ── 2. Blind one-shot — no tools, but still better than the raw skeleton.
+    try {
+      const tailored = await this.invokeLLM(
+        skeleton,
+        workspace.repo_path,
+        workspace.name,
+        techResult.detectedTechs,
+        hasClaudeMd,
+        params.timeoutMs ?? 60_000,
+        workspace.id
+      )
+      if (acceptable(tailored)) {
+        return { prompt: tailored, method: 'oneshot' }
+      }
+      buildLog.warn('[tailor] One-shot output too short — keeping skeleton')
+    } catch (err) {
+      buildLog.warn('[tailor] One-shot prompt build failed — keeping skeleton:', err)
+    }
+
+    return null
+  }
+
   private async invokeLLM(
     skeleton: string,
     workspacePath: string,
     workspaceName: string,
     detectedTechs: string[],
+    hasClaudeMd: boolean,
     timeoutMs: number,
     workspaceId?: string
   ): Promise<string> {
@@ -529,6 +822,7 @@ export class SpecialistBuilderService {
       workspaceName,
       detectedTechs,
       claudeMdReference,
+      hasClaudeMd,
       skeleton,
       verbosity
     })

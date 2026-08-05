@@ -998,11 +998,16 @@ export class ChatStreamService {
             this.injectedFactIds.set(conversationId, existing)
           }
           const dedupeSet = this.injectedFactIds.get(conversationId)!
+          // Uncommitted files are what this turn is about, whether or not the
+          // message names them.
+          const { resolveActivePaths } = await import('./active-paths')
+          const activePaths = resolveActivePaths(ctx.workspacePath)
           const memoryContext = await memoryRetrievalService.getContextForTurn(
             workspace.id,
             fullContent,
             'medium',
-            dedupeSet
+            dedupeSet,
+            activePaths
           )
           if (memoryContext) {
             enrichedContent = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${fullContent}`

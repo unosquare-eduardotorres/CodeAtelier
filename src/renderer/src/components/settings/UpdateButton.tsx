@@ -2,12 +2,14 @@ import { RefreshCw, Download, CheckCircle2 } from 'lucide-react'
 import { useUpdateStore } from '@renderer/store'
 
 export default function UpdateButton(): React.JSX.Element {
-  const { status, availableVersion, checkForUpdates, installUpdate } = useUpdateStore()
+  const { status, availableVersion, checkForUpdates, openModal } = useUpdateStore()
 
   if (status === 'ready') {
     return (
       <button
-        onClick={installUpdate}
+        // Opens the modal rather than restarting outright — a stray click here
+        // must never quit the app mid-work.
+        onClick={openModal}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-success border border-success/30 hover:bg-success-muted transition-colors"
       >
         <CheckCircle2 size={12} />
@@ -19,7 +21,9 @@ export default function UpdateButton(): React.JSX.Element {
   if (status === 'available') {
     return (
       <button
-        onClick={() => useUpdateStore.getState().downloadUpdate()}
+        // Confirmation lives in the modal; starting a download straight from
+        // this button skipped it entirely once "Later" had been pressed.
+        onClick={openModal}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-primary-text border border-primary/30 hover:bg-primary-muted transition-colors"
       >
         <Download size={12} />

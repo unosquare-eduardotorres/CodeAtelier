@@ -535,7 +535,12 @@ export function useAppIpcListeners(): void {
       setDownloaded(info.version)
     )
     const unsubUpdateProgress = window.api.onUpdateProgress((progress) =>
-      setProgress(progress.percent)
+      setProgress(
+        progress.percent,
+        progress.bytesPerSecond,
+        progress.transferred,
+        progress.total
+      )
     )
     const unsubUpdateError = window.api.onUpdateError((message) => setError(message))
     const unsubMemoryFeed = window.api.onMemoryFeedProgress((progress) =>

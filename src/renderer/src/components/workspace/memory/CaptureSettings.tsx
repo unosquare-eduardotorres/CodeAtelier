@@ -144,6 +144,35 @@ export default function CaptureSettings({
           </div>
         </SettingsCard>
       )}
+
+      {captureSettings && (
+        <SettingsCard>
+          <h3 className="text-sm font-medium text-text-primary">Feed Brain Throughput</h3>
+          <p className="text-xs text-text-secondary mt-0.5">
+            How many documents Feed Brain extracts at once. Each one spawns a Claude CLI
+            process — raise this to finish sooner, lower it if you hit API rate limits.
+          </p>
+          <div className="flex items-center gap-3 mt-3">
+            <input
+              type="range"
+              min={1}
+              max={6}
+              step={1}
+              value={captureSettings.bootstrapConcurrency}
+              onChange={(e) =>
+                onUpdateSettings(workspaceId, { bootstrapConcurrency: Number(e.target.value) })
+              }
+              className="flex-1 accent-teal"
+            />
+            <span className="text-sm font-mono text-text-primary w-6 text-right tabular-nums">
+              {captureSettings.bootstrapConcurrency}
+            </span>
+          </div>
+          <p className="text-[10px] text-text-muted mt-1">
+            Takes effect on the next run. Default 3.
+          </p>
+        </SettingsCard>
+      )}
     </div>
   )
 }

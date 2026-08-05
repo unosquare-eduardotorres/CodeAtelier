@@ -24,7 +24,8 @@ const PAGE_NAV_MAP: Record<string, { sidebarView: 'chat' | 'settings'; settingsT
   audit: { sidebarView: 'settings', settingsTab: 'health' },
   mpa: { sidebarView: 'settings', settingsTab: 'goals' },
   council: { sidebarView: 'settings', settingsTab: 'council' },
-  blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' }
+  blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' },
+  memory: { sidebarView: 'settings', settingsTab: 'memory' }
 }
 
 export interface NotificationStackProps {

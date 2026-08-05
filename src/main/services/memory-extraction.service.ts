@@ -32,6 +32,22 @@ const log = dbLogger
 /** Minimum transcript length to bother extracting from. */
 const MIN_TRANSCRIPT_CHARS = 200
 
+/** Backoff schedule for transient upstream failures. 2s → 4s → 8s. */
+const EXTRACTION_MAX_RETRIES = 3
+const EXTRACTION_RETRY_BASE_MS = 2000
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Rate limits and upstream overloads are transient — the same prompt succeeds
+ * a few seconds later. Everything else (missing CLI, bad prompt, timeout) is
+ * not worth retrying.
+ */
+function isRetryableExtractionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /\b(429|503|529)\b|rate.?limit|overloaded|too many requests/i.test(msg)
+}
+
 /** Structured fact from Haiku extraction. */
 interface ExtractedFact {
   category: MemoryFactCategory
@@ -175,7 +191,16 @@ class MemoryExtractionService {
     sourceRef: string,
     content: string,
     onProgress?: ProgressCallback,
-    opts?: { sourceType?: import('../../shared/types').MemorySourceType; tags?: string[] }
+    opts?: {
+      sourceType?: import('../../shared/types').MemorySourceType
+      tags?: string[]
+      /**
+       * Scope paths applied to facts the model did not scope itself. Rule files
+       * declare the part of the tree they govern in their own frontmatter, so
+       * that is far better than guessing from the source ref.
+       */
+      scopePaths?: string[]
+    }
   ): Promise<number> {
     const sourceType = opts?.sourceType ?? 'document'
     const emit = (msg: string, status: MemoryFeedProgress['status'] = 'running'): void => {
@@ -195,11 +220,16 @@ class MemoryExtractionService {
       budget
     )
 
-    try {
-      const result = await this.spawnSummarizer(prompt, workspacePath, workspaceId)
-      const facts = parseExtractedFacts(result, budget)
+    let created = 0
+    let writeErrors = 0
+    let factCount = 0
+    let lastWriteError: unknown = null
 
-      let created = 0
+    try {
+      const result = await this.spawnSummarizerWithRetry(prompt, workspacePath, workspaceId, emit)
+      const facts = parseExtractedFacts(result, budget)
+      factCount = facts.length
+
       for (const fact of facts) {
         try {
           const written = await memoryEngineService.writeFact({
@@ -208,24 +238,51 @@ class MemoryExtractionService {
             title: fact.title,
             content: fact.content,
             tags: [...(fact.tags ?? []), ...(opts?.tags ?? [])],
-            scopePaths: fact.scopePaths ?? [sourceRef],
+            scopePaths: resolveScopePaths(fact.scopePaths, opts?.scopePaths, sourceRef),
             sourceType,
             sourceRef,
             workspacePath
           })
           if (written) created++
         } catch (err) {
+          writeErrors++
+          lastWriteError = err
           log.warn('[MemoryExtraction] Failed to write content fact:', err)
         }
       }
-
-      emit(`Created ${created} facts from ${sourceRef}`, 'done')
-      return created
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       emit(`Extraction failed: ${msg}`, 'error')
-      return 0
+      // The model never answered, so "0 facts" is not a result — it is an
+      // absence of one. Returning 0 is indistinguishable from a clean empty
+      // extraction and would let the bootstrap executor record a doc-state
+      // hash for a file it never actually read, gating it out of every future
+      // scan. Throw so callers can tell a refusal from an empty document.
+      throw err instanceof Error ? err : new Error(msg)
     }
+
+    // Every write threw — that is a systemic fault (schema CHECK violation,
+    // locked DB, embedding provider crash), not "the model found nothing".
+    // Returning 0 here would look identical to a clean empty result and would
+    // let MemoryBootstrapService record a doc-state hash for a file that in
+    // fact produced nothing, permanently gating it out of future scans.
+    // Throw so the caller can tell the two apart.
+    if (writeErrors > 0 && created === 0) {
+      const msg = lastWriteError instanceof Error ? lastWriteError.message : String(lastWriteError)
+      emit(`All ${writeErrors} fact writes failed: ${msg}`, 'error')
+      throw new Error(
+        `[MemoryExtraction] All ${writeErrors} fact write(s) failed for ${sourceRef}: ${msg}`
+      )
+    }
+
+    if (writeErrors > 0) {
+      log.warn(
+        `[MemoryExtraction] ${writeErrors}/${factCount} fact write(s) failed for ${sourceRef} — ${created} succeeded`
+      )
+    }
+
+    emit(`Created ${created} facts from ${sourceRef}`, 'done')
+    return created
   }
 
   /**
@@ -751,6 +808,40 @@ class MemoryExtractionService {
 
   // ── Internals ───────────────────────────────────────────────────────────
 
+  /**
+   * Feed Brain runs several summarizers concurrently, so a 429 is an expected
+   * event rather than an exception. Backing off absorbs the burst; without it
+   * the file fails, its doc-state hash is not written, and the next run redoes
+   * the whole thing at the same concurrency — amplifying the storm instead of
+   * damping it.
+   */
+  private async spawnSummarizerWithRetry(
+    prompt: string,
+    workspacePath: string | undefined,
+    workspaceId: string | undefined,
+    emit: (msg: string, status?: MemoryFeedProgress['status']) => void
+  ): Promise<string> {
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= EXTRACTION_MAX_RETRIES; attempt++) {
+      try {
+        return await this.spawnSummarizer(prompt, workspacePath, workspaceId)
+      } catch (err) {
+        lastErr = err
+        if (!isRetryableExtractionError(err) || attempt === EXTRACTION_MAX_RETRIES) break
+        const delayMs = EXTRACTION_RETRY_BASE_MS * 2 ** attempt
+        log.warn(
+          `[MemoryExtraction] Transient extraction failure (attempt ${attempt + 1}/${
+            EXTRACTION_MAX_RETRIES + 1
+          }), retrying in ${delayMs}ms:`,
+          err
+        )
+        emit(`Rate limited — retrying in ${Math.round(delayMs / 1000)}s…`)
+        await sleep(delayMs)
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  }
+
   private async spawnSummarizer(prompt: string, workspacePath?: string, workspaceId?: string): Promise<string> {
     // G5: Gate memoryFeed through resolveAssignment — route to local LLM when assigned
     // A2: Guard workspacePath — null paths fall through to the Claude CLI path below
@@ -879,6 +970,27 @@ class MemoryExtractionService {
     }
     this.isBusy = false
   }
+}
+
+// ── Scope resolution ──────────────────────────────────────────────────────────
+
+/**
+ * Pick the scope paths for an extracted fact.
+ *
+ * `parseExtractedFacts` always returns an array, empty when the model omitted
+ * the field — so a plain `??` fallback never fired and unscoped facts were
+ * being written with no scope at all. Path-based activation depends on this
+ * column being populated, so an empty array now falls through to the caller's
+ * declared scope and finally to the source reference.
+ */
+function resolveScopePaths(
+  factScopePaths: string[] | undefined,
+  declared: string[] | undefined,
+  sourceRef: string
+): string[] {
+  if (factScopePaths && factScopePaths.length > 0) return factScopePaths
+  if (declared && declared.length > 0) return declared.slice(0, 10)
+  return [sourceRef]
 }
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────

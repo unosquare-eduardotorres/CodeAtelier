@@ -28,6 +28,8 @@ import { buildMemoryGraph } from '../services/memory-graph'
 import { memoryIngestionService } from '../services/memory-ingestion.service'
 import { memoryBootstrapService } from '../services/memory-bootstrap.service'
 import { memoryConsolidationService } from '../services/memory-consolidation.service'
+import { memoryProjectionService } from '../services/memory-projection.service'
+import { notificationService } from '../services/notification.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 
@@ -74,6 +76,18 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     (event, args: { id: string }) => {
       validateSender(event)
       return memoryFactRepository.findById(args.id)
+    }
+  )
+
+  // Export the fact database to reviewable markdown under .agentstudio/memory/.
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_PROJECT_EXPORT,
+    (event, args: { workspaceId: string; workspacePath: string }) => {
+      validateSender(event)
+      if (!args.workspaceId || !args.workspacePath) {
+        throw new Error('workspaceId and workspacePath are required')
+      }
+      return memoryProjectionService.project(args.workspaceId, args.workspacePath)
     }
   )
 
@@ -235,7 +249,9 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         captureDocumentsOnAttach: (settings as any).memoryCaptureDocumentsOnAttach !== false,
         // Opt-in, so this one defaults to false rather than true
         captureRationales: (settings as any).memoryCaptureRationales === true,
-        watcherGlobs: (settings as any).memoryWatcherGlobs ?? ['docs/**/*.md', 'README.md', 'CLAUDE.md']
+        watcherGlobs: (settings as any).memoryWatcherGlobs ?? ['docs/**/*.md', 'README.md', 'CLAUDE.md'],
+        instructionSources: (settings as any).memoryInstructionSources ?? [],
+        bootstrapConcurrency: Number((settings as any).memoryBootstrapConcurrency) || 3
       }
       return memSettings
     }
@@ -256,7 +272,13 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ...(args.settings.captureGrill !== undefined && { memoryCaptureGrill: args.settings.captureGrill }),
         ...(args.settings.captureDocumentsOnAttach !== undefined && { memoryCaptureDocumentsOnAttach: args.settings.captureDocumentsOnAttach }),
         ...(args.settings.captureRationales !== undefined && { memoryCaptureRationales: args.settings.captureRationales }),
-        ...(args.settings.watcherGlobs !== undefined && { memoryWatcherGlobs: args.settings.watcherGlobs })
+        ...(args.settings.watcherGlobs !== undefined && { memoryWatcherGlobs: args.settings.watcherGlobs }),
+        ...(args.settings.instructionSources !== undefined && {
+          memoryInstructionSources: args.settings.instructionSources
+        }),
+        ...(args.settings.bootstrapConcurrency !== undefined && {
+          memoryBootstrapConcurrency: Math.min(6, Math.max(1, Math.floor(args.settings.bootstrapConcurrency)))
+        })
       }
       workspaceRepository.updateSettings(args.workspaceId, updated)
 
@@ -512,6 +534,31 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
 
   // ── Bootstrap Service ──
 
+  const forwardBootstrapProgress = (
+    progress: import('../../shared/types').BootstrapProgress
+  ): void => {
+    safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, progress)
+
+    // Ingestion runs for many minutes in the background; tell the user when it
+    // lands. notificationService already suppresses this when focused.
+    if (progress.jobStatus === 'done' || progress.jobStatus === 'error') {
+      try {
+        notificationService.dispatch({
+          workspaceId: progress.workspaceId,
+          workspaceName:
+            workspaceRepository.findById(progress.workspaceId)?.name ?? 'Workspace',
+          service: 'memory',
+          status: progress.jobStatus === 'done' ? 'completed' : 'failed',
+          summary:
+            progress.jobStatus === 'done'
+              ? `Feed Brain complete — ${progress.factsCreated} memories from ${progress.itemsDone} items`
+              : `Feed Brain failed — ${progress.message}`,
+          targetPage: 'memory'
+        })
+      } catch { /* non-fatal */ }
+    }
+  }
+
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_BOOTSTRAP_START,
     async (
@@ -521,6 +568,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         workspacePath: string
         mode?: import('../../shared/types').BootstrapMode
         force?: boolean
+        scope?: import('../../shared/types').BootstrapScope
       }
     ) => {
       validateSender(event)
@@ -528,8 +576,9 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         args.workspaceId,
         args.workspacePath,
         args.mode ?? 'full',
-        (progress) => safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, progress),
-        args.force === true
+        forwardBootstrapProgress,
+        args.force === true,
+        args.scope
       )
     }
   )
@@ -539,6 +588,64 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     (event, args: { jobId: string }) => {
       validateSender(event)
       return memoryBootstrapService.cancel(args.jobId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_PAUSE,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return memoryBootstrapService.pause(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_RESUME,
+    async (event, args: { runId: string; workspacePath: string }) => {
+      validateSender(event)
+      return memoryBootstrapService.resumeRun(
+        args.runId,
+        args.workspacePath,
+        forwardBootstrapProgress
+      )
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_SNAPSHOT,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      return memoryBootstrapService.getSnapshot(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_LIST_RUNS,
+    (event, args: { workspaceId: string; limit?: number }) => {
+      validateSender(event)
+      return memoryBootstrapService.listRuns(args.workspaceId, args.limit)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_BOOTSTRAP_LIST_ITEMS,
+    (
+      event,
+      args: {
+        runId: string
+        status?: import('../../shared/types').BootstrapItemStatus
+        phase?: import('../../shared/types').BootstrapPhaseLabel
+        limit?: number
+        offset?: number
+      }
+    ) => {
+      validateSender(event)
+      return memoryBootstrapService.listItems(args.runId, {
+        status: args.status,
+        phase: args.phase,
+        limit: args.limit,
+        offset: args.offset
+      })
     }
   )
 }

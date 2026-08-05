@@ -294,6 +294,10 @@ export default function SpecialistPage(): React.JSX.Element {
 
   const mannequinKey = getWorkspaceMannequin(activeWorkspace?.id ?? '', workspaces)
 
+  const handleGoToIngestion = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('navigate-to-memory'))
+  }, [])
+
   // ── No specialist state ──────────────────────────────────────────────────
 
   if (!specialist) {
@@ -319,6 +323,8 @@ export default function SpecialistPage(): React.JSX.Element {
         displayName={specialist.displayName}
         buildStatus={specialist.buildStatus}
         lastBuiltAt={specialist.lastBuiltAt}
+        buildMethod={specialist.buildMethod}
+        ingestion={specialist.ingestion}
         color={specialist.color}
         mannequinKey={mannequinKey}
         rebuildState={rebuildState}
@@ -327,21 +333,28 @@ export default function SpecialistPage(): React.JSX.Element {
         storeError={storeError}
         onRebuild={handleRebuild}
         onClearError={clearError}
+        onGoToIngestion={handleGoToIngestion}
       />
 
       {/* ── Detected Stack ──────────────────────────────────────────── */}
-      {specialist.detectedTechs.length > 0 && (
-        <section>
-          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Detected Stack
-          </h4>
+      {/* Rendered unconditionally: silently hiding the section made "detected
+          nothing" indistinguishable from "this section doesn't exist". */}
+      <section data-testid="specialist-detected-stack">
+        <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
+          Detected Stack
+        </h4>
+        {specialist.detectedTechs.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {specialist.detectedTechs.map((tech) => (
               <TechBadge key={tech} tech={tech} />
             ))}
           </div>
-        </section>
-      )}
+        ) : (
+          <p className="text-xs text-text-secondary">
+            No stack detected — run Deep Ingestion, then rebuild.
+          </p>
+        )}
+      </section>
 
       <SkillMarketSection
         recommendedSkills={recommendedSkills}

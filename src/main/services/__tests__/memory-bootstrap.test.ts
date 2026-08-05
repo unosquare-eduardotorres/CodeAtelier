@@ -11,8 +11,20 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execSync } from 'node:child_process'
 import { test, describe, beforeEach, afterEach, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 import type { BootstrapProgress, BootstrapPhaseLabel } from '../../../shared/types'
 import { MCP_TOOLS } from '../../../shared/constants'
+
+// Idempotent — the shared runner installs this too. Present so the file can
+// also be run on its own (`npx tsx …/memory-bootstrap.test.ts`), which the
+// service-loading tests below need.
+setupElectronStub()
+
+// db/index must be loaded before any repository: base-repository imports it,
+// so requiring a repository cold trips a TDZ cycle
+// (`Cannot access 'BaseRepository' before initialization`).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+require('../../db/index')
 
 // ── BootstrapProgress type shape ────────────────────────────────────────────
 
@@ -20,13 +32,23 @@ describe('BootstrapProgress type', () => {
   test('progress events have required fields', () => {
     const progress: BootstrapProgress = {
       jobId: 'bootstrap-1-123456',
+      runId: 'run-1',
+      workspaceId: 'ws-1',
       phaseIndex: 2,
       phaseCount: 7,
       phaseLabel: 'stack',
       factsCreated: 5,
       message: 'Extracting tech stack facts…',
       jobStatus: 'running',
-      mode: 'full'
+      mode: 'full',
+      itemsTotal: 40,
+      itemsDone: 12,
+      itemsSkipped: 3,
+      itemsFailed: 0,
+      currentItem: null,
+      perPhase: {},
+      etaSeconds: null,
+      itemsPerMinute: null
     }
 
     assert.equal(progress.jobId, 'bootstrap-1-123456')
@@ -38,8 +60,10 @@ describe('BootstrapProgress type', () => {
   })
 
   test('jobStatus covers all states', () => {
-    const states: BootstrapProgress['jobStatus'][] = ['running', 'done', 'cancelled', 'error']
-    assert.equal(states.length, 4, 'Should have 4 job status states')
+    const states: BootstrapProgress['jobStatus'][] = [
+      'planning', 'running', 'paused', 'done', 'cancelled', 'error'
+    ]
+    assert.equal(states.length, 6, 'Should have 6 job status states')
   })
 
   test('phase labels cover full mode', () => {
@@ -131,16 +155,13 @@ describe('doc discovery', () => {
   })
 
   test('discovers README and doc files', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { discoverDocs } = await import('../memory-bootstrap/discovery')
 
     writeFileSync(join(testDir, 'README.md'), '# Test Project\nThis is a test')
     writeFileSync(join(testDir, 'CLAUDE.md'), '# Claude config')
     mkdirSync(join(testDir, 'docs'), { recursive: true })
     writeFileSync(join(testDir, 'docs', 'guide.md'), '# Guide\nSome content')
 
-    // Access the private method via the class prototype for testing
-    // We test through the public API by checking that docs are found
-    const discoverDocs = (memoryBootstrapService as any).discoverDocs.bind(memoryBootstrapService)
     const docs = discoverDocs(testDir)
 
     assert.ok(docs.length >= 3, `Should find at least 3 doc files (found ${docs.length})`)
@@ -159,13 +180,12 @@ describe('doc discovery', () => {
   })
 
   test('skips node_modules and .git', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { discoverDocs } = await import('../memory-bootstrap/discovery')
 
     mkdirSync(join(testDir, 'node_modules', 'pkg'), { recursive: true })
     writeFileSync(join(testDir, 'node_modules', 'pkg', 'README.md'), '# Package')
     writeFileSync(join(testDir, 'README.md'), '# Root readme')
 
-    const discoverDocs = (memoryBootstrapService as any).discoverDocs.bind(memoryBootstrapService)
     const docs = discoverDocs(testDir)
 
     const hasNodeModules = docs.some((f: string) => f.includes('node_modules'))
@@ -173,11 +193,10 @@ describe('doc discovery', () => {
   })
 
   test('deduplicates found files', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { discoverDocs } = await import('../memory-bootstrap/discovery')
 
     writeFileSync(join(testDir, 'README.md'), '# Readme')
 
-    const discoverDocs = (memoryBootstrapService as any).discoverDocs.bind(memoryBootstrapService)
     const docs = discoverDocs(testDir)
 
     const readmeCount = docs.filter((f: string) => f.endsWith('README.md')).length
@@ -204,7 +223,7 @@ describe('manifest collection', () => {
   })
 
   test('collects package.json and tsconfig', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { collectManifests } = await import('../memory-bootstrap/discovery')
 
     writeFileSync(
       join(testDir, 'package.json'),
@@ -220,9 +239,6 @@ describe('manifest collection', () => {
       })
     )
 
-    const collectManifests = (memoryBootstrapService as any).collectManifests.bind(
-      memoryBootstrapService
-    )
     const content = collectManifests(testDir)
 
     assert.ok(content.includes('package.json'), 'Should include package.json')
@@ -231,15 +247,12 @@ describe('manifest collection', () => {
   })
 
   test('collects migration directory listing', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { collectManifests } = await import('../memory-bootstrap/discovery')
 
     mkdirSync(join(testDir, 'migrations'), { recursive: true })
     writeFileSync(join(testDir, 'migrations', '001_init.sql'), 'CREATE TABLE')
     writeFileSync(join(testDir, 'migrations', '002_users.sql'), 'ALTER TABLE')
 
-    const collectManifests = (memoryBootstrapService as any).collectManifests.bind(
-      memoryBootstrapService
-    )
     const content = collectManifests(testDir)
 
     assert.ok(content.includes('migrations'), 'Should include migrations directory')
@@ -247,7 +260,7 @@ describe('manifest collection', () => {
   })
 
   test('returns empty string for empty project', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { collectManifests } = await import('../memory-bootstrap/discovery')
 
     // Use a dedicated empty dir to avoid race with concurrent tests
     const emptyDir = join(
@@ -256,9 +269,6 @@ describe('manifest collection', () => {
     )
     mkdirSync(emptyDir, { recursive: true })
     try {
-      const collectManifests = (memoryBootstrapService as any).collectManifests.bind(
-        memoryBootstrapService
-      )
       const content = collectManifests(emptyDir)
       assert.equal(content, '', 'Should return empty string')
     } finally {
@@ -299,12 +309,9 @@ describe('git changed files', () => {
   })
 
   test('returns empty set for non-git directory', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { getChangedFilesSinceCommit } = await import('../memory-bootstrap/discovery')
 
-    const getChangedFiles = (memoryBootstrapService as any).getChangedFilesSinceCommit.bind(
-      memoryBootstrapService
-    )
-    const changed = getChangedFiles(testDir, 'abc123')
+    const changed = getChangedFilesSinceCommit(testDir, 'abc123')
 
     assert.equal(changed.size, 0, 'Should return empty set for non-git dir')
   })
@@ -312,7 +319,7 @@ describe('git changed files', () => {
   test('returns changed files in a git repo', async () => {
     if (!isGitAvailable) return // skip without git
 
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { getChangedFilesSinceCommit } = await import('../memory-bootstrap/discovery')
 
     // Set up a git repo
     execSync('git init', { cwd: testDir })
@@ -326,10 +333,7 @@ describe('git changed files', () => {
     writeFileSync(join(testDir, 'file2.ts'), 'const b = 2')
     execSync('git add . && git commit -m "add file2"', { cwd: testDir })
 
-    const getChangedFiles = (memoryBootstrapService as any).getChangedFilesSinceCommit.bind(
-      memoryBootstrapService
-    )
-    const changed = getChangedFiles(testDir, initialSha)
+    const changed = getChangedFilesSinceCommit(testDir, initialSha)
 
     assert.ok(changed.has('file2.ts'), 'Should detect file2.ts as changed')
     assert.ok(!changed.has('file1.ts'), 'Should not include unchanged file1.ts')

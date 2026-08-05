@@ -11,6 +11,7 @@ import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { localEmbeddingProvider } from './local-embedding.provider'
 import { sanitizePromptInput } from './sanitize-prompt-input'
 import { cosineSimilarity } from './memory-engine.service'
+import { anyPathInScope, normalizePath } from './scope-matcher'
 import type {
   MemoryFact,
   MemoryFactCategory,
@@ -33,6 +34,13 @@ const WEIGHT_KEYWORD = 0.25
 const WEIGHT_TIER = 0.10
 const WEIGHT_RECENCY = 0.10
 const WEIGHT_SCOPE = 0.05
+
+/**
+ * Rank multiplier for a fact whose `scope_paths` cover a file the turn is
+ * touching. Scope was 5% of an additive score, which could never lift a
+ * genuinely relevant convention past the relevance floor on its own.
+ */
+const SCOPE_ACTIVATION_MULTIPLIER = 1.5
 
 /** Tier-aware character budgets for per-turn injection. */
 const TIER_BUDGETS = {
@@ -57,15 +65,19 @@ class MemoryRetrievalService {
    * @param promptText — the user's prompt to match against
    * @param contextTier — controls character budget
    * @param injectedIds — set of fact IDs already injected this session (mutated in place)
+   * @param activePaths — files the turn is actually working on. Retrieval used to
+   *   see only the prompt text, so opening `src/billing/Invoice.java` and saying
+   *   "fix this bug" surfaced nothing: no billing token appears in the message.
    */
   async getContextForTurn(
     workspaceId: string,
     promptText: string,
     contextTier: ContextTier = 'medium',
-    injectedIds?: Set<string>
+    injectedIds?: Set<string>,
+    activePaths: string[] = []
   ): Promise<string> {
     try {
-      const results = await this.retrieve(workspaceId, promptText, 10)
+      const results = await this.retrieve(workspaceId, promptText, 10, undefined, activePaths)
       if (results.length === 0) return ''
 
       // Filter out already-injected facts (session dedupe).
@@ -111,10 +123,14 @@ class MemoryRetrievalService {
     workspaceId: string,
     query: string,
     limit = 20,
-    category?: MemoryFactCategory
+    category?: MemoryFactCategory,
+    activePaths: string[] = []
   ): Promise<MemoryRetrievalResult[]> {
     const queryTokens = tokenize(query)
-    if (queryTokens.length === 0) return []
+    // Paths named in the message count as active even when the caller passed
+    // none — "why does src/db/index.ts do this?" is a scope signal.
+    const paths = mergePaths(activePaths, extractPathTokens(query))
+    if (queryTokens.length === 0 && paths.length === 0) return []
 
     const { candidateMap, queryVec } = await this.gatherCandidates(
       workspaceId,
@@ -128,7 +144,7 @@ class MemoryRetrievalService {
     const scored: MemoryRetrievalResult[] = []
 
     for (const { fact, embeddingVec } of candidateMap.values()) {
-      const result = scoreCandidate(fact, embeddingVec, queryVec, queryTokens, query, now)
+      const result = scoreCandidate(fact, embeddingVec, queryVec, queryTokens, query, now, paths)
       if (result) scored.push(result)
     }
 
@@ -247,7 +263,8 @@ function scoreCandidate(
   queryVec: Float32Array | null,
   queryTokens: string[],
   query: string,
-  now: number
+  now: number,
+  activePaths: string[] = []
 ): MemoryRetrievalResult | null {
   const cosineScore =
     queryVec && embeddingVec ? cosineSimilarity(queryVec, embeddingVec) : 0
@@ -255,22 +272,64 @@ function scoreCandidate(
   const keywordScore = computeKeywordOverlap(queryTokens, fact)
   const tierBonus = fact.tier / 3
   const recencyScore = computeRecency(fact, now)
-  const scopeBonus = computeScopeBoost(query, fact.scopePaths)
 
-  const finalScore =
+  // Hard activation: a fact whose declared scope covers a file this turn is
+  // touching is on-topic by construction, whatever the wording of the message.
+  // It bypasses the relevance floor and is ranked above merely-similar facts.
+  const activated = anyPathInScope(activePaths, fact.scopePaths)
+  const scopeBonus = activated ? 1 : computeScopeBoost(query, fact.scopePaths)
+
+  const baseScore =
     cosineContrib * WEIGHT_COSINE +
     keywordScore * WEIGHT_KEYWORD +
     tierBonus * WEIGHT_TIER +
     recencyScore * WEIGHT_RECENCY +
     scopeBonus * WEIGHT_SCOPE
 
-  // Inclusion gate: combined score, cosine alone, or keyword alone
-  if (finalScore < RELEVANCE_FLOOR && cosineScore < COSINE_FLOOR && keywordScore <= 0.5) {
+  const finalScore = activated ? baseScore * SCOPE_ACTIVATION_MULTIPLIER : baseScore
+
+  // Inclusion gate: scope activation, combined score, cosine alone, or keyword alone
+  if (
+    !activated &&
+    finalScore < RELEVANCE_FLOOR &&
+    cosineScore < COSINE_FLOOR &&
+    keywordScore <= 0.5
+  ) {
     return null
   }
 
   const matchType = resolveMatchType(cosineContrib, keywordScore)
   return { fact, score: finalScore, matchType }
+}
+
+/**
+ * Paths mentioned in free text.
+ *
+ * Two shapes count: anything with a separator (`src/db/index.ts`, `src/db/`)
+ * and a bare filename with a source-code extension (`Invoice.java`). Prose
+ * words and decimals must not qualify, or every fact would activate.
+ */
+export function extractPathTokens(text: string): string[] {
+  const out: string[] = []
+
+  const withSeparator = /[A-Za-z0-9_.\-@]+(?:\/[A-Za-z0-9_.\-]+)+/g
+  for (const m of text.matchAll(withSeparator)) out.push(m[0])
+
+  const bareFile =
+    /\b[A-Za-z0-9_.\-]+\.(?:tsx?|jsx?|mjs|cjs|java|py|go|rb|cs|php|rs|swift|kt|scala|c|cc|cpp|h|hpp|sql|md|mdx|ya?ml|json|toml|ini|sh|ps1|xml|gradle|proto)\b/g
+  for (const m of text.matchAll(bareFile)) out.push(m[0])
+
+  return [...new Set(out.map((p) => normalizePath(p.replace(/[.,;:)\]]+$/, ''))))].filter(Boolean)
+}
+
+/** Union two path lists, normalised and deduplicated. */
+function mergePaths(a: string[], b: string[]): string[] {
+  const out = new Set<string>()
+  for (const p of [...a, ...b]) {
+    const normalized = normalizePath(p)
+    if (normalized) out.add(normalized)
+  }
+  return [...out]
 }
 
 /** Determine how a candidate matched (cosine, keyword, or hybrid). */

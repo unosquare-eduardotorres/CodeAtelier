@@ -222,11 +222,13 @@ Respond with ONLY the commit message, no preamble or explanation.`
     const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
     const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
     const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    // Rename source — a path, not a ref, so repoService validates it with assertWithinRepo.
+    const oldPath = optionalString(args, 'oldPath', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
     validateRef(fromRef, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
     validateRef(toRef, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
 
     const { repoPath } = resolveRepoPath(conversationId)
-    return repoService.getRefFileDiff(repoPath, filePath, fromRef, toRef)
+    return repoService.getRefFileDiff(repoPath, filePath, fromRef, toRef, oldPath)
   })
 
   // Fetch latest refs from origin remote

@@ -204,6 +204,7 @@ export const IPC_CHANNELS = {
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
+  MEMORY_PROJECT_EXPORT: 'memory:project:export',
   MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
   MEMORY_SAVE_PLAN_EXECUTION: 'memory:savePlanExecution',
 
@@ -219,6 +220,11 @@ export const IPC_CHANNELS = {
   MEMORY_BOOTSTRAP_START: 'memory:bootstrap:start',
   MEMORY_BOOTSTRAP_CANCEL: 'memory:bootstrap:cancel',
   MEMORY_BOOTSTRAP_PROGRESS: 'memory:bootstrap:progress',
+  MEMORY_BOOTSTRAP_PAUSE: 'memory:bootstrap:pause',
+  MEMORY_BOOTSTRAP_RESUME: 'memory:bootstrap:resume',
+  MEMORY_BOOTSTRAP_SNAPSHOT: 'memory:bootstrap:snapshot',
+  MEMORY_BOOTSTRAP_LIST_RUNS: 'memory:bootstrap:listRuns',
+  MEMORY_BOOTSTRAP_LIST_ITEMS: 'memory:bootstrap:listItems',
 
   // Memory graph (knowledge graph visualization)
   MEMORY_GRAPH_GET: 'memory:graph:get',

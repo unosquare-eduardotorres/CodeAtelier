@@ -112,11 +112,11 @@ export default function CodeChangesPanel({
   let rightLabel: string
   switch (comparisonMode) {
     case 'branch-vs-target':
-      leftLabel = `origin/${targetBranch} (branch point)`
+      leftLabel = `${targetBranch} (branch point)`
       rightLabel = `HEAD (${displayBranch})`
       break
     case 'all-vs-target':
-      leftLabel = `origin/${targetBranch} (branch point)`
+      leftLabel = `${targetBranch} (branch point)`
       rightLabel = `Working Tree (${displayBranch})`
       break
     default:
@@ -164,14 +164,27 @@ export default function CodeChangesPanel({
               onChange={handleTargetChange}
               className="px-2 py-1 rounded border border-border-default bg-surface-base text-text-body text-xs outline-none focus:border-primary/50 cursor-pointer"
             >
-              {availableBranches.remote.length > 0 ? (
-                availableBranches.remote.map((b) => (
-                  <option key={b} value={b}>
-                    origin/{b}
-                  </option>
-                ))
-              ) : (
-                <option value={targetBranch}>origin/{targetBranch}</option>
+              {/* Values are fully-qualified refs so a local branch is a valid target. */}
+              {availableBranches.remote.length === 0 && availableBranches.local.length === 0 && (
+                <option value={targetBranch}>{targetBranch}</option>
+              )}
+              {availableBranches.remote.length > 0 && (
+                <optgroup label="Remote">
+                  {availableBranches.remote.map((b) => (
+                    <option key={`remote-${b}`} value={`origin/${b}`}>
+                      origin/{b}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {availableBranches.local.length > 0 && (
+                <optgroup label="Local">
+                  {availableBranches.local.map((b) => (
+                    <option key={`local-${b}`} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </optgroup>
               )}
             </select>
 

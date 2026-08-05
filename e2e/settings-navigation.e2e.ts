@@ -14,15 +14,20 @@ import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 
-/** All known settings tab IDs. */
+/**
+ * All settings tab IDs that are VISIBLE in the nav.
+ *
+ * `goals`, `plans`, `documents` and `events` are omitted: they are marked
+ * `hidden: true` in SETTINGS_MENU, so no button renders for them (their routes
+ * and pages still work).
+ */
 const ALL_TAB_IDS = [
   // Tools group
   'health',
-  'goals',
   'council',
   'ideas',
-  'plans',
   'blueprints',
+  'testing',
   // Configuration group
   'specialist',
   'team',
@@ -30,10 +35,8 @@ const ALL_TAB_IDS = [
   'code-intelligence',
   'integrations',
   'models',
-  'documents',
   'memory',
-  'tokens',
-  'events'
+  'tokens'
 ]
 
 test.describe('Settings Navigation', () => {
@@ -154,7 +157,8 @@ test.describe('Settings Navigation', () => {
       return
     }
 
-    const toolTabs = ['health', 'goals', 'council', 'ideas', 'plans', 'blueprints']
+    // 'goals' and 'plans' are hidden from the nav — see ALL_TAB_IDS.
+    const toolTabs = ['health', 'council', 'ideas', 'blueprints', 'testing']
     let visibleCount = 0
 
     for (const tabId of toolTabs) {
@@ -178,6 +182,7 @@ test.describe('Settings Navigation', () => {
       return
     }
 
+    // 'documents' and 'events' are hidden from the nav — see ALL_TAB_IDS.
     const configTabs = [
       'specialist',
       'team',
@@ -185,10 +190,8 @@ test.describe('Settings Navigation', () => {
       'code-intelligence',
       'integrations',
       'models',
-      'documents',
       'memory',
-      'tokens',
-      'events'
+      'tokens'
     ]
     let visibleCount = 0
 

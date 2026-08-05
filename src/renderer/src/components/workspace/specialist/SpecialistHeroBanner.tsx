@@ -2,8 +2,12 @@
  * SpecialistHeroBanner — Avatar, metadata, and rebuild button with gradient background.
  */
 
-import { Loader2, CheckCircle, Hammer, XCircle } from 'lucide-react'
+import { Loader2, CheckCircle, Hammer, XCircle, Brain, AlertTriangle } from 'lucide-react'
 import { Avatar } from '@renderer/components/common'
+import type {
+  SpecialistBuildMethod,
+  SpecialistIngestionState
+} from '@renderer/store/project-specialist.store'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -13,6 +17,8 @@ interface SpecialistHeroBannerProps {
   displayName: string
   buildStatus: 'pending' | 'building' | 'ready' | 'failed'
   lastBuiltAt?: string | null
+  buildMethod?: SpecialistBuildMethod | null
+  ingestion?: SpecialistIngestionState | null
   color?: string | null
   mannequinKey: string
   rebuildState: RebuildState
@@ -21,6 +27,8 @@ interface SpecialistHeroBannerProps {
   storeError: string | null
   onRebuild: () => void
   onClearError: () => void
+  /** Route the user to Brain → Bootstrap Project Knowledge. */
+  onGoToIngestion: () => void
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -29,6 +37,8 @@ export function SpecialistHeroBanner({
   displayName,
   buildStatus,
   lastBuiltAt,
+  buildMethod,
+  ingestion,
   color,
   mannequinKey,
   rebuildState,
@@ -36,8 +46,12 @@ export function SpecialistHeroBanner({
   progressMessage,
   storeError,
   onRebuild,
-  onClearError
+  onClearError,
+  onGoToIngestion
 }: SpecialistHeroBannerProps): React.JSX.Element {
+  // Absent ingestion state (read failure) must not lock the user out.
+  const ingestionBlocked = ingestion != null && !ingestion.satisfied
+
   return (
     <>
       {/* ── Hero Banner ──────────────────────────────────────────────── */}
@@ -69,13 +83,18 @@ export function SpecialistHeroBanner({
             <h2 className="text-lg font-semibold text-text-primary mb-1">{displayName}</h2>
             <div className="flex items-center gap-2 mb-3">
               <StatusBadge status={buildStatus} />
+              {buildStatus === 'ready' && <ProvenanceBadge method={buildMethod ?? null} />}
               {lastBuiltAt && (
                 <span className="text-[11px] text-text-muted">
                   Built {new Date(lastBuiltAt).toLocaleDateString()}
                 </span>
               )}
             </div>
-            <p className="text-xs text-text-secondary">Tailored specialist for this workspace</p>
+            <p className="text-xs text-text-secondary">
+              {ingestion?.satisfied && ingestion.finishedAt
+                ? `Last ingestion: ${new Date(ingestion.finishedAt).toLocaleDateString()} · ${ingestion.factsCreated} facts`
+                : 'Tailored specialist for this workspace'}
+            </p>
           </div>
 
           {/* Rebuild button — top right area */}
@@ -84,10 +103,34 @@ export function SpecialistHeroBanner({
               state={rebuildState}
               onClick={onRebuild}
               progressMessage={progressMessage}
+              disabled={ingestionBlocked}
             />
           </div>
         </div>
       </div>
+
+      {/* Ingestion gate — the build is refused in main, so say why here. */}
+      {ingestionBlocked && (
+        <div
+          data-testid="specialist-ingestion-gate"
+          className="flex items-start gap-2 p-3 rounded-lg bg-info-muted border border-info/20"
+        >
+          <Brain size={14} className="text-info flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-info font-medium">Deep Ingestion required</p>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              This specialist can only be tailored after the project knowledge bootstrap has run.
+              Until then it falls back to a generic persona.
+            </p>
+          </div>
+          <button
+            onClick={onGoToIngestion}
+            className="text-[11px] font-medium text-primary hover:text-primary-text px-2 py-1 rounded hover:bg-primary-muted transition-colors flex-shrink-0"
+          >
+            Bootstrap Knowledge
+          </button>
+        </div>
+      )}
 
       {/* Error banner */}
       {rebuildState === 'failed' && rebuildError && (
@@ -148,14 +191,54 @@ function StatusBadge({
   )
 }
 
+/**
+ * Makes a degraded build visible. A `skeleton` result previously rendered as a
+ * plain green "Ready", indistinguishable from a genuinely tailored specialist.
+ */
+function ProvenanceBadge({
+  method
+}: {
+  method: SpecialistBuildMethod | null
+}): React.JSX.Element | null {
+  if (method === null) return null
+
+  const config = {
+    agentic: {
+      label: 'Tailored (agentic)',
+      className: 'bg-success-muted text-success',
+      warn: false
+    },
+    oneshot: { label: 'Tailored (one-shot)', className: 'bg-info-muted text-info', warn: false },
+    skeleton: { label: 'Generic fallback', className: 'bg-danger-muted text-danger', warn: true }
+  } as const
+
+  const { label, className, warn } = config[method]
+  return (
+    <span
+      data-testid="specialist-provenance-badge"
+      title={
+        warn
+          ? 'Prompt tailoring failed — this specialist is the generic template, not project-specific.'
+          : undefined
+      }
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ${className}`}
+    >
+      {warn && <AlertTriangle size={10} className="mr-1" />}
+      {label}
+    </span>
+  )
+}
+
 function RebuildButton({
   state,
   onClick,
-  progressMessage
+  progressMessage,
+  disabled
 }: {
   state: RebuildState
   onClick: () => void
   progressMessage?: string | null
+  disabled?: boolean
 }): React.JSX.Element {
   if (state === 'building') {
     return (
@@ -182,7 +265,13 @@ function RebuildButton({
     <button
       data-testid="specialist-rebuild-btn"
       onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-white hover:bg-primary/90 transition-colors"
+      disabled={disabled}
+      title={disabled ? 'Run Brain → Bootstrap Project Knowledge first' : undefined}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+        disabled
+          ? 'bg-surface-overlay text-text-muted cursor-not-allowed'
+          : 'bg-primary text-white hover:bg-primary/90'
+      }`}
     >
       <Hammer size={14} />
       Rebuild

@@ -1,5 +1,6 @@
 import { Download, RefreshCw, X, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useUpdateStore } from '@renderer/store'
+import { isBannerMuted } from '@renderer/store/update-store-utils'
 
 export default function UpdateBanner(): React.JSX.Element | null {
   const {
@@ -7,12 +8,26 @@ export default function UpdateBanner(): React.JSX.Element | null {
     availableVersion,
     downloadProgress,
     errorMessage,
-    downloadUpdate,
-    installUpdate,
+    showModal,
+    snoozedVersion,
+    snoozeUntil,
+    openModal,
     dismiss
   } = useUpdateStore()
 
   if (status === 'idle' || status === 'checking') {
+    return null
+  }
+
+  // The modal already renders this state in full — showing both meant the same
+  // download had two progress indicators and two buttons.
+  if (showModal) {
+    return null
+  }
+
+  // ✕ means "not now" everywhere, not just in the modal — without this the next
+  // hourly check put the banner straight back.
+  if (isBannerMuted(status, availableVersion, snoozedVersion, snoozeUntil)) {
     return null
   }
 
@@ -40,7 +55,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
           Update <span className="font-semibold">v{availableVersion}</span> is available!
         </span>
         <button
-          onClick={downloadUpdate}
+          onClick={openModal}
           className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors"
         >
           <Download size={12} />
@@ -82,7 +97,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
           Update <span className="font-semibold">v{availableVersion}</span> is ready to install!
         </span>
         <button
-          onClick={installUpdate}
+          onClick={openModal}
           className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-success hover:bg-success text-white text-xs font-medium transition-colors"
         >
           <RefreshCw size={12} />

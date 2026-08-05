@@ -228,11 +228,11 @@ describe('code-changes.ipc — REPO_GET_REF_FILE_DIFF', () => {
       fromRef: 'origin/main',
       toRef: 'HEAD'
     })
-    if (r.ok) {
-      const diff = r.result as { warning?: string; baseSha?: string }
-      assert.equal(diff.warning, 'Could not determine branch point')
-      assert.equal(diff.baseSha, 'a1b2c3d')
-    }
+    // Assert the handler actually ran — otherwise the field checks pass vacuously.
+    assert.equal(r.ok, true, 'Handler should resolve')
+    const diff = r.result as { warning?: string; baseSha?: string }
+    assert.equal(diff.warning, 'Could not determine branch point')
+    assert.equal(diff.baseSha, 'a1b2c3d')
   })
 
   test('passes through isBinary untouched', async () => {
@@ -250,9 +250,8 @@ describe('code-changes.ipc — REPO_GET_REF_FILE_DIFF', () => {
       fromRef: 'origin/main',
       toRef: 'HEAD'
     })
-    if (r.ok) {
-      assert.equal((r.result as { isBinary?: boolean }).isBinary, true)
-    }
+    assert.equal(r.ok, true, 'Handler should resolve')
+    assert.equal((r.result as { isBinary?: boolean }).isBinary, true)
   })
 })
 

@@ -1,5 +1,5 @@
 import { autoUpdater } from 'electron-updater'
-import { app, type BrowserWindow } from 'electron'
+import { app, powerMonitor, type BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { existsSync } from 'node:fs'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -23,6 +23,15 @@ const DEFAULT_CONFIG: UpdateConfig = {
   githubRepo: ''
 }
 
+/** How often the background poll asks the feed whether a newer build exists. */
+const CHECK_INTERVAL_MS = 60 * 60 * 1000
+/**
+ * Floor between two checks whatever triggered them. A machine waking from sleep
+ * fires 'resume' right after an interval tick would have run — without this the
+ * feed gets hit twice within a second.
+ */
+const MIN_CHECK_GAP_MS = 15 * 60 * 1000
+
 class AutoUpdateService {
   private mainWindow: BrowserWindow | null = null
   private config: UpdateConfig = { ...DEFAULT_CONFIG }
@@ -44,6 +53,14 @@ class AutoUpdateService {
   private feedUnavailableReason: string | null = 'No update source configured'
   /** Where we are looking for updates — included in user-facing error messages. */
   private feedDescription = ''
+  /** Background poll handle. Non-null means polling is active. */
+  private checkTimer: ReturnType<typeof setInterval> | null = null
+  /** When the last check (of any origin) started, for the MIN_CHECK_GAP_MS floor. */
+  private lastCheckAt = 0
+  /** An artifact is on disk and not yet installed — further checks are pointless. */
+  private updateDownloaded = false
+  /** Kept so dispose() can detach it — powerMonitor outlives this service. */
+  private onResume: (() => void) | null = null
 
   init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
@@ -98,6 +115,7 @@ class AutoUpdateService {
 
     autoUpdater.on('update-downloaded', (info) => {
       this.downloadInFlight = false
+      this.updateDownloaded = true
       updateLogger.info('Update downloaded:', info.version)
       this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_DOWNLOADED, {
         version: info.version
@@ -246,6 +264,42 @@ class AutoUpdateService {
     }
   }
 
+  /**
+   * Begin polling the feed in the background. Idempotent — a second call is a
+   * no-op, so it is safe to call from both startup and a config change.
+   *
+   * Without this the app only ever checked once, 5s after launch: a session left
+   * open for hours never noticed a release published in the meantime.
+   */
+  startPeriodicChecks(): void {
+    if (this.checkTimer) return
+    this.checkTimer = setInterval(() => this.maybeCheck(), CHECK_INTERVAL_MS)
+    this.checkTimer.unref?.()
+    // A laptop asleep overnight misses every interval tick, so it would come back
+    // to a stale version and wait a full hour before noticing.
+    this.onResume = () => this.maybeCheck()
+    powerMonitor.on('resume', this.onResume)
+    updateLogger.info(`Background update checks started (every ${CHECK_INTERVAL_MS / 60000}m)`)
+  }
+
+  /** A background check, skipped whenever it would be pointless or redundant. */
+  private maybeCheck(): void {
+    if (this.downloadInFlight || this.updateDownloaded) return
+    if (Date.now() - this.lastCheckAt < MIN_CHECK_GAP_MS) return
+    this.checkForUpdates(false)
+  }
+
+  private stopPeriodicChecks(): void {
+    if (this.checkTimer) {
+      clearInterval(this.checkTimer)
+      this.checkTimer = null
+    }
+    if (this.onResume) {
+      powerMonitor.removeListener('resume', this.onResume)
+      this.onResume = null
+    }
+  }
+
   private async stopFeedServer(): Promise<void> {
     if (!this.feedServer) return
     try {
@@ -256,8 +310,9 @@ class AutoUpdateService {
     this.feedServer = null
   }
 
-  /** Close the loopback feed server (called on app quit) */
+  /** Stop background polling and close the loopback feed server (called on app quit) */
   async dispose(): Promise<void> {
+    this.stopPeriodicChecks()
     await this.stopFeedServer()
   }
 
@@ -295,6 +350,7 @@ class AutoUpdateService {
    */
   checkForUpdates(userInitiated = false): void {
     this.userInitiatedCheck = userInitiated
+    this.lastCheckAt = Date.now()
     updateLogger.info(
       `Checking for updates (${userInitiated ? 'user-initiated' : 'automatic'})... current version: ${app.getVersion()}`
     )
@@ -343,9 +399,39 @@ class AutoUpdateService {
     autoUpdater.downloadUpdate()
   }
 
+  /**
+   * Install now and come back on the new version. `(isSilent, isForceRunAfter)`:
+   * silent skips the Windows NSIS installer UI (the build is oneClick, so there
+   * is nothing to configure), force-run-after relaunches us afterwards. macOS
+   * Squirrel ignores both and always relaunches — same felt behaviour.
+   */
   installUpdate(): void {
     updateLogger.info('Installing update and restarting...')
-    autoUpdater.quitAndInstall()
+    autoUpdater.quitAndInstall(true, true)
+  }
+
+  /**
+   * Install a downloaded update as part of quitting — Windows/Linux only.
+   *
+   * There, autoInstallOnAppQuit hangs off the 'quit' event and our before-quit
+   * handler ends in app.exit(0), which never emits it — so "it installs when you
+   * close the app" silently never happened. Do it explicitly.
+   */
+  installOnQuitIfReady(): void {
+    if (!this.updateDownloaded) return
+    // macOS needs nothing here: autoInstallOnAppQuit already had MacUpdater stage
+    // the update with Squirrel, and ShipIt applies it when the process dies —
+    // app.exit(0) does not bypass that. Calling quitAndInstall() would instead
+    // take MacUpdater's autoRunAppAfterInstall path and RELAUNCH the app the user
+    // just quit (MacUpdater extends AppUpdater, so it ignores our arguments).
+    if (process.platform === 'darwin') return
+    updateLogger.info('Installing downloaded update on quit')
+    try {
+      // No relaunch: the user asked to quit, not to restart.
+      autoUpdater.quitAndInstall(true, false)
+    } catch (err) {
+      updateLogger.warn('Install-on-quit failed (non-fatal):', err)
+    }
   }
 }
 

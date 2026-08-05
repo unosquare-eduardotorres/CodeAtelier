@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 131
+export const CURRENT_SCHEMA_VERSION = 135
 
 export interface Migration {
   version: number
@@ -3538,6 +3538,252 @@ export const migrations: Migration[] = [
       // workspaces with millions of edges.
       db.exec('DROP INDEX IF EXISTS idx_graph_resolution')
       dbLogger.info('[migration-131] ✓ Dropped unused idx_graph_resolution')
+    }
+  },
+
+  // ── Migration 132: Add 'bootstrap' to memory_facts source_type CHECK ──
+  {
+    version: 132,
+    name: 'memory-facts-bootstrap-source-type',
+    up: (db) => {
+      // MemorySourceType has included 'bootstrap' since the bootstrap pipeline
+      // shipped, but the CHECK was never extended past migration 115. Every
+      // deterministic bootstrap write (docs, stack, architecture, history,
+      // structure) therefore failed with
+      //   CHECK constraint failed: source_type IN (...)
+      // and the per-fact try/catch in memory-extraction.service swallowed it,
+      // so Feed Brain / Deep Scan silently produced 0 facts from those phases.
+      // Only agent-recorded facts (source_type 'tool', via the memory MCP
+      // server) ever landed.
+      //
+      // SQLite cannot ALTER a CHECK constraint — rebuild the table.
+      // Mirrors migration 115, including the memory_contradictions FK detach.
+      const purged = db.prepare(
+        `DELETE FROM memory_facts
+         WHERE workspace_id IS NOT NULL
+           AND workspace_id NOT IN (SELECT id FROM workspaces)`
+      ).run()
+      if (purged.changes > 0) dbLogger.warn(`[migration-132] Purged ${purged.changes} orphaned memory_facts`)
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_contradictions_bak AS
+          SELECT * FROM memory_contradictions;
+        DROP TABLE IF EXISTS memory_contradictions;
+      `)
+
+      db.exec(`
+        CREATE TABLE memory_facts_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+          category TEXT NOT NULL CHECK (category IN ('decision','convention','gotcha','preference','reference')),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+          scope_paths TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scope_paths)),
+          tier INTEGER NOT NULL DEFAULT 0 CHECK (tier BETWEEN 0 AND 3),
+          confidence REAL NOT NULL DEFAULT 0.5,
+          confirmation_count INTEGER NOT NULL DEFAULT 0,
+          last_confirmed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','archived')),
+          superseded_by TEXT,
+          merged_into TEXT,
+          volatile INTEGER NOT NULL DEFAULT 0,
+          source_type TEXT NOT NULL CHECK (source_type IN ('session','commit','document','tool','manual','claude-md','blueprint','grill','bootstrap')),
+          source_ref TEXT,
+          embedding BLOB,
+          embedding_pending INTEGER NOT NULL DEFAULT 1,
+          last_accessed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `)
+
+      // Column-explicit copy: migrations 118/119 added merged_into and volatile
+      // after 115, so positional INSERT…SELECT * is not safe here.
+      db.exec(`
+        INSERT INTO memory_facts_new (
+          id, workspace_id, category, title, content, tags, scope_paths,
+          tier, confidence, confirmation_count, last_confirmed_at, status,
+          superseded_by, merged_into, volatile, source_type, source_ref,
+          embedding, embedding_pending, last_accessed_at, created_at, updated_at
+        )
+        SELECT
+          id, workspace_id, category, title, content, tags, scope_paths,
+          tier, confidence, confirmation_count, last_confirmed_at, status,
+          superseded_by, merged_into, volatile, source_type, source_ref,
+          embedding, embedding_pending, last_accessed_at, created_at, updated_at
+        FROM memory_facts;
+        DROP TABLE memory_facts;
+        ALTER TABLE memory_facts_new RENAME TO memory_facts;
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_workspace ON memory_facts(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1;
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref);
+      `)
+
+      db.exec(`
+        CREATE TABLE memory_contradictions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          old_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          new_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('auto_resolved','pending','user_resolved')),
+          resolution TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          resolved_at TEXT
+        );
+        INSERT INTO memory_contradictions
+          SELECT * FROM memory_contradictions_bak
+          WHERE old_fact_id IN (SELECT id FROM memory_facts)
+            AND new_fact_id IN (SELECT id FROM memory_facts);
+        DROP TABLE memory_contradictions_bak;
+        CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_contradictions_pair
+          ON memory_contradictions(old_fact_id, new_fact_id);
+      `)
+
+      dbLogger.info("[migration-132] ✓ Extended memory_facts source_type CHECK to include 'bootstrap'")
+    }
+  },
+
+  // ── Migration 133: Durable Feed Brain ingestion queue ──
+  {
+    version: 133,
+    name: 'memory-bootstrap-run-queue',
+    up: (db) => {
+      // Bootstrap used to be a purely in-memory pipeline: discovery and
+      // extraction were interleaved, so the item total was unknowable, progress
+      // was phase-index guesswork, and cancelling or quitting discarded every
+      // partially-processed file. These two tables turn it into a durable job
+      // queue — plan up front, drain incrementally, resume where it stopped.
+      // Purely additive: memory_doc_state stays as the cross-run fast path.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_bootstrap_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          status TEXT NOT NULL,
+          current_phase TEXT,
+          items_total INTEGER NOT NULL DEFAULT 0,
+          items_done INTEGER NOT NULL DEFAULT 0,
+          items_skipped INTEGER NOT NULL DEFAULT 0,
+          items_failed INTEGER NOT NULL DEFAULT 0,
+          facts_created INTEGER NOT NULL DEFAULT 0,
+          active_ms INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          finished_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_bootstrap_items (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          run_id TEXT NOT NULL REFERENCES memory_bootstrap_runs(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL,
+          phase TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          source_ref TEXT NOT NULL,
+          content_hash TEXT,
+          priority INTEGER NOT NULL DEFAULT 100,
+          chunk_total INTEGER NOT NULL DEFAULT 0,
+          chunk_done INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          facts_created INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bootstrap_items_run
+          ON memory_bootstrap_items(run_id, status, priority);
+        CREATE INDEX IF NOT EXISTS idx_bootstrap_runs_ws
+          ON memory_bootstrap_runs(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-133] ✓ Created memory_bootstrap_runs + memory_bootstrap_items')
+    }
+  },
+
+  // ── Migration 134: Specialist build provenance ──
+  {
+    version: 134,
+    name: 'specialist-build-provenance',
+    up: (db) => {
+      // A specialist whose LLM tailoring silently failed was persisted with
+      // build_status='ready' and the untouched template skeleton — identical
+      // in the UI to a genuinely tailored one. These two columns make the
+      // degradation visible instead of inferring it from prompt length.
+      //
+      // Plain TEXT without CHECK, matching migration 130's reasoning: the enum
+      // ('agentic' | 'oneshot' | 'skeleton') is enforced in TypeScript.
+      db.exec(`ALTER TABLE specialists ADD COLUMN build_method TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE specialists ADD COLUMN ingestion_run_id TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-134] ✓ Added build_method + ingestion_run_id to specialists')
+    }
+  },
+
+  // ── Migration 135: Full-text search index over memory facts ──
+  {
+    version: 135,
+    name: 'memory-facts-fts',
+    up: (db) => {
+      // Keyword retrieval was `LIKE '%q%'` plus JS token overlap computed over
+      // every active fact loaded with its embedding BLOB. That is linear in the
+      // corpus on every turn, and `LIKE` cannot rank.
+      //
+      // This is a *standard* FTS5 table, not the external-content form used by
+      // library_docs_fts: that one keys off an INTEGER rowid, and
+      // memory_facts.id is TEXT (hex randomblob). `fact_id` is UNINDEXED so it
+      // is stored and returnable without polluting the term index.
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+          fact_id UNINDEXED,
+          title,
+          content,
+          tags
+        );
+      `)
+
+      // Sync via triggers rather than from the repository. Facts are written
+      // through a dozen paths — createFact, updateFact, updateFactInPlace,
+      // archiveFact, supersedeFact, mergeFact, decayFacts, bulk dedup — and a
+      // manually-synced index only has to be forgotten once to start returning
+      // stale titles forever. Triggers cannot be bypassed.
+      //
+      // Every fact is indexed regardless of status; `searchFts` joins back to
+      // memory_facts and filters there, so a status change needs no index work.
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_ai
+        AFTER INSERT ON memory_facts BEGIN
+          INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+          VALUES (new.id, new.title, new.content, new.tags);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_ad
+        AFTER DELETE ON memory_facts BEGIN
+          DELETE FROM memory_facts_fts WHERE fact_id = old.id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_au
+        AFTER UPDATE ON memory_facts BEGIN
+          DELETE FROM memory_facts_fts WHERE fact_id = old.id;
+          INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+          VALUES (new.id, new.title, new.content, new.tags);
+        END;
+      `)
+
+      // Backfill. Guarded so re-running against a partially-built index cannot
+      // double-insert every row.
+      db.exec(`DELETE FROM memory_facts_fts;`)
+      db.exec(`
+        INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+        SELECT id, title, content, tags FROM memory_facts;
+      `)
+
+      const indexed = (
+        db.prepare('SELECT count(*) AS n FROM memory_facts_fts').get() as { n: number }
+      ).n
+      dbLogger.info(`[migration-135] ✓ Created memory_facts_fts + triggers (${indexed} fact(s) indexed)`)
     }
   }
 ]

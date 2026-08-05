@@ -95,7 +95,9 @@ export function forwardBlueprintChunk(
           elapsedSeconds: processed.toolActivity.elapsedSeconds,
           filePath: processed.toolActivity.filePath,
           lineRange: processed.toolActivity.lineRange,
-          operationType: processed.toolActivity.operationType
+          operationType: processed.toolActivity.operationType,
+          editDiffs: processed.toolActivity.editDiffs,
+          editDiffsOmitted: processed.toolActivity.editDiffsOmitted
         },
         ...(ctx.taskId ? { taskId: ctx.taskId } : {})
       })

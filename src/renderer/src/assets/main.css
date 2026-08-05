@@ -919,6 +919,74 @@ body::after {
 .permission-ring-3 { animation-delay: 2s; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   Update Modal — aurora hero, breathing glyph, radiating rings, check draw
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Slow gradient drift behind the hero header */
+@keyframes update-aurora {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+.update-aurora {
+  background-size: 220% 220%;
+  animation: update-aurora 12s ease-in-out infinite;
+}
+
+/* Card entrance — also used for the version line and arrow, with a delay */
+@keyframes update-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.update-card-enter {
+  animation: update-card-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.update-arrow-enter {
+  animation: update-card-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+}
+
+/* Hero glyph breathing pulse */
+@keyframes update-icon-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.1); }
+}
+.update-icon-pulse {
+  animation: update-icon-pulse 2.8s ease-in-out infinite;
+}
+
+/* Radiating rings around the hero glyph */
+@keyframes update-ring-expand {
+  0%   { transform: scale(0.75); opacity: 0.45; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+.update-ring {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0;
+  animation: update-ring-expand 3s ease-out infinite;
+}
+.update-ring-1 { animation-delay: 0s; }
+.update-ring-2 { animation-delay: 1.5s; }
+
+/* Checkmark stroke draw — pairs with the completed progress ring */
+@keyframes update-check-draw {
+  from { stroke-dashoffset: 32; }
+  to   { stroke-dashoffset: 0; }
+}
+.update-check-draw {
+  stroke-dasharray: 32;
+  animation: update-check-draw 0.5s ease-out 0.1s both;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Mermaid Diagram Overrides — polished dark aesthetic
    ═══════════════════════════════════════════════════════════════════════════ */
 

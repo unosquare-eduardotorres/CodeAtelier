@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle, Archive, Trash2, Globe, Clock } from 'lucide-react'
+import { CheckCircle, Archive, Trash2, Globe, Clock, FolderTree } from 'lucide-react'
 
 import { ConfirmDialog } from '@renderer/components/common'
 import TierBadge from './TierBadge'
@@ -31,6 +31,8 @@ interface FactCardProps {
   onArchive?: () => void
   onDelete?: () => void
   onScopeToggle?: () => void
+  /** Persist edited scope globs. Omit to render scope read-only. */
+  onScopePathsChange?: (paths: string[]) => void
   dimmed?: boolean
 }
 
@@ -40,11 +42,24 @@ export default function FactCard({
   onArchive,
   onDelete,
   onScopeToggle,
+  onScopePathsChange,
   dimmed
 }: FactCardProps): React.JSX.Element {
   const [showArchiveDialog, setShowArchiveDialog] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
+  const [scopeDraft, setScopeDraft] = useState<string | null>(null)
+
+  const commitScope = (): void => {
+    if (scopeDraft === null) return
+    const paths = scopeDraft
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean)
+    setScopeDraft(null)
+    // Skip the round-trip when nothing actually changed.
+    if (paths.join(',') !== fact.scopePaths.join(',')) onScopePathsChange?.(paths)
+  }
 
   return (
     <>
@@ -137,8 +152,38 @@ export default function FactCard({
             {fact.sourceRef ? ` · ${fact.sourceRef.slice(0, 20)}` : ''}
           </span>
           <span>Confirms: {fact.confirmationCount}</span>
-          {fact.scopePaths.length > 0 && (
-            <span>Scope: {fact.scopePaths.slice(0, 2).join(', ')}</span>
+          {scopeDraft !== null ? (
+            <input
+              autoFocus
+              value={scopeDraft}
+              onChange={(e) => setScopeDraft(e.target.value)}
+              onBlur={commitScope}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitScope()
+                if (e.key === 'Escape') setScopeDraft(null)
+              }}
+              placeholder="src/api/**, src/db"
+              aria-label="Scope globs, comma separated"
+              className="flex-1 min-w-[12rem] bg-bg-secondary border border-border-strong rounded px-1 py-0.5 text-[10px] text-text-primary"
+            />
+          ) : onScopePathsChange ? (
+            <button
+              onClick={() => setScopeDraft(fact.scopePaths.join(', '))}
+              className="flex items-center gap-0.5 hover:text-info transition-colors"
+              title="Edit the paths this memory applies to — it is injected whenever you work on them"
+              aria-label="Edit scope paths"
+            >
+              <FolderTree className="w-3 h-3" />
+              {fact.scopePaths.length > 0
+                ? `Scope: ${fact.scopePaths.slice(0, 2).join(', ')}${
+                    fact.scopePaths.length > 2 ? ` +${fact.scopePaths.length - 2}` : ''
+                  }`
+                : 'Add scope'}
+            </button>
+          ) : (
+            fact.scopePaths.length > 0 && (
+              <span>Scope: {fact.scopePaths.slice(0, 2).join(', ')}</span>
+            )
           )}
           <span>{relativeDate(fact.createdAt)}</span>
         </div>
