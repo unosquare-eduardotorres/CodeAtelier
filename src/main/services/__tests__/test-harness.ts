@@ -220,8 +220,16 @@ export function summary(): void {
  * Async summary — awaits every pending async test before printing totals.
  * Use this when your suite contains `async` tests.
  */
-/** Drain the pending queue; new tests may schedule more while we wait. */
-async function drainPending(): Promise<void> {
+/**
+ * Drain the pending queue; new tests may schedule more while we wait.
+ *
+ * Exported so a multi-file runner can drain after each file. Async tests start
+ * eagerly (see `test()`), so without a per-file drain every async test in the
+ * whole run is in flight at once: wall-clock assertions ("resolves within 5s")
+ * then measure event-loop contention rather than the code under test, and a
+ * file's tests can outlive the module mocks they were written against.
+ */
+export async function drainPending(): Promise<void> {
   while (pendingAsyncTests.length > 0) {
     const batch = pendingAsyncTests.splice(0, pendingAsyncTests.length)
     await Promise.all(batch)

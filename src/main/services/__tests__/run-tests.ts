@@ -5,7 +5,7 @@
 //   2. A completeness sentinel prints after all files are loaded
 //   3. Individual file failures don't block the rest of the suite
 import { setupElectronStub } from './electron-stub'
-import { summaryAsync } from './test-harness'
+import { summaryAsync, drainPending } from './test-harness'
 import { restoreFullMock } from './setup-full-mock'
 
 // Install the shared electron/electron-log stubs ONCE before any test file
@@ -275,8 +275,6 @@ const TEST_FILES: string[] = [
   './blueprint-resume.test',
   // ─── Blueprint Discoveries Ledger ───
   './blueprint-discoveries.test',
-  // ─── CLI executor killProcess deadlock regression ───
-  './cli-executor-kill.test',
   // ─── Prompt Optimizer ───
   './prompt-optimizer.test',
   // ─── Cross-provider model roles — resolveAssignment + resolveModelAction ───
@@ -560,6 +558,11 @@ void (async () => {
   for (const file of TEST_FILES) {
     try {
       await import(file)
+      // Let this file's async tests finish before the next file loads. Async
+      // tests start eagerly, so without this every async test in the suite runs
+      // concurrently — wall-clock budgets then measure event-loop contention,
+      // and a file's tests can outlive the mocks they were written against.
+      await drainPending()
     } catch (err) {
       console.error(`\n[run-tests] FAILED to load ${file}:`, err)
       loadFailures++

@@ -22,7 +22,7 @@
  * scripts in package.json.
  */
 import { setupElectronStub } from '../services/__tests__/electron-stub'
-import { summaryAsync } from '../services/__tests__/test-harness'
+import { summaryAsync, drainPending } from '../services/__tests__/test-harness'
 import { restoreFullMock } from '../services/__tests__/setup-full-mock'
 
 // Install the shared electron/electron-log stubs ONCE before any test file
@@ -313,7 +313,6 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/prompt-optimizer.test',
   // ─── Pipeline Stabilization Round 2 — phase watchdog + registry sync guard ───
   '../services/__tests__/blueprint-phase-watchdog.test',
-  '../services/__tests__/cli-executor-kill.test',
   // ─── Memory Engine (knowledge-aware) ───
   '../services/__tests__/memory-engine.test',
   '../services/__tests__/memory-retrieval.test',
@@ -722,6 +721,10 @@ void (async () => {
   for (const file of ALL_TEST_FILES) {
     try {
       await import(file)
+      // Let this file's async tests finish before the next file loads — see the
+      // drainPending() note in test-harness.ts. Also means async bodies still
+      // see this file's mocks when restoreFullMock() runs below.
+      await drainPending()
     } catch (err) {
       console.error(`\n[run-all] FAILED to load ${file}:`, err)
       loadFailures++
