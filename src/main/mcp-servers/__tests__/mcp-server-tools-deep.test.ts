@@ -30,10 +30,7 @@ describe('MCP_TOOLS — structure', () => {
   test('each_server_has_ALL_NAMES_array', () => {
     for (const [serverName, server] of Object.entries(MCP_TOOLS)) {
       const s = server as Record<string, unknown>
-      assert.ok(
-        Array.isArray(s._ALL_NAMES),
-        `Server "${serverName}" should have _ALL_NAMES array`
-      )
+      assert.ok(Array.isArray(s._ALL_NAMES), `Server "${serverName}" should have _ALL_NAMES array`)
       assert.ok(
         (s._ALL_NAMES as string[]).length >= 1,
         `Server "${serverName}" _ALL_NAMES should be non-empty`
@@ -47,7 +44,10 @@ describe('MCP_TOOLS — structure', () => {
         if (key.startsWith('_')) continue // Skip metadata keys
         const t = tool as Record<string, unknown>
         assert.ok(typeof t.name === 'string', `${serverName}.${key}.name should be string`)
-        assert.ok(typeof t.displayName === 'string', `${serverName}.${key}.displayName should be string`)
+        assert.ok(
+          typeof t.displayName === 'string',
+          `${serverName}.${key}.displayName should be string`
+        )
         assert.ok((t.name as string).length > 0, `${serverName}.${key}.name should be non-empty`)
       }
     }
@@ -106,16 +106,20 @@ describe('MCP integrations — structure', () => {
   test('local_integrations_have_expected_shape', () => {
     for (const integration of LOCAL_MCP_INTEGRATIONS) {
       const i = integration as unknown as Record<string, unknown>
-      assert.ok(typeof i.id === 'string' || typeof i.name === 'string',
-        'Each integration should have id or name')
+      assert.ok(
+        typeof i.id === 'string' || typeof i.name === 'string',
+        'Each integration should have id or name'
+      )
     }
   })
 
   test('external_integrations_have_expected_shape', () => {
     for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
       const i = integration as unknown as Record<string, unknown>
-      assert.ok(typeof i.id === 'string' || typeof i.name === 'string',
-        'Each integration should have id or name')
+      assert.ok(
+        typeof i.id === 'string' || typeof i.name === 'string',
+        'Each integration should have id or name'
+      )
     }
   })
 })
@@ -158,7 +162,12 @@ describe('truncateToolOutput — deep branches', () => {
 describe('parseComplexityMessage — deep branches', () => {
   test('handles_arrow_function_name', () => {
     const result = parseComplexityMessage(
-      { message: "Arrow function has a complexity of 15. Maximum allowed is 0.", line: 5, column: 1, ruleId: 'complexity' },
+      {
+        message: 'Arrow function has a complexity of 15. Maximum allowed is 0.',
+        line: 5,
+        column: 1,
+        ruleId: 'complexity'
+      },
       'src/util.ts'
     )
     // Arrow functions may or may not have names extracted
@@ -177,7 +186,12 @@ describe('parseComplexityMessage — deep branches', () => {
 
   test('parses_high_complexity', () => {
     const result = parseComplexityMessage(
-      { message: "Function 'bigFn' has a complexity of 99. Maximum allowed is 0.", line: 100, column: 1, ruleId: 'complexity' },
+      {
+        message: "Function 'bigFn' has a complexity of 99. Maximum allowed is 0.",
+        line: 100,
+        column: 1,
+        ruleId: 'complexity'
+      },
       'src/complex.ts'
     )
     assert.ok(result)
@@ -186,7 +200,12 @@ describe('parseComplexityMessage — deep branches', () => {
 
   test('extracts_correct_file_path', () => {
     const result = parseComplexityMessage(
-      { message: "Function 'test' has a complexity of 5. Maximum allowed is 0.", line: 1, column: 1, ruleId: 'complexity' },
+      {
+        message: "Function 'test' has a complexity of 5. Maximum allowed is 0.",
+        line: 1,
+        column: 1,
+        ruleId: 'complexity'
+      },
       'deep/nested/path/file.ts'
     )
     assert.ok(result)

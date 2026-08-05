@@ -137,6 +137,7 @@ function connectionDraftsEqual(a: ConnectionDraft, b: ConnectionDraft): boolean 
 
 function useConnectionTest(opts: {
   defaultProvider: LLMProvider
+  localLlmBackend: LocalLLMBackend
   localHost: string
   localPort: number
   localApiKey: string
@@ -199,12 +200,13 @@ function useConnectionTest(opts: {
     [opts.localHost, opts.localPort, opts.localApiKey, addToast]
   )
 
-  // Auto-test on mount when local-llm is already the default provider
+  // Auto-test on mount when local-llm is the default provider OR Ollama backend is active
+  // (user may use Claude for chat but Ollama for embeddings — still need to populate model list)
   useEffect(() => {
     if (!autoTestDone) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time auto-test on mount
       setAutoTestDone(true)
-      if (opts.defaultProvider === 'local-llm') {
+      if (opts.defaultProvider === 'local-llm' || opts.localLlmBackend === 'ollama') {
         setConnectionTesting(true)
         const baseUrl = `http://${opts.localHost}:${opts.localPort}`
         window.api
@@ -220,7 +222,7 @@ function useConnectionTest(opts: {
           .finally(() => setConnectionTesting(false))
       }
     }
-  }, [opts.defaultProvider, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
+  }, [opts.defaultProvider, opts.localLlmBackend, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
 
   // Debounced auto-test for blur-then-persist-then-test pattern
   const debouncedTestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -318,6 +320,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   const wsSettings = useWorkspaceSettingActions(activeWorkspace)
   const { localStatus, connectionTesting, testConnection, scheduleAutoTest } = useConnectionTest({
     defaultProvider,
+    localLlmBackend,
     localHost: connectionDraft.localHost,
     localPort: connectionDraft.localPort,
     localApiKey: connectionDraft.localApiKey
@@ -381,9 +384,16 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         }
         setConnectionPersisted(conn)
         setConnectionDraft(conn)
+
+        // When settings resolve to Ollama backend, schedule a connection test
+        // so the model list populates (the initial auto-test may have fired
+        // before settings loaded, using the wrong port).
+        if (resolvedBackend === 'ollama') {
+          setTimeout(() => scheduleAutoTest(), 100)
+        }
       })
       .catch(console.error)
-  }, [activeWorkspace])
+  }, [activeWorkspace]) // eslint-disable-line react-hooks/exhaustive-deps -- scheduleAutoTest is stable ref
 
   // ── Backend tab switch ──
   const setLocalLlmBackend = useCallback(

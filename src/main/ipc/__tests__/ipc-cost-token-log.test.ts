@@ -6,12 +6,12 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let costLoaded = false
 let tokenLoaded = false
@@ -48,19 +48,19 @@ try {
 if (costLoaded) {
   describe('cost.ipc — channel registration', () => {
     test('registers cost:getWorkspaceSummary', () => {
-      assert.ok(capturedHandlers.has('cost:getWorkspaceSummary'))
+      assert.ok(getHandlers().has('cost:getWorkspaceSummary'))
     })
 
     test('registers cost:getConversation', () => {
-      assert.ok(capturedHandlers.has('cost:getConversation'))
+      assert.ok(getHandlers().has('cost:getConversation'))
     })
 
     test('registers cost:getWorkspaceConversations', () => {
-      assert.ok(capturedHandlers.has('cost:getWorkspaceConversations'))
+      assert.ok(getHandlers().has('cost:getWorkspaceConversations'))
     })
 
     test('registers cost:checkBudget', () => {
-      assert.ok(capturedHandlers.has('cost:checkBudget'))
+      assert.ok(getHandlers().has('cost:checkBudget'))
     })
   })
 
@@ -121,23 +121,23 @@ if (costLoaded) {
 if (tokenLoaded) {
   describe('token.ipc — channel registration', () => {
     test('registers token:getWorkspaceSummary', () => {
-      assert.ok(capturedHandlers.has('token:getWorkspaceSummary'))
+      assert.ok(getHandlers().has('token:getWorkspaceSummary'))
     })
 
     test('registers token:getConversationSummary', () => {
-      assert.ok(capturedHandlers.has('token:getConversationSummary'))
+      assert.ok(getHandlers().has('token:getConversationSummary'))
     })
 
     test('registers token:getRecentSessions', () => {
-      assert.ok(capturedHandlers.has('token:getRecentSessions'))
+      assert.ok(getHandlers().has('token:getRecentSessions'))
     })
 
     test('registers token:getWorkspaceUsage', () => {
-      assert.ok(capturedHandlers.has('token:getWorkspaceUsage'))
+      assert.ok(getHandlers().has('token:getWorkspaceUsage'))
     })
 
     test('registers token:getGlobalUsage', () => {
-      assert.ok(capturedHandlers.has('token:getGlobalUsage'))
+      assert.ok(getHandlers().has('token:getGlobalUsage'))
     })
   })
 
@@ -180,7 +180,10 @@ if (tokenLoaded) {
     })
 
     test('token:getRecentSessions calls through with limit', async () => {
-      const r = await tryInvokeHandler('token:getRecentSessions', { workspaceId: 'ws-1', limit: 10 })
+      const r = await tryInvokeHandler('token:getRecentSessions', {
+        workspaceId: 'ws-1',
+        limit: 10
+      })
       assert.ok(r.ok === true || r.ok === false)
     })
 
@@ -203,7 +206,7 @@ if (tokenLoaded) {
 if (logLoaded) {
   describe('log.ipc — channel registration', () => {
     test('registers log:fromRenderer', () => {
-      assert.ok(capturedHandlers.has('log:fromRenderer'))
+      assert.ok(getHandlers().has('log:fromRenderer'))
     })
   })
 
@@ -226,7 +229,7 @@ if (logLoaded) {
     test('log:fromRenderer rejects invalid level (prototype pollution prevention)', async () => {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: 'constructor',
-        message: 'test',
+        message: 'test'
       })
       assert.equal(r.ok, false)
     })
@@ -234,7 +237,7 @@ if (logLoaded) {
     test('log:fromRenderer rejects __proto__ as level', async () => {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: '__proto__',
-        message: 'test',
+        message: 'test'
       })
       assert.equal(r.ok, false)
     })
@@ -244,7 +247,7 @@ if (logLoaded) {
     test('log:fromRenderer accepts level=info', async () => {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: 'info',
-        message: 'Test info message',
+        message: 'Test info message'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -252,7 +255,7 @@ if (logLoaded) {
     test('log:fromRenderer accepts level=warn', async () => {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: 'warn',
-        message: 'Test warning',
+        message: 'Test warning'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -260,7 +263,7 @@ if (logLoaded) {
     test('log:fromRenderer accepts level=error', async () => {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: 'error',
-        message: 'Test error',
+        message: 'Test error'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -268,7 +271,7 @@ if (logLoaded) {
     test('log:fromRenderer accepts level=debug', async () => {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: 'debug',
-        message: 'Test debug',
+        message: 'Test debug'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -277,7 +280,7 @@ if (logLoaded) {
       const r = await tryInvokeHandler('log:fromRenderer', {
         level: 'info',
         message: 'With data',
-        data: ['extra', 42],
+        data: ['extra', 42]
       })
       assert.ok(r.ok === true || r.ok === false)
     })

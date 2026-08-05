@@ -27,7 +27,7 @@ describe('cosineSimilarity', () => {
 
   test('opposite vectors have similarity -1.0', () => {
     const result = cosineSimilarity([1, 0], [-1, 0])
-    assert.ok(Math.abs(result - (-1.0)) < 0.0001)
+    assert.ok(Math.abs(result - -1.0) < 0.0001)
   })
 
   test('similar vectors have high similarity', () => {

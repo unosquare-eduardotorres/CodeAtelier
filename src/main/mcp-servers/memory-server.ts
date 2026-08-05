@@ -130,8 +130,8 @@ function registerToolSchemas(): void {
       content: z
         .string()
         .min(1)
-        .max(2000)
-        .describe('The fact — precise, actionable, self-contained (1-3 sentences)'),
+        .max(4000)
+        .describe('The fact — precise, actionable, self-contained (1-5 sentences)'),
       scopePaths: z
         .array(z.string())
         .optional()

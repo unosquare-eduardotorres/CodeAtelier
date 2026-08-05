@@ -19,7 +19,11 @@ describe('LocalEmbeddingProvider — interface contract', () => {
     assert.equal(typeof localEmbeddingProvider.initialize, 'function', 'initialize() method')
     assert.equal(typeof localEmbeddingProvider.dispose, 'function', 'dispose() method')
     assert.equal(typeof localEmbeddingProvider.reinitialize, 'function', 'reinitialize() method')
-    assert.equal(typeof localEmbeddingProvider.ensureEmbeddingReady, 'function', 'ensureEmbeddingReady() method')
+    assert.equal(
+      typeof localEmbeddingProvider.ensureEmbeddingReady,
+      'function',
+      'ensureEmbeddingReady() method'
+    )
   })
 
   test('has isReady getter', () => {
@@ -68,7 +72,9 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
     localEmbeddingProvider.dispose() // clear any previous model
 
     const errors: string[] = []
-    const handler = (e: string): void => { errors.push(e) }
+    const handler = (e: string): void => {
+      errors.push(e)
+    }
     localEmbeddingProvider.on('modelError', handler)
 
     try {
@@ -76,7 +82,10 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
       assert.fail('Should have thrown when no model configured')
     } catch (err) {
       assert.ok(err instanceof Error)
-      assert.ok(err.message.includes('No Ollama embedding model'), `Error should mention model: ${err.message}`)
+      assert.ok(
+        err.message.includes('No Ollama embedding model'),
+        `Error should mention model: ${err.message}`
+      )
     }
 
     assert.ok(errors.length > 0, 'Should have emitted modelError')
@@ -103,7 +112,9 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
   test('omlx modelReady event propagates through facade when backend is omlx', () => {
     localEmbeddingProvider.setBackend('omlx')
     const events: string[] = []
-    const handler = (): void => { events.push('modelReady') }
+    const handler = (): void => {
+      events.push('modelReady')
+    }
     localEmbeddingProvider.on('modelReady', handler)
 
     // Simulate oMLX emitting modelReady internally
@@ -117,7 +128,9 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
   test('omlx modelError event propagates through facade when backend is omlx', () => {
     localEmbeddingProvider.setBackend('omlx')
     const errors: string[] = []
-    const handler = (e: string): void => { errors.push(e) }
+    const handler = (e: string): void => {
+      errors.push(e)
+    }
     localEmbeddingProvider.on('modelError', handler)
 
     const { omlxEmbeddingProvider } = require('../omlx-embedding.service')
@@ -131,8 +144,12 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
   test('omlx events are NOT forwarded when backend is ollama (cross-backend gating)', () => {
     localEmbeddingProvider.setBackend('ollama')
     const events: string[] = []
-    const readyHandler = (): void => { events.push('ready') }
-    const errorHandler = (): void => { events.push('error') }
+    const readyHandler = (): void => {
+      events.push('ready')
+    }
+    const errorHandler = (): void => {
+      events.push('error')
+    }
     localEmbeddingProvider.on('modelReady', readyHandler)
     localEmbeddingProvider.on('modelError', errorHandler)
 

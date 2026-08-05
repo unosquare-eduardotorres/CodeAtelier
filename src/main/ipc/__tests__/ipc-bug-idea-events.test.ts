@@ -9,15 +9,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  mockEvent,
-  tryInvokeHandler,
-  resetStub,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 // ── Register IPC modules ─────────────────────────────────────────────────
 
@@ -55,45 +53,45 @@ try {
 
 if (bugLoaded) {
   describe('bug.ipc — channel registration', () => {
-    const bugChannels = [...capturedHandlers.keys()].filter(c => c.includes('bug'))
+    const bugChannels = [...getHandlers().keys()].filter((c) => c.includes('bug'))
     test('registers all bug channels', () => {
       assert.ok(bugChannels.length >= 7, `Expected ≥7 bug channels, got ${bugChannels.length}`)
     })
 
     test('registers bug:report', () => {
-      assert.ok(capturedHandlers.has('bug:report'))
+      assert.ok(getHandlers().has('bug:report'))
     })
 
     test('registers bug:list', () => {
-      assert.ok(capturedHandlers.has('bug:list'))
+      assert.ok(getHandlers().has('bug:list'))
     })
 
     test('registers bug:get', () => {
-      assert.ok(capturedHandlers.has('bug:get'))
+      assert.ok(getHandlers().has('bug:get'))
     })
 
     test('registers bug:resolve', () => {
-      assert.ok(capturedHandlers.has('bug:resolve'))
+      assert.ok(getHandlers().has('bug:resolve'))
     })
 
     test('registers bug:unresolve', () => {
-      assert.ok(capturedHandlers.has('bug:unresolve'))
+      assert.ok(getHandlers().has('bug:unresolve'))
     })
 
     test('registers bug:delete', () => {
-      assert.ok(capturedHandlers.has('bug:delete'))
+      assert.ok(getHandlers().has('bug:delete'))
     })
 
     test('registers bug:updateNote', () => {
-      assert.ok(capturedHandlers.has('bug:updateNote'))
+      assert.ok(getHandlers().has('bug:updateNote'))
     })
 
     test('registers bug:count', () => {
-      assert.ok(capturedHandlers.has('bug:count'))
+      assert.ok(getHandlers().has('bug:count'))
     })
 
     test('registers bug:exportMarkdown', () => {
-      assert.ok(capturedHandlers.has('bug:exportMarkdown'))
+      assert.ok(getHandlers().has('bug:exportMarkdown'))
     })
   })
 
@@ -159,7 +157,7 @@ if (bugLoaded) {
       const r = await tryInvokeHandler('bug:report', {
         errorMessage: 'Test error',
         process: 'main',
-        appVersion: '1.0.0',
+        appVersion: '1.0.0'
       })
       // Either succeeds or fails due to sqlite — validation passed either way
       assert.ok(r.ok === true || r.ok === false)
@@ -203,7 +201,7 @@ if (bugLoaded) {
     test('bug:exportMarkdown with valid args calls through', async () => {
       const r = await tryInvokeHandler('bug:exportMarkdown', {
         markdown: '# Bug Report\nSome details',
-        defaultFilename: 'report.md',
+        defaultFilename: 'report.md'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -217,35 +215,35 @@ if (bugLoaded) {
 if (ideaLoaded) {
   describe('idea.ipc — channel registration', () => {
     test('registers idea:list', () => {
-      assert.ok(capturedHandlers.has('idea:list'))
+      assert.ok(getHandlers().has('idea:list'))
     })
 
     test('registers idea:create', () => {
-      assert.ok(capturedHandlers.has('idea:create'))
+      assert.ok(getHandlers().has('idea:create'))
     })
 
     test('registers idea:update', () => {
-      assert.ok(capturedHandlers.has('idea:update'))
+      assert.ok(getHandlers().has('idea:update'))
     })
 
     test('registers idea:delete', () => {
-      assert.ok(capturedHandlers.has('idea:delete'))
+      assert.ok(getHandlers().has('idea:delete'))
     })
 
     test('registers idea:startGrill', () => {
-      assert.ok(capturedHandlers.has('idea:startGrill'))
+      assert.ok(getHandlers().has('idea:startGrill'))
     })
 
     test('registers idea:convertDirect', () => {
-      assert.ok(capturedHandlers.has('idea:convertDirect'))
+      assert.ok(getHandlers().has('idea:convertDirect'))
     })
 
     test('registers idea:saveGrillDecisions', () => {
-      assert.ok(capturedHandlers.has('idea:saveGrillDecisions'))
+      assert.ok(getHandlers().has('idea:saveGrillDecisions'))
     })
 
     test('registers idea:completeFromGrill', () => {
-      assert.ok(capturedHandlers.has('idea:completeFromGrill'))
+      assert.ok(getHandlers().has('idea:completeFromGrill'))
     })
   })
 
@@ -321,7 +319,7 @@ if (ideaLoaded) {
       const r = await tryInvokeHandler('idea:create', {
         workspaceId: 'ws1',
         title: 'My Idea',
-        description: 'Details',
+        description: 'Details'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -329,7 +327,7 @@ if (ideaLoaded) {
     test('idea:update calls through with valid args', async () => {
       const r = await tryInvokeHandler('idea:update', {
         id: 'idea-1',
-        title: 'Updated',
+        title: 'Updated'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -345,14 +343,17 @@ if (ideaLoaded) {
     })
 
     test('idea:convertDirect calls through with valid args', async () => {
-      const r = await tryInvokeHandler('idea:convertDirect', { ideaId: 'idea-1', workspaceId: 'ws1' })
+      const r = await tryInvokeHandler('idea:convertDirect', {
+        ideaId: 'idea-1',
+        workspaceId: 'ws1'
+      })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     test('idea:saveGrillDecisions calls through with valid args', async () => {
       const r = await tryInvokeHandler('idea:saveGrillDecisions', {
         ideaId: 'idea-1',
-        decisions: JSON.stringify({ track1: 'yes' }),
+        decisions: JSON.stringify({ track1: 'yes' })
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -360,7 +361,7 @@ if (ideaLoaded) {
     test('idea:completeFromGrill calls through with valid args', async () => {
       const r = await tryInvokeHandler('idea:completeFromGrill', {
         conversationId: 'conv-1',
-        summary: 'Done!',
+        summary: 'Done!'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -374,11 +375,11 @@ if (ideaLoaded) {
 if (eventsLoaded) {
   describe('events.ipc — channel registration', () => {
     test('registers events:getRecent', () => {
-      assert.ok(capturedHandlers.has('events:getRecent'))
+      assert.ok(getHandlers().has('events:getRecent'))
     })
 
     test('registers events:getByConversation', () => {
-      assert.ok(capturedHandlers.has('events:getByConversation'))
+      assert.ok(getHandlers().has('events:getByConversation'))
     })
   })
 
@@ -418,7 +419,7 @@ if (eventsLoaded) {
     test('events:getByConversation calls through with valid args', async () => {
       const r = await tryInvokeHandler('events:getByConversation', {
         conversationId: 'conv-1',
-        limit: 50,
+        limit: 50
       })
       assert.ok(r.ok === true || r.ok === false)
     })

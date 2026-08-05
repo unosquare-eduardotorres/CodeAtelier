@@ -17,10 +17,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 
 // ── Runtime imports for constants that existing tests DON'T cover ──
-import {
-  BLUEPRINT_PHASE_ORDER,
-  PHASE_TO_STATUS
-} from '../../../shared/blueprint-types'
+import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../../shared/blueprint-types'
 
 import {
   // Already covered in shared-types-coverage.test.ts:
@@ -311,7 +308,6 @@ describe('Constants — MCP definitions', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('Constants — functions', () => {
-
   test('supportsContext1M_returns_boolean', () => {
     assert.equal(typeof supportsContext1M, 'function')
     // Known 1M model

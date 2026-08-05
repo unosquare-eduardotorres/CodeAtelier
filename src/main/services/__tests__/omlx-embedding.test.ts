@@ -184,8 +184,15 @@ describe('OmlxEmbeddingProvider', () => {
           if (String(url).includes('/admin/api/models')) {
             return jsonResponse({
               models: [
-                { id: 'llama3', loaded: true, is_loading: false, model_type: 'llm',
-                  estimated_size_formatted: '4 GB', pinned: false, is_default: true }
+                {
+                  id: 'llama3',
+                  loaded: true,
+                  is_loading: false,
+                  model_type: 'llm',
+                  estimated_size_formatted: '4 GB',
+                  pinned: false,
+                  is_default: true
+                }
               ]
             })
           }
@@ -211,8 +218,12 @@ describe('OmlxEmbeddingProvider', () => {
   test('modelReady and modelError events fire correctly', () =>
     runExclusive(async () => {
       const events: string[] = []
-      const onReady = (): void => { events.push('ready') }
-      const onError = (msg: string): void => { events.push(`error:${msg}`) }
+      const onReady = (): void => {
+        events.push('ready')
+      }
+      const onError = (msg: string): void => {
+        events.push(`error:${msg}`)
+      }
 
       omlxEmbeddingProvider.on('modelReady', onReady)
       omlxEmbeddingProvider.on('modelError', onError)
@@ -245,9 +256,7 @@ describe('OmlxEmbeddingProvider', () => {
 
         let capturedHeaders: Record<string, string> = {}
         global.fetch = (async (_url: string, init?: RequestInit) => {
-          capturedHeaders = Object.fromEntries(
-            Object.entries(init?.headers ?? {})
-          )
+          capturedHeaders = Object.fromEntries(Object.entries(init?.headers ?? {}))
           return jsonResponse({ data: [{ index: 0, embedding: [1, 2, 3] }] })
         }) as FetchFn
 
@@ -300,13 +309,14 @@ describe('OmlxEmbeddingProvider', () => {
           throw new Error('fetch failed: ECONNREFUSED')
         }) as FetchFn
 
-        await assert.rejects(
-          () => omlxEmbeddingProvider.embed(['test']),
-          /ECONNREFUSED/
-        )
+        await assert.rejects(() => omlxEmbeddingProvider.embed(['test']), /ECONNREFUSED/)
 
         // After connection loss, provider should be marked not ready
-        assert.equal(omlxEmbeddingProvider.isReady, false, 'should be marked not-ready after connection loss')
+        assert.equal(
+          omlxEmbeddingProvider.isReady,
+          false,
+          'should be marked not-ready after connection loss'
+        )
       } finally {
         global.fetch = originalFetch
         internals._isReady = false

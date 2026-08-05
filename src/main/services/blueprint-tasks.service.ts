@@ -62,6 +62,8 @@ export class BlueprintTasksService extends EventEmitter {
     // BP-CHAIN-TASKS-REVIEW: Method-local (not instance field) to avoid race across concurrent workspaces.
     let pendingReviewDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
     let cleanupAskUser: (() => void) | undefined
+    // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
+    let syntheticConvId: string | undefined
 
     try {
       // 1. Pipeline + DB state
@@ -119,7 +121,6 @@ export class BlueprintTasksService extends EventEmitter {
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
       const tasksPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
       const priorConvId = tasksPhaseRec?.conversationId
-      let syntheticConvId: string
       if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
         const priorConv = conversationRepository.findById(priorConvId)
         const currentProvider = modelConfigService.getProvider(workspacePath)
@@ -166,7 +167,7 @@ export class BlueprintTasksService extends EventEmitter {
       }
 
       // 7. Parse output
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
       const completion = parsePhaseCompletionBlock(text, 'tasks') ?? undefined
       const tasksJson = parseBlueprintTasks(text)
 
@@ -243,7 +244,7 @@ export class BlueprintTasksService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session?.getStreamedContent()
+      const partialText = session?.getStreamedContent(syntheticConvId)
       if (partialText && tasksPhase) {
         blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
           type: 'tasks-partial',

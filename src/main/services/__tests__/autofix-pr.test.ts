@@ -60,9 +60,7 @@ describe('autofix-pr prompt generation', () => {
       )
       sections.push('2. Address each review comment by making the requested change')
       sections.push('3. Run the project tests to verify your fixes')
-      sections.push(
-        '4. Do NOT create a new commit — just fix the files. I will handle the commit.'
-      )
+      sections.push('4. Do NOT create a new commit — just fix the files. I will handle the commit.')
     }
 
     return sections.join('\n')
@@ -156,9 +154,7 @@ describe('autofix-pr prompt generation', () => {
     const prompt = buildPromptSections({
       prNumber: 7,
       failedChecks: [],
-      reviewComments: [
-        { author: 'user', body: 'General comment', path: 'README.md', line: null }
-      ]
+      reviewComments: [{ author: 'user', body: 'General comment', path: 'README.md', line: null }]
     })
 
     assert.ok(prompt.includes('`README.md`'))
@@ -195,9 +191,7 @@ describe('autofix-pr context shape', () => {
       prNumber: 42,
       prTitle: 'PR #42',
       failedChecks: [{ name: 'lint', summary: 'error' }],
-      reviewComments: [
-        { author: 'reviewer', body: 'fix this', path: 'src/a.ts', line: 10 }
-      ]
+      reviewComments: [{ author: 'reviewer', body: 'fix this', path: 'src/a.ts', line: 10 }]
     }
 
     assert.equal(context.prNumber, 42)

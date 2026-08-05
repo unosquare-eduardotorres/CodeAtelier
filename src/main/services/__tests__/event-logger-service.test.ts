@@ -23,7 +23,9 @@ function createSequenceCounter() {
       counters.set(sessionId, current + 1)
       return current + 1
     },
-    reset() { counters.clear() }
+    reset() {
+      counters.clear()
+    }
   }
 }
 

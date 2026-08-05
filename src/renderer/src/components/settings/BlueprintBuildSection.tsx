@@ -1,4 +1,4 @@
-import { useAppPreferenceActions, useParallelBuildAgents, useLeanBuildMcp, useMaxStreamLifetimeMin } from '@renderer/store'
+import { useAppPreferenceActions, useParallelBuildAgents, useLeanBuildMcp, useBlueprintAutoMode, useMaxStreamLifetimeMin } from '@renderer/store'
 
 const AGENT_OPTIONS = [1, 2, 3, 4, 5, 6] as const
 const LIFETIME_OPTIONS = [10, 15, 30, 45, 60, 120] as const
@@ -6,6 +6,7 @@ const LIFETIME_OPTIONS = [10, 15, 30, 45, 60, 120] as const
 export default function BlueprintBuildSection(): React.JSX.Element {
   const current = useParallelBuildAgents()
   const leanMcp = useLeanBuildMcp()
+  const autoMode = useBlueprintAutoMode()
   const lifetimeMin = useMaxStreamLifetimeMin()
   const { setPreference } = useAppPreferenceActions()
 
@@ -62,6 +63,35 @@ export default function BlueprintBuildSection(): React.JSX.Element {
             <span
               className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
                 leanMcp ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-text-primary">Auto Mode</h4>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Bypass permission prompts during BUILD and VERIFY phases.
+              All file writes and shell commands execute without asking.
+              You already approve execution when starting the blueprint.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              void setPreference('blueprintAutoMode', !autoMode).catch(console.error)
+            }}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+              autoMode ? 'bg-primary' : 'bg-border-muted'
+            }`}
+            role="switch"
+            aria-checked={autoMode}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                autoMode ? 'translate-x-4' : 'translate-x-0'
               }`}
             />
           </button>

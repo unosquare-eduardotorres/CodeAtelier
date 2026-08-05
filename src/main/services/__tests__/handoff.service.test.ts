@@ -14,10 +14,12 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import type {
-  HandoffEnvelope,
+import type { HandoffEnvelope } from '../../../shared/handoff-types'
+import {
+  MAX_CHAIN_DEPTH,
+  MAX_ENVELOPE_SIZE_BYTES,
+  HANDOFF_TTL_DAYS
 } from '../../../shared/handoff-types'
-import { MAX_CHAIN_DEPTH, MAX_ENVELOPE_SIZE_BYTES, HANDOFF_TTL_DAYS } from '../../../shared/handoff-types'
 import { calculateConfidence } from '../handoff-adapters/base.adapter'
 import { grillAdapter } from '../handoff-adapters/grill.adapter'
 import type { GrillAdapterInput } from '../handoff-adapters/grill.adapter'
@@ -60,7 +62,7 @@ function makeBaseEnvelope(overrides: Partial<HandoffEnvelope> = {}): HandoffEnve
     priority: 'medium',
     createdAt: new Date().toISOString(),
     createdBy: 'system',
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -68,7 +70,7 @@ const BASE_ADAPTER_INPUT = {
   workspaceId: 'ws-1',
   target: 'chat' as const,
   sourceSessionId: 'session-1',
-  createdBy: 'system' as const,
+  createdBy: 'system' as const
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -102,14 +104,14 @@ describe('calculateConfidence', () => {
 
   test('adds 0.1 for decisions', () => {
     const confidence = calculateConfidence({
-      decisions: [{ what: 'test', why: 'reason' }],
+      decisions: [{ what: 'test', why: 'reason' }]
     })
     assert.equal(confidence, 0.6)
   })
 
   test('adds 0.1 for completedWork', () => {
     const confidence = calculateConfidence({
-      completedWork: [{ title: 'step', outcome: 'done' }],
+      completedWork: [{ title: 'step', outcome: 'done' }]
     })
     assert.equal(confidence, 0.6)
   })
@@ -120,7 +122,7 @@ describe('calculateConfidence', () => {
       decisions: [{ what: 'a', why: 'b' }],
       completedWork: [{ title: 'c', outcome: 'd' }],
       constraints: ['e'],
-      risks: [{ risk: 'f', severity: 'medium' }],
+      risks: [{ risk: 'f', severity: 'medium' }]
     })
     assert.equal(confidence, 1.0)
   })
@@ -131,7 +133,7 @@ describe('calculateConfidence', () => {
 describe('redactEnvelope', () => {
   test('redacts API keys in intent', () => {
     const envelope = makeBaseEnvelope({
-      intent: 'Using key sk-ant-abc123defghijklmnopqrst',
+      intent: 'Using key sk-ant-abc123defghijklmnopqrst'
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(!redacted.intent.includes('sk-ant-abc123defghijklmnopqrst'))
@@ -140,7 +142,7 @@ describe('redactEnvelope', () => {
 
   test('redacts email addresses in contextSummary', () => {
     const envelope = makeBaseEnvelope({
-      contextSummary: 'Contact user@example.com for details',
+      contextSummary: 'Contact user@example.com for details'
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(!redacted.contextSummary.includes('user@example.com'))
@@ -149,7 +151,7 @@ describe('redactEnvelope', () => {
 
   test('normalizes absolute paths to relative', () => {
     const envelope = makeBaseEnvelope({
-      filesToReadFirst: ['/Users/john/project/src/app.ts'],
+      filesToReadFirst: ['/Users/john/project/src/app.ts']
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(!redacted.filesToReadFirst[0].includes('/Users/john'))
@@ -158,10 +160,12 @@ describe('redactEnvelope', () => {
 
   test('redacts GitHub tokens in decisions', () => {
     const envelope = makeBaseEnvelope({
-      decisions: [{
-        what: 'Use token ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkL',
-        why: 'For authentication',
-      }],
+      decisions: [
+        {
+          what: 'Use token ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkL',
+          why: 'For authentication'
+        }
+      ]
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(redacted.decisions[0].what.includes('[REDACTED:github-token]'))
@@ -169,7 +173,7 @@ describe('redactEnvelope', () => {
 
   test('does not redact short strings that look like key prefixes', () => {
     const envelope = makeBaseEnvelope({
-      intent: 'Variable sk_color is set',
+      intent: 'Variable sk_color is set'
     })
     const redacted = redactEnvelope(envelope)
     assert.equal(redacted.intent, 'Variable sk_color is set')
@@ -177,7 +181,7 @@ describe('redactEnvelope', () => {
 
   test('redacts secrets in constraints array', () => {
     const envelope = makeBaseEnvelope({
-      constraints: ['API key: sk-ant-aaaabbbbccccddddeeeefffff'],
+      constraints: ['API key: sk-ant-aaaabbbbccccddddeeeefffff']
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(redacted.constraints[0].includes('[REDACTED:anthropic-key]'))
@@ -191,7 +195,7 @@ describe('renderEnvelopeMarkdown', () => {
     const envelope = makeBaseEnvelope({
       completedWork: [{ title: 'Step 1', outcome: 'Done' }],
       remainingWork: [{ title: 'Step 2', description: 'Todo', priority: 'high' }],
-      decisions: [{ what: 'Choice A', why: 'Reason' }],
+      decisions: [{ what: 'Choice A', why: 'Reason' }]
     })
     const compact = renderEnvelopeMarkdown(envelope, 'compact')
     assert.ok(compact.length <= 500, `Compact should be ≤500 chars, got ${compact.length}`)
@@ -201,7 +205,7 @@ describe('renderEnvelopeMarkdown', () => {
   test('standard format includes intent and context', () => {
     const envelope = makeBaseEnvelope({
       contextSummary: 'Detailed context here',
-      remainingWork: [{ title: 'Fix bug', description: 'In module X', priority: 'high' }],
+      remainingWork: [{ title: 'Fix bug', description: 'In module X', priority: 'high' }]
     })
     const standard = renderEnvelopeMarkdown(envelope, 'standard')
     assert.ok(standard.includes('Test handoff intent'))
@@ -218,7 +222,7 @@ describe('renderEnvelopeMarkdown', () => {
       risks: [{ risk: 'Breaking change', severity: 'high', mitigation: 'Add tests' }],
       artifacts: [{ type: 'plan', path: 'plan.md', description: 'The plan' }],
       filesToReadFirst: ['src/app.ts'],
-      commandsToRunFirst: ['npm test'],
+      commandsToRunFirst: ['npm test']
     })
     const full = renderEnvelopeMarkdown(envelope, 'full')
     assert.ok(full.includes('Completed Work'))
@@ -267,7 +271,7 @@ describe('resolveTargetAction', () => {
   test('goals target resolves to GoalsTargetAction', () => {
     const envelope = makeBaseEnvelope({
       target: 'goals',
-      remainingWork: [{ title: 'Goal 1', description: 'Do X', priority: 'high' }],
+      remainingWork: [{ title: 'Goal 1', description: 'Do X', priority: 'high' }]
     })
     const action = resolveTargetAction(envelope)
     assert.equal(action.type, 'goals')
@@ -279,7 +283,7 @@ describe('resolveTargetAction', () => {
   test('chat target with remainingWork uses plan mode', () => {
     const envelope = makeBaseEnvelope({
       target: 'chat',
-      remainingWork: [{ title: 'Step', description: 'Do', priority: 'medium' }],
+      remainingWork: [{ title: 'Step', description: 'Do', priority: 'medium' }]
     })
     const action = resolveTargetAction(envelope)
     if (action.type === 'chat') {
@@ -305,38 +309,54 @@ describe('grillAdapter.toEnvelope', () => {
     session: {
       id: 'grill-session-1',
       trackScores: [
-        { trackId: 'requirements', score: 8, scoreLabel: 'Strong', iterationCount: 2, lastFeedback: 'Good' },
-        { trackId: 'architecture', score: 7, scoreLabel: 'Good', iterationCount: 1, lastFeedback: 'OK' },
+        {
+          trackId: 'requirements',
+          score: 8,
+          scoreLabel: 'Strong',
+          iterationCount: 2,
+          lastFeedback: 'Good'
+        },
+        {
+          trackId: 'architecture',
+          score: 7,
+          scoreLabel: 'Good',
+          iterationCount: 1,
+          lastFeedback: 'OK'
+        }
       ],
       iterationCount: 3,
-      status: 'completed',
+      status: 'completed'
     },
     plan: {
       version: 1,
       title: 'Dark Mode Implementation',
       summary: 'Implement dark mode using CSS variables',
       goalType: 'feature',
-      decisions: [{
-        trackId: 'requirements',
-        trackName: 'Requirements',
-        score: 8,
-        items: [{ question: 'Scope?', answer: 'Full app', rationale: 'Users requested it' }],
-      }],
-      items: [{
-        id: 'item-1',
-        title: 'Add CSS variables',
-        description: 'Define CSS custom properties for theming',
-        scope: 'frontend',
-        files: ['src/styles/theme.css', 'src/styles/dark.css'],
-        dependsOn: [],
-        includesTests: false,
-      }],
+      decisions: [
+        {
+          trackId: 'requirements',
+          trackName: 'Requirements',
+          score: 8,
+          items: [{ question: 'Scope?', answer: 'Full app', rationale: 'Users requested it' }]
+        }
+      ],
+      items: [
+        {
+          id: 'item-1',
+          title: 'Add CSS variables',
+          description: 'Define CSS custom properties for theming',
+          scope: 'frontend',
+          files: ['src/styles/theme.css', 'src/styles/dark.css'],
+          dependsOn: [],
+          includesTests: false
+        }
+      ],
       risks: ['Breaking existing styles'],
       constraints: ['Must work in Electron'],
       originalDescription: 'Add dark mode',
-      requirementDocument: 'Detailed spec...',
+      requirementDocument: 'Detailed spec...'
     },
-    planRecordId: 'plan-123',
+    planRecordId: 'plan-123'
   }
 
   test('creates valid envelope with correct source', () => {
@@ -403,21 +423,36 @@ describe('auditAdapter.toEnvelope', () => {
   const input: AuditAdapterInput = {
     auditRunId: 'audit-run-1',
     overallScore: 6,
-    results: [{
-      id: 'result-1',
-      auditRunId: 'audit-run-1',
-      trackId: 'security' as any,
-      score: 5,
-      status: 'completed' as any,
-      findings: [
-        { id: 'f1', severity: 'critical', title: 'SQL injection', description: 'Unsanitized input', filePath: 'src/db.ts', recommendation: 'Use parameterized queries' },
-        { id: 'f2', severity: 'medium', title: 'Missing CSRF', description: 'No CSRF token', recommendation: 'Add CSRF middleware' },
-      ],
-      summary: 'Security audit found critical issues',
-      skillsUsed: [],
-      startedAt: '2024-01-01',
-      completedAt: '2024-01-01',
-    }],
+    results: [
+      {
+        id: 'result-1',
+        auditRunId: 'audit-run-1',
+        trackId: 'security' as any,
+        score: 5,
+        status: 'completed' as any,
+        findings: [
+          {
+            id: 'f1',
+            severity: 'critical',
+            title: 'SQL injection',
+            description: 'Unsanitized input',
+            filePath: 'src/db.ts',
+            recommendation: 'Use parameterized queries'
+          },
+          {
+            id: 'f2',
+            severity: 'medium',
+            title: 'Missing CSRF',
+            description: 'No CSRF token',
+            recommendation: 'Add CSRF middleware'
+          }
+        ],
+        summary: 'Security audit found critical issues',
+        skillsUsed: [],
+        startedAt: '2024-01-01',
+        completedAt: '2024-01-01'
+      }
+    ]
   }
 
   test('creates envelope with critical findings as high-priority remaining work', () => {
@@ -464,15 +499,15 @@ describe('councilAdapter.toEnvelope', () => {
           clashes: 'Disagree on CSS-in-JS vs CSS variables',
           blindSpots: 'Accessibility not addressed',
           recommendation: 'Use CSS variables for better performance',
-          oneThingFirst: 'Define the color palette first',
+          oneThingFirst: 'Define the color palette first'
         },
         revisions: [],
         individualScores: { architect: 9, security: 7 } as any,
-        rankingsMatrix: {},
+        rankingsMatrix: {}
       },
       memberStatuses: {} as any,
-      createdAt: '2024-01-01',
-    },
+      createdAt: '2024-01-01'
+    }
   }
 
   test('creates envelope with verdict data', () => {
@@ -506,29 +541,45 @@ describe('chatAdapter.toEnvelope', () => {
       type: 'chat',
       createdAt: '2024-01-01',
       status: 'active',
-      llmProvider: 'anthropic' as any,
+      llmProvider: 'anthropic' as any
     },
     recentMessages: [
-      { id: 'm1', conversationId: 'conv-1', role: 'user', contentMd: 'Please add dark mode', attachmentsJson: '[]', createdAt: '2024-01-01' },
-      { id: 'm2', conversationId: 'conv-1', role: 'specialist', contentMd: 'I can help with that', attachmentsJson: '[]', createdAt: '2024-01-01' },
+      {
+        id: 'm1',
+        conversationId: 'conv-1',
+        role: 'user',
+        contentMd: 'Please add dark mode',
+        attachmentsJson: '[]',
+        createdAt: '2024-01-01'
+      },
+      {
+        id: 'm2',
+        conversationId: 'conv-1',
+        role: 'specialist',
+        contentMd: 'I can help with that',
+        attachmentsJson: '[]',
+        createdAt: '2024-01-01'
+      }
     ],
     plan: {
       title: 'Dark Mode Plan',
       summary: 'Add dark mode using CSS variables',
-      phases: [{
-        id: 1,
-        title: 'Define variables',
-        complexity: 3,
-        fileCount: 2,
-        risk: 'low',
-        description: 'Define CSS custom properties',
-      }],
+      phases: [
+        {
+          id: 1,
+          title: 'Define variables',
+          complexity: 3,
+          fileCount: 2,
+          risk: 'low',
+          description: 'Define CSS custom properties'
+        }
+      ],
       files: ['src/styles/theme.css'],
       decisions: [{ what: 'Use CSS variables', why: 'Better performance' }],
-      constraints: ['Must work in Electron'],
+      constraints: ['Must work in Electron']
     },
     planRecordId: 'plan-456',
-    focusDescription: 'Focus on the CSS variable setup',
+    focusDescription: 'Focus on the CSS variable setup'
   }
 
   test('uses focusDescription as intent when provided', () => {
@@ -566,7 +617,7 @@ describe('mpaAdapter.toEnvelope', () => {
       originalPlanMd: 'Build three features',
       status: 'completed',
       createdAt: '2024-01-01',
-      completedAt: '2024-01-02',
+      completedAt: '2024-01-02'
     },
     goals: [
       {
@@ -576,9 +627,9 @@ describe('mpaAdapter.toEnvelope', () => {
           outcome: 'Auth system working',
           successCriteria: ['Login works', 'Logout works'],
           goalType: 'feature',
-          phases: ['plan', 'execute', 'verify'] as any,
+          phases: ['plan', 'execute', 'verify'] as any
         },
-        status: 'completed',
+        status: 'completed'
       },
       {
         goal: {
@@ -587,11 +638,11 @@ describe('mpaAdapter.toEnvelope', () => {
           outcome: 'Dashboard renders',
           successCriteria: ['Charts load', 'Data refreshes'],
           goalType: 'feature',
-          phases: ['plan', 'execute', 'verify'] as any,
+          phases: ['plan', 'execute', 'verify'] as any
         },
-        status: 'failed',
-      },
-    ],
+        status: 'failed'
+      }
+    ]
   }
 
   test('intent mentions failed goals', () => {
@@ -638,14 +689,64 @@ describe('blueprintAdapter.toEnvelope', () => {
       updatedAt: '2024-01-02',
       completedAt: null,
       phases: [
-        { id: 'p1', blueprintId: 'bp-1', phase: 'specify', status: 'complete', conversationId: null, artifactsJson: [{ type: 'spec', filePath: 'spec.md' }], contextSnapshot: null, startedAt: '2024-01-01', completedAt: '2024-01-01' },
-        { id: 'p2', blueprintId: 'bp-1', phase: 'build', status: 'active', conversationId: null, artifactsJson: [], contextSnapshot: null, startedAt: '2024-01-02', completedAt: null },
+        {
+          id: 'p1',
+          blueprintId: 'bp-1',
+          phase: 'specify',
+          status: 'complete',
+          conversationId: null,
+          artifactsJson: [{ type: 'spec', filePath: 'spec.md' }],
+          contextSnapshot: null,
+          startedAt: '2024-01-01',
+          completedAt: '2024-01-01'
+        },
+        {
+          id: 'p2',
+          blueprintId: 'bp-1',
+          phase: 'build',
+          status: 'active',
+          conversationId: null,
+          artifactsJson: [],
+          contextSnapshot: null,
+          startedAt: '2024-01-02',
+          completedAt: null
+        }
       ],
       tasks: [
-        { id: 't1', blueprintId: 'bp-1', taskId: 'T-1', wave: 1, userStory: 'As user', description: 'Build component', filePathsJson: ['src/comp.tsx'], isParallel: false, dependsOnJson: [], status: 'complete', executorRunId: null, startedAt: '2024-01-01', completedAt: '2024-01-01', completionJson: null },
-        { id: 't2', blueprintId: 'bp-1', taskId: 'T-2', wave: 2, userStory: 'As user', description: 'Add tests', filePathsJson: ['src/comp.test.ts'], isParallel: false, dependsOnJson: ['T-1'], status: 'pending', executorRunId: null, startedAt: null, completedAt: null, completionJson: null },
-      ],
-    },
+        {
+          id: 't1',
+          blueprintId: 'bp-1',
+          taskId: 'T-1',
+          wave: 1,
+          userStory: 'As user',
+          description: 'Build component',
+          filePathsJson: ['src/comp.tsx'],
+          isParallel: false,
+          dependsOnJson: [],
+          status: 'complete',
+          executorRunId: null,
+          startedAt: '2024-01-01',
+          completedAt: '2024-01-01',
+          completionJson: null
+        },
+        {
+          id: 't2',
+          blueprintId: 'bp-1',
+          taskId: 'T-2',
+          wave: 2,
+          userStory: 'As user',
+          description: 'Add tests',
+          filePathsJson: ['src/comp.test.ts'],
+          isParallel: false,
+          dependsOnJson: ['T-1'],
+          status: 'pending',
+          executorRunId: null,
+          startedAt: null,
+          completedAt: null,
+          completionJson: null
+        }
+      ]
+    }
   }
 
   test('extracts completed phases as completedWork', () => {
@@ -676,7 +777,7 @@ describe('blueprintAdapter.toEnvelope', () => {
 describe('redactEnvelope — env-api-key', () => {
   test('redacts ANTHROPIC_API_KEY=value assignments', () => {
     const envelope = makeBaseEnvelope({
-      contextSummary: 'Set ANTHROPIC_API_KEY=sk-ant-secret123456789012345',
+      contextSummary: 'Set ANTHROPIC_API_KEY=sk-ant-secret123456789012345'
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(!redacted.contextSummary.includes('sk-ant-secret'))
@@ -685,7 +786,7 @@ describe('redactEnvelope — env-api-key', () => {
 
   test('redacts OPENAI_API_KEY=value assignments', () => {
     const envelope = makeBaseEnvelope({
-      constraints: ['OPENAI_API_KEY="sk-proj-abcdef1234567890"'],
+      constraints: ['OPENAI_API_KEY="sk-proj-abcdef1234567890"']
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(!redacted.constraints[0].includes('sk-proj-abcdef'))
@@ -711,8 +812,8 @@ describe('redactEnvelope — extensions & tools', () => {
     const envelope = makeBaseEnvelope({
       extensions: {
         apiKey: 'sk-ant-secretkey12345678901234567',
-        numericValue: 42,
-      },
+        numericValue: 42
+      }
     })
     const redacted = redactEnvelope(envelope)
     const ext = redacted.extensions as Record<string, unknown>
@@ -723,7 +824,7 @@ describe('redactEnvelope — extensions & tools', () => {
 
   test('redacts secrets in suggestedTools', () => {
     const envelope = makeBaseEnvelope({
-      suggestedTools: ['read_file', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.signature'],
+      suggestedTools: ['read_file', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.signature']
     })
     const redacted = redactEnvelope(envelope)
     assert.ok(!redacted.suggestedTools[1].includes('eyJhbGciOiJ'))
@@ -733,7 +834,7 @@ describe('redactEnvelope — extensions & tools', () => {
 describe('renderStandard — risks', () => {
   test('standard format includes risks section', () => {
     const envelope = makeBaseEnvelope({
-      risks: [{ risk: 'Breaking change in API', severity: 'high', mitigation: 'Add tests' }],
+      risks: [{ risk: 'Breaking change in API', severity: 'high', mitigation: 'Add tests' }]
     })
     const standard = renderEnvelopeMarkdown(envelope, 'standard')
     assert.ok(standard.includes('Risks'))
@@ -745,12 +846,15 @@ describe('resolveTargetAction — audit focusAreas cap', () => {
   test('audit target caps focusAreas', () => {
     const manyRisks = Array.from({ length: 20 }, (_, i) => ({
       risk: `Risk ${i}`,
-      severity: 'medium' as const,
+      severity: 'medium' as const
     }))
     const envelope = makeBaseEnvelope({ target: 'audit', risks: manyRisks })
     const action = resolveTargetAction(envelope)
     if (action.type === 'audit') {
-      assert.ok(action.focusAreas.length <= 15, `Expected ≤15 focusAreas, got ${action.focusAreas.length}`)
+      assert.ok(
+        action.focusAreas.length <= 15,
+        `Expected ≤15 focusAreas, got ${action.focusAreas.length}`
+      )
     }
   })
 })
@@ -762,7 +866,7 @@ describe('resolveTargetAction — blueprint and audit', () => {
     const envelope = makeBaseEnvelope({
       target: 'blueprint',
       contextSummary: 'Build a new feature',
-      decisions: [{ what: 'Use React', why: 'Team preference' }],
+      decisions: [{ what: 'Use React', why: 'Team preference' }]
     })
     const action = resolveTargetAction(envelope)
     assert.equal(action.type, 'blueprint')
@@ -776,7 +880,7 @@ describe('resolveTargetAction — blueprint and audit', () => {
     const envelope = makeBaseEnvelope({
       target: 'audit',
       risks: [{ risk: 'SQL injection', severity: 'critical' }],
-      remainingWork: [{ title: 'Fix auth', description: 'Auth bypass', priority: 'high' }],
+      remainingWork: [{ title: 'Fix auth', description: 'Auth bypass', priority: 'high' }]
     })
     const action = resolveTargetAction(envelope)
     assert.equal(action.type, 'audit')
@@ -792,7 +896,7 @@ describe('resolveTargetAction — blueprint and audit', () => {
 describe('renderFull — suggestedSkills', () => {
   test('full format includes suggestedSkills section', () => {
     const envelope = makeBaseEnvelope({
-      suggestedSkills: ['code-review', 'security-audit'],
+      suggestedSkills: ['code-review', 'security-audit']
     })
     const full = renderEnvelopeMarkdown(envelope, 'full')
     assert.ok(full.includes('Suggested Skills'))
@@ -803,7 +907,7 @@ describe('renderFull — suggestedSkills', () => {
 describe('renderStandard — completedWork', () => {
   test('standard format includes completedWork section', () => {
     const envelope = makeBaseEnvelope({
-      completedWork: [{ title: 'Built auth module', outcome: 'Login/logout working' }],
+      completedWork: [{ title: 'Built auth module', outcome: 'Login/logout working' }]
     })
     const standard = renderEnvelopeMarkdown(envelope, 'standard')
     assert.ok(standard.includes('Completed Work'))
@@ -816,8 +920,8 @@ describe('redactExtensions — nested values', () => {
     const envelope = makeBaseEnvelope({
       extensions: {
         config: { apiKey: 'sk-ant-secretkey12345678901234567' },
-        tags: ['normal', 'ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkL'],
-      },
+        tags: ['normal', 'ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkL']
+      }
     })
     const redacted = redactEnvelope(envelope)
     const ext = redacted.extensions as Record<string, unknown>
@@ -835,8 +939,8 @@ describe('renderFull — codeAnchors', () => {
     const envelope = makeBaseEnvelope({
       codeAnchors: [
         { file: 'src/db.ts', startLine: 42, endLine: 55, title: 'Database migration logic' },
-        { file: 'src/auth.ts', startLine: 10, endLine: 20, title: 'Auth middleware' },
-      ],
+        { file: 'src/auth.ts', startLine: 10, endLine: 20, title: 'Auth middleware' }
+      ]
     })
     const full = renderEnvelopeMarkdown(envelope, 'full')
     assert.ok(full.includes('Code Anchors'))

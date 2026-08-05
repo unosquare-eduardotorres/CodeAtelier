@@ -36,7 +36,10 @@ describe('validate-args — requireObject', () => {
   })
 
   test('throws_on_undefined', () => {
-    assert.throws(() => requireObject(undefined, 'CH'), /expected an object argument, got undefined/)
+    assert.throws(
+      () => requireObject(undefined, 'CH'),
+      /expected an object argument, got undefined/
+    )
   })
 
   test('throws_on_number', () => {
@@ -188,7 +191,10 @@ describe('validate-args — optionalNullableString', () => {
   })
 
   test('throws_on_number', () => {
-    assert.throws(() => optionalNullableString({ s: 42 }, 's', 'CH'), /must be a string, null, or omitted/)
+    assert.throws(
+      () => optionalNullableString({ s: 42 }, 's', 'CH'),
+      /must be a string, null, or omitted/
+    )
   })
 })
 
@@ -205,7 +211,10 @@ describe('validate-args — requireStringArray', () => {
   })
 
   test('throws_on_non_array', () => {
-    assert.throws(() => requireStringArray({ tags: 'not-array' }, 'tags', 'CH'), /must be a non-empty array/)
+    assert.throws(
+      () => requireStringArray({ tags: 'not-array' }, 'tags', 'CH'),
+      /must be a non-empty array/
+    )
   })
 
   test('throws_on_missing_field', () => {
@@ -231,7 +240,10 @@ describe('validate-args — requirePlainObject', () => {
   })
 
   test('throws_on_null_field', () => {
-    assert.throws(() => requirePlainObject({ config: null }, 'config', 'CH'), /must be a plain object/)
+    assert.throws(
+      () => requirePlainObject({ config: null }, 'config', 'CH'),
+      /must be a plain object/
+    )
   })
 
   test('throws_on_undefined_field', () => {
@@ -239,11 +251,17 @@ describe('validate-args — requirePlainObject', () => {
   })
 
   test('throws_on_array_field', () => {
-    assert.throws(() => requirePlainObject({ config: [1, 2] }, 'config', 'CH'), /must be a plain object/)
+    assert.throws(
+      () => requirePlainObject({ config: [1, 2] }, 'config', 'CH'),
+      /must be a plain object/
+    )
   })
 
   test('throws_on_string_field', () => {
-    assert.throws(() => requirePlainObject({ config: 'str' }, 'config', 'CH'), /must be a plain object/)
+    assert.throws(
+      () => requirePlainObject({ config: 'str' }, 'config', 'CH'),
+      /must be a plain object/
+    )
   })
 })
 

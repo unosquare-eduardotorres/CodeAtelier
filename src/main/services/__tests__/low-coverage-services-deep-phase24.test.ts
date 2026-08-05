@@ -7,7 +7,7 @@
  * Run: tsx src/main/services/__tests__/low-coverage-services-deep-phase24.test.ts
  */
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync, createSpy } from './test-harness'
+import { test, describe, summaryAsync } from './test-harness'
 import { setupElectronStub } from './electron-stub'
 
 setupElectronStub()
@@ -17,13 +17,10 @@ setupElectronStub()
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('agent-recovery-manager — service shape', () => {
-  test('exports agentRecoveryManager singleton', async () => {
+  test('exports AgentRecoveryManager class', async () => {
     try {
       const mod = await import('../../services/agent-recovery-manager')
-      assert.ok(mod.agentRecoveryManager !== undefined)
-      // Verify key methods exist
-      const mgr = mod.agentRecoveryManager
-      assert.equal(typeof mgr.handleCrash, 'function')
+      assert.equal(typeof mod.AgentRecoveryManager, 'function')
     } catch {
       // May fail to import in test env
       assert.ok(true, 'agent-recovery-manager may not load')
@@ -38,7 +35,8 @@ describe('agent-recovery-manager — service shape', () => {
 describe('memory-feed.service — service shape', () => {
   test('exports memoryFeedService singleton', async () => {
     try {
-      const mod = await import('../../services/memory-feed.service')
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require('../../services/memory-feed.service')
       assert.ok(mod.memoryFeedService !== undefined)
     } catch {
       assert.ok(true, 'memory-feed.service may not load')
@@ -137,10 +135,8 @@ describe('audit-agent.service — service shape and state', () => {
       assert.ok(mod.auditAgentService !== undefined)
       // Check key methods
       const svc = mod.auditAgentService
-      if (typeof svc.isRunning === 'function') {
-        const running = svc.isRunning()
-        assert.equal(typeof running, 'boolean')
-        assert.equal(running, false, 'Should not be running initially')
+      if (typeof svc.isRunning === 'boolean') {
+        assert.equal(svc.isRunning, false, 'Should not be running initially')
       }
     } catch {
       assert.ok(true, 'audit-agent.service may not load')
@@ -157,8 +153,8 @@ describe('council.service — deep state checks', () => {
     try {
       const mod = await import('../../services/council.service')
       const svc = mod.councilService
-      if (typeof svc.isRunning === 'function') {
-        assert.equal(svc.isRunning(), false)
+      if (typeof svc.isRunning === 'boolean') {
+        assert.equal(svc.isRunning, false)
       }
     } catch {
       assert.ok(true, 'council.service may not load')
@@ -187,8 +183,8 @@ describe('mpa-orchestration.service — deep state checks', () => {
     try {
       const mod = await import('../../services/mpa-orchestration.service')
       const svc = mod.mpaOrchestrationService
-      if (typeof svc.isRunning === 'function') {
-        assert.equal(svc.isRunning(), false)
+      if (typeof svc.isRunning === 'boolean') {
+        assert.equal(svc.isRunning, false)
       }
     } catch {
       assert.ok(true, 'mpa-orchestration.service may not load')

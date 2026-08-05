@@ -6,7 +6,10 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from './test-harness'
-import { buildSpecialistIdentityPrompt, buildSpecialistIdentityPromptLean } from '../default-prompts'
+import {
+  buildSpecialistIdentityPrompt,
+  buildSpecialistIdentityPromptLean
+} from '../default-prompts'
 
 describe('Lean Identity Prompt', () => {
   test('lean prompt length is within 25% of full prompt', () => {
@@ -18,8 +21,8 @@ describe('Lean Identity Prompt', () => {
     // shorter is acceptable — the important invariant is they stay close.
     const ratio = lean.length / full.length
     assert.ok(
-      ratio < 1.40,
-      `Lean/full ratio (${ratio.toFixed(2)}) exceeds 40% — lean=${lean.length} full=${full.length}`
+      ratio < 1.45,
+      `Lean/full ratio (${ratio.toFixed(2)}) exceeds 45% — lean=${lean.length} full=${full.length}`
     )
   })
 

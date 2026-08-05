@@ -269,7 +269,9 @@ describe('processAttachments', () => {
     const errorOps = {
       ...mockFileOps,
       isImageFile: () => false,
-      readFileContent: () => { throw new Error('Permission denied') }
+      readFileContent: () => {
+        throw new Error('Permission denied')
+      }
     }
     const result = processAttachments(['/path/secret.txt'], errorOps)
     assert.ok(result.textContent.includes('Failed to read'))
@@ -278,10 +280,7 @@ describe('processAttachments', () => {
   })
 
   test('multiple_attachments_all_processed', () => {
-    const result = processAttachments(
-      ['/path/a.png', '/path/b.ts', '/path/c.jpg'],
-      mockFileOps
-    )
+    const result = processAttachments(['/path/a.png', '/path/b.ts', '/path/c.jpg'], mockFileOps)
     assert.equal(result.images.length, 2) // two images
     assert.ok(result.textContent.includes('b.ts'))
   })
@@ -296,28 +295,36 @@ describe('processAttachments', () => {
 describe('forceResetIfStuck', () => {
   test('lock_false_sm_idle_no_abort', () => {
     let aborted = false
-    const didReset = forceResetIfStuck(false, true, () => { aborted = true })
+    const didReset = forceResetIfStuck(false, true, () => {
+      aborted = true
+    })
     assert.ok(!aborted)
     assert.ok(!didReset)
   })
 
   test('lock_true_triggers_abort', () => {
     let abortReason = ''
-    const didReset = forceResetIfStuck(true, true, (r) => { abortReason = r })
+    const didReset = forceResetIfStuck(true, true, (r) => {
+      abortReason = r
+    })
     assert.ok(didReset)
     assert.equal(abortReason, 'workspace-switch')
   })
 
   test('sm_not_idle_triggers_abort', () => {
     let aborted = false
-    const didReset = forceResetIfStuck(false, false, () => { aborted = true })
+    const didReset = forceResetIfStuck(false, false, () => {
+      aborted = true
+    })
     assert.ok(aborted)
     assert.ok(didReset)
   })
 
   test('both_stuck_triggers_abort', () => {
     let aborted = false
-    const didReset = forceResetIfStuck(true, false, () => { aborted = true })
+    const didReset = forceResetIfStuck(true, false, () => {
+      aborted = true
+    })
     assert.ok(aborted)
     assert.ok(didReset)
   })

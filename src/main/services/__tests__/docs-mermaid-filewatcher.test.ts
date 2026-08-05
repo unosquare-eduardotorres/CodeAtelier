@@ -18,7 +18,11 @@ function withTmpDir(fn: (dir: string) => void): void {
   try {
     fn(dir)
   } finally {
-    try { rmSync(dir, { recursive: true }) } catch {}
+    try {
+      rmSync(dir, { recursive: true })
+    } catch {
+      /* best-effort cleanup */
+    }
   }
 }
 
@@ -138,7 +142,9 @@ describe('mermaid.service — sanitizeMermaid (shared)', () => {
       const mod = await import('../../../shared/mermaid-sanitizers')
       const result = mod.sanitizeMermaid('')
       assert.equal(typeof result, 'string')
-    } catch {}
+    } catch {
+      /* module optional under test env */
+    }
   })
 })
 

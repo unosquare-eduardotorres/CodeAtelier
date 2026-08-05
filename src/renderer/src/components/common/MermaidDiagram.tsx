@@ -134,6 +134,7 @@ let renderCounter = 0
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 4
+const MIN_FIT_SCALE = 0.35
 const ZOOM_STEP_CLICK = 0.1
 const ZOOM_STEP_WHEEL = 0.05
 const FIT_PADDING = 16
@@ -170,11 +171,21 @@ export default function MermaidDiagram({
 
     if (sw === 0 || sh === 0) return
 
-    const fitScale = Math.min(1, vw / sw, vh / sh)
+    // Width is the primary constraint in narrow containers (side panels).
+    // Height is secondary — the user can pan vertically.
+    const widthFit = vw > 0 && sw > 0 ? vw / sw : 1
+    const heightFit = vh > 0 && sh > 0 ? vh / sh : 1
+    const fitScale = Math.max(MIN_FIT_SCALE, Math.min(1, widthFit, heightFit))
     setScale(fitScale)
+
+    // When the scale is clamped to MIN_FIT_SCALE, align to top-left
+    // instead of centering — avoids hiding content off-screen.
+    const fitsHorizontally = sw * fitScale <= vw + FIT_PADDING * 2
+    const fitsVertically = sh * fitScale <= vh + FIT_PADDING * 2
+
     setTranslate({
-      x: (vw + FIT_PADDING * 2 - sw * fitScale) / 2,
-      y: (vh + FIT_PADDING * 2 - sh * fitScale) / 2
+      x: fitsHorizontally ? (vw + FIT_PADDING * 2 - sw * fitScale) / 2 : FIT_PADDING,
+      y: fitsVertically ? (vh + FIT_PADDING * 2 - sh * fitScale) / 2 : FIT_PADDING,
     })
   }, [])
 
@@ -408,6 +419,7 @@ export default function MermaidDiagram({
         style={{
           cursor: isDragging ? 'grabbing' : 'grab',
           minHeight: '200px',
+          maxHeight: '60vh',
           backgroundColor: 'var(--color-surface-base)',
         }}
         onMouseDown={handleMouseDown}

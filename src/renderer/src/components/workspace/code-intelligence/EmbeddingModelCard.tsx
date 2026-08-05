@@ -32,9 +32,14 @@ export default function EmbeddingModelCard({
     window.open(url, '_blank')
   }
 
+  // Ollama provides an alternative embedding backend on non-Apple Silicon platforms
+  const isOllamaBackend = embeddingStatus?.backend === 'ollama'
+  const hasOllamaEmbedding = isOllamaBackend && embeddingStatus?.ollamaRunning
+
   // Determine operational state: covers both ready flag AND connected+loaded
   const isOperational = embeddingStatus?.ready ||
-    (embeddingStatus?.omlxRunning && embeddingStatus?.omlxEmbeddingModelLoaded)
+    (embeddingStatus?.omlxRunning && embeddingStatus?.omlxEmbeddingModelLoaded) ||
+    (hasOllamaEmbedding && !!embeddingStatus?.ollamaEmbeddingModel)
 
   // Determine status label and color
   let statusLabel = 'Not connected'
@@ -66,7 +71,9 @@ export default function EmbeddingModelCard({
         {/* Backend */}
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Backend</span>
-          <span className="text-text-body">oMLX (Apple Silicon native)</span>
+          <span className="text-text-body">
+            {isOllamaBackend ? 'Ollama' : 'oMLX (Apple Silicon native)'}
+          </span>
         </div>
 
         {/* Status */}
@@ -82,7 +89,9 @@ export default function EmbeddingModelCard({
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Model</span>
           <span className="text-text-body font-mono">
-            {embeddingStatus?.omlxEmbeddingModelId ?? 'None loaded'}
+            {isOllamaBackend
+              ? (embeddingStatus?.ollamaEmbeddingModel ?? 'None selected')
+              : (embeddingStatus?.omlxEmbeddingModelId ?? 'None loaded')}
           </span>
         </div>
 
@@ -90,13 +99,21 @@ export default function EmbeddingModelCard({
         <div className="flex items-baseline justify-between">
           <span className="text-text-secondary">Recommended</span>
           <span className="text-text-muted font-mono text-[10px] truncate max-w-[240px]">
-            {/* Match by suffix: server returns 'bge-m3-mlx-8bit', constant is 'mlx-community/bge-m3-mlx-8bit' */}
-            {embeddingStatus?.omlxEmbeddingModelId &&
+            {isOllamaBackend ? (
+              embeddingStatus?.ollamaEmbeddingModel ? (
+                <span className="text-success">✓ {embeddingStatus.ollamaEmbeddingModel}</span>
+              ) : (
+                'bge-m3 or nomic-embed-text'
+              )
+            ) : (
+              /* Match by suffix: server returns 'bge-m3-mlx-8bit', constant is 'mlx-community/bge-m3-mlx-8bit' */
+              embeddingStatus?.omlxEmbeddingModelId &&
               (OMLX_EMBEDDING.recommendedModel.id.endsWith(embeddingStatus.omlxEmbeddingModelId) ||
                embeddingStatus.omlxEmbeddingModelId.endsWith(OMLX_EMBEDDING.recommendedModel.modelName)) ? (
-              <span className="text-success">✓ Recommended model loaded</span>
-            ) : (
-              OMLX_EMBEDDING.recommendedModel.id
+                <span className="text-success">✓ Recommended model loaded</span>
+              ) : (
+                OMLX_EMBEDDING.recommendedModel.id
+              )
             )}
           </span>
         </div>
@@ -106,13 +123,15 @@ export default function EmbeddingModelCard({
       <div className="mt-4 flex items-center gap-2">
         {isOperational ? (
           <>
-            <button
-              onClick={handleOpenDashboard}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-md transition-colors"
-            >
-              <ExternalLink size={12} />
-              Open oMLX Dashboard
-            </button>
+            {!isOllamaBackend && (
+              <button
+                onClick={handleOpenDashboard}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary border border-border-default hover:bg-surface-hover rounded-md transition-colors"
+              >
+                <ExternalLink size={12} />
+                Open oMLX Dashboard
+              </button>
+            )}
             <button
               onClick={handleCheckConnection}
               disabled={isChecking}
@@ -131,32 +150,34 @@ export default function EmbeddingModelCard({
             onClick={onNavigateToModels}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors"
           >
-            Configure oMLX Connection →
+            Configure Embedding Connection →
           </button>
         )}
       </div>
 
-      {/* Apple Silicon warning */}
-      {isAppleSilicon === false && (
+      {/* Apple Silicon warning — only shown when oMLX backend is selected on non-Apple Silicon */}
+      {isAppleSilicon === false && !isOllamaBackend && (
         <div className="mt-3 flex items-start gap-2">
           <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
           <p className="text-xs text-text-muted leading-relaxed">
-            <span className="font-medium text-text-secondary">Apple Silicon required.</span>{' '}
-            oMLX only runs on Apple Silicon (M1/M2/M3/M4) Macs. Semantic search is not available on
-            Intel-based Macs.
+            <span className="font-medium text-text-secondary">Apple Silicon required for oMLX.</span>{' '}
+            Switch to the Ollama backend in Models to use semantic search on this platform.
           </p>
         </div>
       )}
 
       {/* Help text — only when NOT operational */}
-      {!isOperational && isAppleSilicon !== false && (
+      {!isOperational && !(isAppleSilicon === false && !isOllamaBackend) && (
         <p className="mt-3 text-xs text-text-muted leading-relaxed">
-          Install an embedding model in oMLX to enable semantic search. Open the oMLX admin
-          dashboard and download{' '}
-          <span className="font-mono text-text-secondary">
-            {OMLX_EMBEDDING.recommendedModel.id}
-          </span>{' '}
-          (~{OMLX_EMBEDDING.recommendedModel.estimatedSizeMB} MB).
+          {isOllamaBackend
+            ? 'Select an embedding model (e.g. bge-m3 or nomic-embed-text) in Models → Local Models → Ollama to enable semantic search.'
+            : <>Install an embedding model in oMLX to enable semantic search. Open the oMLX admin
+                dashboard and download{' '}
+                <span className="font-mono text-text-secondary">
+                  {OMLX_EMBEDDING.recommendedModel.id}
+                </span>{' '}
+                (~{OMLX_EMBEDDING.recommendedModel.estimatedSizeMB} MB).
+              </>}
         </p>
       )}
     </SettingsCard>

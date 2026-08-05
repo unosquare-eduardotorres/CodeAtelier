@@ -176,6 +176,8 @@ export class BlueprintSpecService extends EventEmitter {
     // BP-CHAIN-SPECIFY-CLARIFY: Method-local (not instance field) to avoid race across concurrent workspaces.
     let pendingClarifyDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
     let cleanupAskUser: (() => void) | undefined
+    // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
+    let syntheticConvId: string | undefined
 
     try {
       // Update pipeline state
@@ -313,7 +315,6 @@ export class BlueprintSpecService extends EventEmitter {
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
       const specPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
       const priorConvId = specPhaseRecord?.conversationId
-      let syntheticConvId: string
       if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
         // Guard: if model/provider changed between attempts, session resume is invalid
         const priorConv = conversationRepository.findById(priorConvId)
@@ -362,7 +363,7 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // 11. Get accumulated text and parse completion
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
       const completion = parsePhaseCompletionBlock(text, 'specify') ?? undefined
 
       // 12. Save spec artifact to phase
@@ -449,7 +450,7 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // Still save partial output regardless of cancel/fail
-      const partialText = session?.getStreamedContent()
+      const partialText = session?.getStreamedContent(syntheticConvId)
       if (partialText && specifyPhase) {
         blueprintPhaseRepository.appendArtifact(specifyPhase.id, {
           type: 'spec-partial',
@@ -672,7 +673,7 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // Parse structured blocks from the response
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
       await this.handleClarifyTurnEnd(blueprintId, workspaceId, text)
     } catch (err) {
       bpLog.error(`[startClarifyPhase] CLARIFY phase failed:`, err)
@@ -767,7 +768,7 @@ export class BlueprintSpecService extends EventEmitter {
       await Promise.race([sendPromise, abortPromise, answerWatchdog.promise])
 
       // Parse structured blocks from the response
-      const text = sessionState.session.getStreamedContent()
+      const text = sessionState.session.getStreamedContent(sessionState.conversationId)
       await this.handleClarifyTurnEnd(blueprintId, workspaceId, text)
     } catch (err) {
       bpLog.error(`[sendClarifyAnswer] Failed to send answer:`, err)
@@ -887,7 +888,7 @@ export class BlueprintSpecService extends EventEmitter {
             const correctionMsg = CLARIFY_CORRECTION_MESSAGE
 
             await sessionState.session.send(correctionMsg, sessionState.conversationId)
-            const retryText = sessionState.session.getStreamedContent()
+            const retryText = sessionState.session.getStreamedContent(sessionState.conversationId)
 
             // Parse the retry response (recursive but capped by correctionAttempted flag)
             return this.handleClarifyTurnEnd(blueprintId, workspaceId, retryText)
@@ -1015,7 +1016,7 @@ export class BlueprintSpecService extends EventEmitter {
       const sendPromise = sessionState.session.send(iterationMessage, sessionState.conversationId)
       await Promise.race([sendPromise, abortPromise])
 
-      const text = sessionState.session.getStreamedContent()
+      const text = sessionState.session.getStreamedContent(sessionState.conversationId)
       await this.handleClarifyTurnEnd(blueprintId, sessionState.workspaceId, text)
     } catch (err) {
       bpLog.error(`[iterateClarify] Failed:`, err)
@@ -1055,7 +1056,7 @@ export class BlueprintSpecService extends EventEmitter {
     const sessionState = this.clarifySessions.get(blueprintId)
     if (!sessionState) return null
 
-    const text = sessionState.session.getStreamedContent()
+    const text = sessionState.session.getStreamedContent(sessionState.conversationId)
     return parseClarifyFindings(text)
   }
 

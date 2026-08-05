@@ -401,6 +401,26 @@ export function resetAllMocks(): void {
  * by later, non-mocked repository tests — silently resolves to this mock
  * instead of the real implementation, contributing zero real coverage.
  *
+ * Deliberately does NOT purge require.cache. An earlier version of this
+ * function deleted every cached /services/, /ipc/, /db/ entry (later
+ * narrowed to only entries created since setupFullMock() was called) to
+ * force stale, mock-bound modules to re-resolve to the real implementation.
+ * Both variants forced modules that never even saw the mock to be
+ * re-executed, and re-executing one half of a circular require pair while
+ * its partner stays cached (or is evicted out of order) leaves a
+ * partially-initialized circular partner — surfacing first as "accessing
+ * non-existent property inside circular dependency" warnings and then as a
+ * hard crash (observed: ChatStreamService and BlueprintService reading
+ * properties off an undefined circular import, and BlueprintService's
+ * mocked repositories resolving to the real, unopened DB instead). Simply
+ * restoring `Module._load` promptly after each file — which this function
+ * still does — is enough to stop any LATER file's plain (non-mock) requires
+ * from ever reaching the hijacked loader; the residual risk (a module
+ * transitively pulled in while a mock episode was active keeps its
+ * mock-bound singletons for the rest of the run, undercounting coverage for
+ * that specific module) is a coverage-completeness tradeoff, not a
+ * correctness/stability one, and is the safer failure mode of the two.
+ *
  * Does NOT clear `serviceMocks` or captured mock state (that's
  * `resetAllMocks()`'s job) — it only reverses the module-loader patch, so a
  * file that calls `setupFullMock()` again later re-installs cleanly.
@@ -410,11 +430,12 @@ export function restoreFullMock(): void {
   if (origLoad) {
     ;(Module as any)._load = origLoad
   }
+
   fullMockInstalled = false
   origLoad = null
 }
 
 // ── Re-exports from electron-stub ────────────────────────────────────────────
 export { mockMainWindow, mockEvent, getHandlers, sentEvents }
-export { setupElectronStub } from './electron-stub'
+export { setupElectronStub, resetStub } from './electron-stub'
 export { invokeHandler, tryInvokeHandler } from './electron-stub'

@@ -288,7 +288,8 @@ describe('BlueprintBuildAdapter', () => {
 
   test('buildMcpConfig_lean_mode_excludes_semantic_search_and_code_analysis', async () => {
     // Mock the preference to return leanBuildMcp: true
-    const { appPreferenceRepository } = await import('../../../main/db/repositories/app-preference.repository')
+    const { appPreferenceRepository } =
+      await import('../../../main/db/repositories/app-preference.repository')
     const originalGetPrefs = appPreferenceRepository.getAppPreferences.bind(appPreferenceRepository)
     appPreferenceRepository.getAppPreferences = () => ({
       ...originalGetPrefs(),
@@ -305,17 +306,25 @@ describe('BlueprintBuildAdapter', () => {
       const { allowedTools } = result
       assert.ok(allowedTools, 'allowedTools should be defined')
       // Should NOT have semantic-search tools
-      assert.ok(!allowedTools.some((t) => t.startsWith('mcp__semantic-search__')),
-        'lean mode should exclude semantic-search')
+      assert.ok(
+        !allowedTools.some((t) => t.startsWith('mcp__semantic-search__')),
+        'lean mode should exclude semantic-search'
+      )
       // Should NOT have code-analysis tools
-      assert.ok(!allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
-        'lean mode should exclude code-analysis')
+      assert.ok(
+        !allowedTools.some((t) => t.startsWith('mcp__code-analysis__')),
+        'lean mode should exclude code-analysis'
+      )
       // Should still have code-graph
-      assert.ok(allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
-        'lean mode should keep code-graph')
+      assert.ok(
+        allowedTools.some((t) => t.startsWith('mcp__code-graph__')),
+        'lean mode should keep code-graph'
+      )
       // Should still have git-context
-      assert.ok(allowedTools.some((t) => t.startsWith('mcp__git-context__')),
-        'lean mode should keep git-context')
+      assert.ok(
+        allowedTools.some((t) => t.startsWith('mcp__git-context__')),
+        'lean mode should keep git-context'
+      )
     } finally {
       appPreferenceRepository.getAppPreferences = originalGetPrefs
     }

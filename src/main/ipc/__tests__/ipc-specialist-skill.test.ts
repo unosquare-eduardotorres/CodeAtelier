@@ -9,13 +9,12 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 // ── Register IPC modules ─────────────────────────────────────────────────
 
@@ -44,7 +43,9 @@ try {
   mod.registerConversationSpecialistIpc()
   convSpecLoaded = true
 } catch (err) {
-  console.log(`⚠ conversation-specialist.ipc load failed: ${(err as Error).message?.split('\n')[0]}`)
+  console.log(
+    `⚠ conversation-specialist.ipc load failed: ${(err as Error).message?.split('\n')[0]}`
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -54,35 +55,35 @@ try {
 if (specialistLoaded) {
   describe('specialist.ipc — channel registration', () => {
     test('registers specialist:list', () => {
-      assert.ok(capturedHandlers.has('specialist:list'))
+      assert.ok(getHandlers().has('specialist:list'))
     })
 
     test('registers specialist:get', () => {
-      assert.ok(capturedHandlers.has('specialist:get'))
+      assert.ok(getHandlers().has('specialist:get'))
     })
 
     test('registers specialist:create', () => {
-      assert.ok(capturedHandlers.has('specialist:create'))
+      assert.ok(getHandlers().has('specialist:create'))
     })
 
     test('registers specialist:update', () => {
-      assert.ok(capturedHandlers.has('specialist:update'))
+      assert.ok(getHandlers().has('specialist:update'))
     })
 
     test('registers specialist:delete', () => {
-      assert.ok(capturedHandlers.has('specialist:delete'))
+      assert.ok(getHandlers().has('specialist:delete'))
     })
 
     test('registers specialist:reorder', () => {
-      assert.ok(capturedHandlers.has('specialist:reorder'))
+      assert.ok(getHandlers().has('specialist:reorder'))
     })
 
     test('registers specialist:assignSkill', () => {
-      assert.ok(capturedHandlers.has('specialist:assignSkill'))
+      assert.ok(getHandlers().has('specialist:assignSkill'))
     })
 
     test('registers specialist:removeSkill', () => {
-      assert.ok(capturedHandlers.has('specialist:removeSkill'))
+      assert.ok(getHandlers().has('specialist:removeSkill'))
     })
   })
 
@@ -157,7 +158,7 @@ if (specialistLoaded) {
     test('specialist:create calls through with valid args', async () => {
       const r = await tryInvokeHandler('specialist:create', {
         agentId: 'agent-1',
-        displayName: 'Frontend Dev',
+        displayName: 'Frontend Dev'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -165,7 +166,7 @@ if (specialistLoaded) {
     test('specialist:update calls through with valid args', async () => {
       const r = await tryInvokeHandler('specialist:update', {
         id: 'sp-1',
-        displayName: 'Updated Name',
+        displayName: 'Updated Name'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -183,7 +184,7 @@ if (specialistLoaded) {
     test('specialist:assignSkill calls through with valid args', async () => {
       const r = await tryInvokeHandler('specialist:assignSkill', {
         specialistId: 'sp-1',
-        skillId: 'sk-1',
+        skillId: 'sk-1'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -191,7 +192,7 @@ if (specialistLoaded) {
     test('specialist:removeSkill calls through with valid args', async () => {
       const r = await tryInvokeHandler('specialist:removeSkill', {
         specialistId: 'sp-1',
-        skillId: 'sk-1',
+        skillId: 'sk-1'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -205,35 +206,35 @@ if (specialistLoaded) {
 if (skillLoaded) {
   describe('skill.ipc — channel registration', () => {
     test('registers skill:list', () => {
-      assert.ok(capturedHandlers.has('skill:list'))
+      assert.ok(getHandlers().has('skill:list'))
     })
 
     test('registers skill:get', () => {
-      assert.ok(capturedHandlers.has('skill:get'))
+      assert.ok(getHandlers().has('skill:get'))
     })
 
     test('registers skill:import', () => {
-      assert.ok(capturedHandlers.has('skill:import'))
+      assert.ok(getHandlers().has('skill:import'))
     })
 
     test('registers skill:update', () => {
-      assert.ok(capturedHandlers.has('skill:update'))
+      assert.ok(getHandlers().has('skill:update'))
     })
 
     test('registers skill:delete', () => {
-      assert.ok(capturedHandlers.has('skill:delete'))
+      assert.ok(getHandlers().has('skill:delete'))
     })
 
     test('registers skill:activate', () => {
-      assert.ok(capturedHandlers.has('skill:activate'))
+      assert.ok(getHandlers().has('skill:activate'))
     })
 
     test('registers skill:deactivate', () => {
-      assert.ok(capturedHandlers.has('skill:deactivate'))
+      assert.ok(getHandlers().has('skill:deactivate'))
     })
 
     test('registers skill:selectFile', () => {
-      assert.ok(capturedHandlers.has('skill:selectFile'))
+      assert.ok(getHandlers().has('skill:selectFile'))
     })
   })
 
@@ -289,7 +290,7 @@ if (skillLoaded) {
       const r = await tryInvokeHandler('skill:update', {
         id: 'sk-1',
         name: 'Updated Skill',
-        description: 'New desc',
+        description: 'New desc'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -322,18 +323,23 @@ if (skillLoaded) {
 
 if (convSpecLoaded) {
   describe('conversation-specialist.ipc — channel registration', () => {
-    const csChannels = [...capturedHandlers.keys()].filter(
-      c => c.includes('convSpecialist') || c.includes('conversationSpecialist')
+    const csChannels = [...getHandlers().keys()].filter(
+      (c) => c.includes('convSpecialist') || c.includes('conversationSpecialist')
     )
     test('registers ≥5 conversation-specialist channels', () => {
-      assert.ok(csChannels.length >= 5, `Expected ≥5, got ${csChannels.length}: ${csChannels.join(', ')}`)
+      assert.ok(
+        csChannels.length >= 5,
+        `Expected ≥5, got ${csChannels.length}: ${csChannels.join(', ')}`
+      )
     })
   })
 
   describe('conversation-specialist.ipc — argument validation', () => {
-    const listCh = [...capturedHandlers.keys()].find(
-      c => (c.includes('Specialist') || c.includes('specialist')) &&
-        c.includes('list') && (c.includes('conv') || c.includes('Conv'))
+    const listCh = [...getHandlers().keys()].find(
+      (c) =>
+        (c.includes('Specialist') || c.includes('specialist')) &&
+        c.includes('list') &&
+        (c.includes('conv') || c.includes('Conv'))
     )
 
     if (listCh) {
@@ -343,8 +349,8 @@ if (convSpecLoaded) {
       })
     }
 
-    const upsertCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('upsert')
+    const upsertCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('upsert')
     )
     if (upsertCh) {
       test(`${upsertCh} rejects missing conversationId`, async () => {
@@ -358,8 +364,8 @@ if (convSpecLoaded) {
       })
     }
 
-    const removeCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('remove') && !c.includes('All')
+    const removeCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('remove') && !c.includes('All')
     )
     if (removeCh) {
       test(`${removeCh} rejects missing conversationId`, async () => {
@@ -373,8 +379,8 @@ if (convSpecLoaded) {
       })
     }
 
-    const resetCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('reset')
+    const resetCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('reset')
     )
     if (resetCh) {
       test(`${resetCh} rejects missing conversationId`, async () => {
@@ -383,8 +389,8 @@ if (convSpecLoaded) {
       })
     }
 
-    const estimateCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('estimate')
+    const estimateCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('estimate')
     )
     if (estimateCh) {
       test(`${estimateCh} rejects missing conversationId`, async () => {
@@ -395,9 +401,11 @@ if (convSpecLoaded) {
   })
 
   describe('conversation-specialist.ipc — handler bodies', () => {
-    const listCh = [...capturedHandlers.keys()].find(
-      c => (c.includes('Specialist') || c.includes('specialist')) &&
-        c.includes('list') && (c.includes('conv') || c.includes('Conv'))
+    const listCh = [...getHandlers().keys()].find(
+      (c) =>
+        (c.includes('Specialist') || c.includes('specialist')) &&
+        c.includes('list') &&
+        (c.includes('conv') || c.includes('Conv'))
     )
     if (listCh) {
       test(`${listCh} calls through with valid args`, async () => {
@@ -406,22 +414,22 @@ if (convSpecLoaded) {
       })
     }
 
-    const upsertCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('upsert')
+    const upsertCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('upsert')
     )
     if (upsertCh) {
       test(`${upsertCh} calls through with valid args`, async () => {
         const r = await tryInvokeHandler(upsertCh, {
           conversationId: 'c1',
           specialistId: 'sp1',
-          isActive: true,
+          isActive: true
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const resetCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('reset')
+    const resetCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('reset')
     )
     if (resetCh) {
       test(`${resetCh} calls through with valid args`, async () => {
@@ -430,8 +438,8 @@ if (convSpecLoaded) {
       })
     }
 
-    const estimateCh = [...capturedHandlers.keys()].find(
-      c => c.includes('Specialist') && c.includes('estimate')
+    const estimateCh = [...getHandlers().keys()].find(
+      (c) => c.includes('Specialist') && c.includes('estimate')
     )
     if (estimateCh) {
       test(`${estimateCh} calls through with valid args`, async () => {

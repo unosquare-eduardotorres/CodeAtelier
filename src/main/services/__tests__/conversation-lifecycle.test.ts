@@ -296,7 +296,10 @@ describe('LifecycleRegistry — concurrent streams', () => {
     assert.notEqual(lcA.requestId, lcB.requestId)
     assert.equal(registry.size, 2)
     assert.deepEqual(
-      registry.active().map((s) => s.conversationId).sort(),
+      registry
+        .active()
+        .map((s) => s.conversationId)
+        .sort(),
       ['conv-A', 'conv-B']
     )
   })
@@ -336,8 +339,12 @@ describe('LifecycleRegistry — concurrent streams', () => {
 
     let aDisposed = false
     let bDisposed = false
-    lcA.onDispose(() => { aDisposed = true })
-    lcB.onDispose(() => { bDisposed = true })
+    lcA.onDispose(() => {
+      aDisposed = true
+    })
+    lcB.onDispose(() => {
+      bDisposed = true
+    })
 
     registry.abort('conv-A', 'userStop')
 

@@ -6,12 +6,12 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let docsLoaded = false
 let repoLoaded = false
@@ -48,15 +48,15 @@ try {
 if (docsLoaded) {
   describe('docs.ipc — channel registration', () => {
     test('registers docs:list', () => {
-      assert.ok(capturedHandlers.has('docs:list'))
+      assert.ok(getHandlers().has('docs:list'))
     })
 
     test('registers docs:readFile', () => {
-      assert.ok(capturedHandlers.has('docs:readFile'))
+      assert.ok(getHandlers().has('docs:readFile'))
     })
 
     test('registers docs:renderMermaid', () => {
-      assert.ok(capturedHandlers.has('docs:renderMermaid'))
+      assert.ok(getHandlers().has('docs:renderMermaid'))
     })
   })
 
@@ -79,7 +79,7 @@ if (docsLoaded) {
     test('docs:readFile rejects path traversal outside docs/', async () => {
       const r = await tryInvokeHandler('docs:readFile', {
         filePath: '/etc/passwd',
-        workspacePath: '/tmp/myproject',
+        workspacePath: '/tmp/myproject'
       })
       assert.equal(r.ok, false)
     })
@@ -99,7 +99,7 @@ if (docsLoaded) {
     test('docs:renderMermaid calls through', async () => {
       const r = await tryInvokeHandler('docs:renderMermaid', {
         definition: 'graph TD; A-->B;',
-        id: 'test-diagram',
+        id: 'test-diagram'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -113,19 +113,19 @@ if (docsLoaded) {
 if (repoLoaded) {
   describe('repo.ipc — channel registration', () => {
     test('registers repo:init', () => {
-      assert.ok(capturedHandlers.has('repo:init'))
+      assert.ok(getHandlers().has('repo:init'))
     })
 
     test('registers repo:setRemote', () => {
-      assert.ok(capturedHandlers.has('repo:setRemote'))
+      assert.ok(getHandlers().has('repo:setRemote'))
     })
 
     test('registers repo:getInfo', () => {
-      assert.ok(capturedHandlers.has('repo:getInfo'))
+      assert.ok(getHandlers().has('repo:getInfo'))
     })
 
     test('registers repo:listBranches', () => {
-      assert.ok(capturedHandlers.has('repo:listBranches'))
+      assert.ok(getHandlers().has('repo:listBranches'))
     })
   })
 
@@ -181,19 +181,19 @@ if (repoLoaded) {
 if (githubLoaded) {
   describe('github.ipc — channel registration', () => {
     test('registers github:saveToken', () => {
-      assert.ok(capturedHandlers.has('github:saveToken'))
+      assert.ok(getHandlers().has('github:saveToken'))
     })
 
     test('registers github:validateToken', () => {
-      assert.ok(capturedHandlers.has('github:validateToken'))
+      assert.ok(getHandlers().has('github:validateToken'))
     })
 
     test('registers github:getStatus', () => {
-      assert.ok(capturedHandlers.has('github:getStatus'))
+      assert.ok(getHandlers().has('github:getStatus'))
     })
 
     test('registers github:removeToken', () => {
-      assert.ok(capturedHandlers.has('github:removeToken'))
+      assert.ok(getHandlers().has('github:removeToken'))
     })
   })
 
@@ -228,7 +228,7 @@ if (githubLoaded) {
     test('github:saveToken calls through', async () => {
       const r = await tryInvokeHandler('github:saveToken', {
         workspaceId: 'ws-1',
-        token: 'ghp_test123',
+        token: 'ghp_test123'
       })
       assert.ok(r.ok === true || r.ok === false)
     })

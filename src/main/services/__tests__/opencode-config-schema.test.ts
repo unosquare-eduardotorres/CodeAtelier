@@ -35,9 +35,19 @@ try {
   } else {
     // Not yet loaded — plant a fresh cache entry
     require.cache[appPrefRepoPath] = {
-      id: appPrefRepoPath, filename: appPrefRepoPath, loaded: true,
-      exports: { appPreferenceRepository: { get: () => null, set: () => {}, getBool: (_k: string, d?: boolean) => d ?? false } },
-      children: [], paths: [], path: ''
+      id: appPrefRepoPath,
+      filename: appPrefRepoPath,
+      loaded: true,
+      exports: {
+        appPreferenceRepository: {
+          get: () => null,
+          set: () => {},
+          getBool: (_k: string, d?: boolean) => d ?? false
+        }
+      },
+      children: [],
+      paths: [],
+      path: ''
     } as unknown as NodeModule
   }
 } catch {
@@ -45,11 +55,11 @@ try {
 }
 
 // Now dynamically import
-let OpenCodeConfigWriter: typeof import('../opencode-config-writer').OpenCodeConfigWriter | null = null
+let OpenCodeConfigWriter: typeof import('../opencode-config-writer').OpenCodeConfigWriter | null =
+  null
 let importError: Error | null = null
 
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require('../opencode-config-writer')
   OpenCodeConfigWriter = mod.OpenCodeConfigWriter
 } catch (err) {
@@ -74,8 +84,8 @@ const baseOpts = {
     repomapEnabled: true,
     semanticSearchEnabled: true,
     githubConfigured: false,
-    localMcpActive: {},
-  },
+    localMcpActive: {}
+  }
 }
 
 describe('OpenCode config schema compliance', () => {
@@ -150,19 +160,32 @@ describe('OpenCode config schema compliance', () => {
   test('no unrecognized top-level keys', () => {
     const config = safeBuildConfig(baseOpts)
     const knownKeys = new Set([
-      '$schema', 'model', 'small_model', 'default_agent', 'autoupdate',
-      'provider', 'disabled_providers', 'enabled_providers',
-      'mcp', 'plugin', 'instructions', 'tools', 'permission',
-      'compaction', 'snapshot', 'shell', 'formatter', 'lsp',
-      'attachment', 'watcher', 'server', 'share',
+      '$schema',
+      'model',
+      'small_model',
+      'default_agent',
+      'autoupdate',
+      'provider',
+      'disabled_providers',
+      'enabled_providers',
+      'mcp',
+      'plugin',
+      'instructions',
+      'tools',
+      'permission',
+      'compaction',
+      'snapshot',
+      'shell',
+      'formatter',
+      'lsp',
+      'attachment',
+      'watcher',
+      'server',
+      'share'
     ])
     const configKeys = Object.keys(config)
-    const unrecognized = configKeys.filter(k => !knownKeys.has(k))
-    assert.deepEqual(
-      unrecognized,
-      [],
-      `Unrecognized top-level keys: ${unrecognized.join(', ')}`
-    )
+    const unrecognized = configKeys.filter((k) => !knownKeys.has(k))
+    assert.deepEqual(unrecognized, [], `Unrecognized top-level keys: ${unrecognized.join(', ')}`)
   })
 
   // ── Required fields ──
@@ -216,7 +239,7 @@ describe('OpenCode config schema compliance', () => {
       ...baseOpts,
       provider: { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' },
       isLocalProvider: false,
-      contextTier: undefined,
+      contextTier: undefined
     }
     const config = safeBuildConfig(cloudOpts)
     assert.ok(Array.isArray(config.enabled_providers))
@@ -244,10 +267,10 @@ describe('OpenCode config schema compliance', () => {
     const saved = {
       WORKSPACE_PATH: process.env.WORKSPACE_PATH,
       GIT_TERMINAL_PROMPT: process.env.GIT_TERMINAL_PROMPT,
-      IPC_SOCKET_PATH: process.env.IPC_SOCKET_PATH,
+      IPC_SOCKET_PATH: process.env.IPC_SOCKET_PATH
     }
     try {
-      w.buildConfig(baseOpts)  // raw call — this test verifies env mutation
+      w.buildConfig(baseOpts) // raw call — this test verifies env mutation
       assert.equal(process.env.WORKSPACE_PATH, '/tmp/test-workspace')
       assert.equal(process.env.GIT_TERMINAL_PROMPT, '0')
       assert.equal(process.env.IPC_SOCKET_PATH, '/tmp/test.sock')

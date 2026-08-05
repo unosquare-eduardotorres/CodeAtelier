@@ -13,9 +13,13 @@ import { test, describe, summaryAsync } from './test-harness'
 // ── Replicate parseExtractionResponse logic for hermetic testing ──
 // (avoids importing the real module which pulls in electron-log)
 
-function parseExtractionResponse(
-  responseText: string
-): { overallStatus: string; phase: string; status: string; findings?: unknown[]; remediationTasks?: unknown[] } | null {
+function parseExtractionResponse(responseText: string): {
+  overallStatus: string
+  phase: string
+  status: string
+  findings?: unknown[]
+  remediationTasks?: unknown[]
+} | null {
   let jsonText = responseText.trim()
   const fenceMatch = jsonText.match(/```(?:json)?\s*\n([\s\S]*?)\n```/)
   if (fenceMatch?.[1]) {
@@ -63,9 +67,7 @@ describe('parseExtractionResponse — valid JSON', () => {
     const json = JSON.stringify({
       overallStatus: 'gaps_found',
       recommendation: 'Fix the auth middleware',
-      findings: [
-        { description: 'Missing auth', severity: 'critical', files: ['src/auth.ts'] }
-      ],
+      findings: [{ description: 'Missing auth', severity: 'critical', files: ['src/auth.ts'] }],
       remediationTasks: [
         { taskId: 'R001', description: 'Add auth middleware', files: ['src/auth.ts'] }
       ]
@@ -277,10 +279,7 @@ describe('extraction input preparation', () => {
 describe('EXTRACTION_SYSTEM_PROMPT — schema presence guard (Fix 1)', () => {
   // Read the actual prompt constant from the source file to verify the schema is present.
   // This is a build-time guard — if someone removes the schema, this test fails.
-  const sourceFile = path.resolve(
-    import.meta.dirname ?? '.',
-    '..', 'blueprint-verify-extractor.ts'
-  )
+  const sourceFile = path.resolve(import.meta.dirname ?? '.', '..', 'blueprint-verify-extractor.ts')
   const sourceText = fs.readFileSync(sourceFile, 'utf-8')
 
   test('prompt_contains_overallStatus_key', () => {
@@ -310,7 +309,9 @@ describe('BP-VERIFY-ENUM-GUARD — invalid overallStatus from fence block', () =
   const VALID_OVERALL_STATUSES = new Set(['passed', 'gaps_found', 'human_needed'])
 
   function shouldDeleteOverallStatus(completion: { overallStatus?: string } | undefined): boolean {
-    return !!(completion?.overallStatus && !VALID_OVERALL_STATUSES.has(String(completion.overallStatus)))
+    return !!(
+      completion?.overallStatus && !VALID_OVERALL_STATUSES.has(String(completion.overallStatus))
+    )
   }
 
   test('valid_passed_not_deleted', () => {
@@ -390,7 +391,7 @@ describe('source-guard: VALID_OVERALL_STATUSES in blueprint-verify.service.ts', 
     const setMatch = source.match(/VALID_OVERALL_STATUSES\s*=\s*new Set\(\[([^\]]*)]\)/)
     assert.ok(setMatch?.[1], 'Could not extract Set literal from VALID_OVERALL_STATUSES line')
 
-    const literals = setMatch[1].match(/'[^']+'/g)?.map(s => s.slice(1, -1)) ?? []
+    const literals = setMatch[1].match(/'[^']+'/g)?.map((s) => s.slice(1, -1)) ?? []
     const expected = ['passed', 'gaps_found', 'human_needed']
 
     assert.deepStrictEqual(

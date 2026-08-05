@@ -607,6 +607,22 @@ interface Api {
     conversationId: string
     filePath: string
   }) => Promise<{ oldContent: string; newContent: string; language: string }>
+  getRefFileDetails: (args: {
+    conversationId: string
+    fromRef: string
+    toRef: string
+  }) => Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  >
+  getRefFileDiff: (args: {
+    conversationId: string
+    filePath: string
+    fromRef: string
+    toRef: string
+  }) => Promise<{ oldContent: string; newContent: string; language: string }>
+  fetchOrigin: (args: {
+    conversationId: string
+  }) => Promise<{ fetched: boolean; error?: string }>
   commitFiles: (args: {
     conversationId: string
     filePaths: string[]

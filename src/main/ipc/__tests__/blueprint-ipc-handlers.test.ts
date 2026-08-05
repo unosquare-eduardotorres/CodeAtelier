@@ -117,9 +117,7 @@ describe('selectPhaseToRetry', () => {
 describe('extractGrillDecisions', () => {
   test('extracts valid grill decisions', () => {
     const settingsJson = {
-      grillDecisions: [
-        { header: 'Q1', selectedOption: 'Option A', reason: 'Because' }
-      ]
+      grillDecisions: [{ header: 'Q1', selectedOption: 'Option A', reason: 'Because' }]
     }
     const result = extractGrillDecisions(settingsJson)
     assert.ok(result)
@@ -202,10 +200,7 @@ describe('extractReferenceDocuments', () => {
 
   test('returns undefined when all entries are invalid (empty result)', () => {
     const settingsJson = {
-      referenceDocuments: [
-        { type: 'file', name: 'no-path' },
-        null
-      ]
+      referenceDocuments: [{ type: 'file', name: 'no-path' }, null]
     }
     assert.equal(extractReferenceDocuments(settingsJson), undefined)
   })

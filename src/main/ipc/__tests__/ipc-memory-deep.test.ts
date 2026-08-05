@@ -6,19 +6,21 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let memoryLoaded = false
 
 try {
   const mod = require('../../ipc/memory.ipc')
-  const fn = Object.values(mod).find((v: any) => typeof v === 'function' && v.name?.startsWith('register')) as any
+  const fn = Object.values(mod).find(
+    (v: any) => typeof v === 'function' && v.name?.startsWith('register')
+  ) as any
   if (fn) {
     fn.length > 0 ? fn(mockMainWindow) : fn()
     memoryLoaded = true
@@ -29,20 +31,24 @@ try {
 
 if (memoryLoaded) {
   describe('memory.ipc — channel registration (deep)', () => {
-    const memCh = [...capturedHandlers.keys()].filter(c => c.startsWith('memory:'))
+    const memCh = [...getHandlers().keys()].filter((c) => c.startsWith('memory:'))
     test('registers ≥10 memory channels', () => {
       assert.ok(memCh.length >= 10, `Expected ≥10, got ${memCh.length}: ${memCh.join(', ')}`)
     })
 
     // Specific channel checks
     const expected = [
-      'memory:search', 'memory:getFacts', 'memory:createFact',
-      'memory:updateFact', 'memory:deleteFact', 'memory:archiveFact',
+      'memory:search',
+      'memory:getFacts',
+      'memory:createFact',
+      'memory:updateFact',
+      'memory:deleteFact',
+      'memory:archiveFact'
     ]
     for (const ch of expected) {
-      if (capturedHandlers.has(ch)) {
+      if (getHandlers().has(ch)) {
         test(`registers ${ch}`, () => {
-          assert.ok(capturedHandlers.has(ch))
+          assert.ok(getHandlers().has(ch))
         })
       }
     }
@@ -50,7 +56,9 @@ if (memoryLoaded) {
 
   describe('memory.ipc — argument validation (deep)', () => {
     // Test each memory channel for missing required fields
-    const searchCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('search'))
+    const searchCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('search')
+    )
     if (searchCh) {
       test(`${searchCh} rejects missing workspaceId`, async () => {
         const r = await tryInvokeHandler(searchCh, { query: 'test' })
@@ -68,7 +76,9 @@ if (memoryLoaded) {
       })
     }
 
-    const getFactsCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('getFact'))
+    const getFactsCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('getFact')
+    )
     if (getFactsCh) {
       test(`${getFactsCh} rejects missing workspaceId`, async () => {
         const r = await tryInvokeHandler(getFactsCh, {})
@@ -76,7 +86,9 @@ if (memoryLoaded) {
       })
     }
 
-    const createFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('createFact'))
+    const createFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('createFact')
+    )
     if (createFactCh) {
       test(`${createFactCh} rejects missing workspaceId`, async () => {
         const r = await tryInvokeHandler(createFactCh, { title: 'test', content: 'data' })
@@ -89,7 +101,9 @@ if (memoryLoaded) {
       })
     }
 
-    const updateFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('updateFact'))
+    const updateFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('updateFact')
+    )
     if (updateFactCh) {
       test(`${updateFactCh} rejects missing factId`, async () => {
         const r = await tryInvokeHandler(updateFactCh, { title: 'new' })
@@ -97,7 +111,9 @@ if (memoryLoaded) {
       })
     }
 
-    const deleteFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('deleteFact'))
+    const deleteFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('deleteFact')
+    )
     if (deleteFactCh) {
       test(`${deleteFactCh} rejects missing factId`, async () => {
         const r = await tryInvokeHandler(deleteFactCh, {})
@@ -105,7 +121,9 @@ if (memoryLoaded) {
       })
     }
 
-    const archiveFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('archiveFact'))
+    const archiveFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('archiveFact')
+    )
     if (archiveFactCh) {
       test(`${archiveFactCh} rejects missing factId`, async () => {
         const r = await tryInvokeHandler(archiveFactCh, {})
@@ -115,12 +133,14 @@ if (memoryLoaded) {
   })
 
   describe('memory.ipc — handler bodies (deep)', () => {
-    const searchCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('search'))
+    const searchCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('search')
+    )
     if (searchCh) {
       test(`${searchCh} calls through with valid args`, async () => {
         const r = await tryInvokeHandler(searchCh, {
           workspaceId: 'ws1',
-          query: 'architecture patterns',
+          query: 'architecture patterns'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
@@ -129,13 +149,15 @@ if (memoryLoaded) {
         const r = await tryInvokeHandler(searchCh, {
           workspaceId: 'ws1',
           query: 'testing conventions',
-          limit: 5,
+          limit: 5
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const getFactsCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('getFact'))
+    const getFactsCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('getFact')
+    )
     if (getFactsCh) {
       test(`${getFactsCh} calls through`, async () => {
         const r = await tryInvokeHandler(getFactsCh, { workspaceId: 'ws1' })
@@ -143,7 +165,9 @@ if (memoryLoaded) {
       })
     }
 
-    const createFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('createFact'))
+    const createFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('createFact')
+    )
     if (createFactCh) {
       test(`${createFactCh} calls through`, async () => {
         const r = await tryInvokeHandler(createFactCh, {
@@ -151,25 +175,29 @@ if (memoryLoaded) {
           title: 'Test Fact',
           content: 'This is a test fact for coverage.',
           category: 'architecture',
-          tags: ['test'],
+          tags: ['test']
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const updateFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('updateFact'))
+    const updateFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('updateFact')
+    )
     if (updateFactCh) {
       test(`${updateFactCh} calls through`, async () => {
         const r = await tryInvokeHandler(updateFactCh, {
           factId: 'f1',
           title: 'Updated Fact',
-          content: 'Updated content.',
+          content: 'Updated content.'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const deleteFactCh = [...capturedHandlers.keys()].find(c => c.includes('memory') && c.includes('deleteFact'))
+    const deleteFactCh = [...getHandlers().keys()].find(
+      (c) => c.includes('memory') && c.includes('deleteFact')
+    )
     if (deleteFactCh) {
       test(`${deleteFactCh} calls through`, async () => {
         const r = await tryInvokeHandler(deleteFactCh, { factId: 'f1' })
@@ -178,9 +206,9 @@ if (memoryLoaded) {
     }
 
     // Test additional memory channels (getGraph, getStats, etc.)
-    const allMemCh = [...capturedHandlers.keys()].filter(c => c.startsWith('memory:'))
+    const allMemCh = [...getHandlers().keys()].filter((c) => c.startsWith('memory:'))
     const testedChannels = new Set([searchCh, getFactsCh, createFactCh, updateFactCh, deleteFactCh])
-    const untestedChannels = allMemCh.filter(c => !testedChannels.has(c))
+    const untestedChannels = allMemCh.filter((c) => !testedChannels.has(c))
 
     for (const ch of untestedChannels) {
       test(`${ch} calls through`, async () => {

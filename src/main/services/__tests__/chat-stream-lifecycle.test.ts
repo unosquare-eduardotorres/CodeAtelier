@@ -108,7 +108,8 @@ function createTestService(overrides?: {
     setupStreamTimers: undefined as unknown as ChatStreamServiceInternal['setupStreamTimers'],
     finalizeStreamMessage:
       undefined as unknown as ChatStreamServiceInternal['finalizeStreamMessage'],
-    enqueueMemoryExtraction: undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
+    enqueueMemoryExtraction:
+      undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
     forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck']
   }
 
@@ -148,7 +149,11 @@ describe('acquireStreamLock', () => {
       const svc = createTestService()
       const result = svc.acquireStreamLock('conv-1')
 
-      assert.equal(svc.streamingLocks.has('conv-1'), true, 'streamingLock should be held for conv-1')
+      assert.equal(
+        svc.streamingLocks.has('conv-1'),
+        true,
+        'streamingLock should be held for conv-1'
+      )
       assert.equal(
         conversationStateMachine.getState('conv-1'),
         'chat-agent-streaming',
@@ -218,7 +223,11 @@ describe('acquireStreamLock', () => {
       const svc = createTestService()
       svc.stoppedConversations.add('conv-1')
       svc.acquireStreamLock('conv-1')
-      assert.equal(svc.stoppedConversations.has('conv-1'), false, 'stoppedConversations should be cleared')
+      assert.equal(
+        svc.stoppedConversations.has('conv-1'),
+        false,
+        'stoppedConversations should be cleared'
+      )
 
       lifecycleRegistry.abort('conv-1', 'test-cleanup')
     }))
@@ -271,8 +280,16 @@ describe('acquireStreamLock', () => {
       assert.equal(svc.streamingLocks.has('conv-x'), true, 'lock should be held')
       lifecycleRegistry.abort('conv-x', 'userStop')
 
-      assert.equal(svc.streamingLocks.has('conv-x'), false, 'streamingLock must be released by abort')
-      assert.equal(svc.activeRequestIds.has('conv-x'), false, 'activeRequestId must be cleared by abort')
+      assert.equal(
+        svc.streamingLocks.has('conv-x'),
+        false,
+        'streamingLock must be released by abort'
+      )
+      assert.equal(
+        svc.activeRequestIds.has('conv-x'),
+        false,
+        'activeRequestId must be cleared by abort'
+      )
 
       // A subsequent acquireStreamLock must succeed — no permanent lockout.
       conversationStateMachine.forceReset('conv-x')
@@ -388,7 +405,11 @@ describe('setupStreamTimers', () => {
 
       // Cleanup — lifecycle dispose should clear timers
       lifecycle.complete()
-      assert.equal(svc.keepaliveTimers.has('conv-timer'), false, 'keepaliveTimer cleared on dispose')
+      assert.equal(
+        svc.keepaliveTimers.has('conv-timer'),
+        false,
+        'keepaliveTimer cleared on dispose'
+      )
     }))
 
   test('dispose clears both timers without firing callbacks', () =>
@@ -497,7 +518,11 @@ describe('finalizeStreamMessage', () => {
       assert.ok(completeMsg, 'CHAT_MESSAGE_COMPLETE should be sent')
 
       // Assert: state machine transitioned to idle
-      assert.equal(conversationStateMachine.getState('conv-finalize'), 'idle', 'state machine should be idle')
+      assert.equal(
+        conversationStateMachine.getState('conv-finalize'),
+        'idle',
+        'state machine should be idle'
+      )
     }))
 
   test('sends error chunk when streamedContent is empty', () =>
@@ -528,7 +553,11 @@ describe('finalizeStreamMessage', () => {
       restoreRepo()
 
       // Should still transition to idle
-      assert.equal(conversationStateMachine.getState('conv-finalize'), 'idle', 'state machine should be idle')
+      assert.equal(
+        conversationStateMachine.getState('conv-finalize'),
+        'idle',
+        'state machine should be idle'
+      )
 
       // Should have sent an error text chunk (channel is 'chat:messageChunk')
       const errorChunk = mainWindow.sentMessages.find(
@@ -692,7 +721,8 @@ describe('enqueueMemoryExtraction', () => {
       specialistMeta: undefined,
       adapterAgentId: 'specialist',
       workspacePath: undefined,
-      streamedContent: 'some content that is definitely longer than 200 characters to pass the length guard in enqueueMemoryExtraction which checks ctx.streamedContent.length > 200 before calling the service so we need to have enough text here to exceed that threshold',
+      streamedContent:
+        'some content that is definitely longer than 200 characters to pass the length guard in enqueueMemoryExtraction which checks ctx.streamedContent.length > 200 before calling the service so we need to have enough text here to exceed that threshold',
       planInjected: false
     }
 
@@ -877,7 +907,11 @@ describe('forceResetIfStuck — A9 SM stuck with empty registry', () => {
       svc.forceResetIfStuck()
 
       assert.equal(conversationStateMachine.isIdle(), true, 'SM should be idle after force reset')
-      assert.equal(conversationStateMachine.getState('conv-stuck'), 'idle', 'conv-stuck should be idle')
+      assert.equal(
+        conversationStateMachine.getState('conv-stuck'),
+        'idle',
+        'conv-stuck should be idle'
+      )
     }))
 })
 
@@ -911,7 +945,11 @@ describe('forceResetIfStuck — F2 mixed SM/registry state', () => {
       svc.forceResetIfStuck()
 
       // F2 guarantees: both SM entries cleared, registry empty
-      assert.equal(conversationStateMachine.isIdle(), true, 'SM should be globally idle after F2 reset')
+      assert.equal(
+        conversationStateMachine.isIdle(),
+        true,
+        'SM should be globally idle after F2 reset'
+      )
       assert.equal(conversationStateMachine.getState('conv-A'), 'idle', 'conv-A SM idle')
       assert.equal(conversationStateMachine.getState('conv-B'), 'idle', 'conv-B SM idle')
       assert.equal(lifecycleRegistry.active().length, 0, 'registry should be empty')
@@ -949,7 +987,11 @@ describe('forceReset — F1(3) suppresses idle→idle emission', () => {
 
       // Attach a stateChange listener to count emissions
       const emissions: Array<{ from: string; to: string; conversationId: string | null }> = []
-      const listener = (payload: { from: string; to: string; conversationId: string | null }): void => {
+      const listener = (payload: {
+        from: string
+        to: string
+        conversationId: string | null
+      }): void => {
         emissions.push(payload)
       }
       conversationStateMachine.on('stateChange', listener)
@@ -969,7 +1011,11 @@ describe('forceReset — F1(3) suppresses idle→idle emission', () => {
       resetGlobals()
 
       const emissions: Array<{ from: string; to: string; conversationId: string | null }> = []
-      const listener = (payload: { from: string; to: string; conversationId: string | null }): void => {
+      const listener = (payload: {
+        from: string
+        to: string
+        conversationId: string | null
+      }): void => {
         emissions.push(payload)
       }
       conversationStateMachine.on('stateChange', listener)
@@ -1008,7 +1054,9 @@ describe('setupStreamTimers — activity-based safety timer', () => {
       // Track cancelCurrentQuery calls
       const origCancel = chatAgentService.cancelCurrentQuery
       let cancelCalled = 0
-      chatAgentService.cancelCurrentQuery = () => { cancelCalled++ }
+      chatAgentService.cancelCurrentQuery = () => {
+        cancelCalled++
+      }
 
       try {
         const rejectDone = createSpy<[Error], void>()
@@ -1016,7 +1064,11 @@ describe('setupStreamTimers — activity-based safety timer', () => {
 
         // Register the disposer that calls cancelCurrentQuery (mirrors registerStreamDisposers)
         lifecycle.onDispose(() => {
-          try { chatAgentService.cancelCurrentQuery() } catch { /* */ }
+          try {
+            chatAgentService.cancelCurrentQuery('conv-kill')
+          } catch {
+            /* */
+          }
         })
 
         // Simulate safety timeout by aborting the lifecycle

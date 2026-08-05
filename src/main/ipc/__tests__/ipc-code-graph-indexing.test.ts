@@ -6,13 +6,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 // ── Register ─────────────────────────────────────────────────────────────
 
@@ -29,9 +29,12 @@ try {
 
 try {
   const mod = require('../../ipc/indexing.ipc')
-  const fn = Object.values(mod).find((v: any) => typeof v === 'function' && v.name?.startsWith('register')) as any
+  const fn = Object.values(mod).find(
+    (v: any) => typeof v === 'function' && v.name?.startsWith('register')
+  ) as any
   if (fn) {
-    if (fn.length > 0) fn(mockMainWindow); else fn()
+    if (fn.length > 0) fn(mockMainWindow)
+    else fn()
     indexingLoaded = true
   }
 } catch (err) {
@@ -45,15 +48,15 @@ try {
 if (codeGraphLoaded) {
   describe('code-graph.ipc — channel registration', () => {
     test('registers codeGraph:indexStart', () => {
-      assert.ok(capturedHandlers.has('codeGraph:indexStart'))
+      assert.ok(getHandlers().has('codeGraph:indexStart'))
     })
 
     test('registers codeGraph:getStatus', () => {
-      assert.ok(capturedHandlers.has('codeGraph:getStatus'))
+      assert.ok(getHandlers().has('codeGraph:getStatus'))
     })
 
     test('registers codeGraph:hasIndex', () => {
-      assert.ok(capturedHandlers.has('codeGraph:hasIndex'))
+      assert.ok(getHandlers().has('codeGraph:hasIndex'))
     })
   })
 
@@ -93,17 +96,20 @@ if (codeGraphLoaded) {
 
 if (indexingLoaded) {
   describe('indexing.ipc — channel registration', () => {
-    const indexChannels = [...capturedHandlers.keys()].filter(c =>
-      c.includes('indexing') || c.includes('index')
+    const indexChannels = [...getHandlers().keys()].filter(
+      (c) => c.includes('indexing') || c.includes('index')
     )
     test('registers indexing channels', () => {
-      assert.ok(indexChannels.length >= 1, `Expected ≥1 indexing channels, got ${indexChannels.length}`)
+      assert.ok(
+        indexChannels.length >= 1,
+        `Expected ≥1 indexing channels, got ${indexChannels.length}`
+      )
     })
   })
 
   describe('indexing.ipc — handler bodies', () => {
-    const indexChannels = [...capturedHandlers.keys()].filter(c =>
-      c.includes('indexing') && !c.includes('codeGraph')
+    const indexChannels = [...getHandlers().keys()].filter(
+      (c) => c.includes('indexing') && !c.includes('codeGraph')
     )
     for (const ch of indexChannels) {
       test(`${ch} calls through with workspaceId`, async () => {

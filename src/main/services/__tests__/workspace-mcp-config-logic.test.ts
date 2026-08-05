@@ -39,12 +39,10 @@ try {
 
 // Now dynamically import
 let buildWorkspaceMcpConfig:
-  | typeof import('../workspace-mcp-config').buildWorkspaceMcpConfig
-  | null = null
+  typeof import('../workspace-mcp-config').buildWorkspaceMcpConfig | null = null
 let importError: Error | null = null
 
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require('../workspace-mcp-config')
   buildWorkspaceMcpConfig = mod.buildWorkspaceMcpConfig
 } catch (err) {
@@ -62,7 +60,7 @@ function makeOpts(overrides: Record<string, unknown> = {}) {
       semanticSearchEnabled: true,
       githubConfigured: false,
       localMcpActive: {},
-      ...(overrides.featureFlags as Record<string, unknown> ?? {})
+      ...((overrides.featureFlags as Record<string, unknown>) ?? {})
     },
     controlCallbacks: {
       onPlan: () => {},
@@ -101,38 +99,53 @@ describe('buildWorkspaceMcpConfig', () => {
 
   describe('local_provider_small_tier', () => {
     test('includes_only_essential_code_graph_tools_not_full_set', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'small'
-      }))
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'small'
+        })
+      )
       // Should include some code-graph tools
-      const codeGraphTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-graph__')) ?? []
-      assert.equal(codeGraphTools.length, 6, 'Small tier should have exactly 6 essential code-graph tools')
+      const codeGraphTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-graph__')) ?? []
+      assert.equal(
+        codeGraphTools.length,
+        6,
+        'Small tier should have exactly 6 essential code-graph tools'
+      )
     })
 
     test('excludes_semantic_search_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'small'
-      }))
-      const semanticTools = result.allowedTools?.filter(t => t.startsWith('mcp__semantic-search__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'small'
+        })
+      )
+      const semanticTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__semantic-search__')) ?? []
       assert.equal(semanticTools.length, 0, 'Small tier should have no semantic-search tools')
     })
 
     test('excludes_code_analysis_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'small'
-      }))
-      const analysisTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-analysis__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'small'
+        })
+      )
+      const analysisTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-analysis__')) ?? []
       assert.equal(analysisTools.length, 0, 'Small tier should have no code-analysis tools')
     })
 
     test('disallowedTools_includes_non_essential_code_graph', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'small'
-      }))
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'small'
+        })
+      )
       // The disallowed list should include redundant code-graph tools
       assert.ok(result.disallowedTools.length > 0, 'Small tier should have disallowed tools')
     })
@@ -142,29 +155,38 @@ describe('buildWorkspaceMcpConfig', () => {
 
   describe('local_provider_medium_tier', () => {
     test('includes_full_code_graph_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'medium'
-      }))
-      const codeGraphTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-graph__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'medium'
+        })
+      )
+      const codeGraphTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-graph__')) ?? []
       assert.ok(codeGraphTools.length > 6, 'Medium tier should have more than 6 code-graph tools')
     })
 
     test('includes_semantic_search_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'medium'
-      }))
-      const semanticTools = result.allowedTools?.filter(t => t.startsWith('mcp__semantic-search__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'medium'
+        })
+      )
+      const semanticTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__semantic-search__')) ?? []
       assert.ok(semanticTools.length > 0, 'Medium tier should have semantic-search tools')
     })
 
     test('includes_code_analysis_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'medium'
-      }))
-      const analysisTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-analysis__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'medium'
+        })
+      )
+      const analysisTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-analysis__')) ?? []
       assert.ok(analysisTools.length > 0, 'Medium tier should have code-analysis tools')
     })
   })
@@ -173,12 +195,16 @@ describe('buildWorkspaceMcpConfig', () => {
 
   describe('local_provider_large_tier', () => {
     test('includes_all_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: true,
-        contextTier: 'large'
-      }))
-      const codeGraphTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-graph__')) ?? []
-      const semanticTools = result.allowedTools?.filter(t => t.startsWith('mcp__semantic-search__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: true,
+          contextTier: 'large'
+        })
+      )
+      const codeGraphTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-graph__')) ?? []
+      const semanticTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__semantic-search__')) ?? []
       assert.ok(codeGraphTools.length > 6, 'Large tier should have full code-graph tools')
       assert.ok(semanticTools.length > 0, 'Large tier should have semantic-search tools')
     })
@@ -188,17 +214,21 @@ describe('buildWorkspaceMcpConfig', () => {
 
   describe('claude_provider_no_tier_gating', () => {
     test('full_tool_set_regardless_of_tier', () => {
-      const result = build(makeOpts({
-        isLocalProvider: false
-      }))
+      const result = build(
+        makeOpts({
+          isLocalProvider: false
+        })
+      )
       // Claude should have code-graph tools when featureFlags enable them
-      const codeGraphTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-graph__')) ?? []
+      const codeGraphTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-graph__')) ?? []
       assert.ok(codeGraphTools.length > 0, 'Claude should have code-graph tools')
     })
 
     test('includes_control_action_tools', () => {
       const result = build(makeOpts({ isLocalProvider: false }))
-      const controlTools = result.allowedTools?.filter(t => t.startsWith('mcp__control-actions__')) ?? []
+      const controlTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__control-actions__')) ?? []
       assert.ok(controlTools.length > 0, 'Claude should have control-action tools')
     })
   })
@@ -207,29 +237,56 @@ describe('buildWorkspaceMcpConfig', () => {
 
   describe('feature_flags', () => {
     test('repomapEnabled_false_excludes_code_graph_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: false,
-        featureFlags: { repomapEnabled: false, semanticSearchEnabled: true, githubConfigured: false, localMcpActive: {} }
-      }))
-      const codeGraphTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-graph__')) ?? []
-      assert.equal(codeGraphTools.length, 0, 'Should have no code-graph tools when repomapEnabled=false')
+      const result = build(
+        makeOpts({
+          isLocalProvider: false,
+          featureFlags: {
+            repomapEnabled: false,
+            semanticSearchEnabled: true,
+            githubConfigured: false,
+            localMcpActive: {}
+          }
+        })
+      )
+      const codeGraphTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-graph__')) ?? []
+      assert.equal(
+        codeGraphTools.length,
+        0,
+        'Should have no code-graph tools when repomapEnabled=false'
+      )
     })
 
     test('semanticSearchEnabled_false_excludes_semantic_search_tools', () => {
-      const result = build(makeOpts({
-        isLocalProvider: false,
-        featureFlags: { repomapEnabled: true, semanticSearchEnabled: false, githubConfigured: false, localMcpActive: {} }
-      }))
-      const semanticTools = result.allowedTools?.filter(t => t.startsWith('mcp__semantic-search__')) ?? []
-      assert.equal(semanticTools.length, 0, 'Should have no semantic-search tools when semanticSearchEnabled=false')
+      const result = build(
+        makeOpts({
+          isLocalProvider: false,
+          featureFlags: {
+            repomapEnabled: true,
+            semanticSearchEnabled: false,
+            githubConfigured: false,
+            localMcpActive: {}
+          }
+        })
+      )
+      const semanticTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__semantic-search__')) ?? []
+      assert.equal(
+        semanticTools.length,
+        0,
+        'Should have no semantic-search tools when semanticSearchEnabled=false'
+      )
     })
 
     test('null_workspaceId_excludes_code_graph', () => {
-      const result = build(makeOpts({
-        isLocalProvider: false,
-        workspaceId: null
-      }))
-      const codeGraphTools = result.allowedTools?.filter(t => t.startsWith('mcp__code-graph__')) ?? []
+      const result = build(
+        makeOpts({
+          isLocalProvider: false,
+          workspaceId: null
+        })
+      )
+      const codeGraphTools =
+        result.allowedTools?.filter((t) => t.startsWith('mcp__code-graph__')) ?? []
       assert.equal(codeGraphTools.length, 0)
     })
   })

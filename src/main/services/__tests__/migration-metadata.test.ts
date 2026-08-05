@@ -22,7 +22,7 @@ setupElectronStub()
 
 // ── Import the module ───────────────────────────────────────────────────────
 
-let migrations: Array<{ version: number; name: string; up: Function }> = []
+let migrations: Array<{ version: number; name: string; up: (...args: any[]) => any }> = []
 let moduleExports: Record<string, unknown> = {}
 let importError: Error | null = null
 
@@ -51,9 +51,9 @@ describe('db/index.ts — module exports', () => {
       const msg = importError.message || ''
       assert.ok(
         msg.includes('better-sqlite3') ||
-        msg.includes('NODE_MODULE_VERSION') ||
-        msg.includes('napi') ||
-        msg.includes('native'),
+          msg.includes('NODE_MODULE_VERSION') ||
+          msg.includes('napi') ||
+          msg.includes('native'),
         `Expected better-sqlite3 ABI error, got: ${msg.substring(0, 200)}`
       )
     }
@@ -134,10 +134,7 @@ describe('db/index.ts — migration array structure', () => {
     if (importError) return
     const names = new Set<string>()
     for (const m of migrations) {
-      assert.ok(
-        !names.has(m.name),
-        `Duplicate migration name: ${m.name} (v${m.version})`
-      )
+      assert.ok(!names.has(m.name), `Duplicate migration name: ${m.name} (v${m.version})`)
       names.add(m.name)
     }
   })
@@ -171,10 +168,7 @@ describe('db/index.ts — migration array structure', () => {
     for (const m of migrations.slice(0, 10)) {
       // Migration names should be kebab-case descriptive
       assert.ok(m.name.length >= 5, `v${m.version}: name "${m.name}" is too short`)
-      assert.ok(
-        /^[a-z0-9-]+$/.test(m.name),
-        `v${m.version}: name "${m.name}" should be kebab-case`
-      )
+      assert.ok(/^[a-z0-9-]+$/.test(m.name), `v${m.version}: name "${m.name}" should be kebab-case`)
     }
   })
 })
@@ -197,10 +191,7 @@ describe('db/index.ts — known migration names', () => {
     // These features should appear in migration names
     const expectedKeywords = ['conversation', 'message', 'specialist', 'workspace']
     for (const kw of expectedKeywords) {
-      assert.ok(
-        allNames.includes(kw),
-        `Expected migration names to contain "${kw}"`
-      )
+      assert.ok(allNames.includes(kw), `Expected migration names to contain "${kw}"`)
     }
   })
 })

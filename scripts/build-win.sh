@@ -137,3 +137,8 @@ else
   echo "  (dev dependencies will be restored by cleanup trap)"
   exit $BUILD_EXIT
 fi
+
+# ── Step 4: Publish to OneDrive (auto-update distribution)
+if [ $BUILD_EXIT -eq 0 ] && [ "${SKIP_PUBLISH:-}" != "1" ]; then
+  bash "$ROOT/scripts/publish-to-onedrive.sh"
+fi

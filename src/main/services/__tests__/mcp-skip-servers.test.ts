@@ -35,10 +35,7 @@ describe('deriveSkipServers', () => {
   })
 
   test('does_not_skip_control_actions_when_emit_plan_in_allowed', () => {
-    const result = deriveSkipServers([
-      'Read',
-      'mcp__control-actions__emit_plan'
-    ])
+    const result = deriveSkipServers(['Read', 'mcp__control-actions__emit_plan'])
     // control-actions should NOT be skipped
     assert.ok(
       !result || !result.includes('control-actions'),
@@ -47,10 +44,7 @@ describe('deriveSkipServers', () => {
   })
 
   test('does_not_skip_checkpoint_context_when_its_tools_in_allowed', () => {
-    const result = deriveSkipServers([
-      'Read',
-      'mcp__checkpoint-context__list_checkpoints'
-    ])
+    const result = deriveSkipServers(['Read', 'mcp__checkpoint-context__list_checkpoints'])
     assert.ok(
       !result || !result.includes('checkpoint-context'),
       'Should not skip checkpoint-context when its tools are allowed'
@@ -71,7 +65,11 @@ describe('deriveSkipServers', () => {
   test('blueprint_typical_allowedTools_skips_correct_servers', () => {
     // Simulates the actual blueprint allowedTools (full mode, not lean)
     const blueprintTools = [
-      'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
+      'Read',
+      'Glob',
+      'Grep',
+      'WebSearch',
+      'WebFetch',
       'mcp__code-graph__search_identifiers',
       'mcp__code-graph__file_outline',
       'mcp__semantic-search__semantic_search',
@@ -97,7 +95,15 @@ describe('deriveSkipServers', () => {
   test('lean_build_allowedTools_skips_semantic_search_and_code_analysis', () => {
     // Simulates build allowedTools with leanBuildMcp=true (no semantic-search, no code-analysis)
     const leanBuildTools = [
-      'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash', 'WebSearch', 'WebFetch', 'ListDir',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'Bash',
+      'WebSearch',
+      'WebFetch',
+      'ListDir',
       'mcp__code-graph__search_identifiers',
       'mcp__code-graph__file_outline',
       'mcp__git-context__git_log',

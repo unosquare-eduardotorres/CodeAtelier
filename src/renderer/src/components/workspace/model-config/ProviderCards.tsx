@@ -560,6 +560,9 @@ function OmlxProviderCard({
                 const allModels = localStatus?.models ?? []
                 const embeddingCandidates = allModels.filter((m) => EMBEDDING_MODEL_PATTERN.test(m))
                 const otherModels = allModels.filter((m) => !EMBEDDING_MODEL_PATTERN.test(m))
+                // Ensure the persisted model always appears as an option even before
+                // the connection test completes (prevents dropdown showing "Select...")
+                const persistedNotInList = ollamaEmbeddingModel && !allModels.includes(ollamaEmbeddingModel)
                 return (
                   <select
                     value={ollamaEmbeddingModel}
@@ -567,6 +570,9 @@ function OmlxProviderCard({
                     className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
                   >
                     <option value="">Select embedding model…</option>
+                    {persistedNotInList && (
+                      <option value={ollamaEmbeddingModel}>{ollamaEmbeddingModel}</option>
+                    )}
                     {embeddingCandidates.length > 0 && (
                       <optgroup label="Embedding Models">
                         {embeddingCandidates.map((m) => (
@@ -581,7 +587,7 @@ function OmlxProviderCard({
                         ))}
                       </optgroup>
                     )}
-                    {allModels.length === 0 && (
+                    {allModels.length === 0 && !persistedNotInList && (
                       <option disabled>No models found — check Ollama connection</option>
                     )}
                   </select>

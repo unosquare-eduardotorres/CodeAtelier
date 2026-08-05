@@ -6,13 +6,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let wsDeployLoaded = false
 let testingLoaded = false
@@ -40,25 +40,29 @@ try {
 if (wsDeployLoaded) {
   describe('workspace-deploy.ipc — channel registration', () => {
     test('registers workspace:scanClaude', () => {
-      assert.ok(capturedHandlers.has('workspace:scanClaude'))
+      assert.ok(getHandlers().has('workspace:scanClaude'))
     })
 
     test('registers workspace:activateAgents', () => {
-      assert.ok(capturedHandlers.has('workspace:activateAgents'))
+      assert.ok(getHandlers().has('workspace:activateAgents'))
     })
 
     test('registers workspace:cancelActivation', () => {
-      assert.ok(capturedHandlers.has('workspace:cancelActivation'))
+      assert.ok(getHandlers().has('workspace:cancelActivation'))
     })
 
     test('registers workspace:cleanActivation', () => {
-      assert.ok(capturedHandlers.has('workspace:cleanActivation'))
+      assert.ok(getHandlers().has('workspace:cleanActivation'))
     })
 
-    const wsDeplCh = [...capturedHandlers.keys()].filter(c =>
-      c.includes('scanClaude') || c.includes('activateAgents') ||
-      c.includes('cancelActivation') || c.includes('cleanActivation') ||
-      c.includes('readWorkspaceFile') || c.includes('writeWorkspaceFile')
+    const wsDeplCh = [...getHandlers().keys()].filter(
+      (c) =>
+        c.includes('scanClaude') ||
+        c.includes('activateAgents') ||
+        c.includes('cancelActivation') ||
+        c.includes('cleanActivation') ||
+        c.includes('readWorkspaceFile') ||
+        c.includes('writeWorkspaceFile')
     )
     test('registers ≥4 workspace-deploy channels', () => {
       assert.ok(wsDeplCh.length >= 4, `Expected ≥4, got ${wsDeplCh.length}`)
@@ -84,13 +88,13 @@ if (wsDeployLoaded) {
     test('workspace:cleanActivation calls through', async () => {
       const r = await tryInvokeHandler('workspace:cleanActivation', {
         workspacePath: '/tmp/proj',
-        removeClaudeMd: false,
+        removeClaudeMd: false
       })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     // File read/write — test path validation
-    const readFileCh = capturedHandlers.has('workspace:readFile')
+    const readFileCh = getHandlers().has('workspace:readFile')
     if (readFileCh) {
       test('workspace:readFile rejects disallowed paths', async () => {
         const r = await tryInvokeHandler('workspace:readFile', { filePath: '/etc/passwd' })
@@ -99,18 +103,18 @@ if (wsDeployLoaded) {
 
       test('workspace:readFile accepts .claude/ paths', async () => {
         const r = await tryInvokeHandler('workspace:readFile', {
-          filePath: '/tmp/proj/.claude/settings.json',
+          filePath: '/tmp/proj/.claude/settings.json'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const writeFileCh = capturedHandlers.has('workspace:writeFile')
+    const writeFileCh = getHandlers().has('workspace:writeFile')
     if (writeFileCh) {
       test('workspace:writeFile rejects disallowed paths', async () => {
         const r = await tryInvokeHandler('workspace:writeFile', {
           filePath: '/etc/passwd',
-          content: 'bad',
+          content: 'bad'
         })
         assert.equal(r.ok, false)
       })
@@ -125,18 +129,18 @@ if (wsDeployLoaded) {
 if (testingLoaded) {
   describe('testing.ipc — channel registration', () => {
     test('registers testing:listScenarios', () => {
-      assert.ok(capturedHandlers.has('testing:listScenarios'))
+      assert.ok(getHandlers().has('testing:listScenarios'))
     })
 
     test('registers testing:preflight', () => {
-      assert.ok(capturedHandlers.has('testing:preflight'))
+      assert.ok(getHandlers().has('testing:preflight'))
     })
 
     test('registers testing:run', () => {
-      assert.ok(capturedHandlers.has('testing:run'))
+      assert.ok(getHandlers().has('testing:run'))
     })
 
-    const testCh = [...capturedHandlers.keys()].filter(c => c.startsWith('testing:'))
+    const testCh = [...getHandlers().keys()].filter((c) => c.startsWith('testing:'))
     test('registers ≥5 testing channels', () => {
       assert.ok(testCh.length >= 5, `Expected ≥5, got ${testCh.length}: ${testCh.join(', ')}`)
     })
@@ -174,8 +178,8 @@ if (testingLoaded) {
     })
 
     // testing:getRuns, testing:getRunResults
-    const getRunsCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('testing') && (c.includes('getRuns') || c.includes('listRuns'))
+    const getRunsCh = [...getHandlers().keys()].find(
+      (c) => c.includes('testing') && (c.includes('getRuns') || c.includes('listRuns'))
     )
     if (getRunsCh) {
       test(`${getRunsCh} calls through`, async () => {
@@ -184,8 +188,8 @@ if (testingLoaded) {
       })
     }
 
-    const getResultsCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('testing') && c.includes('Result')
+    const getResultsCh = [...getHandlers().keys()].find(
+      (c) => c.includes('testing') && c.includes('Result')
     )
     if (getResultsCh) {
       test(`${getResultsCh} calls through`, async () => {

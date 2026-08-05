@@ -12,6 +12,17 @@ import { requireObject, requireString, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
 
+/** Reject ref strings that look like flags or contain dangerous chars */
+function validateRef(ref: string, channel: string): void {
+  if (ref === 'WORKING_TREE') return  // Sentinel value is allowed
+  if (ref.startsWith('-')) {
+    throw new Error(`${channel}: invalid ref — must not start with "-"`)
+  }
+  if (/[\x00\n\r]/.test(ref)) {
+    throw new Error(`${channel}: invalid ref — contains control characters`)
+  }
+}
+
 /**
  * Enqueue commit-based memory extraction if gated settings allow it.
  * Extracted to keep the REPO_COMMIT_FILES handler below complexity threshold.
@@ -187,6 +198,45 @@ Respond with ONLY the commit message, no preamble or explanation.`
           )
       }
     }
+  })
+
+  // Get files differing between two refs (branch comparison)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    validateRef(fromRef, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    validateRef(toRef, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getRefDiffFiles(repoPath, fromRef, toRef)
+  })
+
+  // Get file content at two refs for side-by-side diff (branch comparison)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    validateRef(fromRef, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    validateRef(toRef, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getRefFileDiff(repoPath, filePath, fromRef, toRef)
+  })
+
+  // Fetch latest refs from origin remote
+  ipcMain.handle(IPC_CHANNELS.REPO_FETCH_ORIGIN, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_FETCH_ORIGIN)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_FETCH_ORIGIN)
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.fetchOrigin(repoPath)
   })
 
   // Create a pull request via GitHub API

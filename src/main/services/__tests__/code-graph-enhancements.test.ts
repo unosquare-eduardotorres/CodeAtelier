@@ -72,10 +72,7 @@ describe('CodeGraphEdgeRepository.findTransitiveDependents', () => {
     }
 
     assert.equal(result.length, 2, 'cycle should not cause duplicates')
-    assert.deepEqual(
-      result.map((r) => r.file).sort(),
-      ['b.ts', 'c.ts']
-    )
+    assert.deepEqual(result.map((r) => r.file).sort(), ['b.ts', 'c.ts'])
   })
 
   test('respects maxDepth', () => {
@@ -141,8 +138,7 @@ describe('CodeGraphService.findCoChangePairs — pair counting', () => {
 
       for (let i = 0; i < files.length; i++) {
         for (let j = i + 1; j < files.length; j++) {
-          const key =
-            files[i] < files[j] ? `${files[i]}\0${files[j]}` : `${files[j]}\0${files[i]}`
+          const key = files[i] < files[j] ? `${files[i]}\0${files[j]}` : `${files[j]}\0${files[i]}`
           pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1)
         }
       }
@@ -242,14 +238,22 @@ describe('code clone normalization', () => {
       return title
     }`
 
-    assert.equal(normalize(funcA), normalize(funcB), 'structurally identical functions should normalize identically')
+    assert.equal(
+      normalize(funcA),
+      normalize(funcB),
+      'structurally identical functions should normalize identically'
+    )
   })
 
   test('functions with different logic normalize differently', () => {
     const funcA = `function add(a, b) { return a + b }`
     const funcB = `function mul(a, b) { return a * b }`
 
-    assert.notEqual(normalize(funcA), normalize(funcB), 'different operators should produce different normalized forms')
+    assert.notEqual(
+      normalize(funcA),
+      normalize(funcB),
+      'different operators should produce different normalized forms'
+    )
   })
 
   test('strips comments before normalizing', () => {

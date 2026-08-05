@@ -26,7 +26,8 @@ test('extraction: invalid category rejected', () => {
 // ── JSON line parsing logic ──
 
 test('extraction: parses valid JSON fact line', () => {
-  const line = '{"category":"decision","title":"Use SQLite for storage","content":"Chose SQLite over PostgreSQL for embedded use case.","tags":["database","storage"]}'
+  const line =
+    '{"category":"decision","title":"Use SQLite for storage","content":"Chose SQLite over PostgreSQL for embedded use case.","tags":["database","storage"]}'
   const data = JSON.parse(line)
   assert.equal(data.category, 'decision')
   assert.equal(data.title, 'Use SQLite for storage')
@@ -60,13 +61,13 @@ test('extraction: skips malformed JSON lines', () => {
 
 test('extraction: title and content are truncated', () => {
   const longTitle = 'A'.repeat(300)
-  const longContent = 'B'.repeat(3000)
+  const longContent = 'B'.repeat(5000)
 
   const truncTitle = longTitle.slice(0, 200)
-  const truncContent = longContent.slice(0, 2000)
+  const truncContent = longContent.slice(0, 4000)
 
   assert.equal(truncTitle.length, 200)
-  assert.equal(truncContent.length, 2000)
+  assert.equal(truncContent.length, 4000)
 })
 
 test('extraction: tags are capped at 10', () => {

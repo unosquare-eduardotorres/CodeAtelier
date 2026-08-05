@@ -32,7 +32,7 @@ describe('MCP tool error boundary', () => {
 
   test('non-Error throw returns isError: true with stringified message', async () => {
     const handler = withErrorBoundary('test_tool', async () => {
-      throw 'string error'  // eslint-disable-line no-throw-literal
+      throw 'string error'
     })
     const result = await handler({})
     assert.equal(result.isError, true)

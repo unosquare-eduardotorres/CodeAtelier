@@ -24,7 +24,7 @@ void (async () => {
 
     test('formats single user message', () => {
       const result = contextHandoffService.generateFallbackHandoff([
-        { role: 'user', content: 'Hello world' },
+        { role: 'user', content: 'Hello world' }
       ])
       assert.ok(result.includes('**User:** Hello world'))
       assert.ok(result.includes('summary of the prior conversation context'))
@@ -32,7 +32,7 @@ void (async () => {
 
     test('formats single assistant message', () => {
       const result = contextHandoffService.generateFallbackHandoff([
-        { role: 'assistant', content: 'I can help with that.' },
+        { role: 'assistant', content: 'I can help with that.' }
       ])
       assert.ok(result.includes('**Assistant:** I can help with that.'))
     })
@@ -41,7 +41,7 @@ void (async () => {
       const result = contextHandoffService.generateFallbackHandoff([
         { role: 'user', content: 'Question 1' },
         { role: 'assistant', content: 'Answer 1' },
-        { role: 'user', content: 'Question 2' },
+        { role: 'user', content: 'Question 2' }
       ])
       const q1Idx = result.indexOf('Question 1')
       const a1Idx = result.indexOf('Answer 1')
@@ -53,7 +53,7 @@ void (async () => {
     test('takes last 20 messages from array >20', () => {
       const messages = Array.from({ length: 25 }, (_, i) => ({
         role: i % 2 === 0 ? 'user' : 'assistant',
-        content: `Message ${i}`,
+        content: `Message ${i}`
       }))
       const result = contextHandoffService.generateFallbackHandoff(messages)
       // First 5 messages should be omitted (slice(-20) keeps 5..24)
@@ -66,7 +66,7 @@ void (async () => {
     test('truncates individual messages >1000 chars', () => {
       const longContent = 'A'.repeat(1500)
       const result = contextHandoffService.generateFallbackHandoff([
-        { role: 'user', content: longContent },
+        { role: 'user', content: longContent }
       ])
       assert.ok(result.includes('… [truncated]'))
       // Should not contain the full 1500 chars
@@ -76,7 +76,7 @@ void (async () => {
     test('skips messages with empty content', () => {
       const result = contextHandoffService.generateFallbackHandoff([
         { role: 'user', content: '' },
-        { role: 'assistant', content: 'Real content' },
+        { role: 'assistant', content: 'Real content' }
       ])
       assert.ok(!result.includes('**User:**  '))
       assert.ok(result.includes('**Assistant:** Real content'))
@@ -85,7 +85,7 @@ void (async () => {
     test('skips messages with whitespace-only content', () => {
       const result = contextHandoffService.generateFallbackHandoff([
         { role: 'user', content: '   \n\n  ' },
-        { role: 'assistant', content: 'Valid' },
+        { role: 'assistant', content: 'Valid' }
       ])
       // The whitespace message should be skipped (content.trim() === '')
       const userOccurrences = (result.match(/\*\*User:\*\*/g) || []).length
@@ -96,7 +96,7 @@ void (async () => {
       // Each message ~500 chars → 16 messages → 8000 chars → should cut off
       const messages = Array.from({ length: 20 }, (_, i) => ({
         role: 'user',
-        content: `Message ${i}: ${'X'.repeat(490)}`,
+        content: `Message ${i}: ${'X'.repeat(490)}`
       }))
       const result = contextHandoffService.generateFallbackHandoff(messages)
       assert.ok(result.includes('… [earlier messages omitted for brevity]'))
@@ -105,14 +105,14 @@ void (async () => {
     test('handles null content gracefully', () => {
       const result = contextHandoffService.generateFallbackHandoff([
         { role: 'user', content: null as any },
-        { role: 'assistant', content: 'Works fine' },
+        { role: 'assistant', content: 'Works fine' }
       ])
       assert.ok(result.includes('Works fine'))
     })
 
     test('always returns a string', () => {
       const result = contextHandoffService.generateFallbackHandoff([
-        { role: 'user', content: 'Hello' },
+        { role: 'user', content: 'Hello' }
       ])
       assert.equal(typeof result, 'string')
     })

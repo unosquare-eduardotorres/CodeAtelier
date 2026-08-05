@@ -322,7 +322,9 @@ if (buildLoaded) {
   describe('BlueprintBuildService — safeEmit', () => {
     test('emits event without throwing on listener error', () => {
       const service = new BlueprintBuildService()
-      service.on('test:crash', () => { throw new Error('listener crash') })
+      service.on('test:crash', () => {
+        throw new Error('listener crash')
+      })
       const result = (service as any).safeEmit('test:crash', { data: 1 })
       // Should not throw, returns boolean
       assert.equal(typeof result, 'boolean')
@@ -331,7 +333,9 @@ if (buildLoaded) {
     test('emits event normally when listener succeeds', () => {
       const service = new BlueprintBuildService()
       let received = false
-      service.on('test:ok', () => { received = true })
+      service.on('test:ok', () => {
+        received = true
+      })
       ;(service as any).safeEmit('test:ok', { data: 1 })
       assert.ok(received)
     })
@@ -471,7 +475,9 @@ if (specLoaded) {
   describe('BlueprintSpecService — safeEmit', () => {
     test('catches listener error without crashing', () => {
       const service = new BlueprintSpecService()
-      service.on('crash:event', () => { throw new Error('listener error') })
+      service.on('crash:event', () => {
+        throw new Error('listener error')
+      })
       const result = (service as any).safeEmit('crash:event', {})
       assert.equal(typeof result, 'boolean')
     })
@@ -479,7 +485,9 @@ if (specLoaded) {
     test('returns true when listener receives event', () => {
       const service = new BlueprintSpecService()
       let received = false
-      service.on('ok:event', () => { received = true })
+      service.on('ok:event', () => {
+        received = true
+      })
       ;(service as any).safeEmit('ok:event', {})
       assert.ok(received)
     })
@@ -529,7 +537,9 @@ if (planLoaded) {
   describe('BlueprintPlanService — safeEmit', () => {
     test('catches listener error without crashing', () => {
       const service = new BlueprintPlanService()
-      service.on('crash', () => { throw new Error('listener error') })
+      service.on('crash', () => {
+        throw new Error('listener error')
+      })
       const result = (service as any).safeEmit('crash', {})
       assert.equal(typeof result, 'boolean')
     })
@@ -577,7 +587,9 @@ if (tasksLoaded) {
   describe('BlueprintTasksService — safeEmit', () => {
     test('catches listener error without crashing', () => {
       const service = new BlueprintTasksService()
-      service.on('crash', () => { throw new Error('listener error') })
+      service.on('crash', () => {
+        throw new Error('listener error')
+      })
       const result = (service as any).safeEmit('crash', {})
       assert.equal(typeof result, 'boolean')
     })
@@ -625,7 +637,9 @@ if (verifyLoaded) {
   describe('BlueprintVerifyService — safeEmit', () => {
     test('catches listener error without crashing', () => {
       const service = new BlueprintVerifyService()
-      service.on('crash', () => { throw new Error('listener error') })
+      service.on('crash', () => {
+        throw new Error('listener error')
+      })
       const result = (service as any).safeEmit('crash', {})
       assert.equal(typeof result, 'boolean')
     })
@@ -665,7 +679,9 @@ if (reviewLoaded) {
   describe('BlueprintReviewService — safeEmit', () => {
     test('catches listener error without crashing', () => {
       const service = new BlueprintReviewService()
-      service.on('crash', () => { throw new Error('listener error') })
+      service.on('crash', () => {
+        throw new Error('listener error')
+      })
       const result = (service as any).safeEmit('crash', {})
       assert.equal(typeof result, 'boolean')
     })

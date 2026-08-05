@@ -87,6 +87,7 @@ class MemoryEngineService {
     embedding: Buffer
     factText: string
     workspaceId: string
+    sourceType: MemorySourceType
     resolve: (fact: MemoryFact | null | undefined) => void
     reject: (err: Error) => void
   }> = []
@@ -233,12 +234,18 @@ class MemoryEngineService {
       return undefined // New fact territory
     }
 
+    // During bootstrap, raise the dedup threshold slightly to avoid
+    // over-merging related facts from the same knowledge domain
+    const effectiveDupThreshold = params.sourceType === 'bootstrap'
+      ? 0.93
+      : DUPLICATE_THRESHOLD
+
     // Volatile facts: UPDATE-in-place only when similarity is high AND same category.
     // At 0.70 two different volatile facts (e.g. schemaVersion vs electronVersion) can
     // easily match — require ≥0.90 + same category to prevent cross-fact data loss.
     if (
       isVolatile &&
-      topMatch.similarity >= DUPLICATE_THRESHOLD &&
+      topMatch.similarity >= effectiveDupThreshold &&
       topMatch.fact.category === params.category
     ) {
       return this.handleUpdate(topMatch.fact, params, embedding)
@@ -249,12 +256,12 @@ class MemoryEngineService {
       return this.handleDuplicate(topMatch.fact, params.sourceType)
     }
 
-    // ≥0.90 — duplicate
-    if (topMatch.similarity >= DUPLICATE_THRESHOLD) {
+    // ≥effectiveDupThreshold — duplicate
+    if (topMatch.similarity >= effectiveDupThreshold) {
       return this.handleDuplicate(topMatch.fact, params.sourceType)
     }
 
-    // 0.70–0.90 — ambiguous band → Mem0-style classification
+    // ambiguous band → Mem0-style classification
     return this.classifyAmbiguous(topMatch.fact, params, factText, embedding, scored)
   }
 
@@ -336,6 +343,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
           embedding,
           factText: _newText,
           workspaceId: newParams.workspaceId!,
+          sourceType: newParams.sourceType,
           resolve,
           reject
         })
@@ -430,15 +438,22 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         // Fast-path: mirror the pipeline's branch order to skip the LLM classifier
         // when fresh similarity is high enough for a deterministic outcome.
         const isVolatile = this.detectVolatility(item.factText)
+        const effectiveDupThreshold = item.sourceType === 'bootstrap'
+          ? 0.93
+          : DUPLICATE_THRESHOLD
         if (
           isVolatile &&
-          bestMatch.similarity >= DUPLICATE_THRESHOLD &&
+          bestMatch.similarity >= effectiveDupThreshold &&
           bestMatch.fact.category === item.params.category
         ) {
           item.resolve(this.handleUpdate(bestMatch.fact, item.params, item.embedding))
           continue
         }
-        if (bestMatch.similarity >= DUPLICATE_THRESHOLD) {
+        if (bestMatch.similarity >= AUTO_MERGE_THRESHOLD) {
+          item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
+          continue
+        }
+        if (bestMatch.similarity >= effectiveDupThreshold) {
           item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
           continue
         }

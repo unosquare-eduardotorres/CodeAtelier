@@ -86,10 +86,7 @@ const ERROR_DIAGNOSTICS: MockDiagnostic[] = [
   }
 ]
 
-const MIXED_DIAGNOSTICS: MockDiagnostic[] = [
-  ...ERROR_DIAGNOSTICS,
-  ...CLEAN_DIAGNOSTICS
-]
+const MIXED_DIAGNOSTICS: MockDiagnostic[] = [...ERROR_DIAGNOSTICS, ...CLEAN_DIAGNOSTICS]
 
 // ── Summary formatting (mirrors summarizeDiagnostics logic) ──
 
@@ -172,7 +169,9 @@ function formatFullDiagnostics(diagnostics: MockDiagnostic[]): string {
     lines.push('')
     for (const msg of file.messages) {
       const sev = msg.severity === 2 ? '❌' : '⚠️'
-      lines.push(`- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`)
+      lines.push(
+        `- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`
+      )
     }
     lines.push('')
   }
@@ -217,7 +216,10 @@ describe('ESLint MCP Tools — eslint_check output parsing', () => {
     const output = summarizeDiagnostics(ERROR_DIAGNOSTICS)
     const serviceIdx = output.indexOf('src/service.ts')
     const utilsIdx = output.indexOf('src/utils.ts')
-    assert.ok(serviceIdx < utilsIdx, 'service.ts (2 errors) should appear before utils.ts (1 error)')
+    assert.ok(
+      serviceIdx < utilsIdx,
+      'service.ts (2 errors) should appear before utils.ts (1 error)'
+    )
   })
 })
 
@@ -233,8 +235,8 @@ describe('ESLint MCP Tools — full format output', () => {
     assert.ok(output.includes('L10:7'))
     assert.ok(output.includes('L15:20'))
     assert.ok(output.includes("'foo' is defined but never used."))
-    assert.ok(output.includes('❌'))  // error severity marker
-    assert.ok(output.includes('⚠️'))  // warning severity marker
+    assert.ok(output.includes('❌')) // error severity marker
+    assert.ok(output.includes('⚠️')) // warning severity marker
   })
 
   test('full format includes file path headings', () => {
@@ -313,11 +315,7 @@ describe('ESLint MCP Tools — eslint_fix output parsing', () => {
 describe('ESLint MCP Tools — eslint_rules output parsing', () => {
   test('rule severity mapping — numeric to string', () => {
     const severityMap = (raw: unknown): string => {
-      return raw === 2 || raw === 'error'
-        ? 'error'
-        : raw === 1 || raw === 'warn'
-          ? 'warn'
-          : 'off'
+      return raw === 2 || raw === 'error' ? 'error' : raw === 1 || raw === 'warn' ? 'warn' : 'off'
     }
 
     assert.equal(severityMap(2), 'error')
@@ -473,7 +471,8 @@ describe('ESLint MCP Tools — graceful error messages', () => {
     const isNotFound = message.includes('ENOENT') || message.includes('not found')
     assert.ok(isNotFound)
 
-    const errorMessage = 'ESLint not found in workspace. Ensure eslint is installed (npm install eslint).'
+    const errorMessage =
+      'ESLint not found in workspace. Ensure eslint is installed (npm install eslint).'
     assert.ok(errorMessage.includes('not found'))
     assert.ok(errorMessage.includes('npm install'))
   })

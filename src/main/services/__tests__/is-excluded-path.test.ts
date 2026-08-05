@@ -6,7 +6,12 @@
 import assert from 'node:assert/strict'
 import { join, sep } from 'node:path'
 import { test, describe } from './test-harness'
-import { isExcludedPath, isExcludedDirName, toPosixRel, matchesSkipPattern } from '../code-graph-exclusions'
+import {
+  isExcludedPath,
+  isExcludedDirName,
+  toPosixRel,
+  matchesSkipPattern
+} from '../code-graph-exclusions'
 import { parseIgnoreRules } from '../workspace-ignore'
 
 describe('isExcludedPath', () => {
@@ -218,7 +223,10 @@ describe('toPosixRel', () => {
 
   test('Windows drive-letter paths normalize (Windows only)', () => {
     if (!isWindows) return
-    assert.equal(toPosixRel('C:\\repos\\MULLIGAN\\src\\Foo.cs', 'C:\\repos\\MULLIGAN'), 'src/Foo.cs')
+    assert.equal(
+      toPosixRel('C:\\repos\\MULLIGAN\\src\\Foo.cs', 'C:\\repos\\MULLIGAN'),
+      'src/Foo.cs'
+    )
   })
 })
 

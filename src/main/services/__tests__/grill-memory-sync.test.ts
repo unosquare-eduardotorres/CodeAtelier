@@ -87,8 +87,8 @@ describe('track scores formatting', () => {
       { trackId: 'risk', score: 3 }
     ]
 
-    const scoreLines = trackScores.map((ts: any) =>
-      `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
+    const scoreLines = trackScores.map(
+      (ts: any) => `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
     )
 
     assert.equal(scoreLines.length, 3)
@@ -97,12 +97,10 @@ describe('track scores formatting', () => {
   })
 
   test('handles alternative field names (track/value)', () => {
-    const trackScores = [
-      { track: 'design', value: 9 }
-    ]
+    const trackScores = [{ track: 'design', value: 9 }]
 
-    const scoreLines = trackScores.map((ts: any) =>
-      `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
+    const scoreLines = trackScores.map(
+      (ts: any) => `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
     )
 
     assert.equal(scoreLines[0], '- design: 9/10')
@@ -110,8 +108,8 @@ describe('track scores formatting', () => {
 
   test('handles missing score fields', () => {
     const trackScores = [{ trackId: 'broken' }]
-    const scoreLines = trackScores.map((ts: any) =>
-      `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
+    const scoreLines = trackScores.map(
+      (ts: any) => `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
     )
     assert.equal(scoreLines[0], '- broken: ?/10')
   })
@@ -121,9 +119,7 @@ describe('track scores formatting', () => {
 
 describe('syncIdeaToMemory content assembly', () => {
   test('includes all sections in order', () => {
-    const contentParts = [
-      'Build a REST API for user management'
-    ]
+    const contentParts = ['Build a REST API for user management']
 
     // Grill decisions
     contentParts.push('\n### Grill Decisions\n- **auth**: JWT\n- **db**: SQLite')

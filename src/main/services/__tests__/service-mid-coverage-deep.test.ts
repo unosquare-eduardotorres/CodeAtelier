@@ -60,7 +60,11 @@ describe('GitHub — token type detection', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('Agent Recovery — error classification', () => {
-  function classifyStreamError(errorMsg: string, timedOut: boolean, isAbort: boolean): {
+  function classifyStreamError(
+    errorMsg: string,
+    timedOut: boolean,
+    isAbort: boolean
+  ): {
     isOverload: boolean
     isMaxTurns: boolean
   } {
@@ -133,7 +137,8 @@ describe('Agent Recovery — TURN_LIMIT_EXHAUSTED_MSG', () => {
 })
 
 describe('Agent Recovery — plan line regex', () => {
-  const planLineRegex = /^\s*(?:\d+[.)]\s|[-*]\s|#{2,4}\s(?:Step|Phase|Change|Modify|Add|Remove|Update|Create|Fix|Implement)|\*{1,2}\d+[.)]\*{0,2}\s)/i
+  const planLineRegex =
+    /^\s*(?:\d+[.)]\s|[-*]\s|#{2,4}\s(?:Step|Phase|Change|Modify|Add|Remove|Update|Create|Fix|Implement)|\*{1,2}\d+[.)]\*{0,2}\s)/i
 
   test('matches_numbered_list', () => {
     assert.ok(planLineRegex.test('1. Step name'))
@@ -369,13 +374,21 @@ describe('Agent Sync — change detection', () => {
 describe('Memory Feed — state machine', () => {
   type FeedState = 'idle' | 'generating' | 'complete' | 'error'
 
-  function transitionState(current: FeedState, event: 'start' | 'complete' | 'error' | 'reset'): FeedState {
+  function transitionState(
+    current: FeedState,
+    event: 'start' | 'complete' | 'error' | 'reset'
+  ): FeedState {
     switch (event) {
-      case 'start': return current === 'idle' ? 'generating' : current
-      case 'complete': return current === 'generating' ? 'complete' : current
-      case 'error': return 'error'
-      case 'reset': return 'idle'
-      default: return current
+      case 'start':
+        return current === 'idle' ? 'generating' : current
+      case 'complete':
+        return current === 'generating' ? 'complete' : current
+      case 'error':
+        return 'error'
+      case 'reset':
+        return 'idle'
+      default:
+        return current
     }
   }
 

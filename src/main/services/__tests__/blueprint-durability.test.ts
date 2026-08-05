@@ -7,8 +7,15 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { journalEventsToChatMessages, HYDRATION_EVENT_CAP, type JournalEvent } from '../../../shared/blueprint-journal-mapper'
-import { resolveHydrationAction, resolvePostFetchAction } from '../../../shared/blueprint-hydration-helpers'
+import {
+  journalEventsToChatMessages,
+  HYDRATION_EVENT_CAP,
+  type JournalEvent
+} from '../../../shared/blueprint-journal-mapper'
+import {
+  resolveHydrationAction,
+  resolvePostFetchAction
+} from '../../../shared/blueprint-hydration-helpers'
 import { resolveVerifyBannerState } from '../../../shared/blueprint-verify-banner-helpers'
 
 // -- 1. journalEventsToChatMessages mapper --
@@ -41,7 +48,11 @@ describe('journalEventsToChatMessages', () => {
 
   test('phaseComplete system event includes status', () => {
     const events: JournalEvent[] = [
-      makeEvent({ seq: 1, type: 'system', payload: { event: 'phaseComplete', phase: 'build', status: 'complete' } })
+      makeEvent({
+        seq: 1,
+        type: 'system',
+        payload: { event: 'phaseComplete', phase: 'build', status: 'complete' }
+      })
     ]
     const msgs = journalEventsToChatMessages(events)
     assert.equal(msgs.length, 1)
@@ -84,7 +95,12 @@ describe('journalEventsToChatMessages', () => {
     // Should produce qa message with answers, NOT a separate user message
     assert.equal(msgs.length, 1)
     assert.equal(msgs[0].type, 'qa')
-    const qa = msgs[0] as { answers: Record<string, { selectedOptions: string[]; otherText: string; otherSelected: boolean; skipped: boolean }> }
+    const qa = msgs[0] as {
+      answers: Record<
+        string,
+        { selectedOptions: string[]; otherText: string; otherSelected: boolean; skipped: boolean }
+      >
+    }
     assert.equal(qa.answers['q1'].otherText, 'The scope is X')
     assert.deepEqual(qa.answers['q1'].selectedOptions, [])
     assert.equal(qa.answers['q1'].otherSelected, true)
@@ -117,7 +133,11 @@ describe('journalEventsToChatMessages', () => {
   test('agent event with content and toolActivities', () => {
     const tools = [{ id: 't1', toolName: 'Read', status: 'completed', startedAt: 1 }]
     const events: JournalEvent[] = [
-      makeEvent({ seq: 1, type: 'agent', payload: { contentMd: 'Analyzed the code', toolActivities: tools } })
+      makeEvent({
+        seq: 1,
+        type: 'agent',
+        payload: { contentMd: 'Analyzed the code', toolActivities: tools }
+      })
     ]
     const msgs = journalEventsToChatMessages(events)
     assert.equal(msgs.length, 1)
@@ -172,19 +192,39 @@ describe('journalEventsToChatMessages', () => {
     const questions = [{ id: 'q1', text: 'Scope?' }]
     const events: JournalEvent[] = [
       makeEvent({ seq: 1, type: 'system', payload: { event: 'phaseStart', phase: 'specify' } }),
-      makeEvent({ seq: 2, type: 'agent', payload: { contentMd: 'Analyzing spec...', toolActivities: [] } }),
-      makeEvent({ seq: 3, type: 'system', payload: { event: 'phaseComplete', phase: 'specify', status: 'complete' } }),
+      makeEvent({
+        seq: 2,
+        type: 'agent',
+        payload: { contentMd: 'Analyzing spec...', toolActivities: [] }
+      }),
+      makeEvent({
+        seq: 3,
+        type: 'system',
+        payload: { event: 'phaseComplete', phase: 'specify', status: 'complete' }
+      }),
       makeEvent({ seq: 4, type: 'system', payload: { event: 'phaseStart', phase: 'clarify' } }),
       makeEvent({ seq: 5, type: 'findings', payload: { findings } }),
       makeEvent({ seq: 6, type: 'qa', payload: { questions } }),
       makeEvent({ seq: 7, type: 'user', payload: { message: 'The scope is everything' } }),
-      makeEvent({ seq: 8, type: 'system', payload: { event: 'phaseComplete', phase: 'clarify', status: 'complete' } }),
+      makeEvent({
+        seq: 8,
+        type: 'system',
+        payload: { event: 'phaseComplete', phase: 'clarify', status: 'complete' }
+      }),
       makeEvent({ seq: 9, type: 'system', payload: { event: 'phaseStart', phase: 'plan' } }),
       makeEvent({ seq: 10, type: 'plan', payload: { contentJson: { title: 'Plan' } } }),
-      makeEvent({ seq: 11, type: 'system', payload: { event: 'phaseComplete', phase: 'plan', status: 'complete' } }),
+      makeEvent({
+        seq: 11,
+        type: 'system',
+        payload: { event: 'phaseComplete', phase: 'plan', status: 'complete' }
+      }),
       makeEvent({ seq: 12, type: 'system', payload: { event: 'phaseStart', phase: 'tasks' } }),
       makeEvent({ seq: 13, type: 'tasks', payload: { contentJson: { tasks: [] } } }),
-      makeEvent({ seq: 14, type: 'system', payload: { event: 'phaseComplete', phase: 'tasks', status: 'complete' } }),
+      makeEvent({
+        seq: 14,
+        type: 'system',
+        payload: { event: 'phaseComplete', phase: 'tasks', status: 'complete' }
+      })
     ]
     const msgs = journalEventsToChatMessages(events)
     // 8 system + 1 agent + 1 findings + 1 qa + 1 plan + 1 tasks = 13 (user consumed by qa)
@@ -209,7 +249,9 @@ describe('journalEventsToChatMessages hardening', () => {
     const count = HYDRATION_EVENT_CAP + 50
     const events: JournalEvent[] = []
     for (let i = 1; i <= count; i++) {
-      events.push(makeEvent({ seq: i, type: 'system', payload: { event: 'phaseStart', phase: 'specify' } }))
+      events.push(
+        makeEvent({ seq: i, type: 'system', payload: { event: 'phaseStart', phase: 'specify' } })
+      )
     }
     const msgs = journalEventsToChatMessages(events)
     // Should have cap messages + 1 truncation marker
@@ -222,7 +264,9 @@ describe('journalEventsToChatMessages hardening', () => {
   test('events within cap are returned without truncation marker', () => {
     const events: JournalEvent[] = []
     for (let i = 1; i <= 5; i++) {
-      events.push(makeEvent({ seq: i, type: 'system', payload: { event: 'phaseStart', phase: 'specify' } }))
+      events.push(
+        makeEvent({ seq: i, type: 'system', payload: { event: 'phaseStart', phase: 'specify' } })
+      )
     }
     const msgs = journalEventsToChatMessages(events)
     assert.equal(msgs.length, 5)
@@ -235,11 +279,31 @@ describe('journalEventsToChatMessages hardening', () => {
   test('skips artifact-type agent events when same phase has accumulator agents', () => {
     const events: JournalEvent[] = [
       // Accumulator-style agent (has toolActivities)
-      makeEvent({ seq: 1, type: 'agent', payload: { phase: 'build', contentMd: 'Accumulator text', toolActivities: [{ id: 't1', toolName: 'Read', status: 'completed', startedAt: 1 }] } }),
+      makeEvent({
+        seq: 1,
+        type: 'agent',
+        payload: {
+          phase: 'build',
+          contentMd: 'Accumulator text',
+          toolActivities: [{ id: 't1', toolName: 'Read', status: 'completed', startedAt: 1 }]
+        }
+      }),
       // Artifact-type agent in same phase (should be skipped)
-      makeEvent({ seq: 2, type: 'agent', payload: { phase: 'build', contentMd: 'Same text from artifact', artifactType: 'build-output' } }),
+      makeEvent({
+        seq: 2,
+        type: 'agent',
+        payload: {
+          phase: 'build',
+          contentMd: 'Same text from artifact',
+          artifactType: 'build-output'
+        }
+      }),
       // Non-artifact agent in different phase (should NOT be skipped)
-      makeEvent({ seq: 3, type: 'agent', payload: { phase: 'specify', contentMd: 'Specify output' } }),
+      makeEvent({
+        seq: 3,
+        type: 'agent',
+        payload: { phase: 'specify', contentMd: 'Specify output' }
+      })
     ]
     const msgs = journalEventsToChatMessages(events)
     const agentMsgs = msgs.filter((m) => m.type === 'agent')
@@ -250,7 +314,12 @@ describe('journalEventsToChatMessages hardening', () => {
 
   test('unparseable createdAt falls back to Date.now()', () => {
     const events: JournalEvent[] = [
-      makeEvent({ seq: 1, type: 'system', payload: { event: 'phaseStart', phase: 'specify' }, createdAt: 'not-a-date' })
+      makeEvent({
+        seq: 1,
+        type: 'system',
+        payload: { event: 'phaseStart', phase: 'specify' },
+        createdAt: 'not-a-date'
+      })
     ]
     const msgs = journalEventsToChatMessages(events)
     assert.equal(msgs.length, 1)
@@ -264,13 +333,20 @@ describe('journalEventsToChatMessages hardening', () => {
   // -- QA answer shape correctness --
 
   test('qa answer uses correct QuestionAnswerState shape with selectedOptions/otherText', () => {
-    const questions = [{ id: 'q1', header: 'Scope', question: 'What is the scope?', multiSelect: false, options: [] }]
+    const questions = [
+      { id: 'q1', header: 'Scope', question: 'What is the scope?', multiSelect: false, options: [] }
+    ]
     const events: JournalEvent[] = [
       makeEvent({ seq: 1, type: 'qa', payload: { questions } }),
       makeEvent({ seq: 2, type: 'user', payload: { message: 'Everything' } })
     ]
     const msgs = journalEventsToChatMessages(events)
-    const qa = msgs[0] as { answers: Record<string, { selectedOptions: string[]; otherText: string; otherSelected: boolean; skipped: boolean }> }
+    const qa = msgs[0] as {
+      answers: Record<
+        string,
+        { selectedOptions: string[]; otherText: string; otherSelected: boolean; skipped: boolean }
+      >
+    }
     assert.deepEqual(qa.answers['q1'].selectedOptions, [])
     assert.equal(qa.answers['q1'].otherText, 'Everything')
     assert.equal(qa.answers['q1'].otherSelected, true)
@@ -365,13 +441,33 @@ describe('wrong-transcript-switch', () => {
   test('switching blueprints produces different transcripts', () => {
     // Blueprint A events
     const eventsA: JournalEvent[] = [
-      makeEvent({ seq: 1, type: 'system', payload: { event: 'phaseStart', phase: 'specify' }, createdAt: '2026-01-01T00:00:00.000Z' }),
-      makeEvent({ seq: 2, type: 'agent', payload: { contentMd: 'Analyzing A...' }, createdAt: '2026-01-01T00:01:00.000Z' })
+      makeEvent({
+        seq: 1,
+        type: 'system',
+        payload: { event: 'phaseStart', phase: 'specify' },
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'agent',
+        payload: { contentMd: 'Analyzing A...' },
+        createdAt: '2026-01-01T00:01:00.000Z'
+      })
     ]
     // Blueprint B events
     const eventsB: JournalEvent[] = [
-      makeEvent({ seq: 1, type: 'system', payload: { event: 'phaseStart', phase: 'clarify' }, createdAt: '2026-02-01T00:00:00.000Z' }),
-      makeEvent({ seq: 2, type: 'agent', payload: { contentMd: 'Analyzing B...' }, createdAt: '2026-02-01T00:01:00.000Z' })
+      makeEvent({
+        seq: 1,
+        type: 'system',
+        payload: { event: 'phaseStart', phase: 'clarify' },
+        createdAt: '2026-02-01T00:00:00.000Z'
+      }),
+      makeEvent({
+        seq: 2,
+        type: 'agent',
+        payload: { contentMd: 'Analyzing B...' },
+        createdAt: '2026-02-01T00:01:00.000Z'
+      })
     ]
     const msgsA = journalEventsToChatMessages(eventsA)
     const msgsB = journalEventsToChatMessages(eventsB)

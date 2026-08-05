@@ -291,7 +291,9 @@ if (loaded) {
       const session = new AgentSessionService(adapter as any)
       let planCalled = false
       const cb: any = {
-        onPlan: () => { planCalled = true },
+        onPlan: () => {
+          planCalled = true
+        },
         onAskUser: () => {}
       }
       ;(session as any).accumulatedText = 'before plan'
@@ -314,7 +316,9 @@ if (loaded) {
       let askCalled = false
       const cb: any = {
         onPlan: () => {},
-        onAskUser: () => { askCalled = true }
+        onAskUser: () => {
+          askCalled = true
+        }
       }
       ;(session as any).wrapControlCallbacks(cb)
 
@@ -387,10 +391,7 @@ if (loaded) {
       test('overload_detected_for_529_error', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('529 Server overloaded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('529 Server overloaded'), false)
         assert.ok(result.isOverload)
         assert.ok(!result.isMaxTurns)
         assert.ok(!result.isAbort)
@@ -400,10 +401,7 @@ if (loaded) {
       test('overload_detected_for_server_is_overloaded', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('server_is_overloaded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('server_is_overloaded'), false)
         assert.ok(result.isOverload)
       })
 
@@ -442,10 +440,7 @@ if (loaded) {
       test('context_overflow_detected_for_local_llm', () => {
         const host = createMockHost({ llmProvider: 'local-llm' })
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('context length exceeded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('context length exceeded'), false)
         assert.ok(result.isContextOverflow)
       })
 
@@ -468,20 +463,14 @@ if (loaded) {
       test('context_overflow_not_detected_for_claude_provider', () => {
         const host = createMockHost({ llmProvider: 'claude' })
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('context length exceeded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('context length exceeded'), false)
         assert.ok(!result.isContextOverflow, 'context overflow only for local-llm')
       })
 
       test('generic_error_all_false', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('some random error'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('some random error'), false)
         assert.ok(!result.isOverload)
         assert.ok(!result.isMaxTurns)
         assert.ok(!result.isAbort)
@@ -881,9 +870,11 @@ if (loaded) {
         const host = createMockHostFull()
         const rm = new AgentRecoveryManager(host)
         await rm.handleStreamError(new Error('some error'), false, 1)
-        assert.ok(host._chunks.some((c: any) =>
-          c.type === 'session_recovery' && c.recoveryPhase === 'failed'
-        ))
+        assert.ok(
+          host._chunks.some(
+            (c: any) => c.type === 'session_recovery' && c.recoveryPhase === 'failed'
+          )
+        )
       })
 
       test('clears_sdkAbortController', async () => {
@@ -935,9 +926,9 @@ if (loaded) {
         const host = createMockHostForCapture()
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
-        assert.ok(host._emitted.some((e: any) =>
-          e.event === 'intent' && e.data?.type === 'response'
-        ))
+        assert.ok(
+          host._emitted.some((e: any) => e.event === 'intent' && e.data?.type === 'response')
+        )
       })
 
       test('sets_status_to_idle', () => {
@@ -958,16 +949,23 @@ if (loaded) {
         const host = createMockHostForCapture()
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 2)
-        assert.ok(host._emitted.some((e: any) =>
-          e.event === 'chunk' &&
-          e.data?.type === 'session_recovery' &&
-          e.data?.recoveryPhase === 'completed'
-        ))
+        assert.ok(
+          host._emitted.some(
+            (e: any) =>
+              e.event === 'chunk' &&
+              e.data?.type === 'session_recovery' &&
+              e.data?.recoveryPhase === 'completed'
+          )
+        )
       })
 
       test('flushes_token_usage', () => {
         let flushed = false
-        const host = createMockHostForCapture({ flushTokenUsage: () => { flushed = true } })
+        const host = createMockHostForCapture({
+          flushTokenUsage: () => {
+            flushed = true
+          }
+        })
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
         assert.ok(flushed)
@@ -978,7 +976,9 @@ if (loaded) {
         const host = createMockHostForCapture({
           adapter: {
             role: 'specialist',
-            emitDetectedIntents: () => { called = true }
+            emitDetectedIntents: () => {
+              called = true
+            }
           }
         })
         const rm = new AgentRecoveryManager(host)
@@ -1059,7 +1059,11 @@ if (loaded) {
           isBuildMode: false,
           recoveryDepth: 0,
           timedOut: false,
-          streamState: { messageStopReceived: true, lastTerminalReason: null, overloadDetected: false },
+          streamState: {
+            messageStopReceived: true,
+            lastTerminalReason: null,
+            overloadDetected: false
+          },
           mcpResult: {},
           llmProvider: 'claude'
         })
@@ -1070,7 +1074,13 @@ if (loaded) {
       test('warns_when_no_messageStop_received', async () => {
         let warned = false
         const host = createHostForFinalize({
-          log: { info: () => {}, warn: () => { warned = true }, error: () => {} }
+          log: {
+            info: () => {},
+            warn: () => {
+              warned = true
+            },
+            error: () => {}
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await rm.finalizeStream({
@@ -1079,7 +1089,11 @@ if (loaded) {
           isBuildMode: false,
           recoveryDepth: 0,
           timedOut: false,
-          streamState: { messageStopReceived: false, lastTerminalReason: null, overloadDetected: false },
+          streamState: {
+            messageStopReceived: false,
+            lastTerminalReason: null,
+            overloadDetected: false
+          },
           mcpResult: {},
           llmProvider: 'claude'
         })
@@ -1088,7 +1102,13 @@ if (loaded) {
 
       test('skips_warning_when_timed_out', async () => {
         const host = createHostForFinalize({
-          log: { info: () => {}, warn: () => { /* intentionally unchecked */ }, error: () => {} }
+          log: {
+            info: () => {},
+            warn: () => {
+              /* intentionally unchecked */
+            },
+            error: () => {}
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await rm.finalizeStream({
@@ -1097,7 +1117,11 @@ if (loaded) {
           isBuildMode: false,
           recoveryDepth: 0,
           timedOut: true,
-          streamState: { messageStopReceived: false, lastTerminalReason: null, overloadDetected: false },
+          streamState: {
+            messageStopReceived: false,
+            lastTerminalReason: null,
+            overloadDetected: false
+          },
           mcpResult: {},
           llmProvider: 'claude'
         })
@@ -1228,7 +1252,12 @@ if (loaded) {
       test('resets_circuit_breaker', async () => {
         let resetCalled = false
         const host = createHostForContinue({
-          circuitBreaker: { count: 5, reset: () => { resetCalled = true } }
+          circuitBreaker: {
+            count: 5,
+            reset: () => {
+              resetCalled = true
+            }
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await (rm as any).continueTurnLimit({
@@ -1274,7 +1303,9 @@ if (loaded) {
       test('calls_executeStream_with_continuation_prompt', async () => {
         let execOpts: any = null
         const host = createHostForContinue({
-          executeStream: async (opts: any) => { execOpts = opts }
+          executeStream: async (opts: any) => {
+            execOpts = opts
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await (rm as any).continueTurnLimit({
@@ -1293,7 +1324,9 @@ if (loaded) {
       test('builds_detailed_prompt_for_local_llm', async () => {
         let execOpts: any = null
         const host = createHostForContinue({
-          executeStream: async (opts: any) => { execOpts = opts }
+          executeStream: async (opts: any) => {
+            execOpts = opts
+          }
         })
         const rm = new AgentRecoveryManager(host)
         try {
@@ -1351,7 +1384,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       const status = session.getStatus()
@@ -1371,7 +1404,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       const status = session.getStatus()
@@ -1391,7 +1424,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       // resolveSession with no existing session returns undefined
@@ -1408,7 +1441,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       assert.equal(session.getSessionId('conv-1'), undefined)
@@ -1423,7 +1456,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       // Should not throw

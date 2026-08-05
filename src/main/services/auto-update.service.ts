@@ -85,6 +85,55 @@ class AutoUpdateService {
       githubOwner: repo.get('update_github_owner') ?? DEFAULT_CONFIG.githubOwner,
       githubRepo: repo.get('update_github_repo') ?? DEFAULT_CONFIG.githubRepo
     }
+    // Auto-detect OneDrive path on first run if no drivePath is configured
+    if (this.config.source === 'drive' && !this.config.drivePath) {
+      const detected = this.detectOneDrivePath()
+      if (detected) {
+        updateLogger.info(`Auto-detected OneDrive update path: ${detected}`)
+        this.config.drivePath = detected
+        repo.set('update_drive_path', detected)
+      }
+    }
+  }
+
+  /**
+   * Auto-detect the OneDrive "Code Atelier" folder for update distribution.
+   * Returns the local sync path or null if not found.
+   */
+  private detectOneDrivePath(): string | null {
+    const { platform, homedir } = require('node:os')
+    const { readdirSync, existsSync } = require('node:fs')
+    const { join } = require('node:path')
+    const home = homedir()
+    const targetFolder = 'Code Atelier'
+
+    try {
+      if (platform() === 'darwin') {
+        // macOS: ~/Library/CloudStorage/OneDrive-*/Code Atelier
+        const cloudStorage = join(home, 'Library', 'CloudStorage')
+        if (existsSync(cloudStorage)) {
+          const entries = readdirSync(cloudStorage)
+          for (const entry of entries) {
+            if (entry.startsWith('OneDrive')) {
+              const candidate = join(cloudStorage, entry, targetFolder)
+              if (existsSync(candidate)) return candidate
+            }
+          }
+        }
+      } else if (platform() === 'win32') {
+        // Windows: %USERPROFILE%\OneDrive - *\Code Atelier
+        const entries = readdirSync(home)
+        for (const entry of entries) {
+          if (entry.startsWith('OneDrive')) {
+            const candidate = join(home, entry, targetFolder)
+            if (existsSync(candidate)) return candidate
+          }
+        }
+      }
+    } catch {
+      // Non-fatal — user can configure manually
+    }
+    return null
   }
 
   /** Apply the current config as the electron-updater feed URL */

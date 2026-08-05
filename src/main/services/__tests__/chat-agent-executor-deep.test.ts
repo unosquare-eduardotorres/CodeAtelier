@@ -180,7 +180,9 @@ void (async () => {
     })
   } else {
     describe('chat-agent › ChatAgentService (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 
@@ -202,7 +204,7 @@ void (async () => {
         return {
           workspacePath: '/tmp/test-workspace',
           currentConversationId: null,
-          getWorkspacePath: () => '/tmp/test-workspace',
+          getWorkspacePath: () => '/tmp/test-workspace'
         }
       }
 
@@ -294,7 +296,9 @@ void (async () => {
     })
   } else {
     describe('agent-executor-factory › AgentExecutorFactory (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 })()

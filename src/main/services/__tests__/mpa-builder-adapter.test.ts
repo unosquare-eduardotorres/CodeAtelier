@@ -80,8 +80,20 @@ describe('MpaBuilderAdapter', () => {
         implemented: 0,
         partial: 0,
         missing: 1,
-        issues: [{ planItemId: 'item-1', status: 'missing' as const, detail: 'Missing test', filesChecked: [] }],
-        crossCutting: { frontendBackendConnected: false, backendDatabaseConnected: false, routesRegistered: false, testsPass: false },
+        issues: [
+          {
+            planItemId: 'item-1',
+            status: 'missing' as const,
+            detail: 'Missing test',
+            filesChecked: []
+          }
+        ],
+        crossCutting: {
+          frontendBackendConnected: false,
+          backendDatabaseConnected: false,
+          routesRegistered: false,
+          testsPass: false
+        },
         testOutput: ''
       }
     })

@@ -70,10 +70,7 @@ describe('deriveGraphEdges', () => {
     const facts = [makeFact({ id: 'a' }), makeFact({ id: 'b' })]
     const result = deriveGraphEdges({ facts, embeddings: [], contradictions: [] })
     assert.equal(result.nodes.length, 2)
-    assert.deepEqual(
-      result.nodes.map((n) => n.id).sort(),
-      ['a', 'b']
-    )
+    assert.deepEqual(result.nodes.map((n) => n.id).sort(), ['a', 'b'])
   })
 
   test('node properties are correctly mapped', () => {
@@ -285,10 +282,7 @@ describe('deriveGraphEdges', () => {
   // ── Mixed edge types ──
 
   test('similarity, supersede, and contradiction edges coexist without cross-dedup', () => {
-    const facts = [
-      makeFact({ id: 'a', supersededBy: 'b' }),
-      makeFact({ id: 'b' })
-    ]
+    const facts = [makeFact({ id: 'a', supersededBy: 'b' }), makeFact({ id: 'b' })]
     const vec = identicalVec()
     const contradictions: MemoryContradiction[] = [
       {

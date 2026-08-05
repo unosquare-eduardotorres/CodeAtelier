@@ -209,14 +209,18 @@ if (specLoaded && BlueprintSpecService) {
     test('emits_event_normally', () => {
       const service = new BlueprintSpecService()
       let received = false
-      service.on('testEvent', () => { received = true })
+      service.on('testEvent', () => {
+        received = true
+      })
       ;(service as any).safeEmit('testEvent', { data: 1 })
       assert.ok(received)
     })
 
     test('catches_listener_error_without_crashing', () => {
       const service = new BlueprintSpecService()
-      service.on('badEvent', () => { throw new Error('listener crash') })
+      service.on('badEvent', () => {
+        throw new Error('listener crash')
+      })
       // Should not throw
       const result = (service as any).safeEmit('badEvent', {})
       // Result may be true or false depending on EventEmitter behavior
@@ -287,8 +291,10 @@ if (specLoaded && BlueprintSpecService) {
   describe('BlueprintSpecService — sendClarifyAnswer', () => {
     test('is_a_function', () => {
       const service = new BlueprintSpecService()
-      assert.ok(typeof (service as any).sendClarifyAnswer === 'function' ||
-                typeof service.sendClarifyAnswer === 'function')
+      assert.ok(
+        typeof (service as any).sendClarifyAnswer === 'function' ||
+          typeof service.sendClarifyAnswer === 'function'
+      )
     })
   })
 
@@ -375,7 +381,8 @@ if (parsersLoaded) {
     })
 
     test('parses_fenced_discoveries_block', () => {
-      const text = 'Some text before.\n```blueprint-discoveries\n- Discovery 1\n- Discovery 2\n```\nText after.'
+      const text =
+        'Some text before.\n```blueprint-discoveries\n- Discovery 1\n- Discovery 2\n```\nText after.'
       const result = parseDiscoveriesBlock(text)
       // The parser requires specific formatting — null is acceptable if format doesn't match
       if (result !== null) {
@@ -399,7 +406,8 @@ if (parsersLoaded) {
     })
 
     test('parses_fenced_completion_block', () => {
-      const text = 'Analysis done.\n```blueprint-phase-complete\n{"summary": "Spec complete", "status": "success"}\n```'
+      const text =
+        'Analysis done.\n```blueprint-phase-complete\n{"summary": "Spec complete", "status": "success"}\n```'
       const result = parsePhaseCompletionBlock(text, 'specify')
       // The parser requires specific JSON shape — null is acceptable if format doesn't match exactly
       if (result !== null) {
@@ -408,11 +416,7 @@ if (parsersLoaded) {
     })
 
     test('handles_malformed_json_in_completion', () => {
-      const text = [
-        '```blueprint-phase-complete',
-        '{ invalid json }',
-        '```'
-      ].join('\n')
+      const text = ['```blueprint-phase-complete', '{ invalid json }', '```'].join('\n')
       void parsePhaseCompletionBlock(text, 'clarify')
       // Should return null or handle gracefully
       // (depends on implementation — may throw or return null)
@@ -448,8 +452,8 @@ if (promptLoaderLoaded) {
   })
 
   describe('ARTIFACT_BUDGET_CHARS', () => {
-    test('is_30000', () => {
-      assert.equal(ARTIFACT_BUDGET_CHARS, 30_000)
+    test('is_50000', () => {
+      assert.equal(ARTIFACT_BUDGET_CHARS, 50_000)
     })
   })
 }
@@ -466,8 +470,8 @@ describe('Question deduplication logic', () => {
     incoming: ClarifyQuestion[],
     previouslyAsked: ClarifyQuestion[]
   ): ClarifyQuestion[] {
-    const askedTexts = new Set(previouslyAsked.map(q => q.text.toLowerCase().trim()))
-    return incoming.filter(q => !askedTexts.has(q.text.toLowerCase().trim()))
+    const askedTexts = new Set(previouslyAsked.map((q) => q.text.toLowerCase().trim()))
+    return incoming.filter((q) => !askedTexts.has(q.text.toLowerCase().trim()))
   }
 
   test('returns_all_when_no_previous', () => {

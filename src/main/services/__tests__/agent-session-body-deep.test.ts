@@ -78,10 +78,7 @@ if (loaded) {
       // it should return the raw message or an enriched message
       assert.ok(typeof result === 'string', 'should return a string')
       // It either returns enriched (with ## Previous Context) or raw message
-      assert.ok(
-        result.includes('test message'),
-        'should include the original message'
-      )
+      assert.ok(result.includes('test message'), 'should include the original message')
     })
 
     test('returns_raw_message_on_error', () => {
@@ -218,7 +215,11 @@ if (loaded) {
 
       // Without real openCodeConfigWriter, this will hit the catch and warn
       await write({
-        providerConfig: { providerId: 'ollama', modelId: 'qwen2.5', baseUrl: 'http://localhost:11434' },
+        providerConfig: {
+          providerId: 'ollama',
+          modelId: 'qwen2.5',
+          baseUrl: 'http://localhost:11434'
+        },
         systemPrompt: 'test system prompt',
         llmProvider: 'local-llm'
       })
@@ -335,12 +336,11 @@ if (loaded) {
       const session = new AgentSessionService(adapter as any)
       let called = false
       ;(session as any).streamProcessor = {
-        processMetaChunk: async () => { called = true }
+        processMetaChunk: async () => {
+          called = true
+        }
       }
-      await (session as any).processMetaChunk(
-        { result: 'success' },
-        { conversationId: 'conv-1' }
-      )
+      await (session as any).processMetaChunk({ result: 'success' }, { conversationId: 'conv-1' })
       assert.ok(called, 'should delegate to streamProcessor')
     })
 
@@ -439,7 +439,10 @@ if (loaded) {
       const extract = (session as any).extractPromptContent.bind(session)
 
       async function* gen() {
-        yield { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'extracted' }] } }
+        yield {
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text: 'extracted' }] }
+        }
       }
       const result = await extract(gen())
       // Result can be string or the collected content — just verify it completes
@@ -456,7 +459,7 @@ if (loaded) {
       const resolve = (session as any).resolveExecutorBackend.bind(session)
       // Any non-claude provider → opencode (derivation rule)
       assert.equal(resolve('local-llm'), 'opencode')
-      assert.equal(resolve('opencode'), 'opencode')  // hypothetical future provider
+      assert.equal(resolve('opencode'), 'opencode') // hypothetical future provider
     })
 
     test('claude_returns_cli', () => {
@@ -483,7 +486,10 @@ if (loaded) {
       const resolve = (session as any).resolveExecutorBackend.bind(session)
       for (const provider of ['claude', 'local-llm', undefined]) {
         const result = resolve(provider)
-        assert.ok(result === 'cli' || result === 'opencode', `Should be valid backend for ${provider}`)
+        assert.ok(
+          result === 'cli' || result === 'opencode',
+          `Should be valid backend for ${provider}`
+        )
       }
     })
   })
@@ -809,8 +815,12 @@ if (loaded) {
         // Return a timestamp 10 days ago
         const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
         repoMod.messageRepository.getLastMessageTimestamp = () => tenDaysAgo
-        repoMod.conversationRepository.updateSessionId = () => { updateSessionIdCalled = true }
-        repoMod.conversationRepository.updateSummary = () => { updateSummaryCalled = true }
+        repoMod.conversationRepository.updateSessionId = () => {
+          updateSessionIdCalled = true
+        }
+        repoMod.conversationRepository.updateSummary = () => {
+          updateSummaryCalled = true
+        }
 
         const adapter = createMockAdapter()
         const session = new AgentSessionService(adapter as any)
@@ -870,7 +880,11 @@ if (loaded) {
         ;(session as any).sessionMap.set('conv-empty', 'valid-empty-session-12345')
 
         const resolved = (session as any).resolveSession('conv-empty')
-        assert.equal(resolved, 'valid-empty-session-12345', 'session with no messages should be preserved')
+        assert.equal(
+          resolved,
+          'valid-empty-session-12345',
+          'session with no messages should be preserved'
+        )
       } finally {
         repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
       }
@@ -890,7 +904,11 @@ if (loaded) {
 
         const resolved = (session as any).resolveSession('conv-bad-ts')
         // NaN guard should skip staleness — session preserved
-        assert.equal(resolved, 'valid-badts-session-12345', 'malformed timestamp should not expire session')
+        assert.equal(
+          resolved,
+          'valid-badts-session-12345',
+          'malformed timestamp should not expire session'
+        )
       } finally {
         repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
       }
@@ -938,7 +956,9 @@ if (loaded) {
       // even though the UI conversation was in Build mode.
       const switchCalls: string[] = []
       const adapter = createMockAdapter({
-        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+        onConversationSwitch: (id: string) => {
+          switchCalls.push(id)
+        }
       })
       const session = new AgentSessionService(adapter as any)
 
@@ -956,17 +976,15 @@ if (loaded) {
         'build',
         'switchMode must apply when currentConversationId is null (was silently dropped)'
       )
-      assert.equal(
-        switchCalls.length,
-        1,
-        'adapter.onConversationSwitch should have been called'
-      )
+      assert.equal(switchCalls.length, 1, 'adapter.onConversationSwitch should have been called')
     })
 
     test('switchMode_noop_when_already_in_target_mode', async () => {
       const switchCalls: string[] = []
       const adapter = createMockAdapter({
-        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+        onConversationSwitch: (id: string) => {
+          switchCalls.push(id)
+        }
       })
       const session = new AgentSessionService(adapter as any)
       ;(session as any).workspacePath = '/tmp/test-ws'
@@ -984,7 +1002,9 @@ if (loaded) {
       // the send-lock path (MODE-SWITCH-NOLOCK-01).
       const switchCalls: string[] = []
       const adapter = createMockAdapter({
-        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+        onConversationSwitch: (id: string) => {
+          switchCalls.push(id)
+        }
       })
       const session = new AgentSessionService(adapter as any)
       ;(session as any).workspacePath = '/tmp/test-ws'

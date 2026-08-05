@@ -44,7 +44,11 @@ describe('Git Sandbox — checkpoint format', () => {
 
 describe('Git Sandbox — diff stats parsing', () => {
   // Simulate the parsing logic from getExperimentDiffStats
-  function parseDiffStats(stat: string): { filesChanged: number; linesAdded: number; linesRemoved: number } {
+  function parseDiffStats(stat: string): {
+    filesChanged: number
+    linesAdded: number
+    linesRemoved: number
+  } {
     if (!stat) return { filesChanged: 0, linesAdded: 0, linesRemoved: 0 }
     const filesMatch = stat.match(/(\d+) files? changed/)
     const insertionsMatch = stat.match(/(\d+) insertions?\(\+\)/)

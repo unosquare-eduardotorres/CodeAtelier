@@ -47,7 +47,6 @@ const MAX_CHUNKS_PER_FILE = 25
 const MAX_HOTSPOT_FACTS = 15
 const MAX_COCHANGE_RESULTS = 15
 const MAX_COMMIT_SUBJECTS = 50
-const DEEP_SCAN_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 
 /** Doc patterns for Phase 1 */
 const DOC_PATTERNS = [
@@ -60,7 +59,15 @@ const DOC_PATTERNS = [
 ]
 
 /** Globs for doc directories */
-const DOC_DIRS = ['docs', 'doc', 'documentation', '.github']
+const DOC_DIRS = [
+  'docs', 'doc', 'documentation', '.github',
+  // Common documentation locations beyond the basics
+  'wiki', 'guides', 'specs', 'design',
+  'api-docs', 'api', 'reference',
+  'architecture', 'decisions', 'adr',
+  'manuals', 'handbooks', 'howto',
+  'notes', 'knowledge-base'
+]
 
 /** Manifest files for Phase 2 */
 const MANIFEST_FILES = [
@@ -647,6 +654,55 @@ class MemoryBootstrapService {
 
   // ── Deep Scan: Agent-driven exploration ───────────────────────────────────
 
+  private estimateProjectComplexity(
+    workspacePath: string,
+    _preflight: { hasIndex: boolean }
+  ): { fileCount: number; docCount: number; hasDeepDocs: boolean; codebaseSize: 'small' | 'medium' | 'large' } {
+    let fileCount = 0
+    let docCount = 0
+    let hasDeepDocs = false
+
+    const walk = (dir: string, depth: number): void => {
+      if (depth > 4 || fileCount > 5000) return
+      try {
+        for (const entry of readdirSync(dir)) {
+          if (IGNORE_DIRS.has(entry.toLowerCase())) continue
+          const full = join(dir, entry)
+          try {
+            const stat = statSync(full)
+            if (stat.isDirectory()) {
+              walk(full, depth + 1)
+            } else if (stat.isFile()) {
+              fileCount++
+              if (/\.(md|mdx|txt|rst|adoc)$/i.test(entry)) {
+                docCount++
+                if (stat.size > 10_000) hasDeepDocs = true
+              }
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+
+    walk(workspacePath, 0)
+
+    const codebaseSize = fileCount > 2000 ? 'large' : fileCount > 500 ? 'medium' : 'small'
+    return { fileCount, docCount, hasDeepDocs, codebaseSize }
+  }
+
+  private computeAgentBudget(metrics: {
+    fileCount: number; docCount: number; hasDeepDocs: boolean; codebaseSize: 'small' | 'medium' | 'large'
+  }): { maxTurns: number; maxFacts: number; timeoutMs: number } {
+    if (metrics.codebaseSize === 'large' || metrics.docCount > 50) {
+      return { maxTurns: 80, maxFacts: 40, timeoutMs: 20 * 60 * 1000 }
+    }
+    if (metrics.codebaseSize === 'medium' || metrics.docCount > 20
+        || (metrics.hasDeepDocs && metrics.docCount > 10)) {
+      return { maxTurns: 50, maxFacts: 25, timeoutMs: 15 * 60 * 1000 }
+    }
+    return { maxTurns: 30, maxFacts: 15, timeoutMs: 10 * 60 * 1000 }
+  }
+
   private async phaseDeepScan(
     workspaceId: string,
     workspacePath: string,
@@ -655,6 +711,11 @@ class MemoryBootstrapService {
     onMsg: (msg: string) => void
   ): Promise<number> {
     onMsg('Preparing agent exploration prompt…')
+
+    // Estimate project complexity for adaptive budget
+    const projectMetrics = this.estimateProjectComplexity(workspacePath, preflight)
+    const agentBudget = this.computeAgentBudget(projectMetrics)
+    onMsg(`Project metrics: ${projectMetrics.fileCount} files, ${projectMetrics.docCount} docs (${projectMetrics.codebaseSize}) → budget ${agentBudget.maxFacts} facts, ${agentBudget.maxTurns} turns`)
 
     // Build context for the agent
     let topFilesContext = ''
@@ -679,22 +740,60 @@ class MemoryBootstrapService {
       // ok
     }
 
-    const explorationPrompt = buildDeepScanPrompt(topFilesContext, existingFactsSummary)
+    const explorationPrompt = buildDeepScanPrompt(topFilesContext, existingFactsSummary, agentBudget)
 
     onMsg('Spawning Claude exploration agent…')
 
     // Spawn Claude CLI with read-only permissions, memory tools available
     const factsBefore = memoryFactRepository.countByWorkspace(workspaceId).active
 
+    // ── Circuit breaker: abort if agent stalls ──────────────────────
+    const controller = new AbortController()
+    // Combine external signal with our circuit breaker
+    const combinedAbort = (): void => controller.abort()
+    signal.addEventListener('abort', combinedAbort, { once: true })
+
+    let stalledChecks = 0
+    let lastFactCount = factsBefore
+    const STALL_CHECK_INTERVAL_MS = 30_000   // check every 30s
+    const MAX_STALLED_CHECKS = 3             // abort after 90s of no progress
+
+    const stallTimer = setInterval(() => {
+      if (controller.signal.aborted) return
+      const currentFacts = memoryFactRepository.countByWorkspace(workspaceId).active
+      if (currentFacts <= lastFactCount) {
+        stalledChecks++
+        if (stalledChecks >= MAX_STALLED_CHECKS) {
+          onMsg(`Circuit breaker: no new facts for ${MAX_STALLED_CHECKS * STALL_CHECK_INTERVAL_MS / 1000}s — aborting agent`)
+          controller.abort()
+        }
+      } else {
+        stalledChecks = 0  // reset on progress
+        lastFactCount = currentFacts
+      }
+    }, STALL_CHECK_INTERVAL_MS)
+
     try {
-      await this.spawnDeepScanAgent(workspaceId, workspacePath, explorationPrompt, signal, onMsg)
+      await this.spawnDeepScanAgent(
+        workspaceId, workspacePath, explorationPrompt,
+        controller.signal,    // use combined signal
+        onMsg, agentBudget
+      )
     } catch (err) {
       if (signal.aborted) {
         onMsg('Agent exploration cancelled')
         return 0
       }
-      bsLog.warn('[phaseDeepScan] Agent exploration failed:', err)
-      onMsg('Agent exploration completed with errors')
+      if (controller.signal.aborted && !signal.aborted) {
+        bsLog.warn('[phaseDeepScan] Circuit breaker triggered — no new facts for 90s')
+        onMsg('Agent exploration stopped — stall detected')
+      } else {
+        bsLog.warn('[phaseDeepScan] Agent exploration failed:', err)
+        onMsg('Agent exploration completed with errors')
+      }
+    } finally {
+      clearInterval(stallTimer)
+      signal.removeEventListener('abort', combinedAbort)
     }
 
     const factsAfter = memoryFactRepository.countByWorkspace(workspaceId).active
@@ -709,7 +808,8 @@ class MemoryBootstrapService {
     workspacePath: string,
     prompt: string,
     signal: AbortSignal,
-    onMsg: (msg: string) => void
+    onMsg: (msg: string) => void,
+    budget: { maxTurns: number; timeoutMs: number }
   ): Promise<void> {
     const allowedTools = [
       'Read', 'Grep', 'Glob',
@@ -723,8 +823,8 @@ class MemoryBootstrapService {
       prompt,
       allowedTools,
       model: 'claude-sonnet-4-6',
-      maxTurns: 30,
-      timeoutMs: DEEP_SCAN_TIMEOUT_MS,
+      maxTurns: budget.maxTurns,
+      timeoutMs: budget.timeoutMs,
       signal,
       onLine: (line) => {
         if (line.length > 10) {
@@ -778,11 +878,14 @@ class MemoryBootstrapService {
       this.findAdrDirs(workspacePath, found, 0)
     } catch { /* skip */ }
 
+    // Scattered docs: find .md files outside standard doc dirs
+    this.discoverScatteredDocs(workspacePath, found, 200)
+
     return [...new Set(found)] // deduplicate
   }
 
-  private walkForMd(dirPath: string, files: string[], depth: number): void {
-    if (depth > 5 || files.length >= 100) return
+  private walkForMd(dirPath: string, files: string[], depth: number, maxFiles: number = 200): void {
+    if (depth > 5 || files.length >= maxFiles) return
     if (!existsSync(dirPath)) return
 
     try {
@@ -822,6 +925,44 @@ class MemoryBootstrapService {
         } catch { /* skip */ }
       }
     } catch { /* skip */ }
+  }
+
+  /** Find .md files outside standard doc dirs (e.g. feature/README.md) */
+  private discoverScatteredDocs(
+    rootPath: string,
+    files: string[],
+    maxFiles: number
+  ): void {
+    if (files.length >= maxFiles) return
+
+    const seen = new Set(files) // O(1) lookups instead of O(n) includes()
+
+    const walk = (dir: string, depth: number): void => {
+      if (depth > 2 || files.length >= maxFiles) return
+      try {
+        const entries = readdirSync(dir)
+        for (const entry of entries) {
+          if (IGNORE_DIRS.has(entry.toLowerCase())) continue
+          const fullPath = join(dir, entry)
+          try {
+            const stat = statSync(fullPath)
+            if (stat.isDirectory()) {
+              walk(fullPath, depth + 1)
+            } else if (
+              stat.isFile() &&
+              /\.(md|mdx)$/i.test(entry) &&
+              stat.size > 500 && // skip tiny stubs
+              !seen.has(fullPath)
+            ) {
+              files.push(fullPath)
+              seen.add(fullPath)
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+    }
+
+    walk(rootPath, 0)
   }
 
   /**
@@ -887,7 +1028,7 @@ class MemoryBootstrapService {
   /**
    * Read a file with a size cap, returning null if missing or too large.
    */
-  private readCapped(filePath: string, maxBytes: number = 5000): string | null {
+  private readCapped(filePath: string, maxBytes: number = 15000): string | null {
     try {
       if (!existsSync(filePath)) return null
       const stat = statSync(filePath)
@@ -992,7 +1133,11 @@ class MemoryBootstrapService {
 
 // ── Deep Scan Prompt Builder ────────────────────────────────────────────────
 
-function buildDeepScanPrompt(topFilesContext: string, existingFactsSummary: string): string {
+function buildDeepScanPrompt(
+  topFilesContext: string,
+  existingFactsSummary: string,
+  budget: { maxFacts: number }
+): string {
   return `You are a codebase exploration agent. Your job is to systematically explore this project and record non-obvious architectural facts using the mcp__memory__memory_record tool.
 
 ## Instructions
@@ -1018,8 +1163,10 @@ function buildDeepScanPrompt(topFilesContext: string, existingFactsSummary: stri
 - Naming conventions and code organization
 
 ## Rules
-- Record max 30 facts — quality over quantity
-- Only non-obvious facts (skip things discoverable from a single file read)
+- Record up to ${budget.maxFacts} facts — be thorough for large projects
+- Prioritize depth on rich documentation files (CLAUDE.md, ARCHITECTURE.md, etc.)
+- For each documentation file, extract ALL non-obvious conventions and decisions
+- Only skip facts that are trivially discoverable from a single file read
 - Each fact must be self-contained and actionable
 - Use mcp__memory__memory_search before recording to avoid duplicates
 - Focus on decisions, constraints, and gotchas — not descriptions

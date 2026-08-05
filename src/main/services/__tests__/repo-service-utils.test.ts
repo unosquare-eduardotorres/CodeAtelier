@@ -33,10 +33,7 @@ describe('assertWithinRepo', () => {
   })
 
   test('path traversal attempt with ../ throws', () => {
-    assert.throws(
-      () => assertWithinRepo('/tmp/repo', '../../etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo('/tmp/repo', '../../etc/passwd'), /Path traversal denied/)
   })
 
   test('path traversal attempt with leading ../ throws', () => {
@@ -47,10 +44,7 @@ describe('assertWithinRepo', () => {
   })
 
   test('path traversal with complex ../ chain throws', () => {
-    assert.throws(
-      () => assertWithinRepo('/tmp/repo', 'src/../../outside'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo('/tmp/repo', 'src/../../outside'), /Path traversal denied/)
   })
 
   test('current directory ./ within repo is valid', () => {
@@ -66,10 +60,7 @@ describe('assertWithinRepo', () => {
   test('absolute path outside repo throws', () => {
     // resolve('/tmp/repo', '/etc/passwd') = '/etc/passwd'
     // relative('/tmp/repo', '/etc/passwd') starts with '..'
-    assert.throws(
-      () => assertWithinRepo('/tmp/repo', '/etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo('/tmp/repo', '/etc/passwd'), /Path traversal denied/)
   })
 
   test('empty filePath resolves to repo root (does not throw)', () => {
@@ -85,7 +76,6 @@ describe('assertWithinRepo', () => {
 // the module internals. If the bundler strips it, fall back to asserting
 // known EXT_TO_LANGUAGE mappings via a Proxy approach.
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 let detectLanguage: ((fp: string) => string) | null = null
 try {
   // Dynamic import of the module to access the non-exported function.

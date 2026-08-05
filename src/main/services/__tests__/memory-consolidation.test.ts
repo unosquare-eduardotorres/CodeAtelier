@@ -49,8 +49,11 @@ test('hasRealEvidencePure: returns false for auto_dedup-only confirmations', asy
     { sourceType: 'auto_dedup' },
     { sourceType: 'auto_dedup' }
   ]
-  assert.equal(hasRealEvidencePure(confirmations), false,
-    'auto_dedup-only facts should be eligible for stale archival')
+  assert.equal(
+    hasRealEvidencePure(confirmations),
+    false,
+    'auto_dedup-only facts should be eligible for stale archival'
+  )
 })
 
 test('hasRealEvidencePure: returns true when at least one real confirmation exists', async () => {
@@ -60,15 +63,21 @@ test('hasRealEvidencePure: returns true when at least one real confirmation exis
     { sourceType: 'extraction' },
     { sourceType: 'auto_dedup' }
   ]
-  assert.equal(hasRealEvidencePure(confirmations), true,
-    'facts with real evidence should NOT be eligible for stale archival')
+  assert.equal(
+    hasRealEvidencePure(confirmations),
+    true,
+    'facts with real evidence should NOT be eligible for stale archival'
+  )
 })
 
 test('hasRealEvidencePure: returns true for human/tool/bootstrap sources', async () => {
   const { hasRealEvidencePure } = await import('../memory-consolidation.service')
   for (const sourceType of ['human', 'tool', 'extraction', 'bootstrap']) {
-    assert.equal(hasRealEvidencePure([{ sourceType }]), true,
-      `${sourceType} should count as real evidence`)
+    assert.equal(
+      hasRealEvidencePure([{ sourceType }]),
+      true,
+      `${sourceType} should count as real evidence`
+    )
   }
 })
 

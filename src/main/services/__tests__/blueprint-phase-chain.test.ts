@@ -12,7 +12,13 @@ import { test, describe, summaryAsync } from './test-harness'
 // ── Phase Chain Map ──
 
 const BLUEPRINT_PHASE_ORDER = [
-  'specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify'
+  'specify',
+  'clarify',
+  'plan',
+  'tasks',
+  'review',
+  'build',
+  'verify'
 ] as const
 
 type BlueprintPhaseType = (typeof BLUEPRINT_PHASE_ORDER)[number]
@@ -23,13 +29,13 @@ type BlueprintPhaseType = (typeof BLUEPRINT_PHASE_ORDER)[number]
  * null = no auto-dispatch (handled by a different mechanism like approval gate).
  */
 const PHASE_CHAIN: Partial<Record<BlueprintPhaseType, BlueprintPhaseType | null>> = {
-  specify: 'clarify',   // blueprint-spec.service.ts → startClarifyPhase
-  clarify: 'plan',      // blueprint-spec.service.ts → dispatchPlanPhase
-  plan: 'tasks',        // blueprint-plan.service.ts → startTasksPhase
-  tasks: 'review',      // blueprint-tasks.service.ts → startReviewPhase
-  review: null,         // review → approval gate (user decision, not auto-dispatch)
-  build: 'verify',      // blueprint-build.service.ts → startVerifyPhase (existing)
-  verify: null           // terminal phase
+  specify: 'clarify', // blueprint-spec.service.ts → startClarifyPhase
+  clarify: 'plan', // blueprint-spec.service.ts → dispatchPlanPhase
+  plan: 'tasks', // blueprint-plan.service.ts → startTasksPhase
+  tasks: 'review', // blueprint-tasks.service.ts → startReviewPhase
+  review: null, // review → approval gate (user decision, not auto-dispatch)
+  build: 'verify', // blueprint-build.service.ts → startVerifyPhase (existing)
+  verify: null // terminal phase
 }
 
 // ── Tests ──
@@ -65,10 +71,7 @@ describe('Blueprint phase-chain map', () => {
 
   test('all_7_phases_have_chain_entries', () => {
     for (const phase of BLUEPRINT_PHASE_ORDER) {
-      assert.ok(
-        phase in PHASE_CHAIN,
-        `Missing chain entry for phase '${phase}'`
-      )
+      assert.ok(phase in PHASE_CHAIN, `Missing chain entry for phase '${phase}'`)
     }
   })
 

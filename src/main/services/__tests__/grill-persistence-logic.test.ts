@@ -90,18 +90,14 @@ describe('Grill Persistence — message buffer accumulation', () => {
   })
 
   test('append_text_to_existing_agent_message', () => {
-    const buffer: MessageEntry[] = [
-      { type: 'agent', content: 'Hello', toolActivities: [] }
-    ]
+    const buffer: MessageEntry[] = [{ type: 'agent', content: 'Hello', toolActivities: [] }]
     accumulateMessageChunk(buffer, { content: ' world' })
     assert.equal(buffer.length, 1)
     assert.equal(buffer[0].content, 'Hello world')
   })
 
   test('new_entry_after_user_message', () => {
-    const buffer: MessageEntry[] = [
-      { type: 'user', content: 'Question', toolActivities: [] }
-    ]
+    const buffer: MessageEntry[] = [{ type: 'user', content: 'Question', toolActivities: [] }]
     accumulateMessageChunk(buffer, { content: 'Answer' })
     assert.equal(buffer.length, 2)
     assert.equal(buffer[1].type, 'agent')
@@ -109,9 +105,7 @@ describe('Grill Persistence — message buffer accumulation', () => {
   })
 
   test('tool_activity_added_to_last_agent_message', () => {
-    const buffer: MessageEntry[] = [
-      { type: 'agent', content: 'text', toolActivities: [] }
-    ]
+    const buffer: MessageEntry[] = [{ type: 'agent', content: 'text', toolActivities: [] }]
     accumulateMessageChunk(buffer, {
       toolActivity: { id: 'tool-1', name: 'Read', status: 'running' }
     })
@@ -121,9 +115,11 @@ describe('Grill Persistence — message buffer accumulation', () => {
 
   test('tool_activity_merged_by_id', () => {
     const buffer: MessageEntry[] = [
-      { type: 'agent', content: '', toolActivities: [
-        { id: 'tool-1', name: 'Read', status: 'running' }
-      ]}
+      {
+        type: 'agent',
+        content: '',
+        toolActivities: [{ id: 'tool-1', name: 'Read', status: 'running' }]
+      }
     ]
     accumulateMessageChunk(buffer, {
       toolActivity: { id: 'tool-1', status: 'complete', result: 'data' }
@@ -135,9 +131,7 @@ describe('Grill Persistence — message buffer accumulation', () => {
   })
 
   test('multiple_tool_activities_tracked_separately', () => {
-    const buffer: MessageEntry[] = [
-      { type: 'agent', content: '', toolActivities: [] }
-    ]
+    const buffer: MessageEntry[] = [{ type: 'agent', content: '', toolActivities: [] }]
     accumulateMessageChunk(buffer, { toolActivity: { id: 'tool-1', name: 'Read' } })
     accumulateMessageChunk(buffer, { toolActivity: { id: 'tool-2', name: 'Glob' } })
     assert.equal(buffer[0].toolActivities.length, 2)

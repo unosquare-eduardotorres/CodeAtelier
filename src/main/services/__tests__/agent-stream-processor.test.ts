@@ -363,7 +363,11 @@ describe('AgentStreamProcessor.processContentChunk — api_retry', () => {
     const proc = new AgentStreamProcessor(host)
     const streamState = { overloadDetected: false } as { overloadDetected: boolean }
     proc.processContentChunk(
-      { type: 'api_retry', content: 'server_is_overloaded', retryInfo: { errorStatus: null } } as never,
+      {
+        type: 'api_retry',
+        content: 'server_is_overloaded',
+        retryInfo: { errorStatus: null }
+      } as never,
       { ...ctx, streamState: streamState as never }
     )
     assert.equal(streamState.overloadDetected, true)

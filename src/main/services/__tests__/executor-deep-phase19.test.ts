@@ -281,11 +281,10 @@ if (ocLoaded) {
 
     test('basic_prompt_body_has_parts_and_model', () => {
       const oc = makeOC()
-      const body = (oc as any).buildPromptBody(
-        'Hello',
-        'You are helpful',
-        { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' }
-      )
+      const body = (oc as any).buildPromptBody('Hello', 'You are helpful', {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-6'
+      })
       assert.ok(body.parts)
       assert.equal(body.parts.length, 1)
       assert.equal(body.parts[0].type, 'text')
@@ -300,11 +299,10 @@ if (ocLoaded) {
       const oc = makeOC()
       process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = '/tmp/test'
       try {
-        const body = (oc as any).buildPromptBody(
-          'Hello',
-          'System prompt',
-          { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' }
-        )
+        const body = (oc as any).buildPromptBody('Hello', 'System prompt', {
+          providerId: 'anthropic',
+          modelId: 'claude-sonnet-4-6'
+        })
         assert.equal(body.system, undefined)
       } finally {
         delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
@@ -313,11 +311,10 @@ if (ocLoaded) {
 
     test('empty_system_prompt_not_included', () => {
       const oc = makeOC()
-      const body = (oc as any).buildPromptBody(
-        'Hello',
-        '',
-        { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' }
-      )
+      const body = (oc as any).buildPromptBody('Hello', '', {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-6'
+      })
       assert.equal(body.system, undefined)
     })
 
@@ -442,7 +439,9 @@ if (cliLoaded) {
     let buildGoalCommand: typeof import('../cli-executor').buildGoalCommand
     try {
       buildGoalCommand = require('../cli-executor').buildGoalCommand
-    } catch { /* not exported */ }
+    } catch {
+      /* not exported */
+    }
 
     if (buildGoalCommand!) {
       test('builds_goal_slash_command', () => {

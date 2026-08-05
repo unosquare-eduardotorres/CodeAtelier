@@ -18,24 +18,15 @@ describe('assertWithinRepo', () => {
   })
 
   test('path_traversal_parent_throws', () => {
-    assert.throws(
-      () => assertWithinRepo(REPO, '../etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(REPO, '../etc/passwd'), /Path traversal denied/)
   })
 
   test('absolute_path_outside_repo_throws', () => {
-    assert.throws(
-      () => assertWithinRepo(REPO, '/etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(REPO, '/etc/passwd'), /Path traversal denied/)
   })
 
   test('nested_traversal_throws', () => {
-    assert.throws(
-      () => assertWithinRepo(REPO, 'src/../../../etc/passwd'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(REPO, 'src/../../../etc/passwd'), /Path traversal denied/)
   })
 
   test('dot_path_resolves_correctly', () => {
@@ -60,10 +51,7 @@ describe('assertWithinRepo', () => {
   })
 
   test('double_dot_escaping_repo_throws', () => {
-    assert.throws(
-      () => assertWithinRepo(REPO, 'src/../../outside'),
-      /Path traversal denied/
-    )
+    assert.throws(() => assertWithinRepo(REPO, 'src/../../outside'), /Path traversal denied/)
   })
 })
 

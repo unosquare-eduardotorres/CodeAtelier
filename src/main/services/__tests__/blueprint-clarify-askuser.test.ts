@@ -137,10 +137,7 @@ describe('grillQuestionsToClarifyBlock', () => {
         question: 'Deployment target?',
         header: 'Infrastructure',
         multiSelect: true,
-        options: [
-          { label: 'AWS', recommended: true },
-          { label: 'GCP' }
-        ]
+        options: [{ label: 'AWS', recommended: true }, { label: 'GCP' }]
       }
     ]
 
@@ -179,9 +176,7 @@ describe('grillQuestionsToClarifyBlock', () => {
   })
 
   test('handles empty options array', () => {
-    const block = grillQuestionsToClarifyBlock([
-      { id: 'q1', question: 'Free text?', options: [] }
-    ])
+    const block = grillQuestionsToClarifyBlock([{ id: 'q1', question: 'Free text?', options: [] }])
     assert.equal(block.questions[0].options.length, 0)
   })
 
@@ -191,8 +186,8 @@ describe('grillQuestionsToClarifyBlock', () => {
     ]
 
     const grillQuestions: GrillQuestion[] = [
-      { id: 'q1', question: 'Which auth?', options: [] },  // duplicate
-      { id: 'q2', question: 'Which DB?', options: [] }     // new
+      { id: 'q1', question: 'Which auth?', options: [] }, // duplicate
+      { id: 'q2', question: 'Which DB?', options: [] } // new
     ]
 
     const block = grillQuestionsToClarifyBlock(grillQuestions)
@@ -211,7 +206,9 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     let rejected = false
 
     // Access promise to start timer
-    const p = watchdog.promise.catch(() => { rejected = true })
+    const p = watchdog.promise.catch(() => {
+      rejected = true
+    })
 
     // Touch once, then pause
     watchdog.touch()
@@ -233,7 +230,9 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     const watchdog = new PhaseActivityWatchdog(80, 'TEST')
     let rejected = false
 
-    const p = watchdog.promise.catch(() => { rejected = true })
+    const p = watchdog.promise.catch(() => {
+      rejected = true
+    })
 
     watchdog.pause()
     assert.equal(watchdog.paused, true)
@@ -255,7 +254,9 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     const watchdog = new PhaseActivityWatchdog(80, 'TEST')
     let rejected = false
 
-    const p = watchdog.promise.catch(() => { rejected = true })
+    const p = watchdog.promise.catch(() => {
+      rejected = true
+    })
 
     watchdog.pause()
     watchdog.touch() // should be no-op

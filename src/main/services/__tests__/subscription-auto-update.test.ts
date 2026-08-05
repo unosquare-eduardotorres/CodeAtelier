@@ -25,7 +25,7 @@ describe('subscription.service — checkClaudeCli', () => {
       assert.ok(result.version === null || typeof result.version === 'string')
       // error is string or null
       assert.ok(result.error === null || typeof result.error === 'string')
-    } catch (err) {
+    } catch (_err) {
       // CLI not available is fine — the service handles it gracefully
       assert.ok(true, 'subscription.service import or cli check failed — acceptable in test env')
     }
@@ -42,7 +42,7 @@ describe('subscription.service — validateAll', () => {
       assert.ok('claudeAuth' in result)
       assert.ok('claudeMax' in result)
       assert.ok('sdkHealth' in result)
-    } catch (err) {
+    } catch (_err) {
       assert.ok(true, 'validateAll may fail in test env — acceptable')
     }
   })
@@ -62,7 +62,7 @@ describe('auto-update.service — config management', () => {
       assert.equal(typeof mod.autoUpdateService.checkForUpdates, 'function')
       assert.equal(typeof mod.autoUpdateService.downloadUpdate, 'function')
       assert.equal(typeof mod.autoUpdateService.installUpdate, 'function')
-    } catch (err) {
+    } catch (_err) {
       // electron-updater may not load in test env — acceptable
       assert.ok(true, 'auto-update.service may not load in test env')
     }

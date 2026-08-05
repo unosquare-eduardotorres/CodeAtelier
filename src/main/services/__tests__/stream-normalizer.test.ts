@@ -630,7 +630,9 @@ describe('normalizeMessage — result', () => {
       new TokenAccountant(),
       state,
       '/ws'
-    )) { /* consume generator for side effects on state */ }
+    )) {
+      /* consume generator for side effects on state */
+    }
     assert.equal(state.terminalReason, 'blocking_limit')
     assert.equal(state.sessionTitle, 'My Session')
     assert.equal(state.resultOrigin, 'user_prompt')
@@ -657,7 +659,9 @@ describe('normalizeMessage — result', () => {
       new TokenAccountant(),
       s,
       '/ws'
-    )) { /* consume generator */ }
+    )) {
+      /* consume generator */
+    }
     assert.equal(s.sessionTitle, 'CamelTitle')
   })
 
@@ -685,7 +689,9 @@ describe('normalizeMessage — result', () => {
       new TokenAccountant(),
       state,
       '/ws'
-    )) { /* consume generator */ }
+    )) {
+      /* consume generator */
+    }
     assert.equal(state.resultText, 'raw text output')
   })
 

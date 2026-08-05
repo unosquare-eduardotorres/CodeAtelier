@@ -9,7 +9,13 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
-import { processToolChunk, isExpectedPlanModeBlock, isExpectedToolUnavailable, isAgentToolMistake } from '../tool-chunk-processor'
+import {
+  processToolChunk,
+  isExpectedPlanModeBlock,
+  isExpectedToolUnavailable,
+  isAgentToolMistake,
+  isCliInteractionError
+} from '../tool-chunk-processor'
 import type { StreamChunk } from '../../services/agent-base.service'
 
 const BASE_OPTIONS = { agentType: 'test' } as const
@@ -314,7 +320,8 @@ describe('processToolChunk — plan-mode Write block suppression', () => {
 // ── Layer 4: conditional MCP tool "No such tool" is NOT reported as a bug ──
 
 describe('isExpectedToolUnavailable', () => {
-  const noSuchTool = '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
+  const noSuchTool =
+    '<tool_use_error>No such tool available: mcp__memory__memory_search</tool_use_error>'
 
   test('true for memory_search when tool unavailable', () => {
     assert.equal(isExpectedToolUnavailable('mcp__memory__memory_search', noSuchTool), true)
@@ -322,28 +329,40 @@ describe('isExpectedToolUnavailable', () => {
 
   test('true for memory_record when tool unavailable', () => {
     assert.equal(
-      isExpectedToolUnavailable('mcp__memory__memory_record', '<tool_use_error>No such tool available: mcp__memory__memory_record</tool_use_error>'),
+      isExpectedToolUnavailable(
+        'mcp__memory__memory_record',
+        '<tool_use_error>No such tool available: mcp__memory__memory_record</tool_use_error>'
+      ),
       true
     )
   })
 
   test('true for memory_flag when tool unavailable', () => {
     assert.equal(
-      isExpectedToolUnavailable('mcp__memory__memory_flag', '<tool_use_error>No such tool available: mcp__memory__memory_flag</tool_use_error>'),
+      isExpectedToolUnavailable(
+        'mcp__memory__memory_flag',
+        '<tool_use_error>No such tool available: mcp__memory__memory_flag</tool_use_error>'
+      ),
       true
     )
   })
 
   test('false for a non-conditional tool (Read)', () => {
     assert.equal(
-      isExpectedToolUnavailable('Read', '<tool_use_error>No such tool available: Read</tool_use_error>'),
+      isExpectedToolUnavailable(
+        'Read',
+        '<tool_use_error>No such tool available: Read</tool_use_error>'
+      ),
       false
     )
   })
 
   test('false for a genuine memory tool error (not "No such tool")', () => {
     assert.equal(
-      isExpectedToolUnavailable('mcp__memory__memory_search', '<tool_use_error>Database connection failed</tool_use_error>'),
+      isExpectedToolUnavailable(
+        'mcp__memory__memory_search',
+        '<tool_use_error>Database connection failed</tool_use_error>'
+      ),
       false
     )
   })
@@ -427,33 +446,148 @@ describe('processToolChunk — options', () => {
 
 describe('isAgentToolMistake', () => {
   test('Edit with multiple matches is agent mistake', () => {
-    assert.ok(isAgentToolMistake(
-      '<tool_use_error>Found 2 matches of the string to replace, but replace_all is false.</tool_use_error>'
-    ))
+    assert.ok(
+      isAgentToolMistake(
+        '<tool_use_error>Found 2 matches of the string to replace, but replace_all is false.</tool_use_error>'
+      )
+    )
   })
 
   test('Write before Read is agent mistake', () => {
-    assert.ok(isAgentToolMistake(
-      '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>'
-    ))
+    assert.ok(
+      isAgentToolMistake(
+        '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>'
+      )
+    )
   })
 
   test('Edit identical strings is agent mistake', () => {
-    assert.ok(isAgentToolMistake(
-      '<tool_use_error>No changes to make: old_string and new_string are exactly the same.</tool_use_error>'
-    ))
+    assert.ok(
+      isAgentToolMistake(
+        '<tool_use_error>No changes to make: old_string and new_string are exactly the same.</tool_use_error>'
+      )
+    )
   })
 
   test('Grep non-existent path is agent mistake', () => {
-    assert.ok(isAgentToolMistake(
-      '<tool_use_error>Path does not exist: /some/file.ts.</tool_use_error>'
-    ))
+    assert.ok(
+      isAgentToolMistake('<tool_use_error>Path does not exist: /some/file.ts.</tool_use_error>')
+    )
   })
 
   test('real errors are NOT agent mistakes', () => {
     assert.ok(!isAgentToolMistake('<tool_use_error>EACCES: permission denied</tool_use_error>'))
     assert.ok(!isAgentToolMistake(undefined))
     assert.ok(!isAgentToolMistake(''))
+  })
+})
+
+// ── CLI interaction error filter ──
+
+describe('isCliInteractionError', () => {
+  test('true for Bash permission denied', () => {
+    assert.ok(isCliInteractionError(
+      'Permission to use Bash with command rm -rf coverage/tmp has been denied.'
+    ))
+  })
+
+  test('true for user timeout', () => {
+    assert.ok(isCliInteractionError('No user response — denied by timeout.'))
+  })
+
+  test('true for user rejection (doesn\'t)', () => {
+    assert.ok(isCliInteractionError(
+      "The user doesn't want to proceed with this tool use."
+    ))
+  })
+
+  test('true for user rejection (does not)', () => {
+    assert.ok(isCliInteractionError(
+      'The user does not want to proceed with this tool use.'
+    ))
+  })
+
+  test('true for multi-operation approval', () => {
+    assert.ok(isCliInteractionError(
+      'This Bash command contains multiple operations. The following part requires approval: grep -q "run-all.ts"'
+    ))
+  })
+
+  test('true for file modification race', () => {
+    assert.ok(isCliInteractionError(
+      '<tool_use_error>File has been modified since read, either by the user or by a linter.</tool_use_error>'
+    ))
+  })
+
+  test('true for tool not enabled in context', () => {
+    assert.ok(isCliInteractionError(
+      '<tool_use_error>Error: No such tool available: Bash. Bash exists but is not enabled in this context.</tool_use_error>'
+    ))
+  })
+
+  test('false for real tool errors', () => {
+    assert.ok(!isCliInteractionError('<tool_use_error>EACCES: permission denied</tool_use_error>'))
+    assert.ok(!isCliInteractionError('<tool_use_error>File not found</tool_use_error>'))
+    assert.ok(!isCliInteractionError('Exit code 1'))
+  })
+
+  test('false for undefined/empty', () => {
+    assert.ok(!isCliInteractionError(undefined))
+    assert.ok(!isCliInteractionError(''))
+  })
+})
+
+describe('processToolChunk — CLI interaction error suppression', () => {
+  test('permission denied does not reach reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Bash',
+      toolId: 'cli-int-1',
+      content: 'Permission to use Bash with command rm -rf coverage has been denied.',
+      isError: true
+    }
+    // No formatTagsToSkip — if reportToolError fires, it would crash (no Electron app).
+    // The fact this doesn't throw proves the suppression works.
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+
+  test('user timeout does not reach reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Bash',
+      toolId: 'cli-int-2',
+      content: 'No user response — denied by timeout.',
+      isError: true
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+
+  test('file modified since read does not reach reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Edit',
+      toolId: 'cli-int-3',
+      content: '<tool_use_error>File has been modified since read, either by the user or by a linter.</tool_use_error>'
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
+  })
+
+  test('tool not enabled in context does not reach reportToolError', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Bash',
+      toolId: 'cli-int-4',
+      content: '<tool_use_error>Error: No such tool available: Bash. Bash exists but is not enabled in this context.</tool_use_error>'
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.status, 'error')
   })
 })
 

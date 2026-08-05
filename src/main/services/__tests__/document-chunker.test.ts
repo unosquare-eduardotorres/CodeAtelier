@@ -76,7 +76,10 @@ Content here.`
   test('splits large sections into sub-chunks', () => {
     const largeSection = `# Big Section\n\n${'A'.repeat(15000)}`
     const chunks = chunkDocument(largeSection, 'markdown')
-    assert.ok(chunks.length >= 2, `Large section should split into multiple chunks (got ${chunks.length})`)
+    assert.ok(
+      chunks.length >= 2,
+      `Large section should split into multiple chunks (got ${chunks.length})`
+    )
   })
 
   test('returns empty array for empty content', () => {
@@ -124,8 +127,9 @@ describe('chunkDocument — plain', () => {
 
   test('splits large content with overlap', () => {
     // Create content that exceeds 10K chars
-    const paragraphs = Array.from({ length: 50 }, (_, i) =>
-      `Paragraph ${i}: ${'Lorem ipsum dolor sit amet. '.repeat(20)}`
+    const paragraphs = Array.from(
+      { length: 50 },
+      (_, i) => `Paragraph ${i}: ${'Lorem ipsum dolor sit amet. '.repeat(20)}`
     )
     const text = paragraphs.join('\n\n')
     const chunks = chunkDocument(text, 'plain')
@@ -144,8 +148,9 @@ describe('chunkDocument — plain', () => {
 describe('chunk capping', () => {
   test('caps at MAX_CHUNKS_PER_DOC (25)', () => {
     // Create markdown with 50 sections
-    const sections = Array.from({ length: 50 }, (_, i) =>
-      `# Section ${i}\n\n${'Content '.repeat(500)}`
+    const sections = Array.from(
+      { length: 50 },
+      (_, i) => `# Section ${i}\n\n${'Content '.repeat(500)}`
     )
     const md = sections.join('\n\n')
     const chunks = chunkDocument(md, 'markdown')
@@ -153,8 +158,9 @@ describe('chunk capping', () => {
   })
 
   test('all chunks have correct total after capping', () => {
-    const sections = Array.from({ length: 50 }, (_, i) =>
-      `# Section ${i}\n\n${'Content '.repeat(500)}`
+    const sections = Array.from(
+      { length: 50 },
+      (_, i) => `# Section ${i}\n\n${'Content '.repeat(500)}`
     )
     const md = sections.join('\n\n')
     const chunks = chunkDocument(md, 'markdown')

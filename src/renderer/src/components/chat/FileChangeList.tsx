@@ -3,6 +3,7 @@ import {
   FileCode,
   FileMinus,
   FilePlus,
+  Loader2,
   Minus,
   Square,
   CheckSquare,
@@ -10,6 +11,7 @@ import {
   Settings
 } from 'lucide-react'
 import type { FileChangeDetail } from '@renderer/store'
+import type { DiffComparisonMode } from '../../../../shared/types'
 
 interface FileChangeListProps {
   files: FileChangeDetail[]
@@ -22,6 +24,9 @@ interface FileChangeListProps {
   isLoading: boolean
   isGitConfigured?: boolean
   onNavigateToSettings?: () => void
+  comparisonMode?: DiffComparisonMode
+  currentBranch?: string
+  targetBranch?: string
 }
 
 const CHANGE_TYPE_CONFIG = {
@@ -55,7 +60,10 @@ export default function FileChangeList({
   onDeselectAll,
   isLoading,
   isGitConfigured = true,
-  onNavigateToSettings
+  onNavigateToSettings,
+  comparisonMode = 'uncommitted',
+  currentBranch = '',
+  targetBranch = ''
 }: FileChangeListProps): React.JSX.Element {
   const allChecked = files.length > 0 && checkedFiles.size === files.length
   const someChecked = checkedFiles.size > 0 && checkedFiles.size < files.length
@@ -86,13 +94,31 @@ export default function FileChangeList({
     }
 
     // State B — Git configured, no changes
+    const emptyMessage =
+      comparisonMode === 'uncommitted'
+        ? 'No uncommitted changes'
+        : `No differences between ${currentBranch || 'current branch'} and ${targetBranch || 'target'}`
+    const emptyDetail =
+      comparisonMode === 'uncommitted'
+        ? 'All file changes have been committed.'
+        : 'Both branches are in sync.'
+
     return (
       <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
         <div className="w-12 h-12 rounded-full bg-success-muted flex items-center justify-center mb-3">
           <Check size={24} className="text-success" />
         </div>
-        <p className="text-sm font-medium text-text-primary mb-1">No uncommitted changes</p>
-        <p className="text-xs text-text-secondary">All file changes have been committed.</p>
+        <p className="text-sm font-medium text-text-primary mb-1">{emptyMessage}</p>
+        <p className="text-xs text-text-secondary">{emptyDetail}</p>
+      </div>
+    )
+  }
+
+  // State C — Loading
+  if (isLoading) {
+    return (
+      <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex items-center justify-center">
+        <Loader2 size={20} className="text-text-muted animate-spin" />
       </div>
     )
   }
@@ -101,20 +127,24 @@ export default function FileChangeList({
     <div data-testid="file-change-list" className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col min-h-0">
       {/* Header with select all */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle bg-surface-overlay/50">
-        <button
-          type="button"
-          onClick={allChecked ? onDeselectAll : onSelectAll}
-          className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
-        >
-          {allChecked ? (
-            <CheckSquare size={14} className="text-primary-text" />
-          ) : someChecked ? (
-            <Minus size={14} className="text-primary-text" />
-          ) : (
-            <Square size={14} />
-          )}
-          {allChecked ? 'Deselect all' : 'Select all'}
-        </button>
+        {comparisonMode === 'uncommitted' ? (
+          <button
+            type="button"
+            onClick={allChecked ? onDeselectAll : onSelectAll}
+            className="inline-flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
+          >
+            {allChecked ? (
+              <CheckSquare size={14} className="text-primary-text" />
+            ) : someChecked ? (
+              <Minus size={14} className="text-primary-text" />
+            ) : (
+              <Square size={14} />
+            )}
+            {allChecked ? 'Deselect all' : 'Select all'}
+          </button>
+        ) : (
+          <span className="text-xs text-text-secondary">Changed files</span>
+        )}
         <span className="text-[10px] text-text-muted tabular-nums">
           {files.length} file{files.length !== 1 ? 's' : ''}
         </span>
@@ -142,21 +172,23 @@ export default function FileChangeList({
               `}
               onClick={() => onSelectFile(file.filePath)}
             >
-              {/* Checkbox */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onToggleCheck(file.filePath)
-                }}
-                className="shrink-0 p-0.5 rounded transition-colors hover:bg-surface-overlay"
-              >
-                {isChecked ? (
-                  <CheckSquare size={14} className="text-primary-text" />
-                ) : (
-                  <Square size={14} className="text-text-muted" />
-                )}
-              </button>
+              {/* Checkbox — only in uncommitted mode */}
+              {comparisonMode === 'uncommitted' && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onToggleCheck(file.filePath)
+                  }}
+                  className="shrink-0 p-0.5 rounded transition-colors hover:bg-surface-overlay"
+                >
+                  {isChecked ? (
+                    <CheckSquare size={14} className="text-primary-text" />
+                  ) : (
+                    <Square size={14} className="text-text-muted" />
+                  )}
+                </button>
+              )}
 
               {/* File icon */}
               <Icon size={14} className={`shrink-0 ${config.iconClass}`} />

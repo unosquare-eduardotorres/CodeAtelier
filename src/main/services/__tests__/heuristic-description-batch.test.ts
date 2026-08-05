@@ -192,9 +192,7 @@ describe('generateHeuristicDescriptionBatch', () => {
   })
 
   test('single chunk → map with key 0', () => {
-    const result = generateHeuristicDescriptionBatch([
-      { chunk: chunk({ symbolName: 'getUser' }) }
-    ])
+    const result = generateHeuristicDescriptionBatch([{ chunk: chunk({ symbolName: 'getUser' }) }])
     assert.equal(result.size, 1)
     assert.ok(result.has(0))
     assert.ok(result.get(0)!.length > 0)
@@ -204,7 +202,13 @@ describe('generateHeuristicDescriptionBatch', () => {
     const chunks = [
       { chunk: chunk({ symbolName: 'getUser', signature: 'function getUser(): void' }) },
       { chunk: chunk({ symbolName: 'saveData', signature: 'function saveData(): void' }) },
-      { chunk: chunk({ symbolName: 'AuthService', symbolKind: 'class' as const, signature: 'class AuthService' }) }
+      {
+        chunk: chunk({
+          symbolName: 'AuthService',
+          symbolKind: 'class' as const,
+          signature: 'class AuthService'
+        })
+      }
     ]
     const result = generateHeuristicDescriptionBatch(chunks)
     assert.equal(result.size, 3)

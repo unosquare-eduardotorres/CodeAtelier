@@ -52,9 +52,7 @@ function guardedUpsert(
     .get(conversationId) as { id: string; continuation_count: number } | undefined
 
   if (existing) {
-    db.prepare(
-      'UPDATE local_plan_state SET ...'
-    ).run(
+    db.prepare('UPDATE local_plan_state SET ...').run(
       JSON.stringify(discoveredContext),
       planText ?? '',
       existing.continuation_count + 1,
@@ -62,9 +60,7 @@ function guardedUpsert(
     )
     return { skipped: false, inserted: false, updated: true }
   } else {
-    db.prepare(
-      'INSERT INTO local_plan_state ...'
-    ).run(
+    db.prepare('INSERT INTO local_plan_state ...').run(
       conversationId,
       workspaceId,
       originalRequest,
@@ -131,7 +127,12 @@ describe('LocalPlanStateService.upsert FK guard', () => {
       conversationId: 'conv-real-1',
       workspaceId: 'ws-1',
       originalRequest: 'Build the feature',
-      discoveredContext: { filesExplored: ['src/app.ts'], keyFindings: ['Found entry'], planItems: [], nextSteps: [] },
+      discoveredContext: {
+        filesExplored: ['src/app.ts'],
+        keyFindings: ['Found entry'],
+        planItems: [],
+        nextSteps: []
+      },
       planText: 'Step 1: scaffold'
     })
 
@@ -166,11 +167,7 @@ describe('LocalPlanStateService.upsert FK guard', () => {
   })
 
   test('synthetic grill/audit IDs are correctly rejected by the guard', () => {
-    const syntheticIds = [
-      'grill-requirements-abc123',
-      'audit-code-r1-xyz789',
-      'grill-plan-def456'
-    ]
+    const syntheticIds = ['grill-requirements-abc123', 'audit-code-r1-xyz789', 'grill-plan-def456']
 
     for (const id of syntheticIds) {
       const { db, runCalls } = createMockDb({ conversationExists: false })

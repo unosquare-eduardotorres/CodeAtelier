@@ -86,38 +86,26 @@ function buildFeedUrl(config: {
 
 describe('Context Handoff — generateFallbackHandoff', () => {
   test('empty_messages_returns_fallback', () => {
-    assert.equal(
-      generateFallbackHandoff([]),
-      'No prior conversation context available.'
-    )
+    assert.equal(generateFallbackHandoff([]), 'No prior conversation context available.')
   })
 
   test('null_messages_returns_fallback', () => {
-    assert.equal(
-      generateFallbackHandoff(null as any),
-      'No prior conversation context available.'
-    )
+    assert.equal(generateFallbackHandoff(null as any), 'No prior conversation context available.')
   })
 
   test('single_user_message_formatted', () => {
-    const result = generateFallbackHandoff([
-      { role: 'user', content: 'Hello' }
-    ])
+    const result = generateFallbackHandoff([{ role: 'user', content: 'Hello' }])
     assert.ok(result.includes('**User:** Hello'))
   })
 
   test('assistant_message_formatted', () => {
-    const result = generateFallbackHandoff([
-      { role: 'assistant', content: 'Hi there' }
-    ])
+    const result = generateFallbackHandoff([{ role: 'assistant', content: 'Hi there' }])
     assert.ok(result.includes('**Assistant:** Hi there'))
   })
 
   test('long_message_truncated', () => {
     const longContent = 'x'.repeat(2000)
-    const result = generateFallbackHandoff([
-      { role: 'user', content: longContent }
-    ])
+    const result = generateFallbackHandoff([{ role: 'user', content: longContent }])
     assert.ok(result.length < 2000)
     assert.ok(result.includes('…'))
   })
@@ -162,16 +150,12 @@ describe('Docs Service — file filtering', () => {
   })
 
   test('marks_md_as_supported', () => {
-    const result = filterDocFiles([
-      { name: 'guide', ext: 'md', mtime: 100 }
-    ])
+    const result = filterDocFiles([{ name: 'guide', ext: 'md', mtime: 100 }])
     assert.ok(result[0].supported)
   })
 
   test('marks_non_md_as_unsupported', () => {
-    const result = filterDocFiles([
-      { name: 'notes', ext: 'txt', mtime: 100 }
-    ])
+    const result = filterDocFiles([{ name: 'notes', ext: 'txt', mtime: 100 }])
     assert.ok(!result[0].supported)
   })
 

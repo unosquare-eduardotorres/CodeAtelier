@@ -6,13 +6,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let ollamaLoaded = false
 let embeddingLoaded = false
@@ -40,43 +40,43 @@ try {
 if (ollamaLoaded) {
   describe('ollama.ipc — channel registration', () => {
     test('registers ollama:checkStatus', () => {
-      assert.ok(capturedHandlers.has('ollama:checkStatus'))
+      assert.ok(getHandlers().has('ollama:checkStatus'))
     })
 
     test('registers ollama:pullModel', () => {
-      assert.ok(capturedHandlers.has('ollama:pullModel'))
+      assert.ok(getHandlers().has('ollama:pullModel'))
     })
 
     test('registers ollama:cancelPull', () => {
-      assert.ok(capturedHandlers.has('ollama:cancelPull'))
+      assert.ok(getHandlers().has('ollama:cancelPull'))
     })
 
     test('registers ollama:removeModel', () => {
-      assert.ok(capturedHandlers.has('ollama:removeModel'))
+      assert.ok(getHandlers().has('ollama:removeModel'))
     })
 
     test('registers ollama:start', () => {
-      assert.ok(capturedHandlers.has('ollama:start'))
+      assert.ok(getHandlers().has('ollama:start'))
     })
 
     test('registers omlx:checkStatus', () => {
-      assert.ok(capturedHandlers.has('omlx:checkStatus'))
+      assert.ok(getHandlers().has('omlx:checkStatus'))
     })
 
     test('registers omlx:start', () => {
-      assert.ok(capturedHandlers.has('omlx:start'))
+      assert.ok(getHandlers().has('omlx:start'))
     })
 
     test('registers omlx:adminUrl', () => {
-      assert.ok(capturedHandlers.has('omlx:adminUrl'))
+      assert.ok(getHandlers().has('omlx:adminUrl'))
     })
 
     test('registers omlx:loadModel', () => {
-      assert.ok(capturedHandlers.has('omlx:loadModel'))
+      assert.ok(getHandlers().has('omlx:loadModel'))
     })
 
     test('registers omlx:unloadModel', () => {
-      assert.ok(capturedHandlers.has('omlx:unloadModel'))
+      assert.ok(getHandlers().has('omlx:unloadModel'))
     })
   })
 
@@ -145,11 +145,11 @@ if (ollamaLoaded) {
 if (embeddingLoaded) {
   describe('embedding.ipc — channel registration', () => {
     test('registers embedding:checkStatus', () => {
-      assert.ok(capturedHandlers.has('embedding:checkStatus'))
+      assert.ok(getHandlers().has('embedding:checkStatus'))
     })
 
     test('registers embedding:initialize', () => {
-      assert.ok(capturedHandlers.has('embedding:initialize'))
+      assert.ok(getHandlers().has('embedding:initialize'))
     })
   })
 

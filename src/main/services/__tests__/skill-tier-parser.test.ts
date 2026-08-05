@@ -97,17 +97,35 @@ describe('parseSkillTiers — keyword extraction: explicit lines', () => {
   test('extracts from "Keywords:" line', () => {
     const result = parseSkillTiers('react-hooks', 'React hooks expert', SKILL_WITH_KEYWORDS)
     const tier1 = JSON.parse(result.tier1Json)
-    assert.ok(tier1.keywords.includes('usestate'), `Expected usestate in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('useeffect'), `Expected useeffect in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('custom hooks'), `Expected "custom hooks" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('memoization'), `Expected memoization in ${JSON.stringify(tier1.keywords)}`)
+    assert.ok(
+      tier1.keywords.includes('usestate'),
+      `Expected usestate in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('useeffect'),
+      `Expected useeffect in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('custom hooks'),
+      `Expected "custom hooks" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('memoization'),
+      `Expected memoization in ${JSON.stringify(tier1.keywords)}`
+    )
   })
 
   test('extracts from "Trigger terms:" line', () => {
     const result = parseSkillTiers('api-gateway', 'API Gateway skill', SKILL_WITH_TRIGGER_TERMS)
     const tier1 = JSON.parse(result.tier1Json)
-    assert.ok(tier1.keywords.includes('rate limiting'), `Expected "rate limiting" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('throttling'), `Expected throttling in ${JSON.stringify(tier1.keywords)}`)
+    assert.ok(
+      tier1.keywords.includes('rate limiting'),
+      `Expected "rate limiting" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('throttling'),
+      `Expected throttling in ${JSON.stringify(tier1.keywords)}`
+    )
     assert.ok(tier1.keywords.includes('circuit breaker'))
   })
 
@@ -126,7 +144,10 @@ describe('parseSkillTiers — keyword extraction: name splitting', () => {
   test('splits hyphenated name into individual words', () => {
     const result = parseSkillTiers('async-io', 'Async IO operations', '')
     const tier1 = JSON.parse(result.tier1Json)
-    assert.ok(tier1.keywords.includes('async'), `Expected "async" in ${JSON.stringify(tier1.keywords)}`)
+    assert.ok(
+      tier1.keywords.includes('async'),
+      `Expected "async" in ${JSON.stringify(tier1.keywords)}`
+    )
   })
 
   test('filters out short words (<=2 chars) from name', () => {
@@ -146,10 +167,22 @@ describe('parseSkillTiers — keyword extraction: headings', () => {
   test('extracts words from ## headings', () => {
     const result = parseSkillTiers('feature', 'A feature', SKILL_WITH_HEADINGS)
     const tier1 = JSON.parse(result.tier1Json)
-    assert.ok(tier1.keywords.includes('error'), `Expected "error" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('handling'), `Expected "handling" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('performance'), `Expected "performance" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('optimization'), `Expected "optimization" in ${JSON.stringify(tier1.keywords)}`)
+    assert.ok(
+      tier1.keywords.includes('error'),
+      `Expected "error" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('handling'),
+      `Expected "handling" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('performance'),
+      `Expected "performance" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('optimization'),
+      `Expected "optimization" in ${JSON.stringify(tier1.keywords)}`
+    )
   })
 
   test('removes stop words from heading keywords', () => {
@@ -158,8 +191,14 @@ describe('parseSkillTiers — keyword extraction: headings', () => {
     const tier1 = JSON.parse(result.tier1Json)
     assert.ok(!tier1.keywords.includes('the'), 'Stop word "the" should be removed')
     assert.ok(!tier1.keywords.includes('how'), 'Stop word "how" should be removed')
-    assert.ok(tier1.keywords.includes('widget'), `Expected "widget" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('works'), `Expected "works" in ${JSON.stringify(tier1.keywords)}`)
+    assert.ok(
+      tier1.keywords.includes('widget'),
+      `Expected "widget" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('works'),
+      `Expected "works" in ${JSON.stringify(tier1.keywords)}`
+    )
   })
 
   test('extracts from multiple headings without duplicates', () => {
@@ -179,9 +218,18 @@ describe('parseSkillTiers — keyword extraction: bold terms', () => {
     const result = parseSkillTiers('testing', 'Testing skill', SKILL_WITH_BOLD)
     const tier1 = JSON.parse(result.tier1Json)
     // Bold text splits on [\s-]+ only — "async/await" stays as one token
-    assert.ok(tier1.keywords.includes('async/await'), `Expected "async/await" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('dependency'), `Expected "dependency" in ${JSON.stringify(tier1.keywords)}`)
-    assert.ok(tier1.keywords.includes('injection'), `Expected "injection" in ${JSON.stringify(tier1.keywords)}`)
+    assert.ok(
+      tier1.keywords.includes('async/await'),
+      `Expected "async/await" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('dependency'),
+      `Expected "dependency" in ${JSON.stringify(tier1.keywords)}`
+    )
+    assert.ok(
+      tier1.keywords.includes('injection'),
+      `Expected "injection" in ${JSON.stringify(tier1.keywords)}`
+    )
   })
 
   test('only scans first 2000 chars for bold terms', () => {
@@ -244,15 +292,27 @@ describe('parseSkillTiers — tier 2 extraction', () => {
   test('extracts content between title and second ## heading', () => {
     const content = `# Main Title\n\nPreamble text.\n\n## First Section\n\nFirst section content.\n\n## Second Section\n\nSecond section content.`
     const result = parseSkillTiers('skill', 'desc', content)
-    assert.ok(result.tier2Instructions.includes('First Section'), 'Should include first section heading')
-    assert.ok(result.tier2Instructions.includes('First section content'), 'Should include first section content')
+    assert.ok(
+      result.tier2Instructions.includes('First Section'),
+      'Should include first section heading'
+    )
+    assert.ok(
+      result.tier2Instructions.includes('First section content'),
+      'Should include first section content'
+    )
   })
 
   test('includes first section content up to second ## heading', () => {
     const content = `# Title\n\nIntro.\n\n## Setup\n\nSetup instructions here.\n\n## Advanced\n\nAdvanced content here.`
     const result = parseSkillTiers('skill', 'desc', content)
-    assert.ok(result.tier2Instructions.includes('Setup instructions'), 'Should include Setup section')
-    assert.ok(!result.tier2Instructions.includes('Advanced content'), 'Should NOT include Advanced section')
+    assert.ok(
+      result.tier2Instructions.includes('Setup instructions'),
+      'Should include Setup section'
+    )
+    assert.ok(
+      !result.tier2Instructions.includes('Advanced content'),
+      'Should NOT include Advanced section'
+    )
   })
 
   test('falls back to full content when only one ## heading exists', () => {

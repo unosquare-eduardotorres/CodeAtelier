@@ -177,7 +177,7 @@ describe('applyLocalMcpToggles', () => {
   test('toggle for nonexistent server → no error', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
     assert.doesNotThrow(() => {
-      applyLocalMcpToggles(servers, { 'nonexistent': false })
+      applyLocalMcpToggles(servers, { nonexistent: false })
     })
   })
 })

@@ -105,7 +105,11 @@ function buildPromptBody(
  * for the current event (retryInitiatedThisEvent), NOT simply when the retry
  * budget hasn't been exhausted. See processEventStream deadlock fix.
  */
-function isSessionComplete(event: Record<string, unknown>, sessionId: string, retriesAvailable = false): boolean {
+function isSessionComplete(
+  event: Record<string, unknown>,
+  sessionId: string,
+  retriesAvailable = false
+): boolean {
   const type = event.type as string | undefined
   const properties = event.properties as Record<string, unknown> | undefined
 
@@ -322,8 +326,14 @@ describe('isSessionComplete', () => {
   test('session_error_no_retry_initiated_returns_true', () => {
     // Key deadlock fix: when no retry fires (retryInitiatedThisEvent=false),
     // session.error MUST terminate the loop even if retry budget remains
-    const event = { type: 'session.error', properties: { sessionID: 'sess-1', error: 'model not found' } }
-    assert.ok(isSessionComplete(event, 'sess-1', false), 'Should terminate when no retry was initiated')
+    const event = {
+      type: 'session.error',
+      properties: { sessionID: 'sess-1', error: 'model not found' }
+    }
+    assert.ok(
+      isSessionComplete(event, 'sess-1', false),
+      'Should terminate when no retry was initiated'
+    )
   })
 
   test('session_status_idle_returns_true', () => {
@@ -360,7 +370,10 @@ describe('isSessionComplete', () => {
     // Regression guard: a step ending with finish="stop" must NOT complete the
     // session — it truncated the final answer text (e.g. JSON), spawned a zombie
     // server session, and stalled the UI. Completion is driven by session.idle.
-    const event = { type: 'session.next.step.ended', properties: { sessionID: 'sess-1', finish: 'stop' } }
+    const event = {
+      type: 'session.next.step.ended',
+      properties: { sessionID: 'sess-1', finish: 'stop' }
+    }
     assert.ok(!isSessionComplete(event, 'sess-1'), 'step.ended(stop) must not be terminal')
   })
 

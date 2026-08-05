@@ -6,6 +6,7 @@
 //   3. Individual file failures don't block the rest of the suite
 import { setupElectronStub } from './electron-stub'
 import { summaryAsync } from './test-harness'
+import { restoreFullMock } from './setup-full-mock'
 
 // Install the shared electron/electron-log stubs ONCE before any test file
 // loads. This guarantees every module in the CJS cache gets the full mock
@@ -297,6 +298,7 @@ const TEST_FILES: string[] = [
   './adapter-completion-round2.test',
   './coverage-mega-push-phase18.test',
   './coverage-push-phase18b.test',
+  './ipc-bridge-tcp.test',
   // ─── Blueprint clarify ask_user bridge (B1–B4 fixes) ───
   './blueprint-clarify-askuser.test',
   // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
@@ -409,6 +411,104 @@ const TEST_FILES: string[] = [
   // ─── Phase 24: Deep Tests for Low/Medium-Coverage Services ───
   './low-coverage-services-deep-phase24.test',
   './medium-coverage-augment-phase24.test',
+  // ─── Phase 25: Wave 1 — Giant Services Deep Body Coverage ───
+  './blueprint-build-deep-phase25.test',
+  './agent-session-deep-phase25.test',
+  './chat-stream-deep-phase25.test',
+  './opencode-executor-deep-phase25.test',
+  './vector-search-deep-phase25.test',
+  './blueprint-spec-deep-phase25.test',
+  './blueprint-service-deep-phase25.test',
+  './code-graph-deep-phase25.test',
+  './blueprint-verify-deep-phase25.test',
+  './memory-extraction-deep-phase25.test',
+  // ─── Phase 25: Wave 2 — Pipeline Services Deep Coverage ───
+  './mpa-orchestration-deep-phase25.test',
+  './cli-executor-deep-phase25.test',
+  './council-deep-phase25.test',
+  './memory-engine-deep-phase25.test',
+  './memory-bootstrap-deep-phase25.test',
+  './audit-agent-deep-phase25.test',
+  './workspace-deploy-deep-phase25.test',
+  './grill-persistence-deep-phase25.test',
+  // ─── Phase 25: Wave 3 — IPC Handler Body Deep Coverage ───
+  '../../ipc/__tests__/ipc-blueprint-body-deep.test',
+  '../../ipc/__tests__/ipc-audit-body-deep.test',
+  '../../ipc/__tests__/ipc-mpa-council-body-deep.test',
+  '../../ipc/__tests__/ipc-chat-completion-body.test',
+  '../../ipc/__tests__/ipc-remaining-body-deep.test',
+  // ─── Phase 25: Wave 4 — Medium Services + MCP ───
+  './wave4-services-deep-phase25.test',
+  '../../mcp-servers/__tests__/code-analysis-deep-phase25.test',
+  // ─── Phase 25: Wave 5 — E2E Testing Infrastructure ───
+  './e2e-assertions-deep-phase25.test',
+  './e2e-runner-deep-phase25.test',
+  './e2e-service-runners-phase25.test',
+  // ─── Phase 25: Wave 6 — Remaining Repos & Adapters ───
+  './wave6-repos-adapters-phase25.test',
+  // ─── Phase 26: Wave 1 — Giant Service Bodies (Module-Mock Deep Body) ───
+  './blueprint-build-body-p26.test',
+  './agent-session-body-p26.test',
+  './chat-stream-body-p26.test',
+  './vector-search-body-p26.test',
+  './opencode-exec-body-p26.test',
+  './blueprint-spec-body-p26.test',
+  './blueprint-svc-body-p26.test',
+  './memory-extract-body-p26.test',
+  './blueprint-verify-body-p26.test',
+  './blueprint-ipc-body-p26.test',
+  './memory-engine-body-p26.test',
+  // ─── Phase 26: Wave 2 — IPC Handler Deep Body ───
+  './audit-ipc-body-p26.test',
+  './grill-ipc-body-p26.test',
+  './convo-crud-ipc-body-p26.test',
+  './mpa-ipc-body-p26.test',
+  './chat-ipc-body-p26.test',
+  './memory-ipc-body-p26.test',
+  './workspace-ipc-body-p26.test',
+  './remaining-ipc-body-p26.test',
+  // ─── Phase 26: Wave 3 — Pipeline Service Method Bodies ───
+  './memory-engine-pipeline-p26.test',
+  './mpa-orch-body-p26.test',
+  './memory-boot-body-p26.test',
+  './cli-executor-body-p26.test',
+  './council-body-p26.test',
+  './audit-agent-body-p26.test',
+  './workspace-deploy-body-p26.test',
+  './grill-persist-body-p26.test',
+  // ─── Phase 26: Wave 4 — Repository Deep Coverage ───
+  './memory-fact-repo-deep-p26.test',
+  './blueprint-repo-deep-p26.test',
+  './audit-repo-deep-p26.test',
+  './agent-session-repo-p26.test',
+  './remaining-repos-p26.test',
+  // ─── Phase 26: Wave 5 — Medium Services + MCP ───
+  './code-analysis-mcp-p26.test',
+  './preflight-body-p26.test',
+  './skill-specialist-body-p26.test',
+  './agent-sync-preprocessing-p26.test',
+  './e2e-assertions-body-p26.test',
+  // ─── Phase 26: Wave 6 — Adapters + Edge Cases ───
+  './role-adapters-body-p26.test',
+  './chat-agent-body-p26.test',
+  './medium-services-batch-p26.test',
+  './db-index-migrations-p26.test',
+  // ─── Phase 27: Coverage Push — Pure Functions + Zero-Coverage Services ───
+  './compaction-policy-p27.test',
+  './handoff-redaction-p27.test',
+  './mpa-prompts-p27.test',
+  './audit-discovery-p27.test',
+  './agent-executor-factory-p27.test',
+  './handoff-adapters-p27.test',
+  './one-shot-local-p27.test',
+  './parsing-utils-p27.test',
+  './structured-output-repair-p27.test',
+  './github-service-p27.test',
+  './event-logger-deep-p27.test',
+  './opencode-config-writer-p27.test',
+  './memory-feed-p27.test',
+  './grill-persistence-deep-p27.test',
+  './specialist-builder-deep-p27.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout
@@ -424,6 +524,20 @@ void (async () => {
     } catch (err) {
       console.error(`\n[run-tests] FAILED to load ${file}:`, err)
       loadFailures++
+    } finally {
+      // Undo setupFullMock()'s Module._load patch (if this file installed it)
+      // before the next file loads — mirrors src/main/__tests__/run-all.ts.
+      // Without this, the very first file to call setupFullMock() leaves
+      // Module._load hijacked for every file loaded afterward in this same
+      // process: every subsequent `require('../db/repositories')`-style call
+      // (from test files AND from the production code they exercise) starts
+      // silently resolving to the fake in-memory mock instead of the real
+      // module, while any production module already cached from an EARLIER
+      // require keeps its real (unmocked) binding — the resulting split
+      // identity is what caused e.g. prompt-optimizer.test.ts's settings
+      // monkey-patch to land on a different `workspaceRepository` object
+      // than the one prompt-optimizer.service.ts actually reads from.
+      restoreFullMock()
     }
   }
 
@@ -431,7 +545,9 @@ void (async () => {
     console.error(`\n[run-tests] ${loadFailures} file(s) failed to load`)
     process.exitCode = 1
   }
-  console.log(`[run-tests] all ${TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`)
+  console.log(
+    `[run-tests] all ${TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`
+  )
 
   // Await every async test queued by the harness before printing the aggregate
   // summary and exiting. Individual test files guard their own summaryAsync()

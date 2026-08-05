@@ -19,6 +19,8 @@ import type { ConversationPhase, Message, ToolActivity } from '../../../shared/t
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { PerConversationStreamState } from './chat-action-utils'
 import type { ChatState } from './chat.store'
+import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE } from '@renderer/components/chat/plan-detection'
+import { usePlanExecutionStore } from './plan-execution.store'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -384,10 +386,24 @@ export function appendStreamChunkAction(
   const isCurrentlyStreaming = isActive ? get().isStreaming : (buffer?.isStreaming ?? false)
 
   // CHUNK-LEAK-01: Drop chunks when no active request is expected AND not streaming.
-  if (!effectiveRequestId && !isCurrentlyStreaming) return
+  if (!effectiveRequestId && !isCurrentlyStreaming) {
+    if (chunk?.includes?.('```plan\n')) {
+      rendererLog.warn(
+        `[appendStreamChunk:plan-block-DROPPED] reason=no-active-request ` +
+        `conversationId=${conversationId} chunkLen=${chunk.length}`
+      )
+    }
+    return
+  }
 
   // Drop stale chunks (mismatched request)
   if (effectiveRequestId && requestId && requestId !== effectiveRequestId) {
+    if (chunk?.includes?.('```plan\n')) {
+      rendererLog.warn(
+        `[appendStreamChunk:plan-block-DROPPED] reason=stale-request ` +
+        `conversationId=${conversationId} expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
+      )
+    }
     rendererLog.debug(
       `[appendStreamChunk] Dropped stale chunk: expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
     )
@@ -397,8 +413,23 @@ export function appendStreamChunkAction(
   // STREAM-REQID-BYPASS-01: If we expect a specific request but this chunk has no ID,
   // drop it — it's likely a late chunk from a previous request that omitted requestId.
   if (effectiveRequestId && !requestId) {
+    if (chunk?.includes?.('```plan\n')) {
+      rendererLog.warn(
+        `[appendStreamChunk:plan-block-DROPPED] reason=no-requestId ` +
+        `conversationId=${conversationId} chunkLen=${chunk.length}`
+      )
+    }
     rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (effectiveRequestId set)')
     return
+  }
+
+  // Log plan block reception for diagnostics
+  if (chunk?.includes?.('```plan\n')) {
+    rendererLog.info(
+      `[appendStreamChunk:plan-block] conversationId=${conversationId} ` +
+      `effectiveRequestId=${effectiveRequestId?.slice(0, 12)} requestId=${requestId?.slice(0, 12)} ` +
+      `isCurrentlyStreaming=${isCurrentlyStreaming} chunkLen=${chunk.length}`
+    )
   }
 
   // Reset safety timer — backend is still alive
@@ -649,6 +680,25 @@ export function finalizeStreamAction(
   }
 
   streamingInternals.resetAccumulator(conversationId)
+
+  // PLAN-RACE-FIX-E1: After finalize, schedule a deferred check for late plan blocks.
+  // The backend's late injection (PLAN-RACE-FIX-01) sends the plan chunk after the
+  // complete event. ChunkConsumer's rAF batching could delay it by one frame,
+  // causing it to arrive after this finalize ran. This deferred scan catches that.
+  setTimeout(() => {
+    // GAP-2-GUARD: If the user switched conversations within 500ms, get().messages
+    // now contains messages from a different conversation. Bail out to avoid
+    // populating plan content for a stale conversation.
+    if (get().activeConversation?.id !== conversationId) return
+    const currentMessages = get().messages
+    const msg = currentMessages.find((m: Message) => m.id === messageId)
+    if (msg?.contentMd && PLAN_BLOCK_RE.test(msg.contentMd)) {
+      const match = PLAN_BLOCK_CAPTURE_RE.exec(msg.contentMd)
+      if (match?.[1]) {
+        usePlanExecutionStore.getState().setLatestPlanContent(conversationId, match[1])
+      }
+    }
+  }, 500)
 }
 
 export function finalizeTurnBubbleAction(

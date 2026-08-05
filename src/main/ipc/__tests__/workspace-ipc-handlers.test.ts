@@ -84,10 +84,7 @@ describe('detectLlmProviderChange', () => {
   })
 
   test('no change when both same', () => {
-    const result = detectLlmProviderChange(
-      { llmProvider: 'claude' },
-      { llmProvider: 'claude' }
-    )
+    const result = detectLlmProviderChange({ llmProvider: 'claude' }, { llmProvider: 'claude' })
     assert.equal(result.changed, false)
   })
 
@@ -106,10 +103,7 @@ describe('detectLlmProviderChange', () => {
   })
 
   test('no change from undefined to claude (both default)', () => {
-    const result = detectLlmProviderChange(
-      { llmProvider: undefined },
-      { llmProvider: 'claude' }
-    )
+    const result = detectLlmProviderChange({ llmProvider: undefined }, { llmProvider: 'claude' })
     assert.equal(result.changed, false)
   })
 })

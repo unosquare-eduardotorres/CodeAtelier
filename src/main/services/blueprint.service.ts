@@ -9,6 +9,8 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import log from 'electron-log'
 import {
   blueprintRepository,
@@ -1048,6 +1050,27 @@ export class BlueprintService extends EventEmitter {
           tasksCompleted: typeof parsed.tasksCompleted === 'number' ? parsed.tasksCompleted : 0,
           totalTasks: typeof parsed.totalTasks === 'number' ? parsed.totalTasks : 0
         }
+      }
+    }
+
+    // Write prior artifacts to disk so agents can Read them if truncated from context
+    if (workspacePath && previousArtifacts.length > 0) {
+      const artifactDir = resolve(workspacePath, `blueprints/${blueprint.shortName || blueprint.id}`)
+      try {
+        mkdirSync(artifactDir, { recursive: true })
+        for (const a of previousArtifacts) {
+          if (a.type.endsWith('-partial') || a.type === 'discoveries') continue
+          const relativePath = `blueprints/${blueprint.shortName || blueprint.id}/${a.type}.md`
+          const absPath = resolve(workspacePath, relativePath)
+          const content = a.contentMd
+            ?? (a.contentJson ? '```json\n' + JSON.stringify(a.contentJson, null, 2) + '\n```' : null)
+          if (content) {
+            writeFileSync(absPath, content, 'utf-8')
+            a.filePath = relativePath  // set for renderSingleArtifact() to display
+          }
+        }
+      } catch (err) {
+        bpLog.warn('[assemblePhaseContext] Failed to write artifacts to disk:', err)
       }
     }
 

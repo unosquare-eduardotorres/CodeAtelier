@@ -28,10 +28,7 @@ function resolveBlueprintEventAction(
  * Replicated from blueprint.store.ts shouldDropCancelledEvent.
  * Returns true if the blueprintId is in the recently-cancelled set.
  */
-function shouldDropCancelledEvent(
-  cancelledIds: ReadonlySet<string>,
-  blueprintId: string
-): boolean {
+function shouldDropCancelledEvent(cancelledIds: ReadonlySet<string>, blueprintId: string): boolean {
   return cancelledIds.has(blueprintId)
 }
 

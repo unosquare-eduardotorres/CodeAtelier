@@ -6,12 +6,12 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let planLoaded = false
 let sdkLoaded = false
@@ -48,18 +48,18 @@ try {
 if (planLoaded) {
   describe('plan.ipc — channel registration', () => {
     test('registers plan:getAll', () => {
-      assert.ok(capturedHandlers.has('plan:getAll'))
+      assert.ok(getHandlers().has('plan:getAll'))
     })
 
     test('registers plan:getById', () => {
-      assert.ok(capturedHandlers.has('plan:getById'))
+      assert.ok(getHandlers().has('plan:getById'))
     })
 
     test('registers plan:updateStatus', () => {
-      assert.ok(capturedHandlers.has('plan:updateStatus'))
+      assert.ok(getHandlers().has('plan:updateStatus'))
     })
 
-    const planCh = [...capturedHandlers.keys()].filter(c => c.startsWith('plan:'))
+    const planCh = [...getHandlers().keys()].filter((c) => c.startsWith('plan:'))
     test('registers ≥5 plan channels', () => {
       assert.ok(planCh.length >= 5, `Expected ≥5, got ${planCh.length}: ${planCh.join(', ')}`)
     })
@@ -79,13 +79,13 @@ if (planLoaded) {
     test('plan:updateStatus calls through', async () => {
       const r = await tryInvokeHandler('plan:updateStatus', {
         planId: 'p-1',
-        status: 'active',
+        status: 'active'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     // Test plan:delete and plan:import if registered
-    const deleteCh = capturedHandlers.has('plan:delete')
+    const deleteCh = getHandlers().has('plan:delete')
     if (deleteCh) {
       test('plan:delete calls through', async () => {
         const r = await tryInvokeHandler('plan:delete', { planId: 'p-del' })
@@ -93,12 +93,12 @@ if (planLoaded) {
       })
     }
 
-    const importCh = capturedHandlers.has('plan:import')
+    const importCh = getHandlers().has('plan:import')
     if (importCh) {
       test('plan:import calls through', async () => {
         const r = await tryInvokeHandler('plan:import', {
           workspaceId: 'ws-1',
-          planId: 'p-1',
+          planId: 'p-1'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
@@ -113,19 +113,19 @@ if (planLoaded) {
 if (sdkLoaded) {
   describe('sdk-control.ipc — channel registration', () => {
     test('registers elicitation:response', () => {
-      assert.ok(capturedHandlers.has('elicitation:response'))
+      assert.ok(getHandlers().has('elicitation:response'))
     })
 
     test('registers sdk:elicitationResponse', () => {
-      assert.ok(capturedHandlers.has('sdk:elicitationResponse'))
+      assert.ok(getHandlers().has('sdk:elicitationResponse'))
     })
 
     test('registers chat:askUserRespond', () => {
-      assert.ok(capturedHandlers.has('chat:askUserRespond'))
+      assert.ok(getHandlers().has('chat:askUserRespond'))
     })
 
-    const sdkCh = [...capturedHandlers.keys()].filter(c =>
-      c.startsWith('sdk:') || c.includes('elicitation') || c.includes('askUser')
+    const sdkCh = [...getHandlers().keys()].filter(
+      (c) => c.startsWith('sdk:') || c.includes('elicitation') || c.includes('askUser')
     )
     test('registers ≥5 sdk-control channels', () => {
       assert.ok(sdkCh.length >= 5, `Expected ≥5, got ${sdkCh.length}: ${sdkCh.join(', ')}`)
@@ -146,7 +146,7 @@ if (sdkLoaded) {
     test('elicitation:response rejects non-object content', async () => {
       const r = await tryInvokeHandler('elicitation:response', {
         action: 'accept',
-        content: 'bad',
+        content: 'bad'
       })
       assert.equal(r.ok, false)
     })
@@ -176,7 +176,7 @@ if (sdkLoaded) {
     test('elicitation:response with accept calls through', async () => {
       const r = await tryInvokeHandler('elicitation:response', {
         action: 'accept',
-        content: { field1: 'value1' },
+        content: { field1: 'value1' }
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -194,13 +194,13 @@ if (sdkLoaded) {
     test('chat:askUserRespond calls through', async () => {
       const r = await tryInvokeHandler('chat:askUserRespond', {
         requestId: 'r1',
-        answer: 'yes, proceed',
+        answer: 'yes, proceed'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     // SDK list/fork handlers
-    const supportedModels = capturedHandlers.has('sdk:supportedModels')
+    const supportedModels = getHandlers().has('sdk:supportedModels')
     if (supportedModels) {
       test('sdk:supportedModels calls through', async () => {
         const r = await tryInvokeHandler('sdk:supportedModels')
@@ -217,12 +217,15 @@ if (sdkLoaded) {
 if (handoffLoaded) {
   describe('handoff.ipc — channel registration', () => {
     test('registers handoff:create', () => {
-      assert.ok(capturedHandlers.has('handoff:create'))
+      assert.ok(getHandlers().has('handoff:create'))
     })
 
-    const handoffCh = [...capturedHandlers.keys()].filter(c => c.startsWith('handoff:'))
+    const handoffCh = [...getHandlers().keys()].filter((c) => c.startsWith('handoff:'))
     test('registers ≥4 handoff channels', () => {
-      assert.ok(handoffCh.length >= 4, `Expected ≥4, got ${handoffCh.length}: ${handoffCh.join(', ')}`)
+      assert.ok(
+        handoffCh.length >= 4,
+        `Expected ≥4, got ${handoffCh.length}: ${handoffCh.join(', ')}`
+      )
     })
   })
 
@@ -233,7 +236,7 @@ if (handoffLoaded) {
         workspaceId: 'ws1',
         intent: 'continue',
         originalGoal: 'fix bug',
-        contextSummary: 'summary',
+        contextSummary: 'summary'
       })
       assert.equal(r.ok, false)
     })
@@ -244,7 +247,7 @@ if (handoffLoaded) {
         workspaceId: 'ws1',
         intent: 'continue',
         originalGoal: 'fix bug',
-        contextSummary: 'summary',
+        contextSummary: 'summary'
       })
       assert.equal(r.ok, false)
     })
@@ -255,7 +258,7 @@ if (handoffLoaded) {
         target: 'chat',
         intent: 'continue',
         originalGoal: 'fix bug',
-        contextSummary: 'summary',
+        contextSummary: 'summary'
       })
       assert.equal(r.ok, false)
     })
@@ -269,13 +272,13 @@ if (handoffLoaded) {
         workspaceId: 'ws1',
         intent: 'continue',
         originalGoal: 'implement feature',
-        contextSummary: 'Grill concluded with plan',
+        contextSummary: 'Grill concluded with plan'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     // handoff:list, handoff:get, handoff:accept, handoff:reject
-    const listCh = capturedHandlers.has('handoff:list')
+    const listCh = getHandlers().has('handoff:list')
     if (listCh) {
       test('handoff:list calls through', async () => {
         const r = await tryInvokeHandler('handoff:list', { workspaceId: 'ws1' })
@@ -283,7 +286,7 @@ if (handoffLoaded) {
       })
     }
 
-    const getCh = capturedHandlers.has('handoff:get')
+    const getCh = getHandlers().has('handoff:get')
     if (getCh) {
       test('handoff:get calls through', async () => {
         const r = await tryInvokeHandler('handoff:get', { handoffId: 'h1' })
@@ -291,7 +294,7 @@ if (handoffLoaded) {
       })
     }
 
-    const acceptCh = capturedHandlers.has('handoff:accept')
+    const acceptCh = getHandlers().has('handoff:accept')
     if (acceptCh) {
       test('handoff:accept calls through', async () => {
         const r = await tryInvokeHandler('handoff:accept', { handoffId: 'h1' })

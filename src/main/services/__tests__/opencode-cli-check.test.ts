@@ -81,49 +81,53 @@ describe('OpenCodeExecutor.checkCliAvailable', () => {
 })
 
 describe('OpenCodeExecutor.start CLI validation', () => {
-  test('start() validates CLI before attempting server startup', () => runExclusive(async () => {
-    const { tmpdir } = await import('node:os')
-    const { join } = await import('node:path')
-    const { writeFileSync, mkdirSync, rmSync } = await import('node:fs')
+  test('start() validates CLI before attempting server startup', () =>
+    runExclusive(async () => {
+      const { tmpdir } = await import('node:os')
+      const { join } = await import('node:path')
+      const { writeFileSync, mkdirSync, rmSync } = await import('node:fs')
 
-    // Augment PATH to ensure CLI can be found
-    augmentOpenCodeCliPath()
+      // Augment PATH to ensure CLI can be found
+      augmentOpenCodeCliPath()
 
-    const configDir = join(tmpdir(), `opencode-cli-validation-test-${Date.now()}`)
-    mkdirSync(configDir, { recursive: true })
+      const configDir = join(tmpdir(), `opencode-cli-validation-test-${Date.now()}`)
+      mkdirSync(configDir, { recursive: true })
 
-    const config = {
-      $schema: 'https://opencode.ai/config.json',
-      model: 'test-model',
-      provider: {},
-      mcp: {},
-      instructions: [],
-      plugin: [],
-      tools: { question: false },
-      permission: { Read: 'allow', Glob: 'allow', Grep: 'allow' },
-    }
-    const configPath = join(configDir, 'opencode.json')
-    writeFileSync(configPath, JSON.stringify(config, null, 2))
-
-    try {
-      await executor.start(configDir, { configPath, isLocal: false })
-      // If we get here, CLI is installed and server started successfully
-      await executor.stop()
-      assert.ok(true, 'OpenCode CLI installed and server started successfully')
-    } catch (error) {
-      // If CLI is missing, should get helpful error
-      const err = error as Error
-      if (err.message.includes('ENOENT') || err.message.includes('not found')) {
-        // This is OK - validates that checkCliAvailable caught the missing CLI
-        assert.ok(true, 'Properly detected missing CLI with helpful error')
-      } else {
-        // Some other error (e.g., auth, missing dependencies) -latihog
-        assert.ok(true, `PATH augmentation working (auth/config error is separate): ${err.message}`)
+      const config = {
+        $schema: 'https://opencode.ai/config.json',
+        model: 'test-model',
+        provider: {},
+        mcp: {},
+        instructions: [],
+        plugin: [],
+        tools: { question: false },
+        permission: { Read: 'allow', Glob: 'allow', Grep: 'allow' }
       }
-    } finally {
-      rmSync(configDir, { recursive: true, force: true })
-    }
-  }))
+      const configPath = join(configDir, 'opencode.json')
+      writeFileSync(configPath, JSON.stringify(config, null, 2))
+
+      try {
+        await executor.start(configDir, { configPath, isLocal: false })
+        // If we get here, CLI is installed and server started successfully
+        await executor.stop()
+        assert.ok(true, 'OpenCode CLI installed and server started successfully')
+      } catch (error) {
+        // If CLI is missing, should get helpful error
+        const err = error as Error
+        if (err.message.includes('ENOENT') || err.message.includes('not found')) {
+          // This is OK - validates that checkCliAvailable caught the missing CLI
+          assert.ok(true, 'Properly detected missing CLI with helpful error')
+        } else {
+          // Some other error (e.g., auth, missing dependencies) -latihog
+          assert.ok(
+            true,
+            `PATH augmentation working (auth/config error is separate): ${err.message}`
+          )
+        }
+      } finally {
+        rmSync(configDir, { recursive: true, force: true })
+      }
+    }))
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

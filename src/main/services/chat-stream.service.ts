@@ -64,6 +64,8 @@ interface StreamContext {
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
   readonly workspacePath: string | undefined
+  /** Workspace this stream belongs to — captured at stream start for workspace-scoped lookups. */
+  readonly workspaceId: string | null
   /** HEAD sha captured at stream start — for memory extraction git delta. */
   readonly startSha: string | undefined
   /** Accumulated streamed content — mutable, shared across listeners. */
@@ -192,16 +194,20 @@ export class ChatStreamService {
   /**
    * Resolve the conversation ID that is currently streaming.
    *
-   * Phase 2 note: With multiple concurrent streams, this returns the first
-   * lock entry (most recently acquired). Events from chatAgentService (plan,
-   * askUser, elicitation) are inherently tied to the lastActiveConversationId
-   * in the session, so this heuristic is correct for the bridge event path.
-   * The per-message onChunk/onComplete path uses the explicit StreamContext
-   * conversationId instead.
+   * Phase 2 note: Uses chatAgentService.getCurrentConversationId() as the
+   * primary source — bridge events (plan, askUser, elicitation) are inherently
+   * tied to the lastActiveConversationId. Falls back to the most recently
+   * acquired streaming lock, then empty string.
    */
   private resolveStreamingConversationId(): string {
-    const [first] = this.streamingLocks
-    return first ?? chatAgentService.getCurrentConversationId() ?? ''
+    // WRONG-STREAM-01: Use getCurrentConversationId() as the primary source.
+    // Bridge events (plan, askUser, elicitation) from chatAgentService are inherently
+    // tied to the lastActiveConversationId's stream processing. With multiple
+    // concurrent streams, the first streamingLocks entry (Set insertion order) is
+    // arbitrary and may attribute events to the wrong conversation.
+    return chatAgentService.getCurrentConversationId()
+      ?? [...this.streamingLocks].pop()
+      ?? ''
   }
 
   private registerEventForwarders(): void {
@@ -860,6 +866,7 @@ export class ChatStreamService {
 
     // Remove per-stream listeners
     lifecycle.onDispose(() => {
+      log.info(`[PIPELINE:plan-listener-removed] conversationId=${conversationId}`)
       chatAgentService.removeListener('chunk', onChunk)
       chatAgentService.removeListener('complete', onComplete)
       chatAgentService.removeListener('intent', onIntent)
@@ -1086,6 +1093,56 @@ export class ChatStreamService {
     }
 
     try {
+      // PLAN-RACE-FIX-01: If the session received a plan event (controlToolState.plan)
+      // but the per-stream listener missed it (ctx.planInjected is false), the plan
+      // event arrived via IPC socket after the complete event via stdout — a race
+      // between two I/O channels. Late-inject the plan block before DB save.
+      // PLAN-RACE-FIX-02: Use workspace-scoped session lookup instead of
+      // getControlToolState() (which reads the *active* workspace session).
+      // If the user switched workspaces during the stream, the active session
+      // would be wrong. ctx.workspaceId was captured at stream start.
+      if (!ctx.planInjected) {
+        const session = ctx.workspaceId
+          ? chatAgentService.getSessionForWorkspace(ctx.workspaceId)
+          : null
+        const sessionState = session?.getControlToolState() ?? null
+        if (sessionState?.plan && sessionState.planIntent?.plan) {
+          const data = sessionState.planIntent.plan
+          log.warn(
+            `[PIPELINE:plan-late-inject] Plan received by session but missed by stream listener — ` +
+            `injecting late. conversationId=${ctx.conversationId} workspaceId=${ctx.workspaceId} ` +
+            `rawContentLen=${data.rawContent.length}`
+          )
+          const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
+          ctx.streamedContent += planBlock
+          ctx.planInjected = true
+          // Also send to renderer for immediate display
+          this.safeWindowSend(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({
+              conversationId: ctx.conversationId,
+              requestId: ctx.requestId,
+              text: planBlock,
+              role: ctx.streamingRole
+            })
+          )
+          // Late-register in Plan Hub (non-critical)
+          try {
+            if (ctx.workspaceId && data.structuredPlan) {
+              planRegistryService.registerChatPlan({
+                workspaceId: ctx.workspaceId,
+                conversationId: ctx.conversationId,
+                messageId: ctx.requestId,
+                plan: data.structuredPlan,
+                rawContent: data.rawContent
+              })
+            }
+          } catch (err) {
+            log.warn('[PIPELINE:plan-late-inject-registry-failed] Non-critical:', err)
+          }
+        }
+      }
+
       log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.length })
       const cleanedContent = ctx.streamedContent.trim()
 
@@ -1372,6 +1429,11 @@ export class ChatStreamService {
     }
 
     const onPlanEvent = (data: PlanDetectedEvent): void => {
+      log.info(
+        `[PIPELINE:plan-event-received] conversationId=${ctx.conversationId} ` +
+        `planInjected=${ctx.planInjected} rawContentLen=${data.rawContent.length} ` +
+        `lifecycleActive=${lifecycle.isActive}`
+      )
       if (ctx.planInjected) {
         log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
         return
@@ -1390,11 +1452,12 @@ export class ChatStreamService {
         })
       )
       // Dual-write: register plan in Plan Hub registry (non-critical)
+      // PLAN-RACE-FIX-02: Use ctx.workspaceId (captured at stream start) instead of
+      // chatAgentService.activeWorkspaceId to avoid wrong-workspace registration.
       try {
-        const workspaceId = chatAgentService.activeWorkspaceId
-        if (workspaceId && data.structuredPlan) {
+        if (ctx.workspaceId && data.structuredPlan) {
           planRegistryService.registerChatPlan({
-            workspaceId,
+            workspaceId: ctx.workspaceId,
             conversationId: ctx.conversationId,
             messageId: ctx.requestId,
             plan: data.structuredPlan,
@@ -1503,6 +1566,7 @@ export class ChatStreamService {
       specialistMeta,
       adapterAgentId,
       workspacePath: wpPath ?? undefined,
+      workspaceId: conv?.workspaceId ?? null,
       startSha,
       streamedContent: '',
       planInjected: false
@@ -1656,6 +1720,7 @@ export class ChatStreamService {
           // IPC entry point and has no per-turn snapshot in scope.
           // A3-FIX: Only read persona/role from chatAgentService when this
           // conversation owns the active session, otherwise use defaults.
+          const isActiveSession = chatAgentService.getCurrentConversationId() === conversationId
           const stopPersona = isActiveSession
             ? chatAgentService.getActivePersona()
             : undefined

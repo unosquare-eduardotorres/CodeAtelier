@@ -100,12 +100,7 @@ describe('buildLocalMcpServersFromRegistry', () => {
         environment: () => ({})
       })
     ]
-    const result = buildLocalMcpServersFromRegistry(
-      defs,
-      minimalOpts as any,
-      '/servers',
-      '/db/dir'
-    )
+    const result = buildLocalMcpServersFromRegistry(defs, minimalOpts as any, '/servers', '/db/dir')
     assert.equal(result['semantic-search'].environment!.DB_PATH, '/db/dir')
   })
 
@@ -127,12 +122,7 @@ describe('buildLocalMcpServersFromRegistry', () => {
         environment: () => ({ FOO: 'bar' })
       })
     ]
-    const result = buildLocalMcpServersFromRegistry(
-      defs,
-      minimalOpts as any,
-      '/servers',
-      '/db/dir'
-    )
+    const result = buildLocalMcpServersFromRegistry(defs, minimalOpts as any, '/servers', '/db/dir')
     assert.equal(result['git-context'].environment!.DB_PATH, undefined)
   })
 

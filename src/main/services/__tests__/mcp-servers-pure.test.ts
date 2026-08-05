@@ -34,7 +34,7 @@ void (async () => {
             message: "Function 'handleRequest' has a complexity of 8. Maximum allowed is 0.",
             line: 42,
             column: 5,
-            ruleId: 'complexity',
+            ruleId: 'complexity'
           },
           'src/handlers.ts'
         )
@@ -52,7 +52,7 @@ void (async () => {
             message: "Method 'process' has a complexity of 12. Maximum allowed is 0.",
             line: 100,
             column: 3,
-            ruleId: 'complexity',
+            ruleId: 'complexity'
           },
           'src/service.ts'
         )
@@ -64,10 +64,10 @@ void (async () => {
       test('returns anonymous for arrow functions', () => {
         const result = parseComplexityMessage(
           {
-            message: "Arrow function has a complexity of 15. Maximum allowed is 0.",
+            message: 'Arrow function has a complexity of 15. Maximum allowed is 0.',
             line: 100,
             column: 10,
-            ruleId: 'complexity',
+            ruleId: 'complexity'
           },
           'src/utils.ts'
         )
@@ -98,7 +98,7 @@ void (async () => {
             message: "Function 'test' is too complex",
             line: 1,
             column: 1,
-            ruleId: 'complexity',
+            ruleId: 'complexity'
           },
           'src/test.ts'
         )
@@ -111,7 +111,7 @@ void (async () => {
             message: "Function 'megaHandler' has a complexity of 150. Maximum allowed is 0.",
             line: 1,
             column: 1,
-            ruleId: 'complexity',
+            ruleId: 'complexity'
           },
           'src/big.ts'
         )
@@ -121,7 +121,9 @@ void (async () => {
     })
   } else {
     describe('code-analysis-server (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 
@@ -152,7 +154,7 @@ void (async () => {
 
       test('preserves JSON structure for objects', () => {
         const data: Record<string, unknown> = {
-          items: Array.from({ length: 500 }, (_, i) => ({ id: i, name: 'Test item ' + i })),
+          items: Array.from({ length: 500 }, (_, i) => ({ id: i, name: 'Test item ' + i }))
         }
         const json = JSON.stringify(data)
         const result = truncateToolOutput(json, 5000)
@@ -180,7 +182,9 @@ void (async () => {
     })
   } else {
     describe('output-cap (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 
@@ -211,7 +215,9 @@ void (async () => {
       test('resolve returns true for registered request', () => {
         const reg = createAskUserRegistry()
         let resolved = ''
-        reg.register('req-1', (resp: string) => { resolved = resp })
+        reg.register('req-1', (resp: string) => {
+          resolved = resp
+        })
         const ok = reg.resolve('req-1', 'answer')
         assert.equal(ok, true)
         assert.equal(resolved, 'answer')
@@ -253,7 +259,9 @@ void (async () => {
     })
   } else {
     describe('ask-user-registry (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 
@@ -268,7 +276,7 @@ void (async () => {
         'src/dir/file-name_123.tsx',
         'path/to/deep/nested/file.js',
         'Dockerfile',
-        'package.json',
+        'package.json'
       ]
       for (const p of safePaths) {
         assert.ok(!unsafeCharRegex.test(p), `Should be safe: ${p}`)
@@ -286,7 +294,7 @@ void (async () => {
         'src/file"quoted"',
         'src/file(paren)',
         'src/file{brace}',
-        'src/$PATH',
+        'src/$PATH'
       ]
       for (const p of unsafePaths) {
         assert.ok(unsafeCharRegex.test(p), `Should be unsafe: ${p}`)
@@ -301,7 +309,7 @@ void (async () => {
       const fallback: Record<string, string | null> = {
         flat: 'legacy',
         legacy: 'fallback',
-        fallback: null,
+        fallback: null
       }
       assert.equal(fallback.flat, 'legacy')
       assert.equal(fallback.legacy, 'fallback')
@@ -313,7 +321,7 @@ void (async () => {
         "couldn't find an eslint.config",
         'No ESLint configuration found',
         'eslint.config',
-        'no matching configuration',
+        'no matching configuration'
       ]
       assert.ok(patterns.some((p) => p.includes('eslint.config')))
     })

@@ -91,7 +91,7 @@ const TASKS_PROJECTION_KEYS = new Set([
 ])
 
 /** Per-phase char budget for the formatted artifacts block. */
-export const ARTIFACT_BUDGET_CHARS = 30_000
+export const ARTIFACT_BUDGET_CHARS = 50_000
 
 /** Max number of consolidated discovery entries before truncation. */
 const MAX_DISCOVERY_ENTRIES = 30
@@ -185,7 +185,7 @@ export function formatArtifacts(
     if (total + entry.length > budgetChars && budgeted.length > 0) {
       const remaining = filtered.length - i
       budgeted.push(
-        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or mcp__memory__memory_search for full content)_`
+        `_(${remaining} artifact(s) truncated to stay within context budget — use Read on the file paths shown above for full content)_`
       )
       break
     }
@@ -201,17 +201,25 @@ function renderSingleArtifact(a: BlueprintArtifact): string {
   const parts: string[] = [`### Artifact: ${a.type}`]
   if (a.filePath) parts.push(`**Path**: ${a.filePath}`)
 
-  // Prefer contentMd — skip JSON dump when markdown summary exists
-  if (a.contentMd) {
+  // For plan/tasks: prefer compact projected JSON when available.
+  // The full verbose agent output is on disk at filePath — Read it for details.
+  const preferCompactJson = (a.type === 'plan' || a.type === 'tasks') && a.contentJson
+
+  if (preferCompactJson) {
+    let json = a.contentJson!
+    if (a.type === 'plan') json = projectFields(json, PLAN_PROJECTION_KEYS)
+    else if (a.type === 'tasks') json = projectFields(json, TASKS_PROJECTION_KEYS)
+    parts.push('```json\n' + JSON.stringify(json) + '\n```')
+    if (a.filePath) {
+      parts.push(`_(Full agent output available at ${a.filePath} — use Read for complete details)_`)
+    }
+  } else if (a.contentMd) {
     parts.push(a.contentMd)
   } else if (a.contentJson) {
     // Field projection for known large artifact types
     let json = a.contentJson
-    if (a.type === 'plan') {
-      json = projectFields(json, PLAN_PROJECTION_KEYS)
-    } else if (a.type === 'tasks') {
-      json = projectFields(json, TASKS_PROJECTION_KEYS)
-    }
+    if (a.type === 'plan') json = projectFields(json, PLAN_PROJECTION_KEYS)
+    else if (a.type === 'tasks') json = projectFields(json, TASKS_PROJECTION_KEYS)
     // Compact JSON (no pretty-printing) for ~30-40% savings
     parts.push('```json\n' + JSON.stringify(json) + '\n```')
   }

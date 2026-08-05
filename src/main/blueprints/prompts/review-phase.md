@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+_If any artifacts above appear truncated, use `Read` on the file paths listed in each artifact header to access the full content. Artifacts are saved to `{{BLUEPRINT_DIR}}/` as `spec.md`, `plan.md`, `tasks.md`._
+
 {{RETRY_CONTEXT}}
 
 ## Your Task

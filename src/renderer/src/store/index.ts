@@ -28,7 +28,8 @@ export {
   useParallelBuildAgents,
   useLeanBuildMcp,
   useMaxStreamLifetimeMin,
-  useUserAvatarVariant
+  useUserAvatarVariant,
+  useBlueprintAutoMode
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'

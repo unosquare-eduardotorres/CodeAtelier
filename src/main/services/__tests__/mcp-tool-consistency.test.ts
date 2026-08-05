@@ -156,8 +156,12 @@ describe('MCP tool consistency — prompt guidance text references real tools', 
 
   // Known non-tool identifiers that look like tool names in prompt text
   const knownNonTools = new Set([
-    'tech_debt', 'dead_code', 'untested_files', 'package_audits',
-    'current_api', 'resolve_library_id',
+    'tech_debt',
+    'dead_code',
+    'untested_files',
+    'package_audits',
+    'current_api',
+    'resolve_library_id'
   ])
 
   test('CODE_ANALYSIS_GUIDANCE_PROMPT references only real tools', () => {

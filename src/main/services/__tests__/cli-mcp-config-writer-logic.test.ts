@@ -24,9 +24,19 @@ try {
     repo.getBool = (_key: string, _def?: boolean) => _def ?? false
   } else {
     require.cache[appPrefRepoPath] = {
-      id: appPrefRepoPath, filename: appPrefRepoPath, loaded: true,
-      exports: { appPreferenceRepository: { get: () => null, set: () => {}, getBool: (_k: string, d?: boolean) => d ?? false } },
-      children: [], paths: [], path: ''
+      id: appPrefRepoPath,
+      filename: appPrefRepoPath,
+      loaded: true,
+      exports: {
+        appPreferenceRepository: {
+          get: () => null,
+          set: () => {},
+          getBool: (_k: string, d?: boolean) => d ?? false
+        }
+      },
+      children: [],
+      paths: [],
+      path: ''
     } as unknown as NodeModule
   }
 } catch {
@@ -38,7 +48,6 @@ let CliMcpConfigWriter: typeof import('../cli-mcp-config-writer').CliMcpConfigWr
 let importError: Error | null = null
 
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require('../cli-mcp-config-writer')
   CliMcpConfigWriter = mod.CliMcpConfigWriter
 } catch (err) {
@@ -49,7 +58,9 @@ try {
 function tryBuildConfig(
   Writer: typeof import('../cli-mcp-config-writer').CliMcpConfigWriter,
   overrides: Record<string, unknown> = {}
-): { mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> } | null {
+): {
+  mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>
+} | null {
   try {
     const writer = new Writer()
     const buildFn = (writer as unknown as { buildConfig: (opts: unknown) => unknown }).buildConfig
@@ -66,7 +77,9 @@ function tryBuildConfig(
         ...overrides
       },
       ...overrides
-    }) as { mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> }
+    }) as {
+      mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>
+    }
   } catch {
     return null
   }
@@ -214,7 +227,10 @@ describe('CliMcpConfigWriter.buildConfig', () => {
         localMcpActive: {}
       }
     })
-    assert.ok('checkpoint-context' in config.mcpServers, 'Should include checkpoint-context when conversationId set')
+    assert.ok(
+      'checkpoint-context' in config.mcpServers,
+      'Should include checkpoint-context when conversationId set'
+    )
   })
 
   test('no_conversationId_excludes_checkpoint_context_server', () => {
@@ -227,7 +243,10 @@ describe('CliMcpConfigWriter.buildConfig', () => {
         localMcpActive: {}
       }
     })
-    assert.ok(!('checkpoint-context' in config.mcpServers), 'Should not include checkpoint-context when no conversationId')
+    assert.ok(
+      !('checkpoint-context' in config.mcpServers),
+      'Should not include checkpoint-context when no conversationId'
+    )
   })
 
   test('environment_variables_include_workspace_path', () => {

@@ -467,7 +467,13 @@ describe('wrapControlCallbacks — onPlan', () => {
     let originalCalled = false
     const plan = { type: 'structured', items: [] }
 
-    wrapOnPlan(state, () => { originalCalled = true }, plan)
+    wrapOnPlan(
+      state,
+      () => {
+        originalCalled = true
+      },
+      plan
+    )
 
     assert.equal(state.plan, true)
     assert.ok(originalCalled)

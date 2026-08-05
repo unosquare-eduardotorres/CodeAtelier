@@ -6,13 +6,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let grillLoaded = false
 let mpaLoaded = false
@@ -48,31 +48,36 @@ try {
 
 if (grillLoaded) {
   describe('grill.ipc — channel registration (deep)', () => {
-    const grillCh = [...capturedHandlers.keys()].filter(c => c.startsWith('grill:'))
+    const grillCh = [...getHandlers().keys()].filter((c) => c.startsWith('grill:'))
     test('registers ≥10 grill channels', () => {
       assert.ok(grillCh.length >= 10, `Expected ≥10, got ${grillCh.length}`)
     })
 
     const expectedChannels = [
-      'grill:evaluate', 'grill:cancel', 'grill:getStatus',
-      'grill:getSession', 'grill:saveAnswers', 'grill:complete',
-      'grill:discard', 'grill:listPlannedIdeas',
+      'grill:evaluate',
+      'grill:cancel',
+      'grill:getStatus',
+      'grill:getSession',
+      'grill:saveAnswers',
+      'grill:complete',
+      'grill:discard',
+      'grill:listPlannedIdeas'
     ]
     for (const ch of expectedChannels) {
-      if (capturedHandlers.has(ch)) {
+      if (getHandlers().has(ch)) {
         test(`registers ${ch}`, () => {
-          assert.ok(capturedHandlers.has(ch))
+          assert.ok(getHandlers().has(ch))
         })
       }
     }
   })
 
   describe('grill.ipc — argument validation (deep)', () => {
-    if (capturedHandlers.has('grill:evaluate')) {
+    if (getHandlers().has('grill:evaluate')) {
       test('grill:evaluate rejects missing workspaceId', async () => {
         const r = await tryInvokeHandler('grill:evaluate', {
           conversationId: 'c1',
-          requirement: 'Build a feature',
+          requirement: 'Build a feature'
         })
         assert.equal(r.ok, false)
       })
@@ -80,48 +85,48 @@ if (grillLoaded) {
       test('grill:evaluate rejects missing conversationId', async () => {
         const r = await tryInvokeHandler('grill:evaluate', {
           workspaceId: 'ws1',
-          requirement: 'Build a feature',
+          requirement: 'Build a feature'
         })
         assert.equal(r.ok, false)
       })
     }
 
-    if (capturedHandlers.has('grill:getStatus')) {
+    if (getHandlers().has('grill:getStatus')) {
       test('grill:getStatus rejects missing conversationId', async () => {
         const r = await tryInvokeHandler('grill:getStatus', {})
         assert.equal(r.ok, false)
       })
     }
 
-    if (capturedHandlers.has('grill:getSession')) {
+    if (getHandlers().has('grill:getSession')) {
       test('grill:getSession rejects missing conversationId', async () => {
         const r = await tryInvokeHandler('grill:getSession', {})
         assert.equal(r.ok, false)
       })
     }
 
-    if (capturedHandlers.has('grill:saveAnswers')) {
+    if (getHandlers().has('grill:saveAnswers')) {
       test('grill:saveAnswers rejects missing conversationId', async () => {
         const r = await tryInvokeHandler('grill:saveAnswers', { answers: '{}' })
         assert.equal(r.ok, false)
       })
     }
 
-    if (capturedHandlers.has('grill:complete')) {
+    if (getHandlers().has('grill:complete')) {
       test('grill:complete rejects missing conversationId', async () => {
         const r = await tryInvokeHandler('grill:complete', {})
         assert.equal(r.ok, false)
       })
     }
 
-    if (capturedHandlers.has('grill:discard')) {
+    if (getHandlers().has('grill:discard')) {
       test('grill:discard rejects missing conversationId', async () => {
         const r = await tryInvokeHandler('grill:discard', {})
         assert.equal(r.ok, false)
       })
     }
 
-    if (capturedHandlers.has('grill:listPlannedIdeas')) {
+    if (getHandlers().has('grill:listPlannedIdeas')) {
       test('grill:listPlannedIdeas rejects missing workspaceId', async () => {
         const r = await tryInvokeHandler('grill:listPlannedIdeas', {})
         assert.equal(r.ok, false)
@@ -130,14 +135,14 @@ if (grillLoaded) {
   })
 
   describe('grill.ipc — handler bodies (deep)', () => {
-    const grillCh = [...capturedHandlers.keys()].filter(c => c.startsWith('grill:'))
+    const grillCh = [...getHandlers().keys()].filter((c) => c.startsWith('grill:'))
     for (const ch of grillCh) {
       test(`${ch} calls through`, async () => {
         const r = await tryInvokeHandler(ch, {
           workspaceId: 'ws-1',
           conversationId: 'c-1',
           requirement: 'Build a feature',
-          answers: '{}',
+          answers: '{}'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
@@ -151,32 +156,30 @@ if (grillLoaded) {
 
 if (mpaLoaded) {
   describe('mpa.ipc — channel registration (deep)', () => {
-    const mpaCh = [...capturedHandlers.keys()].filter(c => c.startsWith('mpa:'))
+    const mpaCh = [...getHandlers().keys()].filter((c) => c.startsWith('mpa:'))
     test('registers ≥8 mpa channels', () => {
       assert.ok(mpaCh.length >= 8, `Expected ≥8, got ${mpaCh.length}`)
     })
 
-    const expectedChannels = [
-      'mpa:cancel', 'mpa:getStatus', 'mpa:getRun',
-    ]
+    const expectedChannels = ['mpa:cancel', 'mpa:getStatus', 'mpa:getRun']
     for (const ch of expectedChannels) {
-      if (capturedHandlers.has(ch)) {
+      if (getHandlers().has(ch)) {
         test(`registers ${ch}`, () => {
-          assert.ok(capturedHandlers.has(ch))
+          assert.ok(getHandlers().has(ch))
         })
       }
     }
   })
 
   describe('mpa.ipc — argument validation (deep)', () => {
-    if (capturedHandlers.has('mpa:getStatus')) {
+    if (getHandlers().has('mpa:getStatus')) {
       test('mpa:getStatus calls through with workspaceId', async () => {
         const r = await tryInvokeHandler('mpa:getStatus', { workspaceId: 'ws-1' })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    if (capturedHandlers.has('mpa:getRun')) {
+    if (getHandlers().has('mpa:getRun')) {
       test('mpa:getRun calls through with runId', async () => {
         const r = await tryInvokeHandler('mpa:getRun', { runId: 'run-1' })
         assert.ok(r.ok === true || r.ok === false)
@@ -185,20 +188,20 @@ if (mpaLoaded) {
   })
 
   describe('mpa.ipc — handler bodies (deep)', () => {
-    const mpaCh = [...capturedHandlers.keys()].filter(c => c.startsWith('mpa:'))
+    const mpaCh = [...getHandlers().keys()].filter((c) => c.startsWith('mpa:'))
     for (const ch of mpaCh) {
       test(`${ch} calls through`, async () => {
         const r = await tryInvokeHandler(ch, {
           workspaceId: 'ws-1',
           runId: 'run-1',
-          campaignId: 'camp-1',
+          campaignId: 'camp-1'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
     // MPA cancel without args
-    if (capturedHandlers.has('mpa:cancel')) {
+    if (getHandlers().has('mpa:cancel')) {
       test('mpa:cancel calls through without args', async () => {
         const r = await tryInvokeHandler('mpa:cancel')
         assert.ok(r.ok === true || r.ok === false)
@@ -213,23 +216,23 @@ if (mpaLoaded) {
 
 if (councilLoaded) {
   describe('council.ipc — channel registration (deep)', () => {
-    const councilCh = [...capturedHandlers.keys()].filter(c => c.startsWith('council:'))
+    const councilCh = [...getHandlers().keys()].filter((c) => c.startsWith('council:'))
     test('registers ≥4 council channels', () => {
       assert.ok(councilCh.length >= 4, `Expected ≥4, got ${councilCh.length}`)
     })
 
     const expectedChannels = ['council:cancel', 'council:getSession']
     for (const ch of expectedChannels) {
-      if (capturedHandlers.has(ch)) {
+      if (getHandlers().has(ch)) {
         test(`registers ${ch}`, () => {
-          assert.ok(capturedHandlers.has(ch))
+          assert.ok(getHandlers().has(ch))
         })
       }
     }
   })
 
   describe('council.ipc — argument validation (deep)', () => {
-    if (capturedHandlers.has('council:getSession')) {
+    if (getHandlers().has('council:getSession')) {
       test('council:getSession calls through', async () => {
         const r = await tryInvokeHandler('council:getSession', { workspaceId: 'ws-1' })
         assert.ok(r.ok === true || r.ok === false)
@@ -238,21 +241,21 @@ if (councilLoaded) {
   })
 
   describe('council.ipc — handler bodies (deep)', () => {
-    const councilCh = [...capturedHandlers.keys()].filter(c => c.startsWith('council:'))
+    const councilCh = [...getHandlers().keys()].filter((c) => c.startsWith('council:'))
     for (const ch of councilCh) {
       test(`${ch} calls through`, async () => {
         const r = await tryInvokeHandler(ch, {
           workspaceId: 'ws-1',
           conversationId: 'c-1',
           sessionId: 's-1',
-          topic: 'Architecture review',
+          topic: 'Architecture review'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
     // Council cancel without args
-    if (capturedHandlers.has('council:cancel')) {
+    if (getHandlers().has('council:cancel')) {
       test('council:cancel calls through without args', async () => {
         const r = await tryInvokeHandler('council:cancel')
         assert.ok(r.ok === true || r.ok === false)

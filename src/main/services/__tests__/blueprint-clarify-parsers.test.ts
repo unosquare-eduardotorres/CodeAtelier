@@ -14,7 +14,10 @@ import {
   formatClarifyAnswerMessage,
   deduplicateClarifyQuestions
 } from '../../../shared/blueprint-clarify-parsers'
-import type { ClarifyQuestion, QuestionAnswerState } from '../../../shared/blueprint-clarify-parsers'
+import type {
+  ClarifyQuestion,
+  QuestionAnswerState
+} from '../../../shared/blueprint-clarify-parsers'
 import { parseBlueprintPlan, parseBlueprintTasks } from '../../../shared/blueprint-artifact-parsers'
 
 describe('blueprint-clarify-parsers', () => {
@@ -302,7 +305,7 @@ Done.`
 \`\`\``
       const result = parseBlueprintPlan(text)
       assert.ok(result)
-      assert.equal((result.items as Array<{id:string}>)[0].id, 'new')
+      assert.equal((result.items as Array<{ id: string }>)[0].id, 'new')
     })
   })
 
@@ -353,14 +356,31 @@ Done.`
 
   describe('formatClarifyAnswerMessage', () => {
     const questions: ClarifyQuestion[] = [
-      { id: 'q1', header: 'Auth', question: 'Which?', multiSelect: false, options: [{ label: 'OAuth2', recommended: true }] },
-      { id: 'q2', header: 'DB', question: 'Which?', multiSelect: true, options: [{ label: 'Postgres', recommended: true }] }
+      {
+        id: 'q1',
+        header: 'Auth',
+        question: 'Which?',
+        multiSelect: false,
+        options: [{ label: 'OAuth2', recommended: true }]
+      },
+      {
+        id: 'q2',
+        header: 'DB',
+        question: 'Which?',
+        multiSelect: true,
+        options: [{ label: 'Postgres', recommended: true }]
+      }
     ]
 
     test('formats selected options with question IDs', () => {
       const states: Record<string, QuestionAnswerState> = {
         q1: { selectedOptions: ['OAuth2'], otherText: '', otherSelected: false, skipped: false },
-        q2: { selectedOptions: ['Postgres', 'Redis'], otherText: '', otherSelected: false, skipped: false }
+        q2: {
+          selectedOptions: ['Postgres', 'Redis'],
+          otherText: '',
+          otherSelected: false,
+          skipped: false
+        }
       }
       const result = formatClarifyAnswerMessage(questions, states)
       assert.ok(result.includes('**q1 — Auth**: OAuth2'))
@@ -380,7 +400,12 @@ Done.`
     test('includes Other text with question IDs', () => {
       const states: Record<string, QuestionAnswerState> = {
         q1: { selectedOptions: [], otherText: 'Custom JWT', otherSelected: true, skipped: false },
-        q2: { selectedOptions: ['Postgres'], otherText: 'DynamoDB', otherSelected: true, skipped: false }
+        q2: {
+          selectedOptions: ['Postgres'],
+          otherText: 'DynamoDB',
+          otherSelected: true,
+          skipped: false
+        }
       }
       const result = formatClarifyAnswerMessage(questions, states)
       assert.ok(result.includes('**q1 — Auth**: Custom JWT'))
@@ -396,9 +421,27 @@ Done.`
   // ── deduplicateClarifyQuestions ──
 
   describe('deduplicateClarifyQuestions', () => {
-    const q1: ClarifyQuestion = { id: 'q1', header: 'Auth', question: 'Which auth?', multiSelect: false, options: [] }
-    const q2: ClarifyQuestion = { id: 'q2', header: 'DB', question: 'Which DB?', multiSelect: false, options: [] }
-    const q3: ClarifyQuestion = { id: 'q3', header: 'Cache', question: 'Which cache?', multiSelect: false, options: [] }
+    const q1: ClarifyQuestion = {
+      id: 'q1',
+      header: 'Auth',
+      question: 'Which auth?',
+      multiSelect: false,
+      options: []
+    }
+    const q2: ClarifyQuestion = {
+      id: 'q2',
+      header: 'DB',
+      question: 'Which DB?',
+      multiSelect: false,
+      options: []
+    }
+    const q3: ClarifyQuestion = {
+      id: 'q3',
+      header: 'Cache',
+      question: 'Which cache?',
+      multiSelect: false,
+      options: []
+    }
 
     test('removes exact duplicates (same id + question)', () => {
       const result = deduplicateClarifyQuestions([q1, q2, q3], [q1, q2])

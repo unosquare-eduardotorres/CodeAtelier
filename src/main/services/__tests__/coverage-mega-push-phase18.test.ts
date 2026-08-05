@@ -55,7 +55,7 @@ describe('AgentRecoveryManager — error classification', () => {
       circuitBreaker: { count: 0, reset: () => {} },
       toolActivityAccumulator: {
         getExploredFiles: () => [],
-        count: 0,
+        count: 0
       },
       tokenTracker: { getCacheEfficiency: () => ({}) },
       adapter: { role: 'generalist' },
@@ -63,7 +63,7 @@ describe('AgentRecoveryManager — error classification', () => {
       emit: () => {},
       flushTokenUsage: () => {},
       getStatus: () => ({ status: 'idle' }),
-      ...overrides,
+      ...overrides
     }
     return new AgentRecoveryManager(mockSession)
   }
@@ -71,9 +71,7 @@ describe('AgentRecoveryManager — error classification', () => {
   test('classifyStreamError_identifies_overload', () => {
     const mgr = createManager()
     if (!mgr) return
-    const result = (mgr as any).classifyStreamError(
-      new Error('529 server_is_overloaded'), false
-    )
+    const result = (mgr as any).classifyStreamError(new Error('529 server_is_overloaded'), false)
     assert.equal(result.isOverload, true)
     assert.equal(result.isMaxTurns, false)
     assert.equal(result.isAbort, false)
@@ -83,7 +81,8 @@ describe('AgentRecoveryManager — error classification', () => {
     const mgr = createManager()
     if (!mgr) return
     const result = (mgr as any).classifyStreamError(
-      new Error('503 Service temporarily unavailable'), false
+      new Error('503 Service temporarily unavailable'),
+      false
     )
     assert.equal(result.isOverload, true)
   })
@@ -92,7 +91,8 @@ describe('AgentRecoveryManager — error classification', () => {
     const mgr = createManager()
     if (!mgr) return
     const result = (mgr as any).classifyStreamError(
-      new Error('Reached maximum number of turns'), false
+      new Error('Reached maximum number of turns'),
+      false
     )
     assert.equal(result.isMaxTurns, true)
     assert.equal(result.isOverload, false)
@@ -112,27 +112,21 @@ describe('AgentRecoveryManager — error classification', () => {
   test('classifyStreamError_identifies_context_overflow_for_local_llm', () => {
     const mgr = createManager({ llmProvider: 'local-llm' })
     if (!mgr) return
-    const result = (mgr as any).classifyStreamError(
-      new Error('context length exceeded'), false
-    )
+    const result = (mgr as any).classifyStreamError(new Error('context length exceeded'), false)
     assert.equal(result.isContextOverflow, true)
   })
 
   test('classifyStreamError_no_context_overflow_for_claude', () => {
     const mgr = createManager({ llmProvider: 'claude' })
     if (!mgr) return
-    const result = (mgr as any).classifyStreamError(
-      new Error('context length exceeded'), false
-    )
+    const result = (mgr as any).classifyStreamError(new Error('context length exceeded'), false)
     assert.equal(result.isContextOverflow, false)
   })
 
   test('classifyStreamError_generic_error', () => {
     const mgr = createManager()
     if (!mgr) return
-    const result = (mgr as any).classifyStreamError(
-      new Error('Something went wrong'), false
-    )
+    const result = (mgr as any).classifyStreamError(new Error('Something went wrong'), false)
     assert.equal(result.isOverload, false)
     assert.equal(result.isMaxTurns, false)
     assert.equal(result.isAbort, false)
@@ -143,9 +137,7 @@ describe('AgentRecoveryManager — error classification', () => {
     const mgr = createManager()
     if (!mgr) return
     // Even if message contains 529, timedOut=true means it's a timeout, not overload
-    const result = (mgr as any).classifyStreamError(
-      new Error('529 overloaded'), true
-    )
+    const result = (mgr as any).classifyStreamError(new Error('529 overloaded'), true)
     assert.equal(result.isOverload, false)
   })
 
@@ -156,7 +148,7 @@ describe('AgentRecoveryManager — error classification', () => {
       'maximum context window exceeded',
       'too many tokens in request',
       'exceeds max context',
-      'token limit reached',
+      'token limit reached'
     ]
     for (const p of patterns) {
       const result = (mgr as any).classifyStreamError(new Error(p), false)
@@ -180,13 +172,14 @@ describe('AgentRecoveryManager — error classification', () => {
 
   test('extractStructuredSummary_extracts_plan_items', () => {
     const mgr = createManager({
-      accumulatedText: `Let me analyze the codebase. Here's what I found:\n\n` +
+      accumulatedText:
+        `Let me analyze the codebase. Here's what I found:\n\n` +
         `1. First step: Set up the project\n` +
         `2. Second step: Implement auth\n` +
         `- Third item: Add tests\n` +
         `Some non-plan text here that should appear in key findings.\n`.repeat(3),
       toolActivityAccumulator: { getExploredFiles: () => ['src/app.ts', 'src/auth.ts'], count: 5 },
-      lastStreamOpts: { sdkPrompt: 'Build an auth system' },
+      lastStreamOpts: { sdkPrompt: 'Build an auth system' }
     })
     if (!mgr) return
     const result = (mgr as any).extractStructuredSummary('conv-1')
@@ -203,7 +196,7 @@ describe('AgentRecoveryManager — error classification', () => {
   test('extractStructuredSummary_no_files_no_tools', () => {
     const mgr = createManager({
       accumulatedText: 'Here is a detailed analysis of the issue:\n' + 'x'.repeat(100),
-      toolActivityAccumulator: { getExploredFiles: () => [], count: 0 },
+      toolActivityAccumulator: { getExploredFiles: () => [], count: 0 }
     })
     if (!mgr) return
     const result = (mgr as any).extractStructuredSummary('conv-1')
@@ -217,8 +210,10 @@ describe('AgentRecoveryManager — error classification', () => {
   test('handleAbortOrTimeout_emits_timeout_message', () => {
     const chunks: any[] = []
     const mgr = createManager({
-      emit: (event: string, data: any) => { if (event === 'chunk') chunks.push(data) },
-      log: { info: () => {}, warn: () => {}, error: () => {} },
+      emit: (event: string, data: any) => {
+        if (event === 'chunk') chunks.push(data)
+      },
+      log: { info: () => {}, warn: () => {}, error: () => {} }
     })
     if (!mgr) return
     ;(mgr as any).handleAbortOrTimeout(new Error('timeout'), true, 5 * 60_000)
@@ -230,8 +225,10 @@ describe('AgentRecoveryManager — error classification', () => {
   test('handleAbortOrTimeout_user_cancel_no_chunk', () => {
     const chunks: any[] = []
     const mgr = createManager({
-      emit: (event: string, data: any) => { if (event === 'chunk') chunks.push(data) },
-      log: { info: () => {}, warn: () => {}, error: () => {} },
+      emit: (event: string, data: any) => {
+        if (event === 'chunk') chunks.push(data)
+      },
+      log: { info: () => {}, warn: () => {}, error: () => {} }
     })
     if (!mgr) return
     ;(mgr as any).handleAbortOrTimeout(new Error('AbortError'), false)
@@ -244,7 +241,7 @@ describe('AgentRecoveryManager — error classification', () => {
       currentStatus: 'thinking',
       flushTokenUsage: () => {},
       getStatus: () => ({ status: 'idle' }),
-      emit: (event: string) => events.push(event),
+      emit: (event: string) => events.push(event)
     }
     const mgr = createManager(mockSession)
     if (!mgr) return
@@ -459,7 +456,7 @@ describe('GrillPersistenceController — state management', () => {
         workspacePath: '/tmp/test',
         grillSessionId: 'gs-1',
         trackId: 'architecture',
-        isGreenfield: false,
+        isGreenfield: false
       })
       const tracking = ctrl.getTracking('ws-1')
       assert.notEqual(tracking, undefined)

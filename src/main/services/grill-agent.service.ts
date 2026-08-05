@@ -23,6 +23,8 @@ interface GrillSession {
   running: boolean
   /** GRILL-GREENFIELD-CANCEL-ALWAYS-01: Track workspaceId for targeted cancel of greenfield sessions. */
   workspaceId?: string
+  /** Per-conversation cancel: track the syntheticConvId used for send(). */
+  lastConversationId?: string
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -104,13 +106,14 @@ export class GrillAgentService extends EventEmitter {
 
       // Single-shot: send the evaluation trigger
       const syntheticConvId = `grill-${params.trackId}-${Date.now()}`
+      entry.lastConversationId = syntheticConvId
       const effectiveMessage = params.iterationHistory
         ? `Re-evaluate based on updated decisions:\n\n${params.iterationHistory}`
         : 'Begin your evaluation.'
       await session.send(effectiveMessage, syntheticConvId, [])
 
       // Collect the full response and parse evaluation
-      const responseText = session.getStreamedContent()
+      const responseText = session.getStreamedContent(syntheticConvId)
       const evaluation = this.parseGrillEvaluation(responseText)
 
       // GRILL-CANCEL-RACE-01: Only emit evaluation if not cancelled during send()
@@ -202,12 +205,13 @@ export class GrillAgentService extends EventEmitter {
       await session.start(workDir, 'plan')
 
       const syntheticConvId = `greenfield-grill-${params.trackId}-${Date.now()}`
+      greenfieldEntry.lastConversationId = syntheticConvId
       const effectiveMessage = params.iterationHistory
         ? `Re-evaluate based on updated decisions:\n\n${params.iterationHistory}`
         : 'Begin your evaluation.'
       await session.send(effectiveMessage, syntheticConvId, [])
 
-      const responseText = session.getStreamedContent()
+      const responseText = session.getStreamedContent(syntheticConvId)
       const evaluation = this.parseGrillEvaluation(responseText)
 
       // GRILL-CANCEL-RACE-01: Only emit evaluation if not cancelled during send()
@@ -244,7 +248,7 @@ export class GrillAgentService extends EventEmitter {
       const entry = this.sessions.get(workspaceId)
       if (entry?.session) {
         try {
-          entry.session.cancelCurrentQuery()
+          entry.session.cancelCurrentQuery(entry.lastConversationId)
         } catch (e) {
           grillLog.debug('[grill] cancelCurrentQuery() failed (non-fatal):', e)
         }
@@ -255,7 +259,7 @@ export class GrillAgentService extends EventEmitter {
       // unrelated greenfield evaluation.
       if (this.greenfieldSession?.running && this.greenfieldSession.workspaceId === workspaceId) {
         try {
-          this.greenfieldSession.session.cancelCurrentQuery()
+          this.greenfieldSession.session.cancelCurrentQuery(this.greenfieldSession.lastConversationId)
         } catch (e) {
           grillLog.debug('[grill:greenfield] cancelCurrentQuery() failed (non-fatal):', e)
         }
@@ -265,7 +269,7 @@ export class GrillAgentService extends EventEmitter {
       // Cancel all (backward compat)
       for (const [, entry] of this.sessions) {
         try {
-          entry.session.cancelCurrentQuery()
+          entry.session.cancelCurrentQuery(entry.lastConversationId)
         } catch (e) {
           grillLog.debug('[grill] cancelCurrentQuery() failed (non-fatal):', e)
         }
@@ -273,7 +277,7 @@ export class GrillAgentService extends EventEmitter {
       }
       if (this.greenfieldSession?.session) {
         try {
-          this.greenfieldSession.session.cancelCurrentQuery()
+          this.greenfieldSession.session.cancelCurrentQuery(this.greenfieldSession.lastConversationId)
         } catch (e) {
           grillLog.debug('[grill:greenfield] cancelCurrentQuery() failed (non-fatal):', e)
         }

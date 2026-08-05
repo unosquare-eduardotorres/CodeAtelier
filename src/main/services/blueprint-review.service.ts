@@ -67,6 +67,8 @@ export class BlueprintReviewService extends EventEmitter {
     let onChunk: ((chunk: StreamChunk) => void) | null = null
     let onStatus: ((status: AgentStatus) => void) | null = null
     let cleanupAskUser: (() => void) | undefined
+    // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
+    let syntheticConvId: string | undefined
 
     try {
       // 1. Pipeline + DB state
@@ -125,7 +127,6 @@ export class BlueprintReviewService extends EventEmitter {
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
       const reviewPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
       const priorConvId = reviewPhaseRec?.conversationId
-      let syntheticConvId: string
       if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
         const priorConv = conversationRepository.findById(priorConvId)
         const currentProvider = modelConfigService.getProvider(workspacePath)
@@ -172,7 +173,7 @@ export class BlueprintReviewService extends EventEmitter {
       }
 
       // 7. Parse output
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
       const completion = parsePhaseCompletionBlock(text, 'review') ?? undefined
 
       // 8. Save phase artifact
@@ -284,7 +285,7 @@ export class BlueprintReviewService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session?.getStreamedContent()
+      const partialText = session?.getStreamedContent(syntheticConvId)
       if (partialText && reviewPhase) {
         blueprintPhaseRepository.appendArtifact(reviewPhase.id, {
           type: 'review-partial',

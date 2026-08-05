@@ -269,6 +269,9 @@ export const IPC_CHANNELS = {
   REPO_GENERATE_COMMIT_MESSAGE: 'repo:generateCommitMessage',
   REPO_CREATE_PR: 'repo:createPr',
   REPO_LIST_BRANCHES: 'repo:listBranches',
+  REPO_GET_REF_FILE_DETAILS: 'repo:getRefFileDetails',
+  REPO_GET_REF_FILE_DIFF: 'repo:getRefFileDiff',
+  REPO_FETCH_ORIGIN: 'repo:fetchOrigin',
 
   // PR Description Generation
   CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription',
@@ -739,7 +742,7 @@ export const AVAILABLE_MODELS = [
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
   specialist: 'claude-opus-5',
   'specialist:plan': 'claude-opus-5',
-  'specialist:build': 'claude-sonnet-5',
+  'specialist:build': 'claude-opus-5',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-5',
   'specialist:complex': 'claude-opus-5',
@@ -759,7 +762,7 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'blueprint:plan': 'claude-opus-5',
   'blueprint:tasks': 'claude-opus-5',
   'blueprint:review': 'claude-opus-5',
-  'blueprint:build': 'claude-sonnet-5',
+  'blueprint:build': 'claude-opus-5',
   'blueprint:verify': 'claude-opus-5',
 
   // Prompt optimization

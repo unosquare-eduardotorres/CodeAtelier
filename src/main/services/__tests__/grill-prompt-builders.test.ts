@@ -75,7 +75,10 @@ describe('buildWorkspaceGrillPrompt — full mode', () => {
   test('uses full instructions with tool guidance', () => {
     const result = buildWorkspaceGrillPrompt(wsParams())
     assert.ok(result.includes('**Narrate your process.**'), 'missing full narration instruction')
-    assert.ok(result.includes('Code Graph, Code Analysis') || result.includes('Code Graph'), 'missing tool guidance')
+    assert.ok(
+      result.includes('Code Graph, Code Analysis') || result.includes('Code Graph'),
+      'missing tool guidance'
+    )
   })
 
   test('uses full question quality rules', () => {
@@ -98,7 +101,10 @@ describe('buildWorkspaceGrillPrompt — lean mode', () => {
 
   test('uses lean evaluation schema (no JSON block)', () => {
     const result = buildWorkspaceGrillPrompt(wsParams({ model: leanModel }))
-    assert.ok(!result.includes('```grill-evaluation'), 'should not have full grill-evaluation fence')
+    assert.ok(
+      !result.includes('```grill-evaluation'),
+      'should not have full grill-evaluation fence'
+    )
     assert.ok(result.includes('Emit one `grill-evaluation` JSON block'), 'missing lean schema')
   })
 
@@ -108,7 +114,10 @@ describe('buildWorkspaceGrillPrompt — lean mode', () => {
       result.includes('Narrate your process —') || result.includes('Narrate your process —'),
       'missing lean narration'
     )
-    assert.ok(!result.includes('**Narrate your process.**'), 'should not have full instruction style')
+    assert.ok(
+      !result.includes('**Narrate your process.**'),
+      'should not have full instruction style'
+    )
   })
 
   test('uses lean question quality rules', () => {
@@ -196,12 +205,18 @@ describe('buildGreenfieldGrillPrompt — full mode', () => {
 
   test('uses narrate reasoning instruction (not narrate process)', () => {
     const result = buildGreenfieldGrillPrompt(gfParams())
-    assert.ok(result.includes('**Narrate your reasoning.**'), 'missing greenfield reasoning instruction')
+    assert.ok(
+      result.includes('**Narrate your reasoning.**'),
+      'missing greenfield reasoning instruction'
+    )
   })
 
   test('does NOT contain Code Graph tool instructions', () => {
     const result = buildGreenfieldGrillPrompt(gfParams())
-    assert.ok(!result.includes('Code Graph + Code Analysis tools FIRST'), 'should not have workspace tool instructions')
+    assert.ok(
+      !result.includes('Code Graph + Code Analysis tools FIRST'),
+      'should not have workspace tool instructions'
+    )
   })
 })
 

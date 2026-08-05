@@ -13,7 +13,7 @@ import {
   ScrollText,
   Bot,
   ShieldCheck,
-  Brain,
+  Braces,
   Puzzle,
   Target,
   Landmark,
@@ -98,7 +98,7 @@ export const SETTINGS_MENU: {
   {
     id: 'code-intelligence',
     label: 'Code Intelligence',
-    icon: Brain,
+    icon: Braces,
     iconColor: 'text-cyan-400',
     group: 'configuration'
   },

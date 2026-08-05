@@ -29,6 +29,25 @@ import { restoreFullMock } from '../services/__tests__/setup-full-mock'
 // loads. See run-tests.ts for rationale.
 setupElectronStub()
 
+// Some registered test files call an async service method (e.g.
+// `service.stop()`, `service.assemblePhaseContext()`) inside a *synchronous*
+// try/catch without awaiting it — the try/catch only guards the synchronous
+// call expression, not the returned promise. If that promise later rejects
+// (often well after the originating test has already reported pass/fail,
+// once mocks it depended on have been reset by unrelated later tests), it
+// surfaces as an unhandled rejection that crashes the whole unified run —
+// discovered while investigating R018, where this truncated coverage output
+// (and silently skipped writing coverage/coverage-summary.json) twice, from
+// two different offending test files. A single bad `await`-less test call
+// should not invalidate ~488 files' worth of measurement, so log and
+// continue rather than let Node's default handler kill the process.
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    '\n[run-all] unhandled promise rejection (a test likely called an async method without awaiting it):',
+    reason
+  )
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Service tests (mirrors src/main/services/__tests__/run-tests.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -305,6 +324,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/adapter-completion-round2.test',
   '../services/__tests__/coverage-mega-push-phase18.test',
   '../services/__tests__/coverage-push-phase18b.test',
+  '../services/__tests__/ipc-bridge-tcp.test',
   // ─── Blueprint clarify ask_user bridge ───
   '../services/__tests__/blueprint-clarify-askuser.test',
   // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
@@ -499,7 +519,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/github-service-p27.test',
   '../services/__tests__/event-logger-deep-p27.test',
   '../services/__tests__/opencode-config-writer-p27.test',
-  '../services/__tests__/memory-feed-p27.test',
+  // memory-feed-p27.test removed: targeted a memory-feed.service.ts module
+  // that was never created — pure load failure, invalidated every unified
+  // coverage run per FR-001 (discovered while investigating R018).
   '../services/__tests__/grill-persistence-deep-p27.test',
   '../services/__tests__/specialist-builder-deep-p27.test',
   // ─── R006: Close the gap to 65% — service-runners, handoff-adapters, mcp-servers ───

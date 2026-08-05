@@ -141,8 +141,7 @@ describe('goalMode gating — replicated', () => {
     goalMode: 'advisory' | 'enforce' | undefined
   ): { goalQueued: boolean; goalCmd: string | null } {
     const effectiveGoalMode = goalMode ?? 'advisory'
-    const goalCmd =
-      goal && effectiveGoalMode === 'enforce' ? buildGoalCommand(goal) : null
+    const goalCmd = goal && effectiveGoalMode === 'enforce' ? buildGoalCommand(goal) : null
     return {
       goalQueued: goalCmd !== null,
       goalCmd
@@ -232,8 +231,10 @@ describe('Drain logic — replicated', () => {
       { type: 'result' }, // finalize here
       { type: 'result' } // trailing — drained
     ]
-    const { finalizedOnIndex, drainAttempted, drainedMessage } =
-      simulateResultHandling(messages, true)
+    const { finalizedOnIndex, drainAttempted, drainedMessage } = simulateResultHandling(
+      messages,
+      true
+    )
     assert.equal(finalizedOnIndex, 1) // First result
     assert.equal(drainAttempted, true)
     assert.deepEqual(drainedMessage, { type: 'result' }) // Trailing result consumed
@@ -244,8 +245,10 @@ describe('Drain logic — replicated', () => {
       { type: 'assistant' },
       { type: 'result' } // finalize here — no trailing
     ]
-    const { finalizedOnIndex, drainAttempted, drainedMessage } =
-      simulateResultHandling(messages, true)
+    const { finalizedOnIndex, drainAttempted, drainedMessage } = simulateResultHandling(
+      messages,
+      true
+    )
     assert.equal(finalizedOnIndex, 1)
     assert.equal(drainAttempted, true)
     assert.equal(drainedMessage, null) // Timer would win
@@ -263,8 +266,10 @@ describe('Drain logic — replicated', () => {
       { type: 'result' },
       { type: 'assistant' } // unexpected trailing — would be discarded with warning
     ]
-    const { finalizedOnIndex, drainAttempted, drainedMessage } =
-      simulateResultHandling(messages, true)
+    const { finalizedOnIndex, drainAttempted, drainedMessage } = simulateResultHandling(
+      messages,
+      true
+    )
     assert.equal(finalizedOnIndex, 0)
     assert.equal(drainAttempted, true)
     assert.deepEqual(drainedMessage, { type: 'assistant' })

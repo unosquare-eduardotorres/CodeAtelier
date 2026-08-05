@@ -6,13 +6,14 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
+import { IPC_CHANNELS } from '../../../shared/constants'
 
-setupElectronStub()
+setupFullMock()
 
 let appPrefLoaded = false
 let zoomLoaded = false
@@ -58,15 +59,15 @@ try {
 if (appPrefLoaded) {
   describe('app-preference.ipc — channel registration', () => {
     test('registers appPreference:getAll', () => {
-      assert.ok(capturedHandlers.has('appPreference:getAll'))
+      assert.ok(getHandlers().has('appPreference:getAll'))
     })
 
     test('registers appPreference:set', () => {
-      assert.ok(capturedHandlers.has('appPreference:set'))
+      assert.ok(getHandlers().has('appPreference:set'))
     })
 
     test('registers notification:probe', () => {
-      assert.ok(capturedHandlers.has('notification:probe'))
+      assert.ok(getHandlers().has('notification:probe'))
     })
   })
 
@@ -117,23 +118,23 @@ if (appPrefLoaded) {
 if (zoomLoaded) {
   describe('zoom.ipc — channel registration', () => {
     test('registers zoom:get', () => {
-      assert.ok(capturedHandlers.has('zoom:get'))
+      assert.ok(getHandlers().has('zoom:get'))
     })
 
     test('registers zoom:in', () => {
-      assert.ok(capturedHandlers.has('zoom:in'))
+      assert.ok(getHandlers().has('zoom:in'))
     })
 
     test('registers zoom:out', () => {
-      assert.ok(capturedHandlers.has('zoom:out'))
+      assert.ok(getHandlers().has('zoom:out'))
     })
 
     test('registers zoom:reset', () => {
-      assert.ok(capturedHandlers.has('zoom:reset'))
+      assert.ok(getHandlers().has('zoom:reset'))
     })
 
     test('registers zoom:set', () => {
-      assert.ok(capturedHandlers.has('zoom:set'))
+      assert.ok(getHandlers().has('zoom:set'))
     })
   })
 
@@ -198,7 +199,7 @@ if (zoomLoaded) {
 if (platformLoaded) {
   describe('platform.ipc — channel registration', () => {
     test('registers platform:info', () => {
-      assert.ok(capturedHandlers.has('platform:info'))
+      assert.ok(getHandlers().has('platform:info'))
     })
   })
 
@@ -224,11 +225,11 @@ if (platformLoaded) {
 if (userProfileLoaded) {
   describe('user-profile.ipc — channel registration', () => {
     test('registers userProfile:get', () => {
-      assert.ok(capturedHandlers.has('userProfile:get'))
+      assert.ok(getHandlers().has(IPC_CHANNELS.USER_PROFILE_GET))
     })
 
     test('registers userProfile:upsert', () => {
-      assert.ok(capturedHandlers.has('userProfile:upsert'))
+      assert.ok(getHandlers().has(IPC_CHANNELS.USER_PROFILE_UPSERT))
     })
   })
 
@@ -253,7 +254,7 @@ if (userProfileLoaded) {
     test('userProfile:upsert calls through with valid args', async () => {
       const r = await tryInvokeHandler('userProfile:upsert', {
         displayName: 'Alice',
-        avatarKey: 'avatar-01',
+        avatarKey: 'avatar-01'
       })
       assert.ok(r.ok === true || r.ok === false)
     })

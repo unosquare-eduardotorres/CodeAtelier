@@ -25,7 +25,8 @@ import { stripClarificationsSection } from '../blueprint-spec.service'
 
 describe('Blueprint Parsers — parsePhaseCompletionBlock', () => {
   test('extracts_tagged_completion_block', () => {
-    const text = 'Some text\n```blueprint-phase-complete\n{"phase":"specify","status":"complete"}\n```\nMore text'
+    const text =
+      'Some text\n```blueprint-phase-complete\n{"phase":"specify","status":"complete"}\n```\nMore text'
     const result = parsePhaseCompletionBlock(text)
     assert.ok(result)
     assert.equal(result!.phase, 'specify')
@@ -138,9 +139,7 @@ describe('Blueprint — wave flattening logic', () => {
         },
         {
           wave: 2,
-          tasks: [
-            { taskId: 'T3', description: 'Task 3', dependsOn: ['T1'] }
-          ]
+          tasks: [{ taskId: 'T3', description: 'Task 3', dependsOn: ['T1'] }]
         }
       ]
     }
@@ -174,29 +173,29 @@ describe('Blueprint — wave flattening logic', () => {
 describe('Blueprint — verify pass/fail determination', () => {
   test('passed_status_is_complete', () => {
     const overallStatus = 'passed'
-    const result = overallStatus === 'passed' || overallStatus === 'human_needed'
-      ? 'complete' : 'failed'
+    const result =
+      overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
     assert.equal(result, 'complete')
   })
 
   test('human_needed_status_is_complete', () => {
     const overallStatus: string = 'human_needed'
-    const result = overallStatus === 'passed' || overallStatus === 'human_needed'
-      ? 'complete' : 'failed'
+    const result =
+      overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
     assert.equal(result, 'complete')
   })
 
   test('gaps_found_status_is_failed', () => {
     const overallStatus: string = 'gaps_found'
-    const result = overallStatus === 'passed' || overallStatus === 'human_needed'
-      ? 'complete' : 'failed'
+    const result =
+      overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
     assert.equal(result, 'failed')
   })
 
   test('unknown_status_is_failed', () => {
     const overallStatus: string = 'unknown'
-    const result = overallStatus === 'passed' || overallStatus === 'human_needed'
-      ? 'complete' : 'failed'
+    const result =
+      overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
     assert.equal(result, 'failed')
   })
 })

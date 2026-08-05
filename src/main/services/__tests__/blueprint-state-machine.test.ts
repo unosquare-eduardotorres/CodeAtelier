@@ -8,10 +8,7 @@
 
 import assert from 'node:assert/strict'
 import { describe, test } from './test-harness'
-import {
-  BlueprintStateMachine,
-  type BlueprintStateChangePayload
-} from '../blueprint-state-machine'
+import { BlueprintStateMachine, type BlueprintStateChangePayload } from '../blueprint-state-machine'
 
 /** Fresh machine per test — avoids async test runner clobbering. */
 function make(wsId = 'ws-test'): BlueprintStateMachine {

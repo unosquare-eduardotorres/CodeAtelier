@@ -117,10 +117,7 @@ describe('CostTracker — MODEL_PRICING completeness', () => {
       const p = pricing as { inputPer1M: number; outputPer1M: number }
       assert.ok(p.inputPer1M > 0, `${modelId} inputPer1M must be positive`)
       assert.ok(p.outputPer1M > 0, `${modelId} outputPer1M must be positive`)
-      assert.ok(
-        p.outputPer1M >= p.inputPer1M,
-        `${modelId} output should be >= input price`
-      )
+      assert.ok(p.outputPer1M >= p.inputPer1M, `${modelId} output should be >= input price`)
     }
   })
 })

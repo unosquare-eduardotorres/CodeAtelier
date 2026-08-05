@@ -30,7 +30,9 @@ try {
   parsePeerReview = mod.parsePeerReview
   parseCouncilVerdict = mod.parseCouncilVerdict
   councilLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   const mod = require('../mpa-artifact-parsers')
@@ -38,7 +40,9 @@ try {
   parsePlanArtifact = mod.parsePlanArtifact
   parseVerifyReport = mod.parseVerifyReport
   mpaLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 // ── Council parsers ──────────────────────────────────────────────────────
 
@@ -168,28 +172,33 @@ if (mpaLoaded) {
     })
 
     test('returns_false_for_all_passing', () => {
-      assert.equal(hasFailingCriteria({
-        overallPass: true,
-        criteriaResults: [
-          { label: 'Test', status: 'pass', evidence: 'OK' }
-        ]
-      } as any), false)
+      assert.equal(
+        hasFailingCriteria({
+          overallPass: true,
+          criteriaResults: [{ label: 'Test', status: 'pass', evidence: 'OK' }]
+        } as any),
+        false
+      )
     })
 
     test('returns_true_for_failing_criteria', () => {
-      assert.equal(hasFailingCriteria({
-        overallPass: false,
-        criteriaResults: [
-          { label: 'Test', status: 'fail', evidence: 'Failed' }
-        ]
-      } as any), true)
+      assert.equal(
+        hasFailingCriteria({
+          overallPass: false,
+          criteriaResults: [{ label: 'Test', status: 'fail', evidence: 'Failed' }]
+        } as any),
+        true
+      )
     })
 
     test('returns_false_for_empty_criteria', () => {
-      assert.equal(hasFailingCriteria({
-        overallPass: false,
-        criteriaResults: []
-      } as any), false)
+      assert.equal(
+        hasFailingCriteria({
+          overallPass: false,
+          criteriaResults: []
+        } as any),
+        false
+      )
     })
 
     test('returns_false_for_missing_criteriaResults', () => {

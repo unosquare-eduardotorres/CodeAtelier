@@ -130,10 +130,7 @@ describe('conversation-specialist.ipc validation contracts', () => {
 
   test('CONV_SPECIALIST_UPSERT requires conversationId, specialistId; isActive optional', () => {
     const ch = 'convSpec:upsert'
-    const args = requireObject(
-      { conversationId: 'c-1', specialistId: 'sp-1', isActive: true },
-      ch
-    )
+    const args = requireObject({ conversationId: 'c-1', specialistId: 'sp-1', isActive: true }, ch)
     assert.equal(requireString(args, 'conversationId', ch), 'c-1')
     assert.equal(requireString(args, 'specialistId', ch), 'sp-1')
     assert.equal(optionalBoolean(args, 'isActive', ch), true)

@@ -73,6 +73,8 @@ export interface AgentSessionHost {
   readonly log: LogFunctions
   readonly tokenTracker: AgentTokenTracker
   readonly cliExecutor: CLIExecutor
+  /** Resolve the CLI executor for a specific conversation (creates one if needed). */
+  getOrCreateCliExecutor(conversationId: string): CLIExecutor
   readonly circuitBreaker: AgentCircuitBreaker
   readonly recoveryNudge: RecoveryNudgeService
   readonly toolActivityAccumulator: ToolActivityAccumulator

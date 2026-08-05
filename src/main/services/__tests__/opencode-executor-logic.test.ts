@@ -563,7 +563,11 @@ describe('OC-03: Prompt response error detection', () => {
    * Returns { rejected: true, message } for error responses,
    * or { rejected: false, id } for success.
    */
-  function classifyPromptResponse(response: any): { rejected: boolean; message?: string; id?: string } {
+  function classifyPromptResponse(response: any): {
+    rejected: boolean
+    message?: string
+    id?: string
+  } {
     const data = response?.data ?? response
     if (data?.name === 'UnknownError' || data?.name === 'Error') {
       return {

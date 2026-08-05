@@ -54,7 +54,16 @@ describe('extractFromContent', () => {
 // ── MemorySourceType validation ──
 
 describe('MemorySourceType', () => {
-  const VALID_SOURCE_TYPES = ['session', 'commit', 'document', 'tool', 'manual', 'claude-md', 'blueprint', 'grill']
+  const VALID_SOURCE_TYPES = [
+    'session',
+    'commit',
+    'document',
+    'tool',
+    'manual',
+    'claude-md',
+    'blueprint',
+    'grill'
+  ]
 
   test('blueprint is a valid source type', () => {
     assert.ok(VALID_SOURCE_TYPES.includes('blueprint'))
@@ -79,16 +88,17 @@ describe('blueprint extraction context assembly', () => {
   test('assembles spec + plan + clarify + tasks into extraction context', () => {
     const phases = [
       { phase: 'specify', artifacts: [{ type: 'spec', contentMd: '# Spec\nBuild a widget' }] },
-      { phase: 'plan', artifacts: [{ type: 'plan', contentMd: '# Plan\n1. Create widget\n2. Test it' }] }
+      {
+        phase: 'plan',
+        artifacts: [{ type: 'plan', contentMd: '# Plan\n1. Create widget\n2. Test it' }]
+      }
     ]
     const tasks = [
       { taskId: 'T1', description: 'Create widget', status: 'complete' },
       { taskId: 'T2', description: 'Write tests', status: 'failed' },
       { taskId: 'T3', description: 'Deploy', status: 'skipped' }
     ]
-    const clarifyQA = [
-      { question: 'What framework?', answer: 'React' }
-    ]
+    const clarifyQA = [{ question: 'What framework?', answer: 'React' }]
 
     const parts: string[] = []
     parts.push(`## Blueprint: Test Blueprint\nFinal status: complete\n`)
@@ -113,7 +123,9 @@ describe('blueprint extraction context assembly', () => {
     const completed = tasks.filter((t) => t.status === 'complete')
     const failed = tasks.filter((t) => t.status === 'failed')
     const skipped = tasks.filter((t) => t.status === 'skipped')
-    parts.push(`### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`)
+    parts.push(
+      `### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`
+    )
 
     const combined = parts.join('\n\n')
     assert.ok(combined.includes('Test Blueprint'))
@@ -162,7 +174,12 @@ describe('MemoryCaptureSettings', () => {
   })
 
   test('settings can be explicitly disabled', () => {
-    const settings = { memoryCaptureBlueprints: false, memoryCapturePlans: false, memoryCaptureGrill: false, memoryCaptureDocumentsOnAttach: false }
+    const settings = {
+      memoryCaptureBlueprints: false,
+      memoryCapturePlans: false,
+      memoryCaptureGrill: false,
+      memoryCaptureDocumentsOnAttach: false
+    }
     assert.equal(settings.memoryCaptureBlueprints !== false, false)
     assert.equal(settings.memoryCapturePlans !== false, false)
     assert.equal(settings.memoryCaptureGrill !== false, false)

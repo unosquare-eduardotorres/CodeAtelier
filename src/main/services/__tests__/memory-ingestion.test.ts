@@ -22,7 +22,11 @@ describe('discoverFiles', () => {
   })
 
   afterEach(() => {
-    try { rmSync(testDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+    try {
+      rmSync(testDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   })
 
   test('finds supported files in a directory', async () => {
@@ -34,7 +38,10 @@ describe('discoverFiles', () => {
     writeFileSync(join(testDir, 'app.ts'), 'const x = 1')
 
     const result = memoryIngestionService.discoverFiles(testDir)
-    assert.ok(result.files.length >= 3, `Should find at least 3 files (found ${result.files.length})`)
+    assert.ok(
+      result.files.length >= 3,
+      `Should find at least 3 files (found ${result.files.length})`
+    )
     assert.ok(result.counts['.md'] >= 1, 'Should count .md files')
     assert.ok(result.counts['.ts'] >= 1, 'Should count .ts files')
     assert.equal(result.truncated, false)
@@ -54,7 +61,10 @@ describe('discoverFiles', () => {
     const hasGit = result.files.some((f) => f.includes('.git'))
     assert.equal(hasNodeModules, false, 'Should not include node_modules')
     assert.equal(hasGit, false, 'Should not include .git')
-    assert.ok(result.files.some((f) => f.includes('src.ts')), 'Should include src.ts')
+    assert.ok(
+      result.files.some((f) => f.includes('src.ts')),
+      'Should include src.ts'
+    )
   })
 
   test('skips unsupported binary files', async () => {
@@ -111,14 +121,19 @@ describe('IngestionProgress type', () => {
   })
 
   test('progress docStatus covers all states', () => {
-    const states: Array<'queued' | 'reading' | 'chunking' | 'extracting' | 'done' | 'skipped' | 'error'> =
-      ['queued', 'reading', 'chunking', 'extracting', 'done', 'skipped', 'error']
+    const states: Array<
+      'queued' | 'reading' | 'chunking' | 'extracting' | 'done' | 'skipped' | 'error'
+    > = ['queued', 'reading', 'chunking', 'extracting', 'done', 'skipped', 'error']
     assert.equal(states.length, 7, 'Should have 7 doc status states')
   })
 
   test('progress jobStatus covers all states', () => {
-    const states: Array<'running' | 'done' | 'cancelled' | 'error'> =
-      ['running', 'done', 'cancelled', 'error']
+    const states: Array<'running' | 'done' | 'cancelled' | 'error'> = [
+      'running',
+      'done',
+      'cancelled',
+      'error'
+    ]
     assert.equal(states.length, 4, 'Should have 4 job status states')
   })
 })

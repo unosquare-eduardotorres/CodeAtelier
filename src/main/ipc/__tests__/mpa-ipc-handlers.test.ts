@@ -6,11 +6,7 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summary } from '../../services/__tests__/test-harness'
-import {
-  computeMpaStatus,
-  MPA_IDLE_STATUS,
-  validateCampaignGoals
-} from '../mpa-ipc-handlers'
+import { computeMpaStatus, MPA_IDLE_STATUS, validateCampaignGoals } from '../mpa-ipc-handlers'
 import type { MpaRun, MpaPhase } from '../../../shared/mpa-types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -118,9 +114,7 @@ describe('computeMpaStatus', () => {
 
   test('paused run indicates awaitingApproval', () => {
     const run = makeRun({ status: 'paused' })
-    const phases = [
-      makePhase({ phaseType: 'plan', status: 'completed' })
-    ]
+    const phases = [makePhase({ phaseType: 'plan', status: 'completed' })]
     const status = computeMpaStatus(run, 'run-1', phases)
     assert.equal(status.status, 'paused')
     assert.equal(status.awaitingApproval, true)
@@ -169,18 +163,14 @@ describe('computeMpaStatus', () => {
 
   test('iteration defaults to 1 when no running phase', () => {
     const run = makeRun({ status: 'running' })
-    const phases = [
-      makePhase({ phaseType: 'plan', status: 'completed', iteration: 2 })
-    ]
+    const phases = [makePhase({ phaseType: 'plan', status: 'completed', iteration: 2 })]
     const status = computeMpaStatus(run, 'run-1', phases)
     assert.equal(status.iteration, 1)
   })
 
   test('null currentPhase in run with no running phases yields null', () => {
     const run = makeRun({ status: 'running', currentPhase: null })
-    const phases = [
-      makePhase({ phaseType: 'plan', status: 'completed' })
-    ]
+    const phases = [makePhase({ phaseType: 'plan', status: 'completed' })]
     const status = computeMpaStatus(run, 'run-1', phases)
     assert.equal(status.currentPhase, null)
   })

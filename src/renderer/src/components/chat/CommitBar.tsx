@@ -5,16 +5,28 @@ import {
   GitCommitHorizontal,
   Upload,
   GitPullRequest,
-  GitBranch
+  GitBranch,
+  GitCompareArrows
 } from 'lucide-react'
 import { useCodeChangesStore } from '@renderer/store'
 import CreatePrModal from './CreatePrModal'
+import type { DiffComparisonMode } from '../../../../shared/types'
 
 interface CommitBarProps {
   conversationId: string
+  comparisonMode?: DiffComparisonMode
+  currentBranch?: string
+  targetBranch?: string
+  fileCount?: number
 }
 
-export default function CommitBar({ conversationId }: CommitBarProps): React.JSX.Element {
+export default function CommitBar({
+  conversationId,
+  comparisonMode = 'uncommitted',
+  currentBranch = '',
+  targetBranch = '',
+  fileCount = 0
+}: CommitBarProps): React.JSX.Element {
   const [showPrModal, setShowPrModal] = useState(false)
   const files = useCodeChangesStore((s) => s.files)
   const checkedFiles = useCodeChangesStore((s) => s.checkedFiles)
@@ -42,7 +54,20 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
           </div>
         )}
 
-        {showPushState ? (
+        {comparisonMode !== 'uncommitted' ? (
+          /* Branch comparison mode — read-only info bar */
+          <div className="text-xs text-text-muted text-center py-1 flex items-center justify-center gap-2">
+            <GitCompareArrows size={14} />
+            <span>
+              Showing differences: <span className="font-medium text-text-secondary">{currentBranch || 'HEAD'}</span>
+              {' → '}
+              <span className="font-medium text-text-secondary">origin/{targetBranch}</span>
+              {fileCount > 0 && (
+                <span className="text-text-muted ml-1">· {fileCount} file{fileCount !== 1 ? 's' : ''} changed</span>
+              )}
+            </span>
+          </div>
+        ) : showPushState ? (
           /* State 2: All changes committed — show push/PR options */
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-text-secondary">

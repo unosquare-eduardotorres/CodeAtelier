@@ -8,13 +8,14 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
+import { IPC_CHANNELS } from '../../../shared/constants'
 
-setupElectronStub()
+setupFullMock()
 
 let chatCompletionLoaded = false
 let chatModeLoaded = false
@@ -50,9 +51,14 @@ try {
 
 if (chatCompletionLoaded) {
   describe('chat-completion.ipc — channel registration', () => {
-    const ccCh = [...capturedHandlers.keys()].filter(c =>
-      c.includes('chat') && (c.includes('close') || c.includes('complete') ||
-      c.includes('clipboard') || c.includes('saveImage') || c.includes('readImage'))
+    const ccCh = [...getHandlers().keys()].filter(
+      (c) =>
+        c.includes('chat') &&
+        (c.includes('close') ||
+          c.includes('complete') ||
+          c.includes('clipboard') ||
+          c.includes('saveImage') ||
+          c.includes('readImage'))
     )
     test('registers chat completion channels', () => {
       assert.ok(ccCh.length >= 2, `Expected ≥2, got ${ccCh.length}: ${ccCh.join(', ')}`)
@@ -60,8 +66,8 @@ if (chatCompletionLoaded) {
   })
 
   describe('chat-completion.ipc — handler bodies', () => {
-    const closeCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('chat') && c.includes('close') && !c.includes('lifecycle')
+    const closeCh = [...getHandlers().keys()].find(
+      (c) => c.includes('chat') && c.includes('close') && !c.includes('lifecycle')
     )
     if (closeCh) {
       test(`${closeCh} rejects missing conversationId`, async () => {
@@ -75,8 +81,8 @@ if (chatCompletionLoaded) {
       })
     }
 
-    const completeCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('chat') && c.includes('complete')
+    const completeCh = [...getHandlers().keys()].find(
+      (c) => c.includes('chat') && c.includes('complete')
     )
     if (completeCh) {
       test(`${completeCh} calls through`, async () => {
@@ -86,8 +92,8 @@ if (chatCompletionLoaded) {
     }
 
     // clipboard image save/read
-    const saveImgCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('clipboard') && c.includes('save')
+    const saveImgCh = [...getHandlers().keys()].find(
+      (c) => c.includes('clipboard') && c.includes('save')
     )
     if (saveImgCh) {
       test(`${saveImgCh} rejects missing conversationId`, async () => {
@@ -98,14 +104,14 @@ if (chatCompletionLoaded) {
       test(`${saveImgCh} calls through`, async () => {
         const r = await tryInvokeHandler(saveImgCh, {
           conversationId: 'c1',
-          imageData: 'data:image/png;base64,abc',
+          imageData: 'data:image/png;base64,abc'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const readImgCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('clipboard') && c.includes('read')
+    const readImgCh = [...getHandlers().keys()].find(
+      (c) => c.includes('clipboard') && c.includes('read')
     )
     if (readImgCh) {
       test(`${readImgCh} calls through`, async () => {
@@ -122,9 +128,14 @@ if (chatCompletionLoaded) {
 
 if (chatModeLoaded) {
   describe('chat-mode.ipc — channel registration', () => {
-    const modeCh = [...capturedHandlers.keys()].filter(c =>
-      c.includes('chat') && (c.includes('mode') || c.includes('effort') ||
-      c.includes('context') || c.includes('Mode') || c.includes('Effort'))
+    const modeCh = [...getHandlers().keys()].filter(
+      (c) =>
+        c.includes('chat') &&
+        (c.includes('mode') ||
+          c.includes('effort') ||
+          c.includes('context') ||
+          c.includes('Mode') ||
+          c.includes('Effort'))
     )
     test('registers chat mode channels', () => {
       assert.ok(modeCh.length >= 2, `Expected ≥2, got ${modeCh.length}: ${modeCh.join(', ')}`)
@@ -132,8 +143,8 @@ if (chatModeLoaded) {
   })
 
   describe('chat-mode.ipc — handler bodies', () => {
-    const updateModeCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('chat') && (c.includes('updateMode') || c.includes('setMode'))
+    const updateModeCh = [...getHandlers().keys()].find(
+      (c) => c.includes('chat') && (c.includes('updateMode') || c.includes('setMode'))
     )
     if (updateModeCh) {
       test(`${updateModeCh} rejects missing conversationId`, async () => {
@@ -144,27 +155,27 @@ if (chatModeLoaded) {
       test(`${updateModeCh} calls through with valid args`, async () => {
         const r = await tryInvokeHandler(updateModeCh, {
           conversationId: 'c1',
-          mode: 'plan',
+          mode: 'plan'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const effortCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('chat') && c.includes('effort')
+    const effortCh = [...getHandlers().keys()].find(
+      (c) => c.includes('chat') && c.includes('effort')
     )
     if (effortCh) {
       test(`${effortCh} calls through`, async () => {
         const r = await tryInvokeHandler(effortCh, {
           conversationId: 'c1',
-          effort: 'high',
+          effort: 'high'
         })
         assert.ok(r.ok === true || r.ok === false)
       })
     }
 
-    const contextCh = [...capturedHandlers.keys()].find(c =>
-      c.includes('chat') && c.includes('context') && c.includes('usage')
+    const contextCh = [...getHandlers().keys()].find(
+      (c) => c.includes('chat') && c.includes('context') && c.includes('usage')
     )
     if (contextCh) {
       test(`${contextCh} calls through`, async () => {
@@ -182,51 +193,51 @@ if (chatModeLoaded) {
 if (chatMessageLoaded) {
   describe('chat-message.ipc — channel registration', () => {
     test('registers chat:send', () => {
-      assert.ok(capturedHandlers.has('chat:send'))
+      assert.ok(getHandlers().has(IPC_CHANNELS.CHAT_SEND))
     })
 
     test('registers chat:stop', () => {
-      assert.ok(capturedHandlers.has('chat:stop'))
+      assert.ok(getHandlers().has(IPC_CHANNELS.CHAT_STOP))
     })
   })
 
   describe('chat-message.ipc — argument validation', () => {
     test('chat:send rejects missing conversationId', async () => {
-      const r = await tryInvokeHandler('chat:send', { text: 'hello' })
+      const r = await tryInvokeHandler(IPC_CHANNELS.CHAT_SEND, { text: 'hello' })
       assert.equal(r.ok, false)
     })
 
     test('chat:send rejects non-object', async () => {
-      const r = await tryInvokeHandler('chat:send', 'bad')
+      const r = await tryInvokeHandler(IPC_CHANNELS.CHAT_SEND, 'bad')
       assert.equal(r.ok, false)
     })
 
     test('chat:send rejects null', async () => {
-      const r = await tryInvokeHandler('chat:send', null)
+      const r = await tryInvokeHandler(IPC_CHANNELS.CHAT_SEND, null)
       assert.equal(r.ok, false)
     })
   })
 
   describe('chat-message.ipc — handler bodies', () => {
     test('chat:send calls through with valid minimal args', async () => {
-      const r = await tryInvokeHandler('chat:send', {
+      const r = await tryInvokeHandler(IPC_CHANNELS.CHAT_SEND, {
         conversationId: 'c1',
-        text: 'Hello world',
+        text: 'Hello world'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     test('chat:send calls through with attachments', async () => {
-      const r = await tryInvokeHandler('chat:send', {
+      const r = await tryInvokeHandler(IPC_CHANNELS.CHAT_SEND, {
         conversationId: 'c1',
         text: 'Check this',
-        attachments: [{ path: '/tmp/file.txt', name: 'file.txt' }],
+        attachments: [{ path: '/tmp/file.txt', name: 'file.txt' }]
       })
       assert.ok(r.ok === true || r.ok === false)
     })
 
     test('chat:stop calls through', async () => {
-      const r = await tryInvokeHandler('chat:stop')
+      const r = await tryInvokeHandler(IPC_CHANNELS.CHAT_STOP)
       assert.ok(r.ok === true || r.ok === false)
     })
   })

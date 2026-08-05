@@ -29,8 +29,7 @@ import ChatExecutionPanel from './ChatExecutionPanel'
 import { usePlanExecutionStore, type PlanExecution } from '@renderer/store/plan-execution.store'
 import {
   StackDriftBanner,
-  BuildProgressInline,
-  GenerateSpecialistModal
+  BuildProgressInline
 } from '@renderer/components/specialist'
 import type { ConversationMode, ThinkingEffort } from '../../../../shared/types'
 import type { SessionRecoveryPhase } from './SessionRecoveryBanner'
@@ -95,23 +94,23 @@ function PanelToggleButton({
   tasksDone: number
   taskTotal: number
   hasContent: boolean
-}): React.JSX.Element | null {
-  // Only show when there's plan/task/todo content
-  if (!hasContent) return null
-
+}): React.JSX.Element {
   return (
     <button
       type="button"
       data-testid="chat-panel-toggle"
+      disabled={!hasContent}
       aria-expanded={panelOpen}
       aria-label={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
-      onClick={onToggle}
+      onClick={hasContent ? onToggle : undefined}
       className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-        panelOpen
-          ? 'bg-accent/15 text-accent border-accent/30'
-          : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
+        !hasContent
+          ? 'opacity-30 cursor-not-allowed text-text-muted border-border-subtle'
+          : panelOpen
+            ? 'bg-accent/15 text-accent border-accent/30'
+            : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
       }`}
-      title={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
+      title={!hasContent ? 'No plan or task content yet' : panelOpen ? 'Hide execution panel' : 'Show execution panel'}
     >
       <Layers size={14} />
       {taskTotal > 0 && (
@@ -333,7 +332,10 @@ function useChatPanelLocalEffects({
   setShowSearch: React.Dispatch<React.SetStateAction<boolean>>
 }): void {
   useEffect(() => {
-    if (conversationId) void loadFiles(conversationId)
+    if (conversationId) {
+      useCodeChangesStore.getState().resetComparison()
+      void loadFiles(conversationId)
+    }
   }, [conversationId, loadFiles])
 
   useEffect(() => {
@@ -372,12 +374,10 @@ function useChatPanelLocalEffects({
 
 function EmptyConversationState({
   showNewChat,
-  generateModal,
   onCreateChat,
   onCreateIdea
 }: {
   showNewChat?: boolean
-  generateModal: React.ReactNode
   onCreateChat: (data: {
     title: string
     description?: string
@@ -393,22 +393,14 @@ function EmptyConversationState({
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }): React.JSX.Element {
   if (showNewChat) {
-    return (
-      <>
-        {generateModal}
-        <NewChatPage onCreateChat={onCreateChat} onCreateIdea={onCreateIdea} />
-      </>
-    )
+    return <NewChatPage onCreateChat={onCreateChat} onCreateIdea={onCreateIdea} />
   }
   return (
-    <>
-      {generateModal}
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
-        <p className="text-sm text-text-secondary">
-          Select a conversation from the sidebar or start a new one.
-        </p>
-      </div>
-    </>
+    <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
+      <p className="text-sm text-text-secondary">
+        Select a conversation from the sidebar or start a new one.
+      </p>
+    </div>
   )
 }
 
@@ -509,7 +501,7 @@ export default function ChatPanel({
   }, [panelOpen, panelWidth])
 
   // ── Extracted hooks ──
-  const { projectSpecialist, generateModalOpen, handleDismissGenerate } = useChatPanelEffects()
+  const { projectSpecialist } = useChatPanelEffects()
   const { rateLimitState } = useRateLimitState()
   const { apiRetry } = useApiRetryState()
   const { sessionRecovery } = useSessionRecoveryState()
@@ -588,23 +580,11 @@ export default function ChatPanel({
     }
   }
 
-  // Generate-Specialist modal — lifted above early returns so it overlays the
-  // empty state and NewChatPage as well as the main chat render.
-  const generateModal = activeWorkspace ? (
-    <GenerateSpecialistModal
-      open={generateModalOpen}
-      workspaceId={activeWorkspace.id}
-      workspaceName={activeWorkspace.name}
-      onDismiss={handleDismissGenerate}
-    />
-  ) : null
-
   // Workspace selected but no active conversation
   if (!activeConversation) {
     return (
       <EmptyConversationState
         showNewChat={showNewChat}
-        generateModal={generateModal}
         onCreateChat={handleCreateChat}
         onCreateIdea={onCreateIdea}
       />
@@ -617,9 +597,7 @@ export default function ChatPanel({
     : []
 
   return (
-    <>
-      {generateModal}
-      <div
+    <div
         data-testid="chat-panel"
         className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0"
       >
@@ -827,6 +805,5 @@ export default function ChatPanel({
           />
         )}
       </div>
-    </>
   )
 }

@@ -6,6 +6,8 @@ interface FileDiffViewProps {
   filePath: string | null
   diff: { oldContent: string; newContent: string; language: string } | null
   isLoading: boolean
+  leftLabel?: string
+  rightLabel?: string
 }
 
 /** Custom theme matching Code Atelier's dark palette */
@@ -49,15 +51,19 @@ const codeAtelierDiffStyles = {
 export default function FileDiffView({
   filePath,
   diff,
-  isLoading
+  isLoading,
+  leftLabel = 'Previous (HEAD)',
+  rightLabel = 'Current (Working Tree)'
 }: FileDiffViewProps): React.JSX.Element {
-  // Compute line stats
+  // Compute line stats — count lines present in one version but not the other
   const stats = useMemo(() => {
     if (!diff) return null
     const oldLines = diff.oldContent.split('\n')
     const newLines = diff.newContent.split('\n')
-    const added = Math.max(0, newLines.length - oldLines.length)
-    const removed = Math.max(0, oldLines.length - newLines.length)
+    const oldSet = new Set(oldLines)
+    const newSet = new Set(newLines)
+    const added = newLines.filter((l) => !oldSet.has(l)).length
+    const removed = oldLines.filter((l) => !newSet.has(l)).length
     return { added, removed }
   }, [diff])
 
@@ -114,8 +120,8 @@ export default function FileDiffView({
           splitView={true}
           useDarkTheme={true}
           compareMethod={DiffMethod.WORDS}
-          leftTitle="Previous (HEAD)"
-          rightTitle="Current (Working Tree)"
+          leftTitle={leftLabel}
+          rightTitle={rightLabel}
           styles={codeAtelierDiffStyles}
         />
       </div>

@@ -72,6 +72,14 @@ function detectLanguage(filePath: string): string {
   return EXT_TO_LANGUAGE[ext] ?? 'text'
 }
 
+/** Detect binary content by checking for null bytes in the first 8KB */
+function isBinaryContent(s: string): boolean {
+  if (s.length === 0) return false
+  // Skip UTF-16 BOM — these are text files, not binary
+  const start = s.charCodeAt(0) === 0xFEFF ? 1 : 0
+  return s.slice(start, start + 8000).includes('\0')
+}
+
 interface FileDetailEntry {
   filePath: string
   changeType: 'created' | 'modified' | 'deleted'
@@ -282,6 +290,15 @@ export class RepoService {
       newContent = ''
     }
 
+    // Detect binary files — return placeholder instead of garbled content
+    if (isBinaryContent(oldContent) || isBinaryContent(newContent)) {
+      return {
+        oldContent: '(Binary file — cannot display diff)',
+        newContent: '(Binary file — cannot display diff)',
+        language: 'text'
+      }
+    }
+
     return { oldContent, newContent, language }
   }
 
@@ -315,7 +332,10 @@ export class RepoService {
    * Push current branch to origin.
    */
   async push(repoPath: string): Promise<{ branch: string; remote: string }> {
-    const git = simpleGit(repoPath)
+    const git = simpleGit({
+      baseDir: repoPath,
+      timeout: { block: 30_000 }
+    }).env('GIT_TERMINAL_PROMPT', '0')
     const branch = await git.revparse(['--abbrev-ref', 'HEAD'])
     await git.push('origin', branch)
     logger.info(`Pushed branch ${branch} to origin`)
@@ -386,6 +406,147 @@ export class RepoService {
       remote,
       current: branchSummary.current
     }
+  }
+
+  /**
+   * Fetch latest refs from origin. Timeout after 15s to avoid blocking UI
+   * on unreachable remotes.
+   */
+  async fetchOrigin(repoPath: string): Promise<{ fetched: boolean; error?: string }> {
+    try {
+      const git = simpleGit({
+        baseDir: repoPath,
+        timeout: { block: 15_000 }
+      }).env('GIT_TERMINAL_PROMPT', '0')
+      await git.fetch(['origin', '--prune'])
+      return { fetched: true }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Fetch failed'
+      logger.warn('fetchOrigin failed:', msg)
+      return { fetched: false, error: msg }
+    }
+  }
+
+  /**
+   * Get files that differ between two refs using `git diff --name-status`.
+   * When toRef is 'WORKING_TREE', diffs fromRef against the working directory.
+   */
+  async getRefDiffFiles(
+    repoPath: string,
+    fromRef: string,
+    toRef: string
+  ): Promise<FileDetailEntry[]> {
+    const entries: FileDetailEntry[] = []
+
+    try {
+      await this.ensureOwnRepo(repoPath)
+      const git = simpleGit(repoPath)
+      // Use three-dot merge-base diff for ref-to-ref, two-dot for working tree
+      const diffArgs = ['diff', '--name-status']
+      if (toRef === 'WORKING_TREE') {
+        // Compare fromRef against working directory (includes uncommitted changes)
+        diffArgs.push(fromRef)
+      } else {
+        // Three-dot diff: changes since common ancestor
+        diffArgs.push(`${fromRef}...${toRef}`)
+      }
+
+      const raw = await git.raw(diffArgs)
+      if (!raw.trim()) return entries
+
+      for (const line of raw.trim().split('\n')) {
+        const parts = line.split('\t')
+        if (parts.length < 2) continue
+
+        const statusLetter = parts[0].charAt(0)
+        // For renames (R100), use the destination path (parts[2])
+        const filePath = statusLetter === 'R' ? (parts[2] ?? parts[1]) : parts[1]
+
+        let changeType: 'created' | 'modified' | 'deleted'
+        switch (statusLetter) {
+          case 'A':
+            changeType = 'created'
+            break
+          case 'D':
+            changeType = 'deleted'
+            break
+          case 'R':
+          case 'M':
+          case 'C':
+          default:
+            changeType = 'modified'
+            break
+        }
+
+        entries.push({ filePath, changeType, staged: false })
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
+      if (msg.includes('unknown revision') || msg.includes('bad revision')) {
+        throw new Error(`REF_NOT_FOUND: ${fromRef} or ${toRef} does not exist`)
+      }
+      logger.warn(`getRefDiffFiles(${fromRef}...${toRef}) failed:`, e)
+    }
+
+    return entries
+  }
+
+  /**
+   * Get file content at two refs for side-by-side diff.
+   * When toRef is 'WORKING_TREE', reads the file from disk for the new side.
+   */
+  async getRefFileDiff(
+    repoPath: string,
+    filePath: string,
+    fromRef: string,
+    toRef: string
+  ): Promise<FileDiffResult> {
+    assertWithinRepo(repoPath, filePath)
+    const git = simpleGit(repoPath)
+    const language = detectLanguage(filePath)
+
+    const absoluteRepo = resolve(repoPath)
+    const absoluteFile = resolve(repoPath, filePath)
+    const normalizedPath = relative(absoluteRepo, absoluteFile)
+
+    let oldContent = ''
+    let newContent = ''
+
+    // Get old content from fromRef
+    try {
+      oldContent = await git.show([`${fromRef}:${normalizedPath}`])
+    } catch {
+      // File didn't exist in fromRef (new file)
+      oldContent = ''
+    }
+
+    // Get new content from toRef or working tree
+    if (toRef === 'WORKING_TREE') {
+      try {
+        newContent = await readFile(absoluteFile, 'utf-8')
+      } catch {
+        // File was deleted in working tree
+        newContent = ''
+      }
+    } else {
+      try {
+        newContent = await git.show([`${toRef}:${normalizedPath}`])
+      } catch {
+        // File didn't exist in toRef (deleted file)
+        newContent = ''
+      }
+    }
+
+    // Detect binary files — return placeholder instead of garbled content
+    if (isBinaryContent(oldContent) || isBinaryContent(newContent)) {
+      return {
+        oldContent: '(Binary file — cannot display diff)',
+        newContent: '(Binary file — cannot display diff)',
+        language: 'text'
+      }
+    }
+
+    return { oldContent, newContent, language }
   }
 }
 

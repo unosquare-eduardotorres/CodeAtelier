@@ -1290,13 +1290,17 @@ export class BlueprintBuildService extends EventEmitter {
     const cleanupAskUser = wireAskUserAutoResponder(session, 'BUILD')
 
     let taskResult: TaskResult = { success: false, completion: null, discoveries: [] }
+    // BP-CATCH-SCOPE-01: Declared outside try/catch so the catch block (which saves
+    // partial output on failure) can read the same conversation id the try block used.
+    const syntheticConvId = `blueprint-build-${blueprintId}-${task.taskId}-${Date.now()}`
 
     try {
-      // Start session in BUILD mode (write access)
-      await session.start(workspacePath, 'build')
+      // Start session in BUILD mode (write access).
+      // When blueprintAutoMode is enabled, use 'danger' to bypass permission prompts —
+      // the user already approved execution when starting the blueprint.
+      const autoMode = appPreferenceRepository.getAppPreferences().blueprintAutoMode
+      await session.start(workspacePath, autoMode ? 'danger' : 'build')
       tSessionReady = Date.now()
-
-      const syntheticConvId = `blueprint-build-${blueprintId}-${task.taskId}-${Date.now()}`
 
       // Race: send vs timeout vs abort
       let timeoutId: NodeJS.Timeout | undefined
@@ -1356,7 +1360,7 @@ export class BlueprintBuildService extends EventEmitter {
         taskResult = { success: false, completion: null, discoveries: [], failureReason: sendOutcome }
       } else {
       // Parse output
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
       const completion = parsePhaseCompletionBlock(text, 'build') ?? null
 
       if (!completion && text.length > 200) {
@@ -1509,7 +1513,7 @@ export class BlueprintBuildService extends EventEmitter {
       bpLog.error(`[executeTask] Task ${task.taskId} failed:`, err)
 
       // Save partial output if available
-      const partialText = session.getStreamedContent()
+      const partialText = session.getStreamedContent(syntheticConvId)
       if (partialText) {
         const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
         if (buildPhase) {

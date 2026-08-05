@@ -58,20 +58,14 @@ describe('splitBinaryDocs', () => {
   })
 
   test('all-text returns empty binaryPaths', () => {
-    const docs = [
-      makeDoc({ path: 'a.ts' }),
-      makeDoc({ path: 'b.json' })
-    ]
+    const docs = [makeDoc({ path: 'a.ts' }), makeDoc({ path: 'b.json' })]
     const { textDocs, binaryPaths } = splitBinaryDocs(docs)
     assert.equal(textDocs.length, 2)
     assert.equal(binaryPaths.length, 0)
   })
 
   test('all-binary returns empty textDocs', () => {
-    const docs = [
-      makeDoc({ path: 'img.jpg' }),
-      makeDoc({ path: 'archive.zip' })
-    ]
+    const docs = [makeDoc({ path: 'img.jpg' }), makeDoc({ path: 'archive.zip' })]
     const { textDocs, binaryPaths } = splitBinaryDocs(docs)
     assert.equal(textDocs.length, 0)
     assert.equal(binaryPaths.length, 2)

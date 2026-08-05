@@ -28,16 +28,30 @@ class TestAdapter extends BaseRoleAdapter {
   }
 
   // Expose protected methods for testing
-  public _lockMcpFlags() { this.lockMcpFlags() }
-  public _unlockMcpFlags() { this.unlockMcpFlags() }
-  public _getLockedMcpFlags() { return this.getLockedMcpFlags() }
-  public _buildPromptFeatureFlags() { return this.buildPromptFeatureFlags() }
-  public _getMcpStrategy() { return this.getMcpStrategy() }
-  public _getIncludeGitContext() { return this.getIncludeGitContext() }
+  public _lockMcpFlags() {
+    this.lockMcpFlags()
+  }
+  public _unlockMcpFlags() {
+    this.unlockMcpFlags()
+  }
+  public _getLockedMcpFlags() {
+    return this.getLockedMcpFlags()
+  }
+  public _buildPromptFeatureFlags() {
+    return this.buildPromptFeatureFlags()
+  }
+  public _getMcpStrategy() {
+    return this.getMcpStrategy()
+  }
+  public _getIncludeGitContext() {
+    return this.getIncludeGitContext()
+  }
   public _applyLocalLlmTimeout(provider: 'local-llm' | 'claude') {
     this.applyLocalLlmTimeout(provider)
   }
-  public _invalidateToneCache() { this.invalidateToneCache() }
+  public _invalidateToneCache() {
+    this.invalidateToneCache()
+  }
   public _appendToolGuidance(base: string, turnCount: number, model?: string) {
     return this.appendToolGuidance(base, turnCount, model)
   }
@@ -46,13 +60,21 @@ class TestAdapter extends BaseRoleAdapter {
   }
 
   // Expose feature flag setters for testing
-  public setRepomapEnabled(v: boolean) { this.repomapEnabled = v }
-  public setSemanticSearchEnabled(v: boolean) { this.semanticSearchEnabled = v }
-  public setGithubConfigured(v: boolean) { this.githubConfigured = v }
+  public setRepomapEnabled(v: boolean) {
+    this.repomapEnabled = v
+  }
+  public setSemanticSearchEnabled(v: boolean) {
+    this.semanticSearchEnabled = v
+  }
+  public setGithubConfigured(v: boolean) {
+    this.githubConfigured = v
+  }
 
   // Override getMcpStrategy for testing dispatch
   private strategyOverride: McpStrategy | null = null
-  public setMcpStrategyOverride(s: McpStrategy | null) { this.strategyOverride = s }
+  public setMcpStrategyOverride(s: McpStrategy | null) {
+    this.strategyOverride = s
+  }
   protected override getMcpStrategy(): McpStrategy {
     return this.strategyOverride ?? super.getMcpStrategy()
   }
@@ -219,7 +241,11 @@ describe('BaseRoleAdapter — buildMcpConfig dispatch', () => {
     const result = adapter.buildMcpConfig(ctx)
     assert.ok(result, 'should return a config object')
     // buildNoToolsConfig returns an empty config
-    assert.ok(Array.isArray(result.mcpServers) || result.mcpServers === undefined || Object.keys(result).length >= 0)
+    assert.ok(
+      Array.isArray(result.mcpServers) ||
+        result.mcpServers === undefined ||
+        Object.keys(result).length >= 0
+    )
   })
 })
 
@@ -240,16 +266,12 @@ describe('BaseRoleAdapter — applyLocalLlmTimeout', () => {
   })
 })
 
-
-
 describe('BaseRoleAdapter — getIncludeGitContext', () => {
   test('default returns true', () => {
     const adapter = new TestAdapter()
     assert.equal(adapter._getIncludeGitContext(), true)
   })
 })
-
-
 
 // ── buildControlCallbacks ───────────────────────────────────────────
 
@@ -292,7 +314,7 @@ describe('BaseRoleAdapter — emitDetectedIntents', () => {
     }
     adapter.emitDetectedIntents(ctx)
     assert.ok(emitted.length >= 1)
-    const response = emitted.find(e => (e.payload as any)?.type === 'response')
+    const response = emitted.find((e) => (e.payload as any)?.type === 'response')
     assert.ok(response, 'should emit response intent')
     assert.equal((response!.payload as any).content, 'Hello world')
   })

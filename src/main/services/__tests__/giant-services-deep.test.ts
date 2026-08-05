@@ -193,12 +193,18 @@ describe('MpaOrchestrationService — state management', () => {
     const ac1 = new AbortController()
     const ac2 = new AbortController()
     ;(svc as any).pipelines.set('ws-1', {
-      running: true, abortController: ac1,
-      currentPhaseSession: null, pendingGateResolve: null, currentRunId: null
+      running: true,
+      abortController: ac1,
+      currentPhaseSession: null,
+      pendingGateResolve: null,
+      currentRunId: null
     })
     ;(svc as any).pipelines.set('ws-2', {
-      running: true, abortController: ac2,
-      currentPhaseSession: null, pendingGateResolve: null, currentRunId: null
+      running: true,
+      abortController: ac2,
+      currentPhaseSession: null,
+      pendingGateResolve: null,
+      currentRunId: null
     })
     svc.cancel()
     assert.equal(ac1.signal.aborted, true)
@@ -211,9 +217,12 @@ describe('MpaOrchestrationService — state management', () => {
     const svc = new Cls()
     let resolved: any = null
     ;(svc as any).pipelines.set('ws-gate', {
-      running: true, abortController: null,
+      running: true,
+      abortController: null,
       currentPhaseSession: null,
-      pendingGateResolve: (result: any) => { resolved = result },
+      pendingGateResolve: (result: any) => {
+        resolved = result
+      },
       currentRunId: 'run-gate'
     })
     svc.respondToGate('run-gate', true, 'looks good')
@@ -225,7 +234,9 @@ describe('MpaOrchestrationService — state management', () => {
     if (!Cls) return
     const svc = new Cls()
     let emitted: any = null
-    svc.on('pipelineComplete', (payload: any) => { emitted = payload })
+    svc.on('pipelineComplete', (payload: any) => {
+      emitted = payload
+    })
     ;(svc as any).emitComplete('run-1', 'completed', 500)
     assert.deepEqual(emitted, { runId: 'run-1', status: 'completed', totalTokens: 500 })
   })
@@ -256,7 +267,7 @@ describe('CodeGraphService — pure functions', () => {
     if (!buildEdgesFromTags) return
     const tags = [
       { name: 'MyClass', kind: 'def', relFname: 'a.ts', line: 1, fname: 'a.ts' },
-      { name: 'MyClass', kind: 'ref', relFname: 'b.ts', line: 5, fname: 'b.ts' },
+      { name: 'MyClass', kind: 'ref', relFname: 'b.ts', line: 5, fname: 'b.ts' }
     ]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 1)
@@ -269,7 +280,7 @@ describe('CodeGraphService — pure functions', () => {
     if (!buildEdgesFromTags) return
     const tags = [
       { name: 'Foo', kind: 'def', relFname: 'a.ts', line: 1, fname: 'a.ts' },
-      { name: 'Foo', kind: 'ref', relFname: 'a.ts', line: 10, fname: 'a.ts' },
+      { name: 'Foo', kind: 'ref', relFname: 'a.ts', line: 10, fname: 'a.ts' }
     ]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 0)
@@ -287,7 +298,7 @@ describe('CodeGraphService — pure functions', () => {
       { name: 'Util', kind: 'def', relFname: 'utils.ts', line: 1, fname: 'utils.ts' },
       { name: 'Util', kind: 'def', relFname: 'helpers.ts', line: 1, fname: 'helpers.ts' },
       { name: 'Util', kind: 'ref', relFname: 'main.ts', line: 5, fname: 'main.ts' },
-      { name: 'Util', kind: 'ref', relFname: 'app.ts', line: 3, fname: 'app.ts' },
+      { name: 'Util', kind: 'ref', relFname: 'app.ts', line: 3, fname: 'app.ts' }
     ]
     const edges = buildEdgesFromTags(tags)
     // 2 refs × 2 defs = 4 edges
@@ -296,16 +307,17 @@ describe('CodeGraphService — pure functions', () => {
 
   test('buildEdgesFromTags_no_edges_for_refs_without_defs', () => {
     if (!buildEdgesFromTags) return
-    const tags = [
-      { name: 'Missing', kind: 'ref', relFname: 'a.ts', line: 1, fname: 'a.ts' },
-    ]
+    const tags = [{ name: 'Missing', kind: 'ref', relFname: 'a.ts', line: 1, fname: 'a.ts' }]
     const edges = buildEdgesFromTags(tags)
     assert.equal(edges.length, 0)
   })
 
   test('applyRankBoosts_applies_focus_20x', () => {
     if (!applyRankBoosts) return
-    const ranks = new Map([['a.ts', 1.0], ['b.ts', 2.0]])
+    const ranks = new Map([
+      ['a.ts', 1.0],
+      ['b.ts', 2.0]
+    ])
     const boosted = applyRankBoosts(ranks, ['a.ts'], [], [], [])
     assert.equal(boosted.get('a.ts'), 20.0)
     assert.equal(boosted.get('b.ts'), 2.0)
@@ -329,7 +341,9 @@ describe('CodeGraphService — pure functions', () => {
   test('applyRankBoosts_applies_identifier_3x', () => {
     if (!applyRankBoosts) return
     const ranks = new Map([['module.ts', 2.0]])
-    const tags = [{ name: 'doStuff', kind: 'def', relFname: 'module.ts', line: 1, fname: 'module.ts' }]
+    const tags = [
+      { name: 'doStuff', kind: 'def', relFname: 'module.ts', line: 1, fname: 'module.ts' }
+    ]
     const boosted = applyRankBoosts(ranks, [], [], ['doStuff'], tags)
     assert.equal(boosted.get('module.ts'), 6.0)
   })
@@ -351,7 +365,11 @@ describe('CodeGraphService — pure functions', () => {
 
   test('sortAndFilterByRank_sorts_descending', () => {
     if (!sortAndFilterByRank) return
-    const ranks = new Map([['a.ts', 1], ['b.ts', 3], ['c.ts', 2]])
+    const ranks = new Map([
+      ['a.ts', 1],
+      ['b.ts', 3],
+      ['c.ts', 2]
+    ])
     const sorted = sortAndFilterByRank(ranks, false)
     assert.equal(sorted[0][0], 'b.ts')
     assert.equal(sorted[1][0], 'c.ts')
@@ -360,7 +378,10 @@ describe('CodeGraphService — pure functions', () => {
 
   test('sortAndFilterByRank_excludes_zero_when_flag_set', () => {
     if (!sortAndFilterByRank) return
-    const ranks = new Map([['a.ts', 0], ['b.ts', 1]])
+    const ranks = new Map([
+      ['a.ts', 0],
+      ['b.ts', 1]
+    ])
     const filtered = sortAndFilterByRank(ranks, true)
     assert.equal(filtered.length, 1)
     assert.equal(filtered[0][0], 'b.ts')
@@ -368,7 +389,10 @@ describe('CodeGraphService — pure functions', () => {
 
   test('sortAndFilterByRank_includes_zero_when_flag_unset', () => {
     if (!sortAndFilterByRank) return
-    const ranks = new Map([['a.ts', 0], ['b.ts', 1]])
+    const ranks = new Map([
+      ['a.ts', 0],
+      ['b.ts', 1]
+    ])
     const filtered = sortAndFilterByRank(ranks, false)
     assert.equal(filtered.length, 2)
   })
@@ -438,7 +462,9 @@ describe('AuditAgentService — state management', () => {
     const svc = new Cls()
     const ac = new AbortController()
     ;(svc as any).workspaceStates.set('ws-1', {
-      running: true, abortController: ac, session: null
+      running: true,
+      abortController: ac,
+      session: null
     })
     svc.cancel('ws-1')
     assert.equal(ac.signal.aborted, true)
@@ -451,10 +477,14 @@ describe('AuditAgentService — state management', () => {
     const ac1 = new AbortController()
     const ac2 = new AbortController()
     ;(svc as any).workspaceStates.set('ws-1', {
-      running: true, abortController: ac1, session: null
+      running: true,
+      abortController: ac1,
+      session: null
     })
     ;(svc as any).workspaceStates.set('ws-2', {
-      running: true, abortController: ac2, session: null
+      running: true,
+      abortController: ac2,
+      session: null
     })
     svc.cancel()
     assert.equal(ac1.signal.aborted, true)
@@ -469,7 +499,11 @@ describe('AuditAgentService — state management', () => {
     ;(svc as any).workspaceStates.set('ws-1', {
       running: true,
       abortController: new AbortController(),
-      session: { cancelCurrentQuery: () => { queryCancelled = true } }
+      session: {
+        cancelCurrentQuery: () => {
+          queryCancelled = true
+        }
+      }
     })
     svc.cancel('ws-1')
     assert.equal(queryCancelled, true)
@@ -482,7 +516,11 @@ describe('AuditAgentService — state management', () => {
     ;(svc as any).workspaceStates.set('ws-1', {
       running: true,
       abortController: new AbortController(),
-      session: { cancelCurrentQuery: () => { throw new Error('session dead') } }
+      session: {
+        cancelCurrentQuery: () => {
+          throw new Error('session dead')
+        }
+      }
     })
     // Should not throw
     svc.cancel('ws-1')
@@ -493,7 +531,9 @@ describe('AuditAgentService — state management', () => {
     if (!Cls) return
     const svc = new Cls()
     ;(svc as any).workspaceStates.set('ws-1', {
-      running: true, abortController: null, session: null
+      running: true,
+      abortController: null,
+      session: null
     })
     // Should return immediately without throwing
     await svc.runAudit({
@@ -511,7 +551,9 @@ describe('AuditAgentService — state management', () => {
     const svc = new Cls()
     assert.equal(svc.isRunning, false)
     ;(svc as any).workspaceStates.set('ws-1', {
-      running: true, abortController: null, session: null
+      running: true,
+      abortController: null,
+      session: null
     })
     assert.equal(svc.isRunning, true)
   })
@@ -521,7 +563,9 @@ describe('AuditAgentService — state management', () => {
     if (!Cls) return
     const svc = new Cls()
     ;(svc as any).workspaceStates.set('ws-1', {
-      running: true, abortController: new AbortController(), session: null
+      running: true,
+      abortController: new AbortController(),
+      session: null
     })
     await svc.shutdown()
     assert.equal(svc.isRunning, false)
@@ -580,7 +624,9 @@ describe('AuditAgentService — state management', () => {
     if (!Cls) return
     const svc = new Cls()
     const findings = Array.from({ length: 10 }, (_, i) => ({
-      title: `Finding ${i}`, severity: 'high' as const, filePath: `file${i}.ts`
+      title: `Finding ${i}`,
+      severity: 'high' as const,
+      filePath: `file${i}.ts`
     }))
     const stats = { fileCount: 8 }
     const result = (svc as any).hasAdequateCoverage(findings, stats, 10)
@@ -671,7 +717,11 @@ describe('CouncilService — state management', () => {
     const svc = new Cls()
     const mockAdvisors = new Map()
     mockAdvisors.set('advisor1', {
-      session: { cancelCurrentQuery: () => { /* cancelled */ } },
+      session: {
+        cancelCurrentQuery: () => {
+          /* cancelled */
+        }
+      },
       status: 'running'
     })
     ;(svc as any).sessions.set('ws-1', {
@@ -688,10 +738,12 @@ describe('CouncilService — state management', () => {
     if (!Cls) return
     const svc = new Cls()
     ;(svc as any).sessions.set('ws-1', {
-      running: true, advisors: new Map()
+      running: true,
+      advisors: new Map()
     })
     ;(svc as any).sessions.set('ws-2', {
-      running: true, advisors: new Map()
+      running: true,
+      advisors: new Map()
     })
     svc.cancel()
     for (const [, entry] of (svc as any).sessions) {
@@ -780,7 +832,8 @@ describe('CouncilService — state management', () => {
     if (!Cls) return
     const svc = new Cls()
     ;(svc as any).sessions.set('ws-1', {
-      running: true, advisors: new Map()
+      running: true,
+      advisors: new Map()
     })
     await svc.shutdown()
     assert.equal(svc.isRunning, false)
@@ -821,8 +874,22 @@ describe('calculateOverallScore — pure function', () => {
   test('returns_weighted_average_when_available', () => {
     if (!calculateOverallScore) return
     const results = [
-      { trackId: 'security', score: 80, status: 'completed', findings: [], summary: '', skillsUsed: [] },
-      { trackId: 'performance', score: 60, status: 'completed', findings: [], summary: '', skillsUsed: [] }
+      {
+        trackId: 'security',
+        score: 80,
+        status: 'completed',
+        findings: [],
+        summary: '',
+        skillsUsed: []
+      },
+      {
+        trackId: 'performance',
+        score: 60,
+        status: 'completed',
+        findings: [],
+        summary: '',
+        skillsUsed: []
+      }
     ]
     const score = calculateOverallScore(results, [])
     assert.equal(typeof score, 'number')
@@ -887,10 +954,12 @@ describe('AgentSessionService — accessors', () => {
       const parsePlanPayload = (mod as any).parsePlanPayload
       if (!parsePlanPayload) return
 
-      const result = parsePlanPayload(JSON.stringify({
-        type: 'plan',
-        content: 'test plan'
-      }))
+      const result = parsePlanPayload(
+        JSON.stringify({
+          type: 'plan',
+          content: 'test plan'
+        })
+      )
       assert.ok(result !== null)
     } catch {
       // skip
@@ -922,7 +991,7 @@ describe('AgentSessionService — accessors', () => {
       buildSystemPrompt: () => 'prompt',
       buildMcpConfig: () => ({}),
       controlCallbacks: () => ({}),
-      detectIntent: () => null,
+      detectIntent: () => null
     }
     try {
       const svc = new Cls(mockAdapter)
@@ -938,9 +1007,12 @@ describe('AgentSessionService — accessors', () => {
     const Cls = await loadService()
     if (!Cls) return
     const mockAdapter = {
-      role: 'generalist', agentId: 'agent-1',
-      buildSystemPrompt: () => 'p', buildMcpConfig: () => ({}),
-      controlCallbacks: () => ({}), detectIntent: () => null,
+      role: 'generalist',
+      agentId: 'agent-1',
+      buildSystemPrompt: () => 'p',
+      buildMcpConfig: () => ({}),
+      controlCallbacks: () => ({}),
+      detectIntent: () => null
     }
     try {
       const svc = new Cls(mockAdapter)
@@ -960,9 +1032,12 @@ describe('AgentSessionService — accessors', () => {
     const Cls = await loadService()
     if (!Cls) return
     const mockAdapter = {
-      role: 'generalist', agentId: 'agent-1',
-      buildSystemPrompt: () => 'p', buildMcpConfig: () => ({}),
-      controlCallbacks: () => ({}), detectIntent: () => null,
+      role: 'generalist',
+      agentId: 'agent-1',
+      buildSystemPrompt: () => 'p',
+      buildMcpConfig: () => ({}),
+      controlCallbacks: () => ({}),
+      detectIntent: () => null
     }
     try {
       const svc = new Cls(mockAdapter)
@@ -977,9 +1052,12 @@ describe('AgentSessionService — accessors', () => {
     const Cls = await loadService()
     if (!Cls) return
     const mockAdapter = {
-      role: 'generalist', agentId: 'agent-1',
-      buildSystemPrompt: () => 'p', buildMcpConfig: () => ({}),
-      controlCallbacks: () => ({}), detectIntent: () => null,
+      role: 'generalist',
+      agentId: 'agent-1',
+      buildSystemPrompt: () => 'p',
+      buildMcpConfig: () => ({}),
+      controlCallbacks: () => ({}),
+      detectIntent: () => null
     }
     try {
       const svc = new Cls(mockAdapter)
@@ -996,9 +1074,12 @@ describe('AgentSessionService — accessors', () => {
     const Cls = await loadService()
     if (!Cls) return
     const mockAdapter = {
-      role: 'generalist', agentId: 'agent-1',
-      buildSystemPrompt: () => 'p', buildMcpConfig: () => ({}),
-      controlCallbacks: () => ({}), detectIntent: () => null,
+      role: 'generalist',
+      agentId: 'agent-1',
+      buildSystemPrompt: () => 'p',
+      buildMcpConfig: () => ({}),
+      controlCallbacks: () => ({}),
+      detectIntent: () => null
     }
     try {
       const svc = new Cls(mockAdapter)

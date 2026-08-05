@@ -66,7 +66,16 @@ describe('buildGrillEvaluationSchema', () => {
 
   test('contains question structure keys', () => {
     const result = buildGrillEvaluationSchema('requirements')
-    const questionKeys = ['id', 'question', 'header', 'options', 'label', 'description', 'recommended', 'recommendedReason']
+    const questionKeys = [
+      'id',
+      'question',
+      'header',
+      'options',
+      'label',
+      'description',
+      'recommended',
+      'recommendedReason'
+    ]
     for (const key of questionKeys) {
       assert.ok(result.includes(`"${key}"`), `missing question key: ${key}`)
     }
@@ -84,7 +93,10 @@ describe('buildGrillEvaluationSchemaLean', () => {
   test('much shorter than full schema', () => {
     const full = buildGrillEvaluationSchema('requirements')
     const lean = buildGrillEvaluationSchemaLean('requirements')
-    assert.ok(lean.length < full.length, `lean (${lean.length}) should be shorter than full (${full.length})`)
+    assert.ok(
+      lean.length < full.length,
+      `lean (${lean.length}) should be shorter than full (${full.length})`
+    )
   })
 
   test('mentions all required keys compactly', () => {

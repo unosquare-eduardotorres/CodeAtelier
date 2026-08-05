@@ -1097,6 +1097,25 @@ const api = {
   }): Promise<{ oldContent: string; newContent: string; language: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
 
+  getRefFileDetails: (args: {
+    conversationId: string
+    fromRef: string
+    toRef: string
+  }): Promise<
+    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS, args),
+
+  getRefFileDiff: (args: {
+    conversationId: string
+    filePath: string
+    fromRef: string
+    toRef: string
+  }): Promise<{ oldContent: string; newContent: string; language: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, args),
+
+  fetchOrigin: (args: { conversationId: string }): Promise<{ fetched: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_FETCH_ORIGIN, args),
+
   commitFiles: (args: {
     conversationId: string
     filePaths: string[]

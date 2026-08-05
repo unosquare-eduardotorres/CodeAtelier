@@ -157,10 +157,7 @@ describe('Blueprint IPC — handler validation patterns', () => {
 
   test('BLUEPRINT_APPROVAL_RESPOND_validation', () => {
     const ch = IPC_CHANNELS.BLUEPRINT_APPROVAL_RESPOND
-    const args = requireObject(
-      { blueprintId: 'bp-1', approved: true, feedback: 'Looks good' },
-      ch
-    )
+    const args = requireObject({ blueprintId: 'bp-1', approved: true, feedback: 'Looks good' }, ch)
     const bpId = requireString(args, 'blueprintId', ch)
     assert.equal(bpId, 'bp-1')
     assert.equal(args.approved, true)

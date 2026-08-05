@@ -3,12 +3,14 @@
  * Control Actions MCP Server — externalized for CLI interactive mode.
  *
  * Exposes four tools: emit_plan, ask_user, permission_prompt, emit_phase_progress.
- * Communicates events back to the Electron main process via a Unix domain
- * socket (IPC bridge). The main process creates the socket server before
+ * Communicates events back to the Electron main process via a socket
+ * (IPC bridge). The main process creates the socket server before
  * spawning the Claude CLI; this server connects to it on startup.
  *
  * Environment variables:
- *   IPC_SOCKET_PATH  — Path to the Unix domain socket for event bridge
+ *   IPC_SOCKET_PATH  — Socket address for event bridge. Supports two formats:
+ *                       Unix socket: "/tmp/code-atelier-ipc-abc.sock"
+ *                       TCP loopback: "tcp:127.0.0.1:49152"
  *   WORKSPACE_PATH   — Current workspace path
  *   CONVERSATION_ID  — Active conversation ID (optional)
  *   CONVERSATION_MODE — 'plan' | 'build' | 'danger'
@@ -24,6 +26,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { createConnection, type Socket } from 'node:net'
 import { createAskUserRegistry } from './ask-user-registry'
+import { parseIpcAddress } from '../../shared/ipc-address'
+import { shouldAutoApprove } from './tool-auto-approve'
 
 // ── Environment ──
 const IPC_SOCKET_PATH = process.env.IPC_SOCKET_PATH
@@ -44,7 +48,23 @@ function connectIpc(): void {
   }
 
   try {
-    ipcSocket = createConnection(IPC_SOCKET_PATH)
+    // Support both Unix socket paths and TCP loopback (tcp:host:port)
+    const parsed = parseIpcAddress(IPC_SOCKET_PATH)
+    if (!parsed) {
+      console.error(`[control-actions-server] Invalid IPC_SOCKET_PATH: ${IPC_SOCKET_PATH}`)
+      return
+    }
+
+    if (parsed.type === 'tcp') {
+      ipcSocket = createConnection({ host: parsed.host, port: parsed.port })
+      // Prevent idle TCP connection drops during long ask_user waits (Windows)
+      ipcSocket.setKeepAlive(true, 30_000)
+      console.error(`[control-actions-server] Connecting to IPC via TCP: ${parsed.host}:${parsed.port}`)
+    } else {
+      ipcSocket = createConnection(parsed.path)
+      console.error(`[control-actions-server] Connecting to IPC via Unix socket: ${parsed.path}`)
+    }
+
     ipcSocket.on('error', (err) => {
       console.error(`[control-actions-server] IPC socket error: ${err.message}`)
       ipcSocket = null
@@ -273,6 +293,11 @@ server.tool(
   planSchema.shape,
   async (args) => {
     const plan = planSchema.parse(args)
+    console.error(
+      `[control-actions-server] emit_plan called — title="${plan.title}" ` +
+      `phases=${plan.phases?.length ?? 0} ` +
+      `ipcConnected=${!!ipcSocket && !ipcSocket.destroyed}`
+    )
     emitEvent('plan', plan)
     return {
       content: [{ type: 'text' as const, text: `Plan "${plan.title}" emitted successfully.` }]
@@ -349,37 +374,6 @@ server.tool(
   }
 )
 
-// ── Auto-approve whitelist ──────────────────────────────────────────
-// Tools that are inherently safe (read-only, no side effects) are auto-approved
-// server-side to avoid unnecessary UI roundtrips. This reduces noise for
-// non-destructive batches in build mode where acceptEdits still prompts for Bash.
-
-const AUTO_APPROVE_TOOLS = new Set([
-  'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
-  'SummarizePage', 'Snapshot', 'Evaluate', // browser read tools
-])
-
-/** Read-only Bash command prefixes that are safe to auto-approve. */
-const SAFE_BASH_PREFIXES = [
-  'git status', 'git log', 'git diff', 'git show', 'git branch',
-  'git tag', 'git remote', 'git rev-parse', 'git describe', 'git stash list',
-  'ls', 'cat ', 'head ', 'tail ', 'wc ', 'find ', 'du ', 'df ',
-  'echo ', 'pwd', 'whoami', 'date', 'uname', 'which ', 'type ',
-  'npm ls', 'npm list', 'npm test', 'npm run test', 'npm run lint',
-  'npm run typecheck', 'npm --version', 'npm run build',
-  'npx tsc --noEmit', 'npx tsc -noEmit',
-  'node --version', 'node -v',
-]
-
-function shouldAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
-  if (AUTO_APPROVE_TOOLS.has(toolName)) return true
-  if (toolName === 'Bash' && typeof input.command === 'string') {
-    const cmd = input.command.trim()
-    return SAFE_BASH_PREFIXES.some((prefix) => cmd.startsWith(prefix))
-  }
-  return false
-}
-
 // permission_prompt tool — implements the Claude CLI --permission-prompt-tool contract.
 // When Claude needs permission for a tool call, it invokes this tool instead of
 // auto-denying. We surface the request in the Electron UI toast and block until
@@ -396,8 +390,8 @@ server.tool(
   async (args) => {
     const { tool_name, input, tool_use_id } = args
 
-    // Auto-approve safe read-only tools without UI roundtrip
-    if (shouldAutoApprove(tool_name, input)) {
+    // Auto-approve safe tools without UI roundtrip
+    if (shouldAutoApprove(tool_name, input, CONVERSATION_MODE)) {
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'allow', updatedInput: input }) }]
       }

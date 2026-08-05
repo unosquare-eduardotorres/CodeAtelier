@@ -10,11 +10,16 @@ import { appendMcpToolGuidance, buildConditionalPrefix } from '../prompt-assembl
 
 describe('appendMcpToolGuidance', () => {
   test('turn 2+ appends compact tool priority reminder for non-lean models with repomap', () => {
-    const out = appendMcpToolGuidance('BASE', 2, {
-      repomapEnabled: true,
-      semanticSearchEnabled: true,
-      githubConfigured: true
-    }, 'claude-haiku-4-5-20251001')
+    const out = appendMcpToolGuidance(
+      'BASE',
+      2,
+      {
+        repomapEnabled: true,
+        semanticSearchEnabled: true,
+        githubConfigured: true
+      },
+      'claude-haiku-4-5-20251001'
+    )
     assert.ok(out.includes('Tool Priority'), 'Should include compact tool priority reminder')
     assert.ok(out.includes('search_identifiers'), 'Should mention search_identifiers')
     // emit_plan guidance removed — mode-context already carries the full emit_plan workflow

@@ -35,6 +35,7 @@ import {
 } from '../db/repositories/blueprint.repository'
 import { blueprintTaskRepository } from '../db/repositories/blueprint.repository'
 import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
+import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository, conversationRepository } from '../db/repositories'
 import { memoryExtractionService } from './memory-extraction.service'
 import type {
@@ -85,6 +86,8 @@ export class BlueprintVerifyService extends EventEmitter {
     let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
     let cleanupAskUser: (() => void) | undefined
     let pendingRemediation: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
+    // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
+    let syntheticConvId: string | undefined
 
     try {
       // BP-VERIFY-CANCEL-STATUS-CHECK-01 + BP-VERIFY-NULL-BLUEPRINT-01:
@@ -149,12 +152,13 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 6. Start session in BUILD mode (Bash execution needed for quality gates).
       // Write/Edit remain blocked by BlueprintVerifyAdapter.buildMcpConfig().disallowedTools.
-      await session.start(workspacePath, 'build')
+      // When blueprintAutoMode is enabled, use 'danger' to bypass permission prompts.
+      const autoMode = appPreferenceRepository.getAppPreferences().blueprintAutoMode
+      await session.start(workspacePath, autoMode ? 'danger' : 'build')
 
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
       const verifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
       const priorConvId = verifyPhaseRec?.conversationId
-      let syntheticConvId: string
       if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
         const priorConv = conversationRepository.findById(priorConvId)
         const currentProvider = modelConfigService.getProvider(workspacePath)
@@ -201,7 +205,7 @@ export class BlueprintVerifyService extends EventEmitter {
         // the outer catch handler tries to clean up — causing a race between the
         // active stream and session.stop() in the finally block.
         try {
-          session.cancelCurrentQuery()
+          session.cancelCurrentQuery(syntheticConvId)
         } catch {
           /* best-effort — session may already be stopped */
         }
@@ -229,7 +233,7 @@ export class BlueprintVerifyService extends EventEmitter {
       }
 
       // 7. Parse output
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
       let completion = parsePhaseCompletionBlock(text, 'verify') ?? undefined
 
       // BP-VERIFY-ENUM-GUARD: Normalize invalid overallStatus from the fence block —
@@ -609,7 +613,7 @@ export class BlueprintVerifyService extends EventEmitter {
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
 
-      const partialText = session?.getStreamedContent()
+      const partialText = session?.getStreamedContent(syntheticConvId)
       if (partialText && verifyPhase) {
         blueprintPhaseRepository.appendArtifact(verifyPhase.id, {
           type: 'verify-partial',

@@ -6,12 +6,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
+import { IPC_CHANNELS } from '../../../shared/constants'
 
-setupElectronStub()
+setupFullMock()
 
 let shellLoaded = false
 let syncLoaded = false
@@ -66,7 +67,7 @@ try {
 if (shellLoaded) {
   describe('shell.ipc — channel registration', () => {
     test('registers shell:showItemInFolder', () => {
-      assert.ok(capturedHandlers.has('shell:showItemInFolder'))
+      assert.ok(getHandlers().has('shell:showItemInFolder'))
     })
   })
 
@@ -118,11 +119,11 @@ if (shellLoaded) {
 if (syncLoaded) {
   describe('sync.ipc — channel registration', () => {
     test('registers sync:computeDiff', () => {
-      assert.ok(capturedHandlers.has('sync:computeDiff'))
+      assert.ok(getHandlers().has('sync:computeDiff'))
     })
 
     test('registers sync:apply', () => {
-      assert.ok(capturedHandlers.has('sync:apply'))
+      assert.ok(getHandlers().has('sync:apply'))
     })
   })
 
@@ -147,7 +148,7 @@ if (syncLoaded) {
     test('sync:apply calls through', async () => {
       const r = await tryInvokeHandler('sync:apply', {
         workspacePath: '/tmp/project',
-        skipRemoved: true,
+        skipRemoved: true
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -161,11 +162,11 @@ if (syncLoaded) {
 if (hooksLoaded) {
   describe('hooks.ipc — channel registration', () => {
     test('registers hooks:list', () => {
-      assert.ok(capturedHandlers.has('hooks:list'))
+      assert.ok(getHandlers().has('hooks:list'))
     })
 
     test('registers hooks:reload', () => {
-      assert.ok(capturedHandlers.has('hooks:reload'))
+      assert.ok(getHandlers().has('hooks:reload'))
     })
   })
 
@@ -196,23 +197,23 @@ if (hooksLoaded) {
 if (updateLoaded) {
   describe('update.ipc — channel registration', () => {
     test('registers update:check', () => {
-      assert.ok(capturedHandlers.has('update:check'))
+      assert.ok(getHandlers().has('update:check'))
     })
 
     test('registers update:download', () => {
-      assert.ok(capturedHandlers.has('update:download'))
+      assert.ok(getHandlers().has('update:download'))
     })
 
     test('registers update:install', () => {
-      assert.ok(capturedHandlers.has('update:install'))
+      assert.ok(getHandlers().has('update:install'))
     })
 
     test('registers update:getConfig', () => {
-      assert.ok(capturedHandlers.has('update:getConfig'))
+      assert.ok(getHandlers().has('update:getConfig'))
     })
 
     test('registers update:setConfig', () => {
-      assert.ok(capturedHandlers.has('update:setConfig'))
+      assert.ok(getHandlers().has('update:setConfig'))
     })
   })
 
@@ -251,19 +252,19 @@ if (updateLoaded) {
 if (subscriptionLoaded) {
   describe('subscription.ipc — channel registration', () => {
     test('registers subscription:validateAll', () => {
-      assert.ok(capturedHandlers.has('subscription:validateAll'))
+      assert.ok(getHandlers().has('subscription:validateAll'))
     })
 
     test('registers subscription:checkClaudeCli', () => {
-      assert.ok(capturedHandlers.has('subscription:checkClaudeCli'))
+      assert.ok(getHandlers().has('subscription:checkClaudeCli'))
     })
 
     test('registers subscription:checkOpencodeCli', () => {
-      assert.ok(capturedHandlers.has('subscription:checkOpencodeCli'))
+      assert.ok(getHandlers().has(IPC_CHANNELS.SUBSCRIPTION_CHECK_OPENCODE_CLI))
     })
 
     test('registers subscription:autoConfigure', () => {
-      assert.ok(capturedHandlers.has('subscription:autoConfigure'))
+      assert.ok(getHandlers().has('subscription:autoConfigure'))
     })
   })
 
@@ -279,7 +280,7 @@ if (subscriptionLoaded) {
     })
 
     test('subscription:checkOpencodeCli calls through', async () => {
-      const r = await tryInvokeHandler('subscription:checkOpencodeCli')
+      const r = await tryInvokeHandler(IPC_CHANNELS.SUBSCRIPTION_CHECK_OPENCODE_CLI)
       assert.ok(r.ok === true || r.ok === false)
     })
 

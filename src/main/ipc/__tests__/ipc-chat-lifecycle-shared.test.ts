@@ -9,13 +9,14 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
+import { IPC_CHANNELS } from '../../../shared/constants'
 
-setupElectronStub()
+setupFullMock()
 
 let chatLoaded = false
 
@@ -34,27 +35,27 @@ if (chatLoaded) {
     // So all of those handlers should be registered:
 
     test('registers chat:send (from chat-message)', () => {
-      assert.ok(capturedHandlers.has('chat:send'))
+      assert.ok(getHandlers().has(IPC_CHANNELS.CHAT_SEND))
     })
 
     test('registers chat:stop (from chat-message)', () => {
-      assert.ok(capturedHandlers.has('chat:stop'))
+      assert.ok(getHandlers().has('chat:stop'))
     })
 
     test('registers chat:getConversations (from conversation-crud)', () => {
-      assert.ok(capturedHandlers.has('chat:getConversations'))
+      assert.ok(getHandlers().has('chat:getConversations'))
     })
 
     test('registers chat:createConversation (from conversation-crud)', () => {
-      assert.ok(capturedHandlers.has('chat:createConversation'))
+      assert.ok(getHandlers().has('chat:createConversation'))
     })
 
     test('registers chat:deleteConversation (from conversation-crud)', () => {
-      assert.ok(capturedHandlers.has('chat:deleteConversation'))
+      assert.ok(getHandlers().has('chat:deleteConversation'))
     })
 
     test('registers chat:getMessages (from conversation-crud)', () => {
-      assert.ok(capturedHandlers.has('chat:getMessages'))
+      assert.ok(getHandlers().has('chat:getMessages'))
     })
   })
 

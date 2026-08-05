@@ -39,7 +39,8 @@ describe('grill-prompt-blocks — buildReEvalBlock', () => {
       isGrillLean = mod.isGrillLean
       GRILL_QUESTION_QUALITY_RULES = mod.GRILL_QUESTION_QUALITY_RULES
       GRILL_QUESTION_QUALITY_RULES_LEAN = mod.GRILL_QUESTION_QUALITY_RULES_LEAN
-      GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA = mod.GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA
+      GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA =
+        mod.GRILL_QUESTION_QUALITY_RULES_GREENFIELD_EXTRA
       GRILL_SCORING_RULES = mod.GRILL_SCORING_RULES
       GRILL_SCORING_RULES_LEAN = mod.GRILL_SCORING_RULES_LEAN
       assert.equal(typeof buildReEvalBlock, 'function')
@@ -320,11 +321,18 @@ describe('CouncilMemberRoleAdapter — lifecycle deep', () => {
       }
     })
     assert.throws(
-      () => a.buildPrompts({
-        message: 'test', conversationId: 'c1', hasImages: false,
-        turnCount: 1, sessionId: undefined, mode: 'plan',
-        workspacePath: '/tmp', workspaceId: 'ws-1', costPreference: 'balanced'
-      }),
+      () =>
+        a.buildPrompts({
+          message: 'test',
+          conversationId: 'c1',
+          hasImages: false,
+          turnCount: 1,
+          sessionId: undefined,
+          mode: 'plan',
+          workspacePath: '/tmp',
+          workspaceId: 'ws-1',
+          costPreference: 'balanced'
+        }),
       /buildPrompts\(\) called before onSessionStart\(\)/
     )
   })
@@ -452,7 +460,9 @@ describe('BaseRoleAdapter — coverage', () => {
     class TestAdapter extends BaseRoleAdapter {
       readonly role = 'test' as any
       readonly agentId = 'test-1'
-      buildPrompts() { return { systemPrompt: '', effectiveMessage: '' } }
+      buildPrompts() {
+        return { systemPrompt: '', effectiveMessage: '' }
+      }
       callAppendToolGuidance(prompt: string, turnCount: number, model?: string) {
         return this.appendToolGuidance(prompt, turnCount, model)
       }
@@ -474,7 +484,9 @@ describe('BaseRoleAdapter — coverage', () => {
     class TestAdapter extends BaseRoleAdapter {
       readonly role = 'test' as any
       readonly agentId = 'test-1'
-      buildPrompts() { return { systemPrompt: '', effectiveMessage: '' } }
+      buildPrompts() {
+        return { systemPrompt: '', effectiveMessage: '' }
+      }
       callResolveModel(workspacePath: string, role: string) {
         return this.resolveModel(workspacePath, role)
       }
@@ -490,7 +502,9 @@ describe('BaseRoleAdapter — coverage', () => {
       readonly role = 'test' as any
       readonly agentId = 'test-1'
       interactionTimeoutMs = 5 * 60_000
-      buildPrompts() { return { systemPrompt: '', effectiveMessage: '' } }
+      buildPrompts() {
+        return { systemPrompt: '', effectiveMessage: '' }
+      }
       callApply(provider: string, minutes?: number) {
         this.applyLocalLlmTimeout(provider as any, minutes)
       }
@@ -508,7 +522,9 @@ describe('BaseRoleAdapter — coverage', () => {
       readonly role = 'test' as any
       readonly agentId = 'test-1'
       interactionTimeoutMs = 5 * 60_000
-      buildPrompts() { return { systemPrompt: '', effectiveMessage: '' } }
+      buildPrompts() {
+        return { systemPrompt: '', effectiveMessage: '' }
+      }
       callApply(provider: string, minutes?: number) {
         this.applyLocalLlmTimeout(provider as any, minutes)
       }
@@ -576,11 +592,18 @@ describe('GrillRoleAdapter — prompt construction', () => {
       trackId: 'architecture'
     })
     assert.throws(
-      () => a.buildPrompts({
-        message: 'test', conversationId: 'c1', hasImages: false,
-        turnCount: 1, sessionId: undefined, mode: 'plan',
-        workspacePath: '/tmp', workspaceId: 'ws-1', costPreference: 'balanced'
-      }),
+      () =>
+        a.buildPrompts({
+          message: 'test',
+          conversationId: 'c1',
+          hasImages: false,
+          turnCount: 1,
+          sessionId: undefined,
+          mode: 'plan',
+          workspacePath: '/tmp',
+          workspaceId: 'ws-1',
+          costPreference: 'balanced'
+        }),
       /buildPrompts/
     )
   })
@@ -643,11 +666,18 @@ describe('GreenfieldGrillRoleAdapter — prompt construction', () => {
       trackId: 'architecture'
     })
     assert.throws(
-      () => a.buildPrompts({
-        message: 'test', conversationId: 'c1', hasImages: false,
-        turnCount: 1, sessionId: undefined, mode: 'plan',
-        workspacePath: '/tmp', workspaceId: 'ws-1', costPreference: 'balanced'
-      }),
+      () =>
+        a.buildPrompts({
+          message: 'test',
+          conversationId: 'c1',
+          hasImages: false,
+          turnCount: 1,
+          sessionId: undefined,
+          mode: 'plan',
+          workspacePath: '/tmp',
+          workspaceId: 'ws-1',
+          costPreference: 'balanced'
+        }),
       /buildPrompts/
     )
   })

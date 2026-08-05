@@ -189,13 +189,15 @@ class MemoryExtractionService {
 
     emit(`Extracting facts from ${sourceRef}...`)
 
+    const budget = estimateExtractionBudget(content, sourceRef)
     const prompt = buildExtractionPrompt(
-      `## Document: ${sourceRef}\n${content.substring(0, 50000)}`
+      `## Document: ${sourceRef}\n${content.substring(0, 50000)}`,
+      budget
     )
 
     try {
       const result = await this.spawnSummarizer(prompt, workspacePath, workspaceId)
-      const facts = parseExtractedFacts(result)
+      const facts = parseExtractedFacts(result, budget)
 
       let created = 0
       for (const fact of facts) {
@@ -883,10 +885,47 @@ class MemoryExtractionService {
 
 const VALID_CATEGORIES: MemoryFactCategory[] = ['decision', 'convention', 'gotcha', 'preference', 'reference']
 
-/** Max facts to accept from a single extraction call. */
-const MAX_EXTRACTED_FACTS = 3
+/** Score content richness to determine extraction budget per chunk. */
+function estimateExtractionBudget(content: string, sourceRef: string): number {
+  let score = 0
 
-function buildExtractionPrompt(source: string): string {
+  // Heading density (more structure = more facts worth capturing)
+  const headingCount = (content.match(/^#{1,4}\s+/gm) || []).length
+  score += Math.min(headingCount, 10)
+
+  // Decision language signals
+  const decisionSignals = [
+    /\bwe chose\b/gi, /\bdecision\b/gi, /\bconvention\b/gi,
+    /\bmust\b/gi, /\bnever\b/gi, /\balways\b/gi,
+    /\barchitecture\b/gi, /\bpattern\b/gi, /\brequired?\b/gi,
+    /\bIMPORTANT\b/g, /\bWARNING\b/g, /\bNOTE\b/g,
+    /\bdo not\b/gi, /\bdon't\b/gi, /\bavoid\b/gi
+  ]
+  for (const signal of decisionSignals) {
+    score += Math.min((content.match(signal) || []).length, 3)
+  }
+
+  // Code blocks (examples = richer context)
+  const codeBlocks = (content.match(/```/g) || []).length / 2
+  score += Math.min(codeBlocks, 5)
+
+  // Length factor
+  if (content.length > 20_000) score += 3
+  else if (content.length > 5_000) score += 1
+
+  // File name signals — rich documentation files get a higher budget
+  const richFilePatterns = /CLAUDE|ARCHITECTURE|CONTRIBUTING|DESIGN|CONVENTIONS|ADR|DECISIONS/i
+  if (richFilePatterns.test(sourceRef)) score += 5
+
+  // Map score to budget: min 2, max 10
+  if (score >= 20) return 10
+  if (score >= 12) return 7
+  if (score >= 6) return 5
+  if (score >= 3) return 3
+  return 2
+}
+
+function buildExtractionPrompt(source: string, maxFacts: number = 3): string {
   return `You are a knowledge extraction engine. Analyze the following source material and extract ONLY the most durable, high-value facts.
 
 For each fact, output a JSON object on its own line:
@@ -903,7 +942,8 @@ For each fact, output a JSON object on its own line:
 
 Strictness rules:
 - Output ONLY valid JSON objects, one per line. No markdown, no explanation.
-- MAXIMUM 3 facts. Fewer is better — only extract what’s genuinely durable.
+- Extract UP TO ${maxFacts} facts from this content.
+- If the content has fewer than ${maxFacts} worthwhile facts, extract fewer.
 - Skip version numbers, schema versions, dependency versions — these change frequently.
 - Skip things trivially discoverable from a single file read (imports, file structure).
 - Skip facts that restate what the code already says ("X uses Y" when X imports Y).
@@ -916,7 +956,7 @@ ${source}`
 }
 
 /** Parse Haiku output: one JSON fact per line. */
-function parseExtractedFacts(text: string): ExtractedFact[] {
+function parseExtractedFacts(text: string, maxFacts: number = 3): ExtractedFact[] {
   const facts: ExtractedFact[] = []
   const lines = text.split('\n').filter((l) => l.trim().startsWith('{'))
 
@@ -929,7 +969,7 @@ function parseExtractedFacts(text: string): ExtractedFact[] {
       facts.push({
         category: data.category,
         title: String(data.title).slice(0, 200),
-        content: String(data.content).slice(0, 2000),
+        content: String(data.content).slice(0, 4000),
         tags: Array.isArray(data.tags) ? data.tags.map(String).slice(0, 10) : [],
         scopePaths: Array.isArray(data.scopePaths) ? data.scopePaths.map(String).slice(0, 10) : []
       })
@@ -938,8 +978,8 @@ function parseExtractedFacts(text: string): ExtractedFact[] {
     }
   }
 
-  // Enforce cap: take only the first MAX_EXTRACTED_FACTS
-  return facts.slice(0, MAX_EXTRACTED_FACTS)
+  // Enforce cap: take only up to the dynamic budget
+  return facts.slice(0, maxFacts)
 }
 
 // ── CLAUDE.md regeneration prompt (retained from memory-feed.service.ts) ──

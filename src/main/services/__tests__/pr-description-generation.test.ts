@@ -16,10 +16,10 @@ import { test, describe, summaryAsync } from './test-harness'
 // Must run before importing any module that references `electron`
 setupElectronStub()
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { parseOneShotResult } = require('../one-shot-claude') as typeof import('../one-shot-claude')
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { DEFAULT_MODEL_CONFIG } = require('../../../shared/constants') as typeof import('../../../shared/constants')
+
+const { DEFAULT_MODEL_CONFIG } =
+  require('../../../shared/constants') as typeof import('../../../shared/constants')
 
 // ── DEFAULT_MODEL_CONFIG includes pr-description ────────────────────────────
 
@@ -42,7 +42,8 @@ describe('pr-description model config', () => {
 describe('parseOneShotResult for PR descriptions', () => {
   test('parses valid JSON result with description text', () => {
     const json = JSON.stringify({
-      result: '## Summary\nAdded PR description generation.\n\n- Implemented IPC handler\n- Fixed race condition',
+      result:
+        '## Summary\nAdded PR description generation.\n\n- Implemented IPC handler\n- Fixed race condition',
       usage: {
         input_tokens: 500,
         output_tokens: 100,
@@ -98,7 +99,10 @@ describe('PR description prompt construction', () => {
     // Each line should be at most role prefix + 500 chars
     for (const line of lines) {
       const contentPart = line.replace(/^\[(user|assistant)\]: /, '')
-      assert.ok(contentPart.length <= 500, `content should be truncated to 500 chars, got ${contentPart.length}`)
+      assert.ok(
+        contentPart.length <= 500,
+        `content should be truncated to 500 chars, got ${contentPart.length}`
+      )
     }
   })
 

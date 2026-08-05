@@ -26,8 +26,7 @@ import type {
   GrillQuestion,
   ImageAttachment,
   LLMProvider,
-  ExecutorBackend,
-  PlanDetectedEvent
+  ExecutorBackend
 } from '../../shared/types'
 import type { AgentPromptInput } from './executor-types'
 import { EXTERNAL_MCP_INTEGRATIONS, resolveModelAction } from '../../shared/constants'
@@ -56,6 +55,7 @@ import { ToolActivityAccumulator } from './tool-activity-accumulator'
 import { localPlanStateService } from './local-plan-state.service'
 import { localContextReconstructor } from './local-context-reconstructor'
 import { IpcBridge } from './ipc-bridge'
+import { parsePlanPayload } from './agent-session-handlers'
 import { AgentStreamProcessor } from './agent-stream-processor'
 import { AgentRecoveryManager } from './agent-recovery-manager'
 import { AgentExecutorFactory } from './agent-executor-factory'
@@ -112,28 +112,6 @@ interface ExecuteStreamOptions {
   /** Explicit goal condition — takes priority over adapter duck-typing. */
   goal?: string
   goalMode?: 'advisory' | 'enforce'
-}
-
-/**
- * Parse a raw plan payload (from IPC bridge or control-actions) into a
- * validated PlanDetectedEvent. Handles both well-shaped objects and raw
- * JSON strings, falling back to null structuredPlan for malformed data.
- */
-function parsePlanPayload(payload: unknown, beforePlan: string): PlanDetectedEvent {
-  const raw = typeof payload === 'string' ? payload : JSON.stringify(payload)
-  const obj =
-    typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {}
-  return {
-    rawContent: raw,
-    structuredPlan:
-      (obj.structuredPlan as PlanDetectedEvent['structuredPlan']) ??
-      // Direct StructuredPlan object (from SDK onPlan callback)
-      (obj.type !== undefined && obj.phases !== undefined
-        ? (payload as PlanDetectedEvent['structuredPlan'])
-        : null),
-    beforePlan,
-    afterPlan: ''
-  }
 }
 
 // ── Helpers ──
@@ -212,12 +190,16 @@ export class AgentSessionService extends AgentBaseService {
   private _pendingPrimingContext: Array<{ type: 'text'; text: string }> | undefined
   /** Per-conversation CLI executors — each conversation gets its own interactive claude process. */
   private readonly cliExecutors = new Map<string, CLIExecutor>()
-  /** Backward-compat accessor — returns the executor for lastActiveConversationId (or a fresh one). */
+  /**
+   * Backward-compat accessor — returns the executor for lastActiveConversationId.
+   * Falls back to '__idle__' if no conversation has started yet (e.g. during init).
+   * The '__idle__' key is cleaned up on next start() via cliExecutors.clear().
+   */
   get cliExecutor(): CLIExecutor {
-    return this.getOrCreateCliExecutor(this._lastActiveConversationId ?? '__default__')
+    return this.getOrCreateCliExecutor(this._lastActiveConversationId ?? '__idle__')
   }
 
-  private getOrCreateCliExecutor(conversationId: string): CLIExecutor {
+  getOrCreateCliExecutor(conversationId: string): CLIExecutor {
     let executor = this.cliExecutors.get(conversationId)
     if (!executor) {
       executor = new CLIExecutor()
@@ -276,6 +258,15 @@ export class AgentSessionService extends AgentBaseService {
   private controlToolState: ControlToolState = {
     plan: false,
     askUser: false
+  }
+
+  /**
+   * Read-only access to the current turn's control tool state.
+   * Used by chat-stream.service for late plan injection when the plan event
+   * arrives via IPC socket after the stream complete event via stdout.
+   */
+  getControlToolState(): ControlToolState {
+    return this.controlToolState
   }
 
   /** G1: Per-session instance ID for MCP config file isolation (parallel build tasks). */
@@ -506,8 +497,12 @@ export class AgentSessionService extends AgentBaseService {
     // Don't abort an active stream if we're re-starting for the same workspace.
     // This prevents HMR, React strict mode, or auto-open from killing in-flight queries.
     // Check if ANY stream is active in this workspace
-    const hasActiveStream = this.activeStreams.size > 0 &&
-      [...this.activeStreams.values()].some(ctx => ctx.abortController !== null)
+    // PERF-01: Use for...of with early exit instead of spread+some to avoid O(n)
+    // temporary array allocation when activeStreams has many completed entries.
+    let hasActiveStream = false
+    for (const ctx of this.activeStreams.values()) {
+      if (ctx.abortController !== null) { hasActiveStream = true; break }
+    }
     if (
       hasActiveStream &&
       this.workspacePath === workspacePath &&
@@ -546,6 +541,13 @@ export class AgentSessionService extends AgentBaseService {
     this.lastContextTokens = undefined
     this._lastActiveConversationId = null
     this.activeStreams.clear()
+    // GHOST-PROC-01: Kill and clear CLI executors on workspace switch.
+    // Without this, orphaned CLI processes from the previous workspace
+    // continue running in the background.
+    for (const executor of this.cliExecutors.values()) {
+      executor.killProcess().catch(() => {})
+    }
+    this.cliExecutors.clear()
     this._directAccumulatedText = ''
     this._directAbortController = null
     this.compactCount = 0
@@ -827,6 +829,12 @@ export class AgentSessionService extends AgentBaseService {
     // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
     // If executeStream() threw, this line is skipped and the pending state is preserved for retry.
     this.adapter.onSendSuccess?.(conversationId)
+
+    // MEMLEAK-01: Delete the per-conversation activeStreams entry after the stream completes
+    // (both success and error paths — error path lands in handleStreamError which already
+    // nulls the abortController). Without this, entries accumulate unboundedly, each
+    // holding the full accumulatedText (can be 50KB+ per conversation).
+    this.activeStreams.delete(conversationId)
   }
 
   /**
@@ -1008,7 +1016,11 @@ export class AgentSessionService extends AgentBaseService {
         danger: 'bypassPermissions'
       }
       const cliMode = cliPermMap[mode] ?? 'plan'
-      this.cliExecutor.setPermissionMode(cliMode as 'plan' | 'auto' | 'bypassPermissions')
+      // WRONG-EXECUTOR-01: Use getOrCreateCliExecutor with currentConversationId
+      // instead of the cliExecutor getter, which resolves via _lastActiveConversationId
+      // and can target the wrong process when multiple streams are active.
+      const executor = this.getOrCreateCliExecutor(this.currentConversationId ?? '__idle__')
+      executor.setPermissionMode(cliMode as 'plan' | 'auto' | 'bypassPermissions')
       // F6: Invalidate cached MCP config so the next continueSession turn
       // rebuilds it with the new mode's permission level.
       this.executorFactory.invalidateMcpConfigCache()
@@ -1116,11 +1128,14 @@ export class AgentSessionService extends AgentBaseService {
 
     // CLI backend: send /compact slash command to the interactive process
     if (this.executorBackend === 'cli') {
-      if (this.cliExecutor.isAlive()) {
+      // WRONG-EXECUTOR-02: Resolve the correct per-conversation executor
+      // instead of using the getter which goes through _lastActiveConversationId.
+      const executor = this.getOrCreateCliExecutor(this.currentConversationId ?? '__idle__')
+      if (executor.isAlive()) {
         this.log.info(`[compaction] CLI backend — sending /compact #${this.compactCount + 1}`)
         this.compactCount++
         this.compactSuggested = false
-        this.cliExecutor.compact()
+        executor.compact()
         return
       }
       this.log.warn('[compaction] CLI backend — no active process to compact')
@@ -1691,10 +1706,11 @@ export class AgentSessionService extends AgentBaseService {
     goalMode?: 'advisory' | 'enforce'
     conversationId?: string
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
-    const cliOptions = this.buildCLIExecuteOptions(params)
-    const executor = this.getOrCreateCliExecutor(
-      params.conversationId ?? this._lastActiveConversationId ?? '__default__'
-    )
+    const convId = params.conversationId ?? this._lastActiveConversationId ?? '__idle__'
+    const executor = this.getOrCreateCliExecutor(convId)
+    // WRONG-EXECUTOR-03: Pass the resolved executor to buildCLIExecuteOptions so
+    // the canContinue check uses THIS conversation's executor, not _lastActiveConversationId's.
+    const cliOptions = this.buildCLIExecuteOptions(params, executor)
     return executor.execute(cliOptions)
   }
 
@@ -2011,8 +2027,8 @@ export class AgentSessionService extends AgentBaseService {
     localContextWindow?: number
     goal?: string
     goalMode?: 'advisory' | 'enforce'
-  }): CLIExecuteOptions {
-    return this.executorFactory.buildCLIExecuteOptions(params)
+  }, executor?: CLIExecutor): CLIExecuteOptions {
+    return this.executorFactory.buildCLIExecuteOptions(params, executor)
   }
 
   /**
@@ -2052,7 +2068,10 @@ export class AgentSessionService extends AgentBaseService {
       const planEvent = parsePlanPayload(payload, this.accumulatedText)
       this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
       this.emit('plan', planEvent)
-      this.log.info(`[ipc-bridge] Plan event received for ${this.currentConversationId}`)
+      this.log.info(
+        `[ipc-bridge] Plan event received — conversationId=${this.currentConversationId} ` +
+        `structuredPlan=${!!planEvent.structuredPlan} rawContentLen=${planEvent.rawContent.length}`
+      )
 
       // Persist the plan so phase/task progress has a DB row to attach to.
       // Without this, planRepository.findActiveByConversationId() (used by the

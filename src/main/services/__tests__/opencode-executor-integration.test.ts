@@ -94,8 +94,7 @@ describe('OpenCodeExecutor — integration', () => {
         error === null || error.includes('HTTP'),
         `oMLX should be reachable at ${OMLX_BASE_URL}, got: ${error}`
       )
-    })
-  )
+    }))
 
   test('health: unreachable server returns "Cannot reach"', () =>
     runExclusive(async () => {
@@ -103,8 +102,7 @@ describe('OpenCodeExecutor — integration', () => {
       const error = await (ex as any).checkLocalProviderHealth('omlx', 'http://192.0.2.1:9999')
       assert.ok(error !== null, 'Should return error for unreachable server')
       assert.ok(error.includes('Cannot reach'), `Expected "Cannot reach", got: ${error}`)
-    })
-  )
+    }))
 
   // ── CLI availability checks ────────────────────────────────────
 
@@ -117,9 +115,11 @@ describe('OpenCodeExecutor — integration', () => {
         // Warn but don't fail - this helps diagnose missing CLI in CI/dev environments
         console.warn('[OpenCode CLI Test]', error)
       }
-      assert.ok(true, `checkCliAvailable() works correctly (CLI ${error ? 'not found' : 'available'})`)
-    })
-  )
+      assert.ok(
+        true,
+        `checkCliAvailable() works correctly (CLI ${error ? 'not found' : 'available'})`
+      )
+    }))
 
   test('cli: start() provides helpful error when CLI missing', () =>
     runExclusive(async () => {
@@ -128,21 +128,25 @@ describe('OpenCodeExecutor — integration', () => {
       mkdirSync(configDir, { recursive: true })
       const configPath = writeTestConfig(configDir)
 
-      const error = await ex.start(TEST_WORKSPACE, { configPath, isLocal: true }).catch((err) => err)
+      const error = await ex
+        .start(TEST_WORKSPACE, { configPath, isLocal: true })
+        .catch((err) => err)
 
       if (error) {
         const errMsg = error.message || String(error)
         // Should contain helpful error about missing opencode CLI
         assert.ok(
-          errMsg.includes('opencode') && (errMsg.includes('ENOENT') || errMsg.includes('not found') || errMsg.includes('Install')),
+          errMsg.includes('opencode') &&
+            (errMsg.includes('ENOENT') ||
+              errMsg.includes('not found') ||
+              errMsg.includes('Install')),
           `Expected helpful installation error, got: ${errMsg}`
         )
       }
 
       // Cleanup
       rmSync(configDir, { recursive: true, force: true })
-    })
-  )
+    }))
 
   test('cli: PATH augmentation enables spawn to find opencode', () =>
     runExclusive(async () => {
@@ -177,8 +181,7 @@ describe('OpenCodeExecutor — integration', () => {
         // Restore PATH
         process.env.PATH = originalPath
       }
-    })
-  )
+    }))
 
   // ── Server lifecycle ──
 
@@ -190,22 +193,19 @@ describe('OpenCodeExecutor — integration', () => {
       process.env.OPENCODE_CONFIG = configPath
       await executor.start(TEST_WORKSPACE, { configPath, isLocal: true })
       assert.equal(executor.isRunning(), true, 'Server should be running after start()')
-    })
-  )
+    }))
 
   test('lifecycle: calling start() again is idempotent', () =>
     runExclusive(async () => {
       await executor.start(TEST_WORKSPACE, { configPath, isLocal: true })
       assert.equal(executor.isRunning(), true, 'Still running after double start()')
-    })
-  )
+    }))
 
   test('lifecycle: getClient() returns a non-null client', () =>
     runExclusive(async () => {
       const client = executor.getClient()
       assert.ok(client, 'Client should be available after start()')
-    })
-  )
+    }))
 
   // ── Session creation (server already running) ──
 
@@ -221,8 +221,7 @@ describe('OpenCodeExecutor — integration', () => {
       const sessionId = session.data?.id
       assert.ok(sessionId, `Session ID should be defined, got: ${JSON.stringify(session.data)}`)
       assert.equal(typeof sessionId, 'string')
-    })
-  )
+    }))
 
   test('session: list returns at least one session', () =>
     runExclusive(async () => {
@@ -230,8 +229,7 @@ describe('OpenCodeExecutor — integration', () => {
       const result = await client.session.list()
       const sessions = (result as any)?.data ?? []
       assert.ok(sessions.length >= 1, 'Should have at least one session')
-    })
-  )
+    }))
 
   // ── Execute prompt round-trip ──
 
@@ -263,8 +261,7 @@ describe('OpenCodeExecutor — integration', () => {
         receivedText.length > 0,
         `Should receive text, got empty. Status: ${receivedStatus}`
       )
-    })
-  )
+    }))
 
   // ── Error object resilience ──
 
@@ -293,7 +290,7 @@ describe('OpenCodeExecutor — integration', () => {
             receivedErrorType = typeof chunk.error
           }
         }
-      } catch (err) {
+      } catch (_err) {
         crashed = true
       }
 
@@ -306,8 +303,7 @@ describe('OpenCodeExecutor — integration', () => {
         )
       }
       // If no error received, the model name was accepted — that's OK too
-    })
-  )
+    }))
 
   test('execute: non-existent model does not hang (deadlock guard)', () =>
     runExclusive(async () => {
@@ -333,8 +329,7 @@ describe('OpenCodeExecutor — integration', () => {
       }
 
       assert.equal(hung, false, 'Stream should not hang — session.error must terminate the loop')
-    })
-  )
+    }))
 
   // ── Stop and restart ──
 
@@ -342,8 +337,7 @@ describe('OpenCodeExecutor — integration', () => {
     runExclusive(async () => {
       await executor.stop()
       assert.equal(executor.isRunning(), false, 'Server should be stopped')
-    })
-  )
+    }))
 
   // NOTE: Port-restart and bad-config tests removed — they require starting
   // a second OpenCode server process after stop(), which hangs in test
@@ -358,8 +352,7 @@ describe('OpenCodeExecutor — integration', () => {
       await executor.stop()
       rmSync(configDir, { recursive: true, force: true })
       delete process.env.OPENCODE_CONFIG
-    })
-  )
+    }))
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

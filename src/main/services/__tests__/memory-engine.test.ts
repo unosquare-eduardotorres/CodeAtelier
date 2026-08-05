@@ -64,7 +64,11 @@ test('cosineSimilarity: zero vector = 0.0', () => {
 // ── Evidence-Based Promotion Tier Logic ──
 
 // Helper to create confirmation events
-function makeConfirm(sourceType: 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap', dayOffset: number, weight?: number) {
+function makeConfirm(
+  sourceType: 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap',
+  dayOffset: number,
+  weight?: number
+) {
   const date = new Date()
   date.setDate(date.getDate() - dayOffset) // dayOffset days ago
   return {
@@ -80,28 +84,17 @@ test('promotion: T0 stays T0 with only 1 confirm (needs 3)', () => {
 })
 
 test('promotion: T0 stays T0 with 2 confirms on 2 days (needs 3 confirms on 3 days)', () => {
-  const confirms = [
-    makeConfirm('extraction', 1),
-    makeConfirm('tool', 0)
-  ]
+  const confirms = [makeConfirm('extraction', 1), makeConfirm('tool', 0)]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
 })
 
 test('promotion: T0 stays T0 with 3 confirms on SAME day (needs 3 distinct days)', () => {
-  const confirms = [
-    makeConfirm('extraction', 0),
-    makeConfirm('tool', 0),
-    makeConfirm('human', 0)
-  ]
+  const confirms = [makeConfirm('extraction', 0), makeConfirm('tool', 0), makeConfirm('human', 0)]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
 })
 
 test('promotion: T0 → T1 with 3 confirms on 3 distinct days', () => {
-  const confirms = [
-    makeConfirm('extraction', 3),
-    makeConfirm('tool', 1),
-    makeConfirm('human', 0)
-  ]
+  const confirms = [makeConfirm('extraction', 3), makeConfirm('tool', 1), makeConfirm('human', 0)]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 1)
 })
 
@@ -139,11 +132,7 @@ test('promotion: T1 stays T1 with all criteria met but confidence < 0.75', () =>
 })
 
 test('promotion: T1 stays T1 with only 3 confirms (needs 5)', () => {
-  const confirms = [
-    makeConfirm('extraction', 20),
-    makeConfirm('tool', 10),
-    makeConfirm('human', 0)
-  ]
+  const confirms = [makeConfirm('extraction', 20), makeConfirm('tool', 10), makeConfirm('human', 0)]
   assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
 })
 
@@ -279,9 +268,7 @@ test('promotion: auto_dedup mixed with real confirms — only real ones count fo
 
 test('promotion: auto_dedup-only confirms do NOT promote T1→T2', () => {
   // 10 auto_dedup confirms spanning 20+ days — should stay T1
-  const confirms = Array.from({ length: 10 }, (_, i) =>
-    makeConfirm('auto_dedup', i * 3)
-  )
+  const confirms = Array.from({ length: 10 }, (_, i) => makeConfirm('auto_dedup', i * 3))
   assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
 })
 
@@ -328,8 +315,8 @@ test('capture caps: per-source caps for auto-capture quality', () => {
 test('backfillAllPendingEmbeddings: returns 0 when provider not ready', async () => {
   const { memoryEngineService } = await import('../memory-engine.service')
   const progressCalls: Array<[number, number]> = []
-  const result = await memoryEngineService.backfillAllPendingEmbeddings(
-    (processed, total) => progressCalls.push([processed, total])
+  const result = await memoryEngineService.backfillAllPendingEmbeddings((processed, total) =>
+    progressCalls.push([processed, total])
   )
   assert.equal(result, 0, 'Should return 0 when provider is not ready')
   assert.equal(progressCalls.length, 0, 'Should not call onProgress when provider is not ready')
@@ -377,10 +364,7 @@ test('regression A3: handleDuplicate returns a fact (non-null) but should NOT co
   // The fix removes that branch entirely — we verify the source doesn't contain it.
   const fs = require('node:fs')
   const path = require('node:path')
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'memory-engine.service.ts'),
-    'utf-8'
-  )
+  const source = fs.readFileSync(path.join(__dirname, '..', 'memory-engine.service.ts'), 'utf-8')
 
   // The pipeline-result branch should NOT contain incrementCaptureCap
   const pipelineBlock = source.slice(
@@ -419,10 +403,7 @@ test('regression B2: checkCaptureCap appears AFTER similarity pipeline in writeF
   // The cap only gates brand-new fact creation.
   const fs = require('node:fs')
   const path = require('node:path')
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'memory-engine.service.ts'),
-    'utf-8'
-  )
+  const source = fs.readFileSync(path.join(__dirname, '..', 'memory-engine.service.ts'), 'utf-8')
 
   const writeFact = source.slice(
     source.indexOf('async writeFact('),
@@ -445,10 +426,7 @@ test('regression A6: drainClassifyQueue has fast-path branches for high similari
   // Verify the drain loop mirrors the pipeline's branch order
   const fs = require('node:fs')
   const path = require('node:path')
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'memory-engine.service.ts'),
-    'utf-8'
-  )
+  const source = fs.readFileSync(path.join(__dirname, '..', 'memory-engine.service.ts'), 'utf-8')
 
   const drainBlock = source.slice(
     source.indexOf('private async drainClassifyQueue'),
@@ -472,10 +450,7 @@ test('regression A6: drainClassifyQueue has fast-path branches for high similari
 test('regression A4: scanForDuplicates reparents confirmations before mergeFact', () => {
   const fs = require('node:fs')
   const path = require('node:path')
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'memory-engine.service.ts'),
-    'utf-8'
-  )
+  const source = fs.readFileSync(path.join(__dirname, '..', 'memory-engine.service.ts'), 'utf-8')
 
   const scanBlock = source.slice(
     source.indexOf('scanForDuplicates(workspaceId'),

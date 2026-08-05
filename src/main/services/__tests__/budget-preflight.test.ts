@@ -11,7 +11,8 @@ import { test, describe, summaryAsync } from './test-harness'
 
 // ── Fix 1.1: BudgetExceededError ──
 
-const { BudgetExceededError } = require('../../../shared/errors') as typeof import('../../../shared/errors')
+const { BudgetExceededError } =
+  require('../../../shared/errors') as typeof import('../../../shared/errors')
 
 describe('BudgetExceededError', () => {
   test('daily scope — constructs with correct message and fields', () => {
@@ -57,7 +58,8 @@ describe('BudgetExceededError', () => {
 
 // ── Fix 1.2: BudgetStatus.dailyCostCents ──
 
-const { estimateCostCents } = require('../cost-tracker.service') as typeof import('../cost-tracker.service')
+const { estimateCostCents } =
+  require('../cost-tracker.service') as typeof import('../cost-tracker.service')
 
 describe('BudgetStatus — daily cost window', () => {
   test('estimateCostCents with sonnet model — basic pricing', () => {

@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
-import { trySetupTestDb, seedConversation } from './db-test-helper'
+import { trySetupTestDb } from './db-test-helper'
 
 const env = trySetupTestDb()
 
@@ -17,7 +17,7 @@ if (!env) {
     test('memory-fact.repository', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db, wsId } = env
+  const { wsId } = env
 
   // ═══════════════════════════════════════════════════════════════════════
   // memory-fact.repository.ts (821 lines, 0%)
@@ -209,10 +209,8 @@ if (!env) {
   // basic CRUD operations. The tests here add supplementary coverage.
 
   let e2eRunRepo: any = null
-  let e2eResultRepo: any = null
   try {
     e2eRunRepo = require('../../repositories').e2eTestRunRepository
-    e2eResultRepo = require('../../repositories').e2eTestResultRepository
   } catch {}
 
   if (e2eRunRepo) {

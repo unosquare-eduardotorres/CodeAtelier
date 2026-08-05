@@ -288,7 +288,10 @@ describe('buildCLIArgs — tool lists', () => {
 describe('buildCLIArgs — additional directories', () => {
   test('multiple_add_dir_flags', () => {
     const args = buildCLIArgs({ additionalDirectories: ['/path/a', '/path/b'] })
-    const indices = args.reduce<number[]>((acc, v, i) => (v === '--add-dir' ? [...acc, i] : acc), [])
+    const indices = args.reduce<number[]>(
+      (acc, v, i) => (v === '--add-dir' ? [...acc, i] : acc),
+      []
+    )
     assert.equal(indices.length, 2)
     assert.equal(args[indices[0] + 1], '/path/a')
     assert.equal(args[indices[1] + 1], '/path/b')

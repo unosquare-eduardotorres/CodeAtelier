@@ -284,7 +284,7 @@ export class AgentRecoveryManager {
     ) {
       try {
         const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
-          cliExecutor: this.s.cliExecutor,
+          cliExecutor: this.s.getOrCreateCliExecutor(conversationId),
           systemPrompt,
           workspacePath: this.s.workspacePath!,
           model: resolveModelFromSnapshot(
@@ -336,7 +336,7 @@ export class AgentRecoveryManager {
           `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
       )
       const recoveryResult = await this.s.recoveryNudge.attemptRecovery({
-        cliExecutor: this.s.cliExecutor,
+        cliExecutor: this.s.getOrCreateCliExecutor(conversationId),
         systemPrompt,
         workspacePath: this.s.workspacePath!,
         model: resolveModelFromSnapshot(

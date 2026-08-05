@@ -44,10 +44,13 @@ describe('Audit IPC — channel constants', () => {
 describe('Audit IPC — validation patterns', () => {
   test('AUDIT_START_validation', () => {
     const ch = IPC_CHANNELS.AUDIT_START
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      tracks: ['security', 'performance']
-    }, ch)
+    const args = requireObject(
+      {
+        workspaceId: 'ws-1',
+        tracks: ['security', 'performance']
+      },
+      ch
+    )
     const wsId = requireString(args, 'workspaceId', ch)
     assert.equal(wsId, 'ws-1')
     assert.ok(Array.isArray(args.tracks))
@@ -62,11 +65,14 @@ describe('Audit IPC — validation patterns', () => {
 
   test('AUDIT_RERUN_TRACK_validation', () => {
     const ch = IPC_CHANNELS.AUDIT_RERUN_TRACK
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      trackId: 'security',
-      runId: 'run-1'
-    }, ch)
+    const args = requireObject(
+      {
+        workspaceId: 'ws-1',
+        trackId: 'security',
+        runId: 'run-1'
+      },
+      ch
+    )
     const wsId = requireString(args, 'workspaceId', ch)
     const trackId = requireString(args, 'trackId', ch)
     const runId = requireString(args, 'runId', ch)
@@ -135,12 +141,15 @@ describe('Grill IPC — channel constants', () => {
 describe('Grill IPC — validation patterns', () => {
   test('GRILL_EVALUATE_validation', () => {
     const ch = IPC_CHANNELS.GRILL_EVALUATE
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      trackId: 'architecture',
-      ideaTitle: 'Test Idea',
-      ideaDescription: 'Description of the idea'
-    }, ch)
+    const args = requireObject(
+      {
+        workspaceId: 'ws-1',
+        trackId: 'architecture',
+        ideaTitle: 'Test Idea',
+        ideaDescription: 'Description of the idea'
+      },
+      ch
+    )
     requireString(args, 'workspaceId', ch)
     requireString(args, 'trackId', ch)
     requireString(args, 'ideaTitle', ch)
@@ -157,10 +166,13 @@ describe('Grill IPC — validation patterns', () => {
 
   test('GRILL_SAVE_ANSWERS_validation', () => {
     const ch = IPC_CHANNELS.GRILL_SAVE_ANSWERS
-    const args = requireObject({
-      sessionId: 'session-1',
-      answers: [{ questionId: 'q1', answer: 'yes' }]
-    }, ch)
+    const args = requireObject(
+      {
+        sessionId: 'session-1',
+        answers: [{ questionId: 'q1', answer: 'yes' }]
+      },
+      ch
+    )
     requireString(args, 'sessionId', ch)
     assert.ok(Array.isArray(args.answers))
   })
@@ -244,11 +256,14 @@ describe('MPA IPC — validation patterns', () => {
 
   test('MPA_APPROVAL_RESPOND_validation', () => {
     const ch = IPC_CHANNELS.MPA_APPROVAL_RESPOND
-    const args = requireObject({
-      runId: 'run-1',
-      approved: true,
-      feedback: 'Approved with modifications'
-    }, ch)
+    const args = requireObject(
+      {
+        runId: 'run-1',
+        approved: true,
+        feedback: 'Approved with modifications'
+      },
+      ch
+    )
     requireString(args, 'runId', ch)
     assert.equal(args.approved, true)
     assert.equal(args.feedback, 'Approved with modifications')
@@ -264,10 +279,13 @@ describe('MPA IPC — validation patterns', () => {
 
   test('MPA_CAMPAIGN_START_validation', () => {
     const ch = IPC_CHANNELS.MPA_CAMPAIGN_START
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      goals: [{ title: 'Goal 1', description: 'Desc 1' }]
-    }, ch)
+    const args = requireObject(
+      {
+        workspaceId: 'ws-1',
+        goals: [{ title: 'Goal 1', description: 'Desc 1' }]
+      },
+      ch
+    )
     requireString(args, 'workspaceId', ch)
     assert.ok(Array.isArray(args.goals))
     assert.ok((args.goals as unknown[]).length > 0, 'At least one goal required')

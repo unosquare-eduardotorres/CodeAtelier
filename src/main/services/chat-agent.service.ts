@@ -15,7 +15,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import type { AgentRole, AgentStatus, ConversationMode, ImageAttachment } from '../../shared/types'
+import type { AgentRole, AgentStatus, ControlToolState, ConversationMode, ImageAttachment } from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { AgentSessionService } from './agent-session.service'
 import { ProjectSpecialistRoleAdapter } from './role-adapters/project-specialist.adapter'
@@ -509,6 +509,15 @@ export class ChatAgentService extends EventEmitter {
    */
   clearConversationPendingState(conversationId: string): void {
     this.getActiveAdapter()?.clearConversation?.(conversationId)
+  }
+
+  /**
+   * Read-only access to the active session's control tool state.
+   * Used by chat-stream.service for late plan injection when the plan event
+   * arrives via IPC socket after the stream complete event via stdout.
+   */
+  getControlToolState(): ControlToolState | null {
+    return this.getActiveSession()?.getControlToolState() ?? null
   }
 
   /** Which executor backend is active for the current workspace (cli | local-direct | unknown). */

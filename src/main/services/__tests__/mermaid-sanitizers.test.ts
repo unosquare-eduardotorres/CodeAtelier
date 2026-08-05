@@ -12,7 +12,7 @@ import {
   fixIconSyntax,
   fixIconNames,
   sanitizeMermaid,
-  ICON_ALIASES,
+  ICON_ALIASES
 } from '../../../shared/mermaid-sanitizers'
 
 // ── splitIconNodeLines ───────────────────────────────────────────────────────
@@ -28,7 +28,10 @@ describe('splitIconNodeLines', () => {
   test('splits three concatenated @{} nodes', () => {
     const input = 'A@{ icon: "lucide:home" }B@{ icon: "lucide:star" }C@{ icon: "lucide:sun" }'
     const result = splitIconNodeLines(input)
-    const lines = result.split('\n').map((l) => l.trim()).filter(Boolean)
+    const lines = result
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
     assert.equal(lines.length, 3, 'should produce 3 separate lines')
   })
 
@@ -233,14 +236,18 @@ describe('sanitizeMermaid', () => {
   test('full pipeline: bracket-wrapped + concatenated nodes', () => {
     const input = '  A["@{ icon: \"lucide:home\" }"]B["@{ icon: \"lucide:star\" }"]'
     const result = sanitizeMermaid(input)
-    const lines = result.split('\n').map(l => l.trim()).filter(Boolean)
+    const lines = result
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
     assert.ok(lines.length >= 2, 'concatenated bracket-wrapped nodes should be split')
     assert.ok(result.includes('A@{'), 'first node unwrapped')
     assert.ok(result.includes('B@{'), 'second node unwrapped')
   })
 
   test('preserves valid multiline diagram unchanged', () => {
-    const input = 'flowchart TD\n  A@{\n    icon: "lucide:house",\n    label: "Home"\n  }\n  B@{\n    icon: "lucide:star"\n  }\n  A --> B'
+    const input =
+      'flowchart TD\n  A@{\n    icon: "lucide:house",\n    label: "Home"\n  }\n  B@{\n    icon: "lucide:star"\n  }\n  A --> B'
     const result = sanitizeMermaid(input)
     assert.equal(result, input, 'valid multiline diagram should pass through unchanged')
   })

@@ -38,7 +38,9 @@ function hangingExecutor(initialChunks: unknown[] = []): {
       try {
         for (const c of initialChunks) yield c as StreamChunk
         // Hang forever — never yields another chunk
-        await new Promise<void>(() => { /* intentionally never resolves */ })
+        await new Promise<void>(() => {
+          /* intentionally never resolves */
+        })
       } finally {
         iteratorClosed.value = true
       }

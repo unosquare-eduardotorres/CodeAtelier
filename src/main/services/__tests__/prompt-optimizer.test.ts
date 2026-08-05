@@ -19,10 +19,11 @@ import { test, describe, summaryAsync } from './test-harness'
 // has already called it.
 setupElectronStub()
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { promptOptimizerService } = require('../prompt-optimizer.service') as typeof import('../prompt-optimizer.service')
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { workspaceRepository } = require('../../db/repositories') as typeof import('../../db/repositories')
+const { promptOptimizerService } =
+  require('../prompt-optimizer.service') as typeof import('../prompt-optimizer.service')
+
+const { workspaceRepository } =
+  require('../../db/repositories') as typeof import('../../db/repositories')
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -35,12 +36,10 @@ const DEFAULT_SETTINGS = {
 }
 
 /** Monkey-patch workspace settings for the duration of a test. */
-function withSettings(
-  settings: Record<string, unknown>,
-  fn: () => Promise<void>
-): Promise<void> {
+function withSettings(settings: Record<string, unknown>, fn: () => Promise<void>): Promise<void> {
   const orig = workspaceRepository.getSettings
-  ;(workspaceRepository as unknown as AnyService).getSettings = (): Record<string, unknown> => settings
+  ;(workspaceRepository as unknown as AnyService).getSettings = (): Record<string, unknown> =>
+    settings
   return fn().finally(() => {
     ;(workspaceRepository as unknown as AnyService).getSettings = orig
   })
@@ -63,14 +62,14 @@ function fakeCliResponse(resultText: string): string {
  * When `response` is a string, the runner returns a valid CLI JSON response.
  * When `response` is an Error, the runner throws.
  */
-function withRunner(
-  response: string | Error
-): { restore: () => void } {
+function withRunner(response: string | Error): { restore: () => void } {
   const svc = promptOptimizerService as unknown as AnyService
   const origRunner = svc._runner
 
   if (response instanceof Error) {
-    svc._runner = async () => { throw response }
+    svc._runner = async () => {
+      throw response
+    }
   } else {
     svc._runner = async () => fakeCliResponse(response)
   }
@@ -147,7 +146,6 @@ describe('PromptOptimizerService', () => {
         assert.equal(result, 'slash-command')
       })
     })
-
   })
 
   // ── Optimize with guards ──
@@ -187,19 +185,16 @@ describe('PromptOptimizerService', () => {
     })
 
     test('skips when disabled in settings', async () => {
-      return withSettings(
-        { ...DEFAULT_SETTINGS, promptOptimizationEnabled: false },
-        async () => {
-          const runner = withRunner('should not reach here')
-          try {
-            const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
-            assert.equal(result.changed, false)
-            assert.equal(result.skippedReason, 'disabled')
-          } finally {
-            runner.restore()
-          }
+      return withSettings({ ...DEFAULT_SETTINGS, promptOptimizationEnabled: false }, async () => {
+        const runner = withRunner('should not reach here')
+        try {
+          const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
+          assert.equal(result.changed, false)
+          assert.equal(result.skippedReason, 'disabled')
+        } finally {
+          runner.restore()
         }
-      )
+      })
     })
 
     test('proceeds for local-llm provider (R6-B1: guard removed, optimize routes to local path)', async () => {
@@ -214,13 +209,15 @@ describe('PromptOptimizerService', () => {
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, true)
-          assert.equal(result.optimizedText, 'Review the authentication middleware in the Express application for security vulnerabilities in JWT token validation')
+          assert.equal(
+            result.optimizedText,
+            'Review the authentication middleware in the Express application for security vulnerabilities in JWT token validation'
+          )
         } finally {
           svc._localRunner = origLocal
         }
       })
     })
-
   })
 
   // ── Parse behavior (exercises real optimize → parseResponse path) ──
@@ -260,9 +257,7 @@ describe('PromptOptimizerService', () => {
     test('rejects oversize output', async () => {
       const oversized = 'x'.repeat(5000)
       return withSettings(DEFAULT_SETTINGS, async () => {
-        const runner = withRunner(
-          `\`\`\`optimized-prompt\n${oversized}\n\`\`\``
-        )
+        const runner = withRunner(`\`\`\`optimized-prompt\n${oversized}\n\`\`\``)
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, false)
@@ -305,9 +300,7 @@ describe('PromptOptimizerService', () => {
 
     test('returns changed=false when optimized text equals original', async () => {
       return withSettings(DEFAULT_SETTINGS, async () => {
-        const runner = withRunner(
-          `\`\`\`optimized-prompt\n${LONG_PROMPT}\n\`\`\``
-        )
+        const runner = withRunner(`\`\`\`optimized-prompt\n${LONG_PROMPT}\n\`\`\``)
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, false)
@@ -336,7 +329,8 @@ describe('PromptOptimizerService', () => {
 
   describe('optimize — fence variants', () => {
     test('parses plain ``` fence (no info string) as fallback', async () => {
-      const optimized = 'Review the authentication middleware in the Express application and identify security vulnerabilities in JWT token validation.'
+      const optimized =
+        'Review the authentication middleware in the Express application and identify security vulnerabilities in JWT token validation.'
       return withSettings(DEFAULT_SETTINGS, async () => {
         const runner = withRunner(`\`\`\`\n${optimized}\n\`\`\``)
         try {
@@ -351,7 +345,8 @@ describe('PromptOptimizerService', () => {
     })
 
     test('parses <think> block + generic fence from local model', async () => {
-      const optimized = 'Analyze the authentication middleware in the Express application for security vulnerabilities in JWT token validation'
+      const optimized =
+        'Analyze the authentication middleware in the Express application for security vulnerabilities in JWT token validation'
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const svc = promptOptimizerService as unknown as AnyService
         const origLocal = svc._localRunner
@@ -370,7 +365,9 @@ describe('PromptOptimizerService', () => {
 
     test('raw text with no fence still returns parse-error', async () => {
       return withSettings(DEFAULT_SETTINGS, async () => {
-        const runner = withRunner('Here is a better version of your prompt without any fences at all')
+        const runner = withRunner(
+          'Here is a better version of your prompt without any fences at all'
+        )
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, false)
@@ -383,7 +380,9 @@ describe('PromptOptimizerService', () => {
 
     test('multiple generic fences reject (ambiguous) — falls to parse-error', async () => {
       return withSettings(DEFAULT_SETTINGS, async () => {
-        const runner = withRunner('\`\`\`\nBlock one\n\`\`\`\n\nSome text\n\`\`\`\nBlock two\n\`\`\`')
+        const runner = withRunner(
+          '\`\`\`\nBlock one\n\`\`\`\n\nSome text\n\`\`\`\nBlock two\n\`\`\`'
+        )
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, false)
@@ -413,19 +412,16 @@ describe('PromptOptimizerService', () => {
 
   describe('resolveLocalModel', () => {
     test('default assignment (no modelRoles) returns localCfg.localModel, not a Claude model', () => {
-      return withSettings(
-        { ...DEFAULT_SETTINGS, llmProvider: 'local-llm' },
-        async () => {
-          const result = promptOptimizerService.resolveLocalModel('ws-test', {
-            localModel: 'Qwen3.6-35B-A3B-MLX-8bit'
-          })
-          assert.equal(result, 'Qwen3.6-35B-A3B-MLX-8bit')
-          assert.ok(
-            !result.startsWith('claude-'),
-            `Expected local model, got Claude model: ${result}`
-          )
-        }
-      )
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const result = promptOptimizerService.resolveLocalModel('ws-test', {
+          localModel: 'Qwen3.6-35B-A3B-MLX-8bit'
+        })
+        assert.equal(result, 'Qwen3.6-35B-A3B-MLX-8bit')
+        assert.ok(
+          !result.startsWith('claude-'),
+          `Expected local model, got Claude model: ${result}`
+        )
+      })
     })
 
     test('explicit local role in modelRoles returns the role modelId', () => {
@@ -447,13 +443,10 @@ describe('PromptOptimizerService', () => {
     })
 
     test('no localModel configured falls back to qwen3-coder', () => {
-      return withSettings(
-        { ...DEFAULT_SETTINGS, llmProvider: 'local-llm' },
-        async () => {
-          const result = promptOptimizerService.resolveLocalModel('ws-test', {})
-          assert.equal(result, 'qwen3-coder')
-        }
-      )
+      return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
+        const result = promptOptimizerService.resolveLocalModel('ws-test', {})
+        assert.equal(result, 'qwen3-coder')
+      })
     })
   })
 
@@ -461,21 +454,26 @@ describe('PromptOptimizerService', () => {
 
   describe('optimize — local LLM path', () => {
     /** Set _localRunner on the service. Returns restore function. */
-    function withLocalRunner(
-      response: string | Error
-    ): { restore: () => void } {
+    function withLocalRunner(response: string | Error): { restore: () => void } {
       const svc = promptOptimizerService as unknown as AnyService
       const orig = svc._localRunner
       if (response instanceof Error) {
-        svc._localRunner = async () => { throw response }
+        svc._localRunner = async () => {
+          throw response
+        }
       } else {
         svc._localRunner = async () => ({ text: response })
       }
-      return { restore: () => { svc._localRunner = orig } }
+      return {
+        restore: () => {
+          svc._localRunner = orig
+        }
+      }
     }
 
     test('parses fence block from local model', async () => {
-      const optimized = 'Review the authentication middleware for security vulnerabilities in JWT token validation including expiry handling.'
+      const optimized =
+        'Review the authentication middleware for security vulnerabilities in JWT token validation including expiry handling.'
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const lr = withLocalRunner(`\`\`\`optimized-prompt\n${optimized}\n\`\`\``)
         try {
@@ -489,7 +487,8 @@ describe('PromptOptimizerService', () => {
     })
 
     test('strips <think> blocks from local model reasoning leakage', async () => {
-      const optimized = 'Review the authentication middleware in Express for security vulnerabilities in JWT token validation'
+      const optimized =
+        'Review the authentication middleware in Express for security vulnerabilities in JWT token validation'
       return withSettings({ ...DEFAULT_SETTINGS, llmProvider: 'local-llm' }, async () => {
         const lr = withLocalRunner(
           '<think>Let me think about this...</think>\n```optimized-prompt\n' + optimized + '\n```'
@@ -551,7 +550,9 @@ describe('PromptOptimizerService', () => {
   describe('optimize — oversize guard (proportional + floor)', () => {
     test('accepts output under 2000-char floor for short originals', async () => {
       // 200-char original → 4× = 800, but floor is 2000, so 1800-char output should pass
-      const shortOriginal = 'A'.repeat(80) + ' review the authentication middleware and check for JWT vulnerabilities in our Express app'
+      const shortOriginal =
+        'A'.repeat(80) +
+        ' review the authentication middleware and check for JWT vulnerabilities in our Express app'
       const optimized1800 = 'B'.repeat(1800)
       return withSettings(DEFAULT_SETTINGS, async () => {
         const runner = withRunner(`\`\`\`optimized-prompt\n${optimized1800}\n\`\`\``)
@@ -592,8 +593,10 @@ describe('PromptOptimizerService', () => {
   describe('optimize — keyword drift guard', () => {
     test('rejects when optimizer introduces completely different topic', async () => {
       // Original talks about README and charts, optimized talks about database schema
-      const original = 'Based on the context and information that you currently have regarding our app, can you regenerate the ReadMe and add charts showing the architecture'
-      const drifted = 'Design a comprehensive database schema migration strategy with PostgreSQL indexing optimization and query performance benchmarking for the distributed microservices backend'
+      const original =
+        'Based on the context and information that you currently have regarding our app, can you regenerate the ReadMe and add charts showing the architecture'
+      const drifted =
+        'Design a comprehensive database schema migration strategy with PostgreSQL indexing optimization and query performance benchmarking for the distributed microservices backend'
       return withSettings(DEFAULT_SETTINGS, async () => {
         const runner = withRunner(`\`\`\`optimized-prompt\n${drifted}\n\`\`\``)
         try {
@@ -611,8 +614,10 @@ describe('PromptOptimizerService', () => {
     })
 
     test('accepts rephrased version that preserves core keywords', async () => {
-      const original = 'Please review the authentication middleware in our Express application and identify any security vulnerabilities related to JWT token validation'
-      const rephrased = 'Analyze the authentication middleware in the Express application for security vulnerabilities in JWT token validation, including expired tokens and signature verification'
+      const original =
+        'Please review the authentication middleware in our Express application and identify any security vulnerabilities related to JWT token validation'
+      const rephrased =
+        'Analyze the authentication middleware in the Express application for security vulnerabilities in JWT token validation, including expired tokens and signature verification'
       return withSettings(DEFAULT_SETTINGS, async () => {
         const runner = withRunner(`\`\`\`optimized-prompt\n${rephrased}\n\`\`\``)
         try {
@@ -651,14 +656,15 @@ describe('PromptOptimizerService', () => {
     test('words that stem to empty strings do not cause false keyword matches', async () => {
       // "able", "ness", "ment", "less", "ible" all stem to "" before the >=3 filter.
       // Without the filter, both sets would contain "" and count as matching.
-      const original = 'The configurable adjustable reasonable deployable scalable extensible system needs a complete refactor'
+      const original =
+        'The configurable adjustable reasonable deployable scalable extensible system needs a complete refactor'
       const optimized = 'A completely unrelated prompt about database migration schemas and indexes'
       return withSettings(DEFAULT_SETTINGS, async () => {
         const runner = withRunner(`\`\`\`optimized-prompt\n${optimized}\n\`\`\``)
         try {
           const result = await promptOptimizerService.optimize({
             ...DEFAULT_PARAMS,
-            text: original,
+            text: original
           })
           assert.equal(result.changed, false)
           assert.equal(result.skippedReason, 'keyword-drift')
@@ -681,7 +687,6 @@ describe('PromptOptimizerService', () => {
       await promptOptimizerService.warmup()
     })
   })
-
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

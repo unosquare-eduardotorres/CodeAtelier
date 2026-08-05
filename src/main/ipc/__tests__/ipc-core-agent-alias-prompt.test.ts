@@ -6,12 +6,12 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let aliasLoaded = false
 let promptLoaded = false
@@ -39,11 +39,11 @@ try {
 if (aliasLoaded) {
   describe('core-agent-alias.ipc — channel registration', () => {
     test('registers coreAgent:list', () => {
-      assert.ok(capturedHandlers.has('coreAgent:list'))
+      assert.ok(getHandlers().has('coreAgent:list'))
     })
 
     test('registers coreAgent:upsert', () => {
-      assert.ok(capturedHandlers.has('coreAgent:upsert'))
+      assert.ok(getHandlers().has('coreAgent:upsert'))
     })
   })
 
@@ -74,7 +74,7 @@ if (aliasLoaded) {
       const r = await tryInvokeHandler('coreAgent:upsert', {
         agentRole: 'specialist',
         alias: 'CodeBot',
-        avatarKey: 'avatar-02',
+        avatarKey: 'avatar-02'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -83,7 +83,7 @@ if (aliasLoaded) {
       const r = await tryInvokeHandler('coreAgent:upsert', {
         agentRole: 'specialist',
         alias: null,
-        avatarKey: null,
+        avatarKey: null
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -97,19 +97,19 @@ if (aliasLoaded) {
 if (promptLoaded) {
   describe('core-agent-prompt.ipc — channel registration', () => {
     test('registers coreAgentPrompt:list', () => {
-      assert.ok(capturedHandlers.has('coreAgentPrompt:list'))
+      assert.ok(getHandlers().has('coreAgentPrompt:list'))
     })
 
     test('registers coreAgentPrompt:get', () => {
-      assert.ok(capturedHandlers.has('coreAgentPrompt:get'))
+      assert.ok(getHandlers().has('coreAgentPrompt:get'))
     })
 
     test('registers coreAgentPrompt:upsert', () => {
-      assert.ok(capturedHandlers.has('coreAgentPrompt:upsert'))
+      assert.ok(getHandlers().has('coreAgentPrompt:upsert'))
     })
 
     test('registers coreAgentPrompt:reset', () => {
-      assert.ok(capturedHandlers.has('coreAgentPrompt:reset'))
+      assert.ok(getHandlers().has('coreAgentPrompt:reset'))
     })
   })
 
@@ -132,7 +132,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:get rejects invalid mode', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:get', {
         agentRole: 'specialist',
-        mode: 'invalid',
+        mode: 'invalid'
       })
       assert.equal(r.ok, false)
     })
@@ -140,7 +140,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:upsert rejects missing promptText', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:upsert', {
         agentRole: 'specialist',
-        mode: 'plan',
+        mode: 'plan'
       })
       assert.equal(r.ok, false)
     })
@@ -149,7 +149,7 @@ if (promptLoaded) {
       const r = await tryInvokeHandler('coreAgentPrompt:upsert', {
         agentRole: 'specialist',
         mode: 'unknown',
-        promptText: 'test',
+        promptText: 'test'
       })
       assert.equal(r.ok, false)
     })
@@ -162,7 +162,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:reset rejects invalid mode', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:reset', {
         agentRole: 'specialist',
-        mode: 'x',
+        mode: 'x'
       })
       assert.equal(r.ok, false)
     })
@@ -177,7 +177,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:get calls through with valid args', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:get', {
         agentRole: 'specialist',
-        mode: 'plan',
+        mode: 'plan'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -185,7 +185,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:get accepts mode=build', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:get', {
         agentRole: 'specialist',
-        mode: 'build',
+        mode: 'build'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -193,7 +193,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:get accepts mode=danger', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:get', {
         agentRole: 'specialist',
-        mode: 'danger',
+        mode: 'danger'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -202,7 +202,7 @@ if (promptLoaded) {
       const r = await tryInvokeHandler('coreAgentPrompt:upsert', {
         agentRole: 'specialist',
         mode: 'plan',
-        promptText: 'You are a helpful assistant.',
+        promptText: 'You are a helpful assistant.'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -210,7 +210,7 @@ if (promptLoaded) {
     test('coreAgentPrompt:reset calls through with valid args', async () => {
       const r = await tryInvokeHandler('coreAgentPrompt:reset', {
         agentRole: 'specialist',
-        mode: 'build',
+        mode: 'build'
       })
       assert.ok(r.ok === true || r.ok === false)
     })

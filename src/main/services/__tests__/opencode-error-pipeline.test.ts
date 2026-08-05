@@ -50,10 +50,7 @@ const SID = 'session-pipeline-test'
  * Run a full pipeline: SDK event → normalizer → processor.
  * Returns { chunks, results, host } for assertions.
  */
-function runPipeline(
-  event: Record<string, unknown>,
-  hostOverrides?: Record<string, unknown>
-) {
+function runPipeline(event: Record<string, unknown>, hostOverrides?: Record<string, unknown>) {
   // Step 1: Normalize (what opencode-executor.ts does)
   const chunks = normalizeOpenCodeEvent(event, SID, freshUsage(), freshState())
 
@@ -176,7 +173,7 @@ describe('Error pipeline: SDK event → normalizer → stream processor', () => 
     type StreamChunk = import('../agent-base.service').StreamChunk
 
     const executor = new OpenCodeExecutor()
-    const proto = OpenCodeExecutor.prototype as unknown as Record<string, Function>
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
 
     async function* fakeStream(events: unknown[]): AsyncIterable<unknown> {
@@ -184,9 +181,14 @@ describe('Error pipeline: SDK event → normalizer → stream processor', () => 
     }
 
     const gen = processEventStream({
-      events: { stream: fakeStream([
-        { type: 'session.error', properties: { error: { name: 'ProviderError', data: { message: 'invalid model' } } } }
-      ]) },
+      events: {
+        stream: fakeStream([
+          {
+            type: 'session.error',
+            properties: { error: { name: 'ProviderError', data: { message: 'invalid model' } } }
+          }
+        ])
+      },
       openCodeSessionId: SID,
       promptBody: { parts: [{ type: 'text', text: 'test' }] },
       tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },

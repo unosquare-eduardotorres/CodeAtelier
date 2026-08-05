@@ -43,10 +43,10 @@ export const MEMORY_PROTOCOL_PROMPT = MEMORY_TOOLS_PROMPT
 export const MEMORY_PROTOCOL_PROMPT_LEAN = MEMORY_TOOLS_PROMPT
 
 export const REPOMAP_GUIDANCE_PROMPT = `## Code Graph
-mcp__code-graph__search_identifiers or mcp__code-graph__graph_map FIRST — not Read/Grep/Glob.
-Read only files identified by code intelligence. Grep for exact strings/regex.
+Prefer mcp__code-graph__search_identifiers or mcp__code-graph__graph_map as your first step for codebase questions.
 mcp__code-graph__file_outline before Read on large files.
-Impact → mcp__code-graph__find_callers/mcp__code-graph__find_references. Architecture → mcp__code-graph__coupling_analysis + mcp__code-graph__circular_dependencies.`
+Impact → mcp__code-graph__find_callers/mcp__code-graph__find_references. Architecture → mcp__code-graph__coupling_analysis + mcp__code-graph__circular_dependencies.
+Grep is fine for exact strings, regex, config values, error messages, or when code-graph returns nothing. Glob for directory/file discovery. If a code-graph tool errors, fall back — don't retry it.`
 
 export const REPOMAP_GUIDANCE_PROMPT_LEAN = REPOMAP_GUIDANCE_PROMPT
 
@@ -143,6 +143,48 @@ export const IMAGE_ATTACHMENTS_PROMPT = `[Image attached — analyze it directly
 /** Unified — only the 1-line behavioral reminder is needed; models process images inline. */
 export const IMAGE_ATTACHMENTS_PROMPT_LEAN = IMAGE_ATTACHMENTS_PROMPT
 
+// ── Shared Diagram Reference ──────────────────────────────────────────────────
+
+/**
+ * Mermaid diagram reference block shared by PLAN_MODE_SECTION and PLAN_MODE_SECTION_LEAN.
+ * Extracted to a single constant to avoid duplication (was byte-identical in both).
+ * Used by Opt 1 (turn-aware mode context) for conditional re-injection.
+ */
+export const MERMAID_DIAGRAM_REFERENCE = `
+### Diagrams
+Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD.
+
+Style rules for flowcharts — include these classDef lines and apply classes to nodes:
+\`\`\`mermaid
+classDef decision fill:#0d1117,stroke:#73daca,stroke-width:2px,color:#c0caf5
+classDef process fill:#0d1117,stroke:#73daca,stroke-width:1.5px,color:#c0caf5
+classDef agent fill:#0d1117,stroke:#c4873a,stroke-width:2px,color:#e0af68
+classDef person fill:#1a3d2a,stroke:#4ade80,stroke-width:2px,color:#4ade80
+classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
+classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
+\`\`\`
+
+Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
+Each \`@{ }\` node MUST be on its own line. Connections (-->, ---) must also be on separate lines from \`@{ }\` nodes.
+Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
+
+Example:
+\`\`\`mermaid
+flowchart TD
+  A@{ icon: "lucide:bot", label: "Ingest", form: "rounded" }
+  B@{ icon: "lucide:database", label: "Store", form: "rounded" }
+  C{Validate}
+  A --> B --> C
+  class A agent
+  class B data
+  class C decision
+\`\`\`
+
+Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:triangle-alert (warning).
+Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
+
+No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).`
+
 // ── Communication Tone Style Directives ──
 
 /**
@@ -210,11 +252,12 @@ ${styleDirective}
 - EXCEPTION — **emit_plan** / **ask_user**: the card IS the deliverable. Put all reasoning before the call; write nothing after it (no "I emitted the plan" line).
 
 ## Code Exploration
-1. FIRST tool → mcp__code-graph__search_identifiers or mcp__semantic-search__semantic_search — not Read/Grep/Glob
-2. Read only files identified by code intelligence — max 3 reads per question
-3. Grep only for exact strings, regex, or config values
-4. Impact → mcp__code-graph__find_callers / mcp__code-graph__find_references / mcp__code-graph__file_dependents. Architecture → mcp__code-graph__coupling_analysis + mcp__code-graph__circular_dependencies + mcp__code-graph__module_boundary_health. Load-bearing symbols → mcp__code-graph__symbol_hotspots
-5. Large files → mcp__code-graph__file_outline before Read
+1. Prefer mcp__code-graph__search_identifiers or mcp__semantic-search__semantic_search first
+2. Read files found by code intelligence or Glob — max 3 reads per question
+3. Grep for exact strings/regex/config values, or when code-graph returns nothing
+4. Glob for file/directory discovery
+5. Impact → find_callers / find_references / file_dependents. Architecture → coupling_analysis + circular_dependencies + module_boundary_health. Hotspots → symbol_hotspots
+6. Large files → mcp__code-graph__file_outline before Read
 
 ## Structured Actions
 - **emit_plan**: plans, proposals, investigation findings
@@ -253,39 +296,7 @@ Workflow — a fixed four-step sequence:
 Set \`type\`: bug (problemSummary, rootCauses, verification), feature (currentState, phases, implementationOrder), refactor (currentState, phases, filesChanged), audit (findings as phases, diagrams), investigation (problemSummary, rootCauses, verification).
 Plans must reference real file paths. Bug/investigation plans: include \`verification\` criteria. Complex (>5 files): use \`phases\` with complexity/risk.
 
-### Diagrams
-Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD.
-
-Style rules for flowcharts — include these classDef lines and apply classes to nodes:
-\`\`\`mermaid
-classDef decision fill:#0d1117,stroke:#73daca,stroke-width:2px,color:#c0caf5
-classDef process fill:#0d1117,stroke:#73daca,stroke-width:1.5px,color:#c0caf5
-classDef agent fill:#0d1117,stroke:#c4873a,stroke-width:2px,color:#e0af68
-classDef person fill:#1a3d2a,stroke:#4ade80,stroke-width:2px,color:#4ade80
-classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
-classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
-\`\`\`
-
-Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
-Each \`@{ }\` node MUST be on its own line. Connections (-->, ---) must also be on separate lines from \`@{ }\` nodes.
-Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
-
-Example:
-\`\`\`mermaid
-flowchart TD
-  A@{ icon: "lucide:bot", label: "Ingest", form: "rounded" }
-  B@{ icon: "lucide:database", label: "Store", form: "rounded" }
-  C{Validate}
-  A --> B --> C
-  class A agent
-  class B data
-  class C decision
-\`\`\`
-
-Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:triangle-alert (warning).
-Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
-
-No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
+${MERMAID_DIAGRAM_REFERENCE}
 
 ### Operational Requests
 Redirect: "That requires Build mode — toggle it in the chat header and I'll run it for you."
@@ -377,39 +388,7 @@ Read 2–5 files → if a decision blocks the plan, call **ask_user** FIRST and 
 ### Plan Type
 Set \`type\`: bug (problemSummary, rootCause), feature (currentState, phases), refactor (currentState, phases), audit (findings), investigation (rootCauses).
 
-### Diagrams
-Add to \`diagrams\` array for complex plans (≥3 files): stateDiagram-v2, erDiagram, sequenceDiagram, flowchart TD.
-
-Style rules for flowcharts — include these classDef lines and apply classes to nodes:
-\`\`\`mermaid
-classDef decision fill:#0d1117,stroke:#73daca,stroke-width:2px,color:#c0caf5
-classDef process fill:#0d1117,stroke:#73daca,stroke-width:1.5px,color:#c0caf5
-classDef agent fill:#0d1117,stroke:#c4873a,stroke-width:2px,color:#e0af68
-classDef person fill:#1a3d2a,stroke:#4ade80,stroke-width:2px,color:#4ade80
-classDef data fill:#0d1117,stroke:#7aa2f7,stroke-width:1.5px,color:#89b4fa
-classDef danger fill:#2d1015,stroke:#f7768e,stroke-width:2px,color:#f7768e
-\`\`\`
-
-Icon nodes use \`@{ }\` directly after the node ID — do NOT wrap in brackets (\`[]\`, \`()\`, \`[()]\`).
-Each \`@{ }\` node MUST be on its own line. Connections (-->, ---) must also be on separate lines from \`@{ }\` nodes.
-Apply styles with \`class\` keyword (NOT \`:::\` — it fails with \`@{ }\`).
-
-Example:
-\`\`\`mermaid
-flowchart TD
-  A@{ icon: "lucide:bot", label: "Ingest", form: "rounded" }
-  B@{ icon: "lucide:database", label: "Store", form: "rounded" }
-  C{Validate}
-  A --> B --> C
-  class A agent
-  class B data
-  class C decision
-\`\`\`
-
-Icon reference: lucide:user (person), lucide:bot (agent), lucide:database (data), lucide:file-code (file), lucide:settings (config), lucide:globe (API), lucide:triangle-alert (warning).
-Forms: "rounded", "square", "circle". Decisions use diamond \`{Label}\` not \`@{ }\`.
-
-No yellow/pink/orange/lime fills. Use outlined nodes (dark fill + colored stroke).
+${MERMAID_DIAGRAM_REFERENCE}
 
 ### Phased Plans
 Complex changes (>5 files): use \`phases\` with complexity 1-10, file count, risk level.
@@ -501,15 +480,15 @@ export const MODE_CONTEXT_SECTIONS_LEAN: Record<ConversationMode, string> = {
 
 export const TOOL_PRIORITY_DIRECTIVE = `
 ## Tool Priority
-Use Code Graph (mcp__code-graph__search_identifiers, mcp__code-graph__graph_map, mcp__code-graph__file_outline) and Semantic Search FIRST — not Read/Grep/Glob.
-Read only files identified by code intelligence. Grep only for exact strings/regex inside function bodies.`
+Prefer Code Graph (mcp__code-graph__search_identifiers, mcp__code-graph__graph_map, mcp__code-graph__file_outline) and Semantic Search as your first step.
+Grep for exact strings, regex, or config values. Glob for file/directory discovery. Fall back to either when code-graph is unavailable or returns nothing.`
 
 /** Builder-specific variant — includes write-mode context (file_outline, find_references before changes) */
 export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
 ## Tool Priority
-Use code graph tools (mcp__code-graph__file_outline, mcp__code-graph__find_references, mcp__code-graph__find_callers) FIRST to understand structure before writing code.
+Prefer code graph tools (mcp__code-graph__file_outline, mcp__code-graph__find_references, mcp__code-graph__find_callers) to understand structure before writing code.
 mcp__code-graph__file_outline before Read on large files. mcp__code-graph__find_references before changing signatures.
-Read only files identified by code intelligence. Grep for exact strings only.
+Grep for exact strings, config values, or when code-graph returns nothing. Glob for finding files by pattern.
 
 ## Finalization Checklist
 Before considering your work complete:

@@ -102,7 +102,10 @@ describe('EXT_TO_LANGUAGE map integrity', () => {
 
   test('all values are non-empty strings', () => {
     for (const [key, value] of Object.entries(EXT_TO_LANGUAGE)) {
-      assert.ok(typeof value === 'string' && value.length > 0, `value for "${key}" should be non-empty string`)
+      assert.ok(
+        typeof value === 'string' && value.length > 0,
+        `value for "${key}" should be non-empty string`
+      )
     }
   })
 

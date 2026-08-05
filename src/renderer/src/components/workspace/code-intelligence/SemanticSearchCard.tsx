@@ -35,11 +35,20 @@ export default function SemanticSearchCard({
   const [showWhyInfo, setShowWhyInfo] = useState(false)
   const [showAiDescInfo, setShowAiDescInfo] = useState(false)
 
+  // Ollama provides an alternative embedding backend on non-Apple Silicon platforms
+  const hasOllamaEmbedding = embeddingStatus?.backend === 'ollama' && embeddingStatus?.ollamaRunning
+  const embeddingUnavailable = isAppleSilicon === false && !hasOllamaEmbedding
+
+  // Resolve display label for the active embedding backend
+  const backendLabel = embeddingStatus?.backend === 'ollama'
+    ? (embeddingStatus.ollamaEmbeddingModel ?? 'Ollama')
+    : (embeddingStatus?.omlxEmbeddingModelId ?? 'oMLX')
+
   return (
     <SettingsCard className="space-y-3">
       <ToggleRow
         label="Semantic Search"
-        description="Natural language code search using oMLX embeddings (requires oMLX running with an embedding model)."
+        description="Natural language code search using local embeddings (requires oMLX or Ollama running with an embedding model)."
         checked={enabled}
         onChange={onToggle}
       />
@@ -98,7 +107,7 @@ export default function SemanticSearchCard({
               <div className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <Database size={12} className="text-primary" />
                 <span>
-                  {persistedIndexStatus.symbolCount?.toLocaleString()} chunks · oMLX embedding
+                  {persistedIndexStatus.symbolCount?.toLocaleString()} chunks · {embeddingStatus?.backend === 'ollama' ? 'Ollama' : 'oMLX'} embedding
                 </span>
               </div>
             </div>
@@ -112,13 +121,15 @@ export default function SemanticSearchCard({
               {embeddingStatus?.ready ? (
                 <span className="flex items-center gap-1 text-xs text-success">
                   <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                  Ready ({embeddingStatus.omlxEmbeddingModelId ?? 'oMLX'})
+                  Ready ({backendLabel})
                 </span>
+              ) : hasOllamaEmbedding ? (
+                <span className="text-xs text-warning">Ollama running — no embedding model selected</span>
               ) : embeddingStatus?.omlxRunning ? (
                 <span className="text-xs text-warning">oMLX running — no embedding model loaded</span>
-              ) : isAppleSilicon === false ? (
+              ) : embeddingUnavailable ? (
                 <span className="text-xs text-text-muted">
-                  Requires Apple Silicon Mac (oMLX is not available on Intel)
+                  Configure Ollama with an embedding model in Models →
                 </span>
               ) : (
                 <button
@@ -126,7 +137,7 @@ export default function SemanticSearchCard({
                   className="text-xs text-primary hover:text-primary-hover flex items-center gap-1"
                 >
                   <Info size={10} />
-                  oMLX not configured — go to Models →
+                  Embedding model not configured — go to Models →
                 </button>
               )}
             </div>
@@ -193,8 +204,8 @@ export default function SemanticSearchCard({
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <Database size={12} />
                 <span>
-                  {isAppleSilicon === false
-                    ? 'Semantic search requires Apple Silicon'
+                  {embeddingUnavailable
+                    ? 'Configure an embedding model in Models to enable semantic search'
                     : 'No cached index — click below to start indexing'}
                 </span>
               </div>
@@ -205,7 +216,7 @@ export default function SemanticSearchCard({
           <div className="pl-1">
             <button
               onClick={onStartIndex}
-              disabled={isStartingIndex || isAppleSilicon === false}
+              disabled={isStartingIndex || embeddingUnavailable}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-primary bg-primary/10 border border-primary/30 hover:bg-primary/20 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isStartingIndex ? (

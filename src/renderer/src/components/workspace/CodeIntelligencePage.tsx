@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Brain } from 'lucide-react'
+import { Braces } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import type { EmbeddingModelStatus, CodeGraphIndexingState, PlatformInfo } from '../../../../shared/types'
 import {
@@ -176,7 +176,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       {/* Page header */}
       <div className="mb-2">
         <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">
-          <Brain size={18} className="text-cyan-400" />
+          <Braces size={18} className="text-cyan-400" />
           Code Intelligence
         </h2>
         <p className="text-xs text-text-secondary mt-1">

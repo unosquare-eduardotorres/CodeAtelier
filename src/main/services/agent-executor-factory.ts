@@ -271,7 +271,7 @@ export class AgentExecutorFactory {
     goal?: string
     /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
     goalMode?: 'advisory' | 'enforce'
-  }): CLIExecuteOptions {
+  }, resolvedExecutor?: { isAlive(): boolean }): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
     const { allowedTools, disallowedTools } = mcpResult
@@ -296,7 +296,9 @@ export class AgentExecutorFactory {
     // inflating the context badge and triggering premature auto-compact.
     const compactionEnv = resolveClaudeCompactionEnv(supports1M, effectiveContextWindow)
 
-    const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
+    // WRONG-EXECUTOR-03: Use the resolved per-conversation executor when provided,
+    // not the cliExecutor getter which goes through _lastActiveConversationId.
+    const canContinue = (resolvedExecutor ?? this.s.cliExecutor).isAlive() && !!sessionId
 
     // C2: Log tool availability on EVERY turn (not just first spawn)
     this.s.log.info(

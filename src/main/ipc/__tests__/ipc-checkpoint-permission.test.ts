@@ -6,12 +6,12 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  setupFullMock,
+  getHandlers,
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-setupElectronStub()
+setupFullMock()
 
 let checkpointLoaded = false
 let permissionLoaded = false
@@ -48,19 +48,19 @@ try {
 if (checkpointLoaded) {
   describe('checkpoint.ipc — channel registration', () => {
     test('registers checkpoint:list', () => {
-      assert.ok(capturedHandlers.has('checkpoint:list'))
+      assert.ok(getHandlers().has('checkpoint:list'))
     })
 
     test('registers checkpoint:restore', () => {
-      assert.ok(capturedHandlers.has('checkpoint:restore'))
+      assert.ok(getHandlers().has('checkpoint:restore'))
     })
 
     test('registers checkpoint:rewind', () => {
-      assert.ok(capturedHandlers.has('checkpoint:rewind'))
+      assert.ok(getHandlers().has('checkpoint:rewind'))
     })
 
     test('registers checkpoint:approvalResponse', () => {
-      assert.ok(capturedHandlers.has('checkpoint:approvalResponse'))
+      assert.ok(getHandlers().has('checkpoint:approvalResponse'))
     })
   })
 
@@ -105,7 +105,7 @@ if (checkpointLoaded) {
     test('checkpoint:rewind calls through', async () => {
       const r = await tryInvokeHandler('checkpoint:rewind', {
         checkpointId: 'cp1',
-        conversationId: 'c1',
+        conversationId: 'c1'
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -113,7 +113,7 @@ if (checkpointLoaded) {
     test('checkpoint:approvalResponse calls through', async () => {
       const r = await tryInvokeHandler('checkpoint:approvalResponse', {
         checkpointId: 'cp1',
-        approved: true,
+        approved: true
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -127,7 +127,7 @@ if (checkpointLoaded) {
 if (permissionLoaded) {
   describe('permission.ipc — channel registration', () => {
     test('registers permission:response', () => {
-      assert.ok(capturedHandlers.has('permission:response'))
+      assert.ok(getHandlers().has('permission:response'))
     })
   })
 
@@ -145,7 +145,7 @@ if (permissionLoaded) {
     test('permission:response rejects invalid type', async () => {
       const r = await tryInvokeHandler('permission:response', {
         workspaceId: 'ws1',
-        type: 'invalid',
+        type: 'invalid'
       })
       assert.equal(r.ok, false)
     })
@@ -161,7 +161,7 @@ if (permissionLoaded) {
       const r = await tryInvokeHandler('permission:response', {
         workspaceId: 'ws1',
         type: 'elicitation',
-        response: { accepted: true },
+        response: { accepted: true }
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -170,7 +170,7 @@ if (permissionLoaded) {
       const r = await tryInvokeHandler('permission:response', {
         workspaceId: 'ws1',
         type: 'askQuestion',
-        response: { requestId: 'r1', answer: 'yes' },
+        response: { requestId: 'r1', answer: 'yes' }
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -179,7 +179,7 @@ if (permissionLoaded) {
       const r = await tryInvokeHandler('permission:response', {
         workspaceId: 'ws1',
         type: 'mpaApproval',
-        response: { approved: true, feedback: 'LGTM' },
+        response: { approved: true, feedback: 'LGTM' }
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -189,7 +189,7 @@ if (permissionLoaded) {
         workspaceId: 'ws1',
         type: 'toolPermission',
         response: 'approve',
-        payload: { requestId: 'req1' },
+        payload: { requestId: 'req1' }
       })
       assert.ok(r.ok === true || r.ok === false)
     })
@@ -203,7 +203,7 @@ if (permissionLoaded) {
 if (insightsLoaded) {
   describe('insights.ipc — channel registration', () => {
     test('registers conversation:insights', () => {
-      assert.ok(capturedHandlers.has('conversation:insights'))
+      assert.ok(getHandlers().has('conversation:insights'))
     })
   })
 

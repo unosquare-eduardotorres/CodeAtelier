@@ -1,7 +1,8 @@
 /**
  * Blueprint Build Adapter — write-mode agent that executes individual BUILD tasks.
  *
- * CLI config: --permission-mode auto, --effort high, goalMode: enforce (/goal via stdin)
+ * CLI config: --permission-mode acceptEdits (or bypassPermissions when autoMode enabled),
+ *             --effort high, goalMode: enforce (/goal via stdin)
  *
  * Key difference from other blueprint adapters: this one overrides buildMcpConfig()
  * for full write access (Write, Edit, Bash), matching the mpa-builder.adapter.ts pattern.

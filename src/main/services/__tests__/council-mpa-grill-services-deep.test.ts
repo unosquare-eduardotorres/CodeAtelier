@@ -191,7 +191,7 @@ if (councilLoaded) {
   describe('CouncilService — construction & state', () => {
     test('extends EventEmitter', () => {
       const svc = new CouncilService()
-      assert.ok(svc instanceof (require('node:events').EventEmitter))
+      assert.ok(svc instanceof require('node:events').EventEmitter)
     })
 
     test('sessions starts as empty Map', () => {
@@ -289,7 +289,7 @@ if (mpaOrchLoaded) {
   describe('MpaOrchestrationService — construction & state', () => {
     test('extends EventEmitter', () => {
       const svc = new MpaOrchestrationService()
-      assert.ok(svc instanceof (require('node:events').EventEmitter))
+      assert.ok(svc instanceof require('node:events').EventEmitter)
     })
 
     test('pipelines starts as empty Map', () => {
@@ -432,7 +432,7 @@ if (mpaCampLoaded) {
   describe('MpaCampaignService — construction & state', () => {
     test('extends EventEmitter', () => {
       const svc = new MpaCampaignService()
-      assert.ok(svc instanceof (require('node:events').EventEmitter))
+      assert.ok(svc instanceof require('node:events').EventEmitter)
     })
 
     test('isRunningForWorkspace returns false for unknown workspace', () => {
@@ -595,7 +595,7 @@ if (grillAgentLoaded) {
   describe('GrillAgentService — construction & state', () => {
     test('extends EventEmitter', () => {
       const svc = new GrillAgentService()
-      assert.ok(svc instanceof (require('node:events').EventEmitter))
+      assert.ok(svc instanceof require('node:events').EventEmitter)
     })
 
     test('sessions starts as empty Map', () => {
