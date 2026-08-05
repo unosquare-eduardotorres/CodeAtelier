@@ -62,7 +62,11 @@ function makeFact(id: string, scopePaths: string[]): MemoryFact {
     embeddingPending: false,
     lastAccessedAt: null,
     createdAt: '2020-01-01 00:00:00',
-    updatedAt: '2020-01-01 00:00:00'
+    updatedAt: '2020-01-01 00:00:00',
+    validFrom: '2020-01-01 00:00:00',
+    validTo: null,
+    observedAt: '2020-01-01 00:00:00',
+    recordedAt: '2020-01-01 00:00:00'
   }
 }
 
@@ -74,6 +78,19 @@ if (loaded) {
   memoryFactRepository.search = (ws: string, query: string, limit: number): MemoryFact[] => {
     const stubbed = stubFacts.get(ws)
     return stubbed ?? originalSearch(ws, query, limit)
+  }
+
+  // The default scorer reads the BM25 arm, not the LIKE scan, so the keyword
+  // arm has to be stubbed here too or these facts never reach scoring.
+  const originalFts = memoryFactRepository.searchFts.bind(memoryFactRepository)
+  memoryFactRepository.searchFts = (
+    ws: string,
+    query: string,
+    limit: number
+  ): Array<{ fact: MemoryFact; rank: number }> => {
+    const stubbed = stubFacts.get(ws)
+    if (!stubbed) return originalFts(ws, query, limit)
+    return stubbed.map((fact, rank) => ({ fact, rank }))
   }
 
   const originalFind = memoryFactRepository.findWithEmbeddings.bind(memoryFactRepository)

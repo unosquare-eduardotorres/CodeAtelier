@@ -13,8 +13,10 @@
 import type {
   MemoryFact,
   MemoryContradiction,
+  MemoryEdge,
   MemoryGraphData,
   MemoryGraphEdge,
+  MemoryGraphEdgeKind,
   MemoryGraphNode
 } from '../../shared/types'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
@@ -33,6 +35,23 @@ export interface DeriveGraphEdgesInput {
   facts: MemoryFact[]
   embeddings: Array<{ factId: string; embedding: Float32Array }>
   contradictions: MemoryContradiction[]
+  /**
+   * Typed relationships from `memory_edges` (migration 137).
+   *
+   * When present these are authoritative for supersede/contradict/derive
+   * links. The legacy derivation from `superseded_by` and the contradictions
+   * table is kept as a fallback so a database that has not been migrated, or
+   * one whose backfill found nothing, still renders a useful graph.
+   */
+  edges?: MemoryEdge[]
+}
+
+/** memory_edges edge_type → the kind the graph UI renders. */
+const EDGE_KIND: Record<string, MemoryGraphEdgeKind | undefined> = {
+  supersedes: 'superseded',
+  contradicts: 'contradiction',
+  derived_from: 'derived',
+  relates_to: 'similarity'
 }
 
 /**
@@ -87,7 +106,20 @@ export function deriveGraphEdges(input: DeriveGraphEdgesInput): MemoryGraphData 
     }
   }
 
-  // 2. Supersede edges — scoped to nodeIds
+  // 2. Typed edges from memory_edges — the single source of truth once the
+  //    backfill has run.
+  const typedEdges = input.edges ?? []
+  for (const edge of typedEdges) {
+    if (!nodeIds.has(edge.fromId) || !nodeIds.has(edge.toId)) continue
+    const kind = EDGE_KIND[edge.edgeType]
+    if (!kind) continue
+    const key = [edge.fromId, edge.toId].sort().join('-')
+    if (edgeSet.has(key)) continue
+    edgeSet.add(key)
+    edges.push({ source: edge.fromId, target: edge.toId, kind, weight: edge.confidence })
+  }
+
+  // 3. Legacy derivation — only fills gaps the edge table did not cover.
   for (const fact of facts) {
     if (fact.supersededBy && nodeIds.has(fact.supersededBy)) {
       const key = [fact.id, fact.supersededBy].sort().join('-')
@@ -98,7 +130,6 @@ export function deriveGraphEdges(input: DeriveGraphEdgesInput): MemoryGraphData 
     }
   }
 
-  // 3. Contradiction edges — scoped to nodeIds
   for (const c of contradictions) {
     if (!nodeIds.has(c.oldFactId) || !nodeIds.has(c.newFactId)) continue
     const key = [c.oldFactId, c.newFactId].sort().join('-')
@@ -122,12 +153,20 @@ export function buildMemoryGraph(workspaceId: string): MemoryGraphData {
   const withEmbeddings = memoryFactRepository.findWithEmbeddings(workspaceId)
   const contradictions = memoryFactRepository.findContradictions()
 
+  let edges: MemoryEdge[] = []
+  try {
+    edges = memoryFactRepository.findEdgesByWorkspace(workspaceId)
+  } catch {
+    // Database predates migration 137 — the legacy derivation still applies.
+  }
+
   return deriveGraphEdges({
     facts: allFacts,
     embeddings: withEmbeddings.map(({ fact, embedding }) => ({
       factId: fact.id,
       embedding
     })),
-    contradictions
+    contradictions,
+    edges
   })
 }

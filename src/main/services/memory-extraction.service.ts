@@ -200,6 +200,11 @@ class MemoryExtractionService {
        * that is far better than guessing from the source ref.
        */
       scopePaths?: string[]
+      /**
+       * When the source stated this — a commit date, a file mtime. Drives
+       * recency, so history-mined facts are not all dated "today".
+       */
+      observedAt?: string | null
     }
   ): Promise<number> {
     const sourceType = opts?.sourceType ?? 'document'
@@ -241,6 +246,7 @@ class MemoryExtractionService {
             scopePaths: resolveScopePaths(fact.scopePaths, opts?.scopePaths, sourceRef),
             sourceType,
             sourceRef,
+            observedAt: opts?.observedAt ?? null,
             workspacePath
           })
           if (written) created++

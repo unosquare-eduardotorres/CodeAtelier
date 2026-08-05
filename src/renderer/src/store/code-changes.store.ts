@@ -26,6 +26,8 @@ interface CodeChangesState {
   /** Fully-qualified comparison ref — `origin/<b>` for remotes, `<b>` for local branches. */
   targetBranch: string
   availableBranches: { local: string[]; remote: string[] }
+  /** Workspace whose branches are loaded — the key the chosen target is remembered under. */
+  workspaceId: string | null
 
   // Commit
   commitMessage: string
@@ -73,6 +75,7 @@ const initialState: CodeChangesState = {
   comparisonMode: 'uncommitted',
   targetBranch: 'origin/main',
   availableBranches: { local: [], remote: [] },
+  workspaceId: null,
   commitMessage: '',
   isCommitting: false,
   isGeneratingMessage: false,
@@ -82,10 +85,35 @@ const initialState: CodeChangesState = {
   error: null
 }
 
+const TARGET_BRANCH_KEY_PREFIX = 'codeChanges.targetBranch.'
+
+/** Remembered comparison target for a workspace — localStorage may be unavailable. */
+function readStoredTarget(workspaceId: string): string | null {
+  try {
+    return localStorage.getItem(`${TARGET_BRANCH_KEY_PREFIX}${workspaceId}`)
+  } catch {
+    return null
+  }
+}
+
+function writeStoredTarget(workspaceId: string, branch: string): void {
+  try {
+    localStorage.setItem(`${TARGET_BRANCH_KEY_PREFIX}${workspaceId}`, branch)
+  } catch {
+    // localStorage may be unavailable
+  }
+}
+
+// Monotonic request ids — clicking file A then B fast enough lands A's response
+// last, rendering A's content under B's filename. Stale responses are dropped.
+let filesRequestId = 0
+let diffRequestId = 0
+
 export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>()((set, get) => ({
   ...initialState,
 
   loadFiles: async (conversationId: string): Promise<void> => {
+    const requestId = ++filesRequestId
     set({ isLoadingFiles: true, error: null })
     try {
       const { comparisonMode, targetBranch } = get()
@@ -100,6 +128,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
         files = await window.api.getRefFileDetails({ conversationId, fromRef, toRef })
       }
 
+      if (requestId !== filesRequestId) return
       set({ files, isLoadingFiles: false })
 
       // Auto-deselect files that no longer exist
@@ -110,10 +139,19 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
       set({ checkedFiles: newChecked, selectedFile: newSelected })
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load file details'
+      if (requestId !== filesRequestId) return
       if (msg.startsWith('REF_NOT_FOUND:')) {
         set({
           isLoadingFiles: false,
           error: `Branch not found — if it is a remote branch, has it been pushed? (${msg.replace('REF_NOT_FOUND: ', '')})`
+        })
+      } else if (msg.includes('DIFF_LIST_FAILED:')) {
+        rendererLog.error('loadFiles failed:', msg)
+        const detail = msg.slice(msg.indexOf('DIFF_LIST_FAILED:')).replace('DIFF_LIST_FAILED: ', '')
+        set({
+          files: [],
+          isLoadingFiles: false,
+          error: `Could not list changes — the comparison is incomplete, do not trust this list. (${detail})`
         })
       } else {
         rendererLog.error('loadFiles failed:', msg)
@@ -123,6 +161,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
   },
 
   selectFile: async (conversationId: string, filePath: string | null): Promise<void> => {
+    const requestId = ++diffRequestId
     set({ selectedFile: filePath, currentDiff: null })
     if (!filePath) return
 
@@ -131,14 +170,15 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
       const { comparisonMode, targetBranch, files } = get()
       let diff: FileDiffResult
 
+      // Renamed files need their source path, or the old side is looked up at the
+      // new path, comes back empty, and the file renders as a 100% addition.
+      const oldPath = files.find((f) => f.filePath === filePath)?.oldPath
+
       if (comparisonMode === 'uncommitted') {
-        diff = await window.api.getFileDiff({ conversationId, filePath })
+        diff = await window.api.getFileDiff({ conversationId, filePath, oldPath })
       } else {
         const fromRef = targetBranch
         const toRef = comparisonMode === 'branch-vs-target' ? 'HEAD' : 'WORKING_TREE'
-        // Renamed files need their source path, or the old side is looked up at the
-        // new path, comes back empty, and the file renders as a 100% addition.
-        const oldPath = files.find((f) => f.filePath === filePath)?.oldPath
         diff = await window.api.getRefFileDiff({
           conversationId,
           filePath,
@@ -148,8 +188,10 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
         })
       }
 
+      if (requestId !== diffRequestId) return
       set({ currentDiff: diff, isLoadingDiff: false })
     } catch (e) {
+      if (requestId !== diffRequestId) return
       const msg = e instanceof Error ? e.message : 'Failed to load diff'
       rendererLog.error('selectFile diff failed:', msg)
       set({ isLoadingDiff: false, error: msg })
@@ -273,7 +315,8 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
   },
 
   setTargetBranch: (branch: string, conversationId: string): void => {
-    const { comparisonMode } = get()
+    const { comparisonMode, workspaceId } = get()
+    if (workspaceId) writeStoredTarget(workspaceId, branch)
     set({ targetBranch: branch, selectedFile: null, currentDiff: null })
     if (comparisonMode !== 'uncommitted') {
       set({ files: [], isLoadingFiles: true })
@@ -284,12 +327,21 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
   loadBranches: async (workspaceId: string): Promise<void> => {
     try {
       const result = await window.api.listBranches({ workspaceId })
-      set({ availableBranches: { local: result.local, remote: result.remote } })
+      set({ availableBranches: { local: result.local, remote: result.remote }, workspaceId })
 
       // targetBranch is stored fully qualified so a local branch can be a target too.
       const qualifiedRemotes = result.remote.map((b) => `origin/${b}`)
       const known = new Set([...qualifiedRemotes, ...result.local])
       const { targetBranch } = get()
+
+      // A target chosen for this workspace survives remount — otherwise `develop`
+      // silently reverts to `origin/main` and the answer changes underneath you.
+      const remembered = readStoredTarget(workspaceId)
+      if (remembered && known.has(remembered)) {
+        if (remembered !== targetBranch) set({ targetBranch: remembered })
+        return
+      }
+
       // Only auto-pick when the current target isn't a real ref — re-running this
       // (mount, post-fetch) must not clobber a target the user chose.
       if (!known.has(targetBranch) && known.size > 0) {
@@ -334,6 +386,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
       comparisonMode: 'uncommitted',
       targetBranch: 'origin/main',
       availableBranches: { local: [], remote: [] },
+      workspaceId: null,
       selectedFile: null,
       currentDiff: null,
       checkedFiles: new Set(),

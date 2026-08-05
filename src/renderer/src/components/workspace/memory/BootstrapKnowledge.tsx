@@ -81,6 +81,10 @@ export default function BootstrapKnowledge(): React.JSX.Element {
     [workspacePath, resumeBootstrap]
   )
 
+  const handleDismiss = useCallback(() => {
+    dismissBootstrap(workspaceId)
+  }, [workspaceId, dismissBootstrap])
+
   const jobStatus = bootstrap?.jobStatus ?? 'idle'
   const showProgress = bootstrap !== null && jobStatus !== 'idle'
   const showScene = jobStatus === 'running' || jobStatus === 'planning' || jobStatus === 'paused'
@@ -138,7 +142,7 @@ export default function BootstrapKnowledge(): React.JSX.Element {
         onPause={handlePause}
         onResume={handleResume}
         onCancel={cancelBootstrap}
-        onDismiss={dismissBootstrap}
+        onDismiss={handleDismiss}
         jobStatus={jobStatus}
         canStart={Boolean(workspaceId && workspacePath)}
         resumableRunId={bootstrapResumableRunId}

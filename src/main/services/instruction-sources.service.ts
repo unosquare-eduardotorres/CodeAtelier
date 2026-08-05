@@ -122,7 +122,9 @@ export function parseFrontmatter(raw: string): {
   data: Record<string, string | string[] | boolean>
   body: string
 } {
-  const match = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw)
+  // A leading BOM is matched via the \uFEFF escape rather than a literal
+  // character, which would be invisible in the source and trips lint.
+  const match = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw)
   if (!match) return { data: {}, body: raw }
 
   const data: Record<string, string | string[] | boolean> = {}
@@ -461,7 +463,7 @@ const MAX_IMPORT_DEPTH = 4
  * nested call — rescanning text it had already consumed, forever.
  */
 const importPattern = (): RegExp =>
-  /@((?:~\/|\.{1,2}\/|\/)?[A-Za-z0-9_.\-/]*[A-Za-z0-9_.\-][A-Za-z0-9_.\-/]*)/g
+  /@((?:~\/|\.{1,2}\/|\/)?[A-Za-z0-9_./-]*[A-Za-z0-9_.-][A-Za-z0-9_./-]*)/g
 
 /** Fenced blocks and inline code spans, whose contents are never expanded. */
 const codePattern = (): RegExp =>
@@ -506,7 +508,7 @@ function expandContent(
     // An '@' glued to a preceding word is an email address or a handle, not an
     // import: `support@example.com`, `npm i @scope/pkg` is fine but `x@y` is not.
     const prev = start > 0 ? content[start - 1] : '\n'
-    if (!/[\s(\[{,;:]/.test(prev)) continue
+    if (!/[\s([{,;:]/.test(prev)) continue
 
     if (inRanges(protectedRanges, start)) continue
 

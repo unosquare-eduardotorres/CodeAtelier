@@ -98,7 +98,7 @@ export default function FilterPopover({
           {/* Edge kinds */}
           <div>
             <p className="font-medium text-text-primary mb-1.5">Edge types</p>
-            {(['similarity', 'superseded', 'contradiction'] as const).map((kind) => (
+            {(['similarity', 'superseded', 'contradiction', 'derived'] as const).map((kind) => (
               <label key={kind} className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer">
                 <input
                   type="checkbox"

@@ -14,6 +14,7 @@
 import { dbLogger } from '../logger'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { memoryEngineService, cosineSimilarity } from './memory-engine.service'
+import { workspaceRepository } from '../db/repositories'
 import type { MemoryFact } from '../../shared/types'
 
 const log = dbLogger
@@ -389,11 +390,40 @@ class MemoryConsolidationService {
       // 5. Run decay sweep
       memoryEngineService.runDecaySweepIfDue()
 
+      // 6. Reflection — synthesise parent facts from clusters. Opt-in per
+      //    workspace and capped per run; it is the only step that calls an LLM.
+      await this.runReflectionIfEnabled(workspaceId)
+
       log.info('[Consolidation] Idle consolidation complete')
     } catch (err) {
       log.warn('[Consolidation] Idle consolidation failed:', err)
     } finally {
       this.running = false
+    }
+  }
+
+  /**
+   * Run the reflection pass when the workspace has opted in.
+   *
+   * Imported lazily so the consolidation service does not drag the Claude CLI
+   * runner into every process that touches memory.
+   */
+  private async runReflectionIfEnabled(workspaceId: string): Promise<void> {
+    try {
+      const { memoryReflectionService } = await import('./memory-reflection.service')
+      if (!memoryReflectionService.isEnabled(workspaceId)) return
+
+      const workspace = workspaceRepository.findById(workspaceId)
+      if (!workspace?.repoPath) return
+
+      const result = await memoryReflectionService.runReflection(workspaceId, workspace.repoPath)
+      if (result.parentsProposed > 0) {
+        log.info(
+          `[Consolidation] Reflection proposed ${result.parentsProposed} parent fact(s) for review`
+        )
+      }
+    } catch (err) {
+      log.warn('[Consolidation] Reflection pass failed:', err)
     }
   }
 }

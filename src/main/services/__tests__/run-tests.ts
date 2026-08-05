@@ -155,6 +155,7 @@ const TEST_FILES: string[] = [
   './workspace-deploy-parsing.test',
   // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
   './chat-stream-lifecycle.test',
+  './stream-wedge-recovery.test',
   // ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
   './telemetry-recorder.test',
   '../../ipc/__tests__/listener-cleanup.test',
@@ -189,6 +190,7 @@ const TEST_FILES: string[] = [
   './blueprint-build-adapter.test',
   './blueprint-verify-adapter.test',
   './repo-service-pure.test',
+  './repo-service-git.test',
   './file-diff-state.test',
   './opencode-config-writer-logic.test',
   './opencode-config-schema.test',
@@ -324,6 +326,8 @@ const TEST_FILES: string[] = [
   './scope-matcher.test',
   './memory-scope-activation.test',
   './memory-projection.test',
+  './memory-retrieval-fusion.test',
+  './memory-reflection.test',
   './memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   './local-plan-state-fk-guard.test',

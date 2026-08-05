@@ -213,6 +213,7 @@ interface Api {
   }) => Promise<{ effort: string }>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: (conversationId?: string) => Promise<void>
+  forceReleaseConversation: (conversationId: string) => Promise<{ released: boolean }>
   getStreamingState: () => Promise<{
     isStreaming: boolean
     conversationId: string | null
@@ -433,6 +434,15 @@ interface Api {
     factsPruned: number
     warnings: string[]
   }>
+  memoryReflectionList: (args: {
+    workspaceId: string
+  }) => Promise<Array<{ parent: MemoryFact; children: MemoryFact[] }>>
+  memoryReflectionApprove: (args: { id: string }) => Promise<MemoryFact | null>
+  memoryReflectionReject: (args: { id: string }) => Promise<void>
+  memoryReflectionRun: (args: {
+    workspaceId: string
+    workspacePath: string
+  }) => Promise<{ clustersConsidered: number; parentsProposed: number; errors: number }>
   memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
@@ -625,9 +635,18 @@ interface Api {
   getFileDetails: (args: {
     conversationId: string
   }) => Promise<
-    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
   >
-  getFileDiff: (args: { conversationId: string; filePath: string }) => Promise<FileDiffResult>
+  getFileDiff: (args: {
+    conversationId: string
+    filePath: string
+    oldPath?: string
+  }) => Promise<FileDiffResult>
   getRefFileDetails: (args: {
     conversationId: string
     fromRef: string

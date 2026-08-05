@@ -61,6 +61,10 @@ function fact(overrides: Partial<MemoryFact> & { id: string }): MemoryFact {
     lastAccessedAt: null,
     createdAt: '2026-01-01 00:00:00',
     updatedAt: '2026-01-01 00:00:00',
+    validFrom: '2026-01-01 00:00:00',
+    validTo: null,
+    observedAt: '2026-01-01 00:00:00',
+    recordedAt: '2026-01-01 00:00:00',
     ...overrides
   }
 }

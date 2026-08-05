@@ -75,11 +75,13 @@ if (!env) {
     params: { title: string; content: string; tags?: string; status?: string }
   ): string {
     const id = `fts-test-${++factSeq}`
+    // workspace_id NULL = a global fact. Avoids needing a workspaces row just
+    // to satisfy the foreign key; the index does not care either way.
     db.prepare(
       `INSERT INTO memory_facts
          (id, workspace_id, category, title, content, tags, scope_paths,
           tier, confidence, source_type, status)
-       VALUES (?, 'ws-fts', 'convention', ?, ?, ?, '[]', 0, 0.5, 'manual', ?)`
+       VALUES (?, NULL, 'convention', ?, ?, ?, '[]', 0, 0.5, 'manual', ?)`
     ).run(id, params.title, params.content, params.tags ?? '[]', params.status ?? 'active')
     return id
   }
@@ -243,7 +245,7 @@ if (!env) {
       try {
         const a = insertFact(db, { title: 'Bulkonefact', content: 'x' })
         const b = insertFact(db, { title: 'Bulktwofact', content: 'x' })
-        db.prepare("UPDATE memory_facts SET content = 'reindexedbody' WHERE workspace_id = 'ws-fts'").run()
+        db.prepare("UPDATE memory_facts SET content = 'reindexedbody' WHERE workspace_id IS NULL").run()
 
         const ids = matchIds(db, '"reindexedbody"').sort()
         assert.deepEqual(ids, [a, b].sort(), 'triggers cover paths the repository never touches')
@@ -286,7 +288,7 @@ if (!env) {
           `INSERT INTO memory_facts
              (id, workspace_id, category, title, content, tags, scope_paths,
               tier, confidence, source_type, status)
-           VALUES (?, 'ws-fts', 'convention', 'Legacyfact title', 'legacy body', '[]', '[]',
+           VALUES (?, NULL, 'convention', 'Legacyfact title', 'legacy body', '[]', '[]',
                    0, 0.5, 'manual', 'active')`
         ).run(id)
 

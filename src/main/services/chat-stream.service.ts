@@ -53,6 +53,15 @@ const log = chatIpcLogger
  */
 const MAX_CONCURRENT_STREAMS = 3
 
+/** How often the orphan sweep looks for busy conversations with no live stream. */
+const ORPHAN_SWEEP_INTERVAL_MS = 60_000
+
+/**
+ * Minimum age before a busy conversation can be swept. Covers the legitimate
+ * window between acquiring the lock and the lifecycle becoming observable.
+ */
+const ORPHAN_MIN_AGE_MS = 2 * 60_000
+
 // ── StreamContext — explicit per-stream state bag ──
 
 /** Immutable per-stream context — replaces the ad-hoc closure state bag. */
@@ -110,6 +119,10 @@ export class ChatStreamService {
 
   /** Per-conversation streaming locks — rejects if that conversation is already streaming */
   private streamingLocks = new Set<string>()
+  /** When each conversation acquired its lock — drives orphan-sweep age checks. */
+  private lockAcquiredAt = new Map<string, number>()
+  /** Periodic orphan sweep handle (see startOrphanSweep). */
+  private orphanSweepTimer: ReturnType<typeof setInterval> | null = null
   /** Per-conversation active request IDs */
   private activeRequestIds = new Map<string, string>()
 
@@ -147,6 +160,7 @@ export class ChatStreamService {
     this.callbacks = callbacks
     this.intentRouter = new IntentRouter(mainWindow)
     this.registerEventForwarders()
+    this.startOrphanSweep()
   }
 
   /**
@@ -444,6 +458,153 @@ export class ChatStreamService {
     this.eventCleanups.push(() => chatAgentService.off('permissionRequest:ws', onPermissionRequestWs))
   }
 
+  // ── Busy-state authority ─────────────────────────────────────────
+
+  /**
+   * Why a conversation is considered busy, or null when it is free.
+   *
+   * "Busy" is three independent pieces of state: the lock, the state machine,
+   * and the lifecycle registry. They are set together but were released on
+   * different paths, so they could — and did — diverge. `acquireStreamLock`
+   * rejected on the union of them while both stall watchdogs only ever tested
+   * `streamingLocks`. A conversation left non-idle in the state machine with
+   * its lock already released therefore blocked every future send while no
+   * timer would ever fire: permanently wedged, recoverable only by switching
+   * workspaces (the one caller of `forceResetIfStuck`).
+   *
+   * Every guard now asks this one question, so no watchdog can test a narrower
+   * condition than the one that rejects users.
+   */
+  private describeBusy(conversationId: string): string | null {
+    const reasons: string[] = []
+    if (this.streamingLocks.has(conversationId)) reasons.push('lock')
+    if (!conversationStateMachine.isIdle(conversationId)) {
+      reasons.push(`sm=${conversationStateMachine.getState(conversationId)}`)
+    }
+    if (lifecycleRegistry.get(conversationId)?.isActive) reasons.push('lifecycle')
+    return reasons.length > 0 ? reasons.join('+') : null
+  }
+
+  /** Whether a conversation is busy by any of the three measures. */
+  isConversationBusy(conversationId: string): boolean {
+    return this.describeBusy(conversationId) !== null
+  }
+
+  /**
+   * Release every piece of per-conversation streaming state, in the order that
+   * leaves nothing behind: abort the lifecycle (which runs disposers and force-
+   * resets the state machine), then clear anything a disposer could have
+   * missed. Idempotent — safe to call on an already-free conversation.
+   *
+   * Returns true if the conversation had been busy.
+   */
+  releaseConversation(conversationId: string, reason: string, requestId?: string): boolean {
+    const busy = this.describeBusy(conversationId)
+    if (!busy) return false
+
+    // Captured before the maps are cleared below — the renderer matches the
+    // completion event on requestId and ignores it if it doesn't line up.
+    const effectiveRequestId = requestId ?? this.activeRequestIds.get(conversationId) ?? ''
+
+    log.warn(
+      `[STREAM:release] Releasing conversation ${conversationId} (was ${busy}) — reason=${reason}`
+    )
+    // completeStreamMetrics takes a closed outcome union; release reasons are
+    // finer-grained, so fold them onto the nearest recorded outcome.
+    const outcome =
+      reason === 'safety-timeout'
+        ? 'timeout'
+        : reason === 'max-lifetime'
+          ? 'max-lifetime'
+          : reason === 'user-force-release'
+            ? 'stopped'
+            : 'aborted'
+    completeStreamMetrics(conversationId, outcome)
+
+    try {
+      lifecycleRegistry.abort(conversationId, reason)
+    } catch (err) {
+      log.warn('[STREAM:release] lifecycle abort failed:', err)
+    }
+    // Belt-and-braces: the lifecycle only force-resets the state machine when it
+    // had an active controller, and its disposers only clear the lock if they
+    // were registered. Neither is guaranteed for a half-torn-down conversation.
+    conversationStateMachine.forceReset(conversationId)
+    this.streamingLocks.delete(conversationId)
+    this.activeRequestIds.delete(conversationId)
+    this.lockAcquiredAt.delete(conversationId)
+    this.safetyTimerResets.delete(conversationId)
+    const kt = this.keepaliveTimers.get(conversationId)
+    if (kt) {
+      clearInterval(kt)
+      this.keepaliveTimers.delete(conversationId)
+    }
+
+    // Let the renderer clear its own streaming flags — without this the input
+    // stays disabled even though main is now free.
+    this.safeWindowSend(
+      IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+      createCompleteMessage({
+        conversationId,
+        messageId: `released-${Date.now()}`,
+        requestId: effectiveRequestId
+      })
+    )
+    return true
+  }
+
+  /**
+   * Periodically release conversations that are busy but have no live stream
+   * behind them.
+   *
+   * The per-stream watchdogs are registered by a running stream and die with
+   * it, so they cannot recover state that outlives the stream that created it.
+   * This sweep is the backstop for exactly that case.
+   */
+  private startOrphanSweep(): void {
+    if (this.orphanSweepTimer) return
+    this.orphanSweepTimer = setInterval(() => {
+      try {
+        this.sweepOrphanedConversations()
+      } catch (err) {
+        log.warn('[STREAM:orphan-sweep] sweep failed:', err)
+      }
+    }, ORPHAN_SWEEP_INTERVAL_MS)
+    this.orphanSweepTimer.unref?.()
+  }
+
+  /**
+   * One sweep pass. A conversation is orphaned when the state machine still
+   * calls it streaming but no lifecycle is active for it — nothing is going to
+   * produce another chunk, so the busy state can never clear on its own.
+   *
+   * Exposed for tests.
+   */
+  sweepOrphanedConversations(): string[] {
+    const released: string[] = []
+    const candidates = new Set<string>([
+      ...conversationStateMachine.activeStreamingIds(),
+      ...this.streamingLocks
+    ])
+
+    for (const conversationId of candidates) {
+      if (lifecycleRegistry.get(conversationId)?.isActive) continue // real stream
+
+      // Grace period: a conversation mid-handoff between acquire and the first
+      // chunk legitimately has no active lifecycle for a brief window.
+      const acquiredAt = this.lockAcquiredAt.get(conversationId)
+      if (acquiredAt !== undefined && Date.now() - acquiredAt < ORPHAN_MIN_AGE_MS) continue
+
+      log.warn(
+        `[STREAM:orphan-sweep] Conversation ${conversationId} is busy with no active lifecycle — releasing`
+      )
+      if (this.releaseConversation(conversationId, 'orphan-sweep')) {
+        released.push(conversationId)
+      }
+    }
+    return released
+  }
+
   // ── Extracted Lifecycle Methods ──
 
   /**
@@ -459,8 +620,11 @@ export class ChatStreamService {
     done: Promise<void>
   } {
     // Per-conversation lock: only reject if THIS conversation is already streaming
-    if (this.streamingLocks.has(conversationId) || !conversationStateMachine.isIdle(conversationId)) {
-      log.warn(`[STREAM:concurrent-rejected] Conversation ${conversationId} is already streaming`)
+    const busy = this.describeBusy(conversationId)
+    if (busy) {
+      log.warn(
+        `[STREAM:concurrent-rejected] Conversation ${conversationId} is already streaming (${busy})`
+      )
       throw new Error(
         'A message is already being processed in this chat. Please wait for it to complete or stop it first.'
       )
@@ -504,6 +668,7 @@ export class ChatStreamService {
     }
 
     this.activeRequestIds.set(conversationId, requestId)
+    this.lockAcquiredAt.set(conversationId, Date.now())
     this.stoppedConversations.delete(conversationId)
 
     // C3-FIX: Register lock-release disposer immediately at acquisition time.
@@ -512,6 +677,7 @@ export class ChatStreamService {
     lifecycle.onDispose(() => {
       this.streamingLocks.delete(conversationId)
       this.activeRequestIds.delete(conversationId)
+      this.lockAcquiredAt.delete(conversationId)
     })
 
     let settled = false
@@ -618,7 +784,10 @@ export class ChatStreamService {
 
     const startSafetyTimer = (): void => {
       safetyTimer = setTimeout(() => {
-        if (!safetyCleared && this.streamingLocks.has(conversationId)) {
+        // Consolidated guard: testing only `streamingLocks` here meant a stream
+        // that lost its lock but kept its state-machine entry was invisible to
+        // this watchdog while still blocking every send.
+        if (!safetyCleared && this.isConversationBusy(conversationId)) {
           // SAFETY-LOG-LEVEL: Downgraded from error to warn. If the stream already
           // completed (resolveDone fired) the double-settle guard makes rejectDone
           // a no-op — this log would be a scary-looking no-op error. Using warn
@@ -627,22 +796,10 @@ export class ChatStreamService {
             '[STREAM:main-safety-timeout] No chunk activity for 5 minutes — force-resetting. ' +
               `conversationId=${conversationId} requestId=${requestId}`
           )
-          completeStreamMetrics(conversationId, 'timeout')
-          lifecycleRegistry.abort(conversationId, 'safety-timeout')
-
-          // SAFETY-COMPLETE-SIGNAL: Send a synthetic CHAT_MESSAGE_COMPLETE so the
-          // renderer's handleMessageComplete fires and cleans up streamingConversationIds,
-          // stashed state, and stall timers. Without this, the conversation can remain
-          // stuck in streamingConversationIds if handleStateChange's idle-guard
-          // (prevState === 'idle' → skip) prevents the forceReset cleanup path.
-          this.safeWindowSend(
-            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({
-              conversationId,
-              messageId: `timeout-${conversationId}`,
-              requestId
-            })
-          )
+          // releaseConversation handles metrics, lifecycle abort, state-machine
+          // reset, timer teardown and the synthetic CHAT_MESSAGE_COMPLETE the
+          // renderer needs to re-enable its input.
+          this.releaseConversation(conversationId, 'safety-timeout', requestId)
 
           rejectDone(new Error('Streaming timed out — safety recovery triggered'))
         }
@@ -665,21 +822,12 @@ export class ChatStreamService {
     const lifetimeMin = appPreferenceRepository.getAppPreferences().maxStreamLifetimeMin
     const MAX_STREAM_LIFETIME_MS = lifetimeMin * 60 * 1000
     const lifetimeTimer = setTimeout(() => {
-      if (!safetyCleared && this.streamingLocks.has(conversationId)) {
+      if (!safetyCleared && this.isConversationBusy(conversationId)) {
         log.warn(
           `[STREAM:max-lifetime] Stream exceeded ${lifetimeMin}-minute hard cap — force-aborting. ` +
             `conversationId=${conversationId} requestId=${requestId}`
         )
-        completeStreamMetrics(conversationId, 'max-lifetime')
-        lifecycleRegistry.abort(conversationId, 'max-lifetime')
-        this.safeWindowSend(
-          IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-          createCompleteMessage({
-            conversationId,
-            messageId: `max-lifetime-${conversationId}`,
-            requestId
-          })
-        )
+        this.releaseConversation(conversationId, 'max-lifetime', requestId)
         rejectDone(new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`))
       }
     }, MAX_STREAM_LIFETIME_MS)
@@ -1824,6 +1972,7 @@ export class ChatStreamService {
       }
       // Belt-and-suspenders: clear any orphaned locks
       this.streamingLocks.clear()
+      this.lockAcquiredAt.clear()
       this.activeRequestIds.clear()
     }
   }
@@ -1850,7 +1999,12 @@ export class ChatStreamService {
 
     // Abort all active streams before disposal
     lifecycleRegistry.abortAll('service-disposed')
+    if (this.orphanSweepTimer) {
+      clearInterval(this.orphanSweepTimer)
+      this.orphanSweepTimer = null
+    }
     this.streamingLocks.clear()
+    this.lockAcquiredAt.clear()
     this.activeRequestIds.clear()
     this.stoppedConversations.clear()
     this.safetyTimerResets.clear()

@@ -149,4 +149,17 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
       requestId: streams[0]?.requestId ?? null
     }
   })
+
+  // ── Manual escape hatch for a wedged conversation ──
+  // Stop only helps while a stream is actually running. When the busy state
+  // outlives the stream, Stop is a no-op and the chat is unusable until the
+  // app restarts — this gives the user a way out without one.
+  ipcMain.handle(IPC_CHANNELS.CHAT_FORCE_RELEASE, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.CHAT_FORCE_RELEASE
+    const args = requireObject(rawArgs, ch)
+    const conversationId = requireString(args, 'conversationId', ch)
+    const released = chatStreamService.releaseConversation(conversationId, 'user-force-release')
+    return { released }
+  })
 }

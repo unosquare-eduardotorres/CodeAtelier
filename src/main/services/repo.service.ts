@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { extname, resolve, relative } from 'node:path'
 import simpleGit from 'simple-git'
 import type { RepoInfo, FileDiffResult, DiffIdenticalReason } from '../../shared/types'
@@ -90,6 +90,15 @@ export function isMissingPathError(msg: string): boolean {
 export function shouldWarnOnShowFailure(baseExists: boolean, msg: string): boolean {
   if (!baseExists) return false
   return !isMissingPathError(msg)
+}
+
+/** Resolve symlinks; falls back to the plain resolved path when the target is gone. */
+async function realPathOrSelf(p: string): Promise<string> {
+  try {
+    return await realpath(resolve(p))
+  } catch {
+    return resolve(p)
+  }
 }
 
 /** First line of an error message — git errors are multi-line and noisy. */
@@ -329,7 +338,10 @@ export class RepoService {
   private async isGitRoot(dirPath: string): Promise<boolean> {
     try {
       const top = (await simpleGit(dirPath).revparse(['--show-toplevel'])).trim()
-      return resolve(top) === resolve(dirPath)
+      // Compare real paths — git reports the symlink-resolved root, so a repo
+      // reached through a symlink (/tmp → /private/tmp) would otherwise look like
+      // a non-root and get `git init`'d on top of itself.
+      return (await realPathOrSelf(top)) === (await realPathOrSelf(dirPath))
     } catch {
       return false
     }
@@ -465,22 +477,38 @@ export class RepoService {
         entries.push({ filePath: fp, changeType: 'deleted', staged: stagedSet.has(fp) })
       }
       for (const r of status.renamed) {
-        entries.push({ filePath: r.to, changeType: 'modified', staged: stagedSet.has(r.to) })
+        // The old side lives at r.from — without it the rename renders as a 100% addition.
+        entries.push({
+          filePath: r.to,
+          changeType: 'modified',
+          staged: stagedSet.has(r.to),
+          oldPath: r.from
+        })
       }
 
       return entries
     } catch (e) {
+      // Returning [] here renders as "No uncommitted changes" — a silent under-report
+      // is the dangerous direction, so the failure has to reach the user.
+      const msg = e instanceof Error ? e.message : String(e)
       logger.warn('Failed to get uncommitted file details:', e)
-      return []
+      throw new Error(`DIFF_LIST_FAILED: ${msg}`)
     }
   }
 
   /**
    * Get old (HEAD) and new (working tree) content for side-by-side diff.
    * For new files: oldContent = ''. For deleted files: newContent = ''.
+   * `oldPath` is the rename source, when git status detected one.
+   *
+   * Shares resolveDiffSides with getRefFileDiff so renames and mode-only changes
+   * are explained here too — but deliberately skips the merge-base lookup: the
+   * base is literally HEAD, and asking merge-base in a repo with no commits would
+   * change the empty-repo warning behaviour.
    */
-  async getFileDiff(repoPath: string, filePath: string): Promise<FileDiffResult> {
+  async getFileDiff(repoPath: string, filePath: string, oldPath?: string): Promise<FileDiffResult> {
     assertWithinRepo(repoPath, filePath)
+    if (oldPath) assertWithinRepo(repoPath, oldPath)
     const git = simpleGit(repoPath)
     const language = detectLanguage(filePath)
 
@@ -491,53 +519,21 @@ export class RepoService {
     const absoluteFile = resolve(repoPath, filePath)
     // Always produce a relative path for git show — absolute paths break git.show
     const normalizedPath = relative(absoluteRepo, absoluteFile)
+    const normalizedOldPath = oldPath
+      ? relative(absoluteRepo, resolve(repoPath, oldPath))
+      : undefined
 
-    let oldContent = ''
-    let newContent = ''
-    let warning: string | undefined
+    const warnings: string[] = []
+    const sides = await this.resolveDiffSides(git, {
+      base: 'HEAD',
+      toRef: 'WORKING_TREE',
+      path: normalizedPath,
+      absoluteFile,
+      oldPath: normalizedOldPath,
+      warnings
+    })
 
-    // Get old content from HEAD using normalized relative path
-    try {
-      oldContent = await git.show([`HEAD:${normalizedPath}`])
-    } catch (e) {
-      // A missing path is EXPECTED (file is new/untracked), and so is any failure
-      // in a repo with no commits at all. Anything else is a real failure — surface
-      // it instead of silently showing an empty side.
-      oldContent = ''
-      const msg = firstLine(e)
-      // Resolved lazily — only a failed `git show` needs to know whether HEAD exists.
-      const hasHead = await git.raw(['rev-parse', '--verify', 'HEAD']).then(
-        () => true,
-        () => false
-      )
-      if (shouldWarnOnShowFailure(hasHead, msg)) {
-        warning = msg
-        logger.warn(`git show HEAD:${normalizedPath} failed:`, msg)
-      } else {
-        logger.debug(`git show HEAD:${normalizedPath} — file is new or repo has no commits`)
-      }
-    }
-
-    // Get new content from working tree
-    try {
-      newContent = await readFile(absoluteFile, 'utf-8')
-    } catch {
-      // File was deleted
-      newContent = ''
-    }
-
-    // Detect binary files — return placeholder instead of garbled content
-    if (isBinaryContent(oldContent) || isBinaryContent(newContent)) {
-      return {
-        oldContent: '(Binary file — cannot display diff)',
-        newContent: '(Binary file — cannot display diff)',
-        language: 'text',
-        isBinary: true,
-        warning
-      }
-    }
-
-    return { oldContent, newContent, language, warning }
+    return this.buildDiffResult({ ...sides, language, warnings })
   }
 
   /**
@@ -725,7 +721,10 @@ export class RepoService {
       if (msg.includes('unknown revision') || msg.includes('bad revision')) {
         throw new Error(`REF_NOT_FOUND: ${fromRef} or ${toRef} does not exist`)
       }
+      // A partial list that looks complete is worse than no list — discard the
+      // untracked results too rather than under-report what would ship.
       logger.warn(`getRefDiffFiles(${fromRef} -> ${toRef}) failed:`, e)
+      throw new Error(`DIFF_LIST_FAILED: ${msg}`)
     }
 
     return mergeUntrackedIntoRefDiff(entries, untracked)
@@ -784,16 +783,134 @@ export class RepoService {
     path: string,
     warnings: string[]
   ): Promise<string> {
+    if (ref === 'WORKING_TREE') return ''
     try {
       return await git.show([`${ref}:${path}`])
     } catch (e) {
       const msg = firstLine(e)
-      // A missing path is EXPECTED (file added or deleted between the two refs)
-      if (!isMissingPathError(msg)) {
+      // A missing path is EXPECTED (file added or deleted between the two refs),
+      // and so is any failure against a ref that doesn't exist at all — a repo with
+      // no commits has no HEAD, and warning there paints an error on every file.
+      // Resolved lazily: only a failed `git show` needs to know whether ref exists.
+      const refExists = await git.raw(['rev-parse', '--verify', ref]).then(
+        () => true,
+        () => false
+      )
+      if (shouldWarnOnShowFailure(refExists, msg)) {
         warnings.push(msg)
         logger.warn(`git show ${ref}:${path} failed:`, msg)
+      } else {
+        logger.debug(`git show ${ref}:${path} — path absent or ref has no commits`)
       }
       return ''
+    }
+  }
+
+  /**
+   * Resolve the two sides of one file's diff for an already-resolved base.
+   * Shared by getFileDiff (base HEAD) and getRefFileDiff (base = branch point) so
+   * the default uncommitted view explains renames and mode changes identically.
+   */
+  private async resolveDiffSides(
+    git: ReturnType<typeof simpleGit>,
+    opts: {
+      base: string
+      toRef: string
+      path: string
+      absoluteFile: string
+      oldPath?: string
+      warnings: string[]
+    }
+  ): Promise<{ entry: RawDiffEntry | null; oldContent: string; newContent: string }> {
+    const { base, toRef, path, absoluteFile, oldPath, warnings } = opts
+    const entry = await this.resolveRawDiffEntry(git, base, toRef, path, oldPath)
+
+    if (entry && isGitlinkEntry(entry)) {
+      // Submodule pointer — both "blobs" are commit ids that cat-file can't read.
+      return {
+        entry,
+        oldContent: gitlinkSideContent(entry.srcSha),
+        newContent:
+          toRef === 'WORKING_TREE'
+            ? gitlinkSideContent(entry.dstSha) || 'Subproject commit (uncommitted change)\n'
+            : gitlinkSideContent(entry.dstSha)
+      }
+    }
+
+    // Content by blob SHA — the list and the pane now share one source of truth.
+    const oldContent = entry
+      ? isZeroSha(entry.srcSha)
+        ? ''
+        : await this.readBlob(git, entry.srcSha, warnings)
+      : await this.showAtRef(git, base, oldPath ?? path, warnings)
+
+    let newContent: string
+    if (toRef === 'WORKING_TREE') {
+      // The working tree is the truth for this mode — never read it from an object.
+      try {
+        newContent = await readFile(absoluteFile, 'utf-8')
+      } catch {
+        // File was deleted in working tree
+        newContent = ''
+      }
+    } else if (entry) {
+      newContent = isZeroSha(entry.dstSha) ? '' : await this.readBlob(git, entry.dstSha, warnings)
+    } else {
+      newContent = await this.showAtRef(git, toRef, path, warnings)
+    }
+
+    return { entry, oldContent, newContent }
+  }
+
+  /**
+   * Turn resolved sides into the renderer's result: binary placeholder, joined
+   * warnings, and — when the sides match — the reason they match. A bland
+   * "no differences" is indistinguishable from a broken pane.
+   */
+  private buildDiffResult(opts: {
+    entry: RawDiffEntry | null
+    oldContent: string
+    newContent: string
+    language: string
+    warnings: string[]
+    baseSha?: string
+  }): FileDiffResult {
+    const { entry, oldContent, newContent, language, warnings, baseSha } = opts
+
+    // Detect binary files — return placeholder instead of garbled content
+    if (isBinaryContent(oldContent) || isBinaryContent(newContent)) {
+      return {
+        oldContent: '(Binary file — cannot display diff)',
+        newContent: '(Binary file — cannot display diff)',
+        language: 'text',
+        isBinary: true,
+        warning: warnings.length > 0 ? warnings.join(' — ') : undefined,
+        baseSha
+      }
+    }
+
+    let identicalReason: DiffIdenticalReason | undefined
+    let modeChange: { from: string; to: string } | undefined
+    if (oldContent === newContent) {
+      identicalReason = resolveIdenticalReason(entry, oldContent === '')
+      if (identicalReason === 'mode-change' && entry) {
+        modeChange = { from: entry.srcMode, to: entry.dstMode }
+      }
+      if (identicalReason === 'unexplained') {
+        warnings.push(
+          'Git reports this file as changed but both sides resolved to identical content.'
+        )
+      }
+    }
+
+    return {
+      oldContent,
+      newContent,
+      language,
+      warning: warnings.length > 0 ? warnings.join(' — ') : undefined,
+      baseSha,
+      identicalReason,
+      modeChange
     }
   }
 
@@ -821,8 +938,6 @@ export class RepoService {
       ? relative(absoluteRepo, resolve(repoPath, oldPath))
       : undefined
 
-    let oldContent = ''
-    let newContent = ''
     const warnings: string[] = []
 
     // Resolve the same base getRefDiffFiles used for the file list — diffing
@@ -835,85 +950,22 @@ export class RepoService {
         `Could not determine branch point — comparing against the tip of ${fromRef} instead.`
       )
     }
-    const base = mergeBase ?? fromRef
 
-    const entry = await this.resolveRawDiffEntry(
-      git,
-      base,
+    const sides = await this.resolveDiffSides(git, {
+      base: mergeBase ?? fromRef,
       toRef,
-      normalizedPath,
-      normalizedOldPath
-    )
+      path: normalizedPath,
+      absoluteFile,
+      oldPath: normalizedOldPath,
+      warnings
+    })
 
-    if (entry && isGitlinkEntry(entry)) {
-      // Submodule pointer — both "blobs" are commit ids that cat-file can't read.
-      oldContent = gitlinkSideContent(entry.srcSha)
-      newContent =
-        toRef === 'WORKING_TREE'
-          ? gitlinkSideContent(entry.dstSha) || 'Subproject commit (uncommitted change)\n'
-          : gitlinkSideContent(entry.dstSha)
-    } else {
-      if (entry) {
-        // Content by blob SHA — the list and the pane now share one source of truth.
-        oldContent = isZeroSha(entry.srcSha) ? '' : await this.readBlob(git, entry.srcSha, warnings)
-      } else {
-        oldContent = await this.showAtRef(git, base, normalizedOldPath ?? normalizedPath, warnings)
-      }
-
-      if (toRef === 'WORKING_TREE') {
-        // The working tree is the truth for this mode — never read it from an object.
-        try {
-          newContent = await readFile(absoluteFile, 'utf-8')
-        } catch {
-          // File was deleted in working tree
-          newContent = ''
-        }
-      } else if (entry) {
-        newContent = isZeroSha(entry.dstSha) ? '' : await this.readBlob(git, entry.dstSha, warnings)
-      } else {
-        newContent = await this.showAtRef(git, toRef, normalizedPath, warnings)
-      }
-    }
-
-    const baseSha = mergeBase ? mergeBase.slice(0, 7) : undefined
-
-    // Detect binary files — return placeholder instead of garbled content
-    if (isBinaryContent(oldContent) || isBinaryContent(newContent)) {
-      return {
-        oldContent: '(Binary file — cannot display diff)',
-        newContent: '(Binary file — cannot display diff)',
-        language: 'text',
-        isBinary: true,
-        warning: warnings.length > 0 ? warnings.join(' — ') : undefined,
-        baseSha
-      }
-    }
-
-    // Identical sides always carry their cause — a bland "no differences" is
-    // indistinguishable from a broken pane.
-    let identicalReason: DiffIdenticalReason | undefined
-    let modeChange: { from: string; to: string } | undefined
-    if (oldContent === newContent) {
-      identicalReason = resolveIdenticalReason(entry, oldContent === '')
-      if (identicalReason === 'mode-change' && entry) {
-        modeChange = { from: entry.srcMode, to: entry.dstMode }
-      }
-      if (identicalReason === 'unexplained') {
-        warnings.push(
-          'Git reports this file as changed but both sides resolved to identical content.'
-        )
-      }
-    }
-
-    return {
-      oldContent,
-      newContent,
+    return this.buildDiffResult({
+      ...sides,
       language,
-      warning: warnings.length > 0 ? warnings.join(' — ') : undefined,
-      baseSha,
-      identicalReason,
-      modeChange
-    }
+      warnings,
+      baseSha: mergeBase ? mergeBase.slice(0, 7) : undefined
+    })
   }
 }
 

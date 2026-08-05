@@ -75,9 +75,12 @@ export function registerCodeChangesIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DIFF)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DIFF)
     const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
+    // Rename source — without it the old side is looked up at the new path and the
+    // file renders as a 100% addition.
+    const oldPath = optionalString(args, 'oldPath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
 
     const { repoPath } = resolveRepoPath(conversationId)
-    return repoService.getFileDiff(repoPath, filePath)
+    return repoService.getFileDiff(repoPath, filePath, oldPath)
   })
 
   // Stage specific files and commit

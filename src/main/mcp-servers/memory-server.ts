@@ -93,7 +93,14 @@ function registerToolSchemas(): void {
         .max(20)
         .optional()
         .default(5)
-        .describe('Number of results to return')
+        .describe('Number of results to return'),
+      asOf: z
+        .string()
+        .optional()
+        .describe(
+          'ISO timestamp for a point-in-time view — returns what the project ' +
+            'believed at that moment, including facts since superseded. Omit for current truth.'
+        )
     },
     withErrorBoundary('memory_search', async (args) => {
       const { memoryRetrievalService } = await ensureReady()
@@ -101,7 +108,9 @@ function registerToolSchemas(): void {
         WORKSPACE_ID,
         args.query,
         args.limit,
-        args.category
+        args.category,
+        [],
+        args.asOf ? { asOf: args.asOf } : undefined
       )
       const formatted = memoryRetrievalService.formatForToolResponse(results)
       return {

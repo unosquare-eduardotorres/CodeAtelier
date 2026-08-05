@@ -247,6 +247,10 @@ const api = {
     requestId: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_STREAMING_STATE),
 
+  /** Force-release a conversation wedged in a busy state (manual escape hatch). */
+  forceReleaseConversation: (conversationId: string): Promise<{ released: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_FORCE_RELEASE, { conversationId }),
+
   compactConversation: (args?: { extractNuance?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, args),
 
@@ -703,6 +707,23 @@ const api = {
     warnings: string[]
   }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_PROJECT_EXPORT, args),
 
+  memoryReflectionList: (args: {
+    workspaceId: string
+  }): Promise<Array<{ parent: MemoryFact; children: MemoryFact[] }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_LIST, args),
+
+  memoryReflectionApprove: (args: { id: string }): Promise<MemoryFact | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_APPROVE, args),
+
+  memoryReflectionReject: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_REJECT, args),
+
+  memoryReflectionRun: (args: {
+    workspaceId: string
+    workspacePath: string
+  }): Promise<{ clustersConsidered: number; parentsProposed: number; errors: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_RUN, args),
+
   memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
@@ -1139,11 +1160,19 @@ const api = {
   getFileDetails: (args: {
     conversationId: string
   }): Promise<
-    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
   > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
 
-  getFileDiff: (args: { conversationId: string; filePath: string }): Promise<FileDiffResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
+  getFileDiff: (args: {
+    conversationId: string
+    filePath: string
+    oldPath?: string
+  }): Promise<FileDiffResult> => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
 
   getRefFileDetails: (args: {
     conversationId: string

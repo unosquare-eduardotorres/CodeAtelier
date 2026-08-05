@@ -33,7 +33,8 @@ const MODE_CONFIG: Array<{
     mode: 'all-vs-target',
     label: 'All → Target',
     icon: GitMerge,
-    tooltip: 'All changes (committed + uncommitted) since the branch point (what a PR would show)'
+    tooltip:
+      'All changes including uncommitted work since the branch point — more than a PR would show'
   }
 ]
 
@@ -103,8 +104,11 @@ export default function CodeChangesPanel({
     }
   }, [activeWorkspace?.id, conversationId, fetchAndRefresh])
 
-  const hasRemote = repoInfo?.hasRemote ?? false
   const currentBranch = repoInfo?.currentBranch ?? ''
+  // Comparison modes only need *some* other ref to compare against — a local
+  // branch target works end to end, so a remote-less repo must not be blocked.
+  const hasComparisonTarget =
+    availableBranches.remote.length > 0 || availableBranches.local.some((b) => b !== currentBranch)
   const displayBranch = currentBranch === 'HEAD' ? 'detached HEAD' : currentBranch
 
   // Determine diff viewer labels based on mode
@@ -132,7 +136,7 @@ export default function CodeChangesPanel({
         <div className="flex rounded-md border border-border-default overflow-hidden">
           {MODE_CONFIG.map(({ mode, label, icon: Icon, tooltip }) => {
             const isActive = comparisonMode === mode
-            const isDisabled = mode !== 'uncommitted' && !hasRemote
+            const isDisabled = mode !== 'uncommitted' && !hasComparisonTarget
 
             return (
               <button
@@ -140,7 +144,7 @@ export default function CodeChangesPanel({
                 type="button"
                 onClick={() => handleModeChange(mode)}
                 disabled={isDisabled}
-                title={isDisabled ? 'No remote configured' : tooltip}
+                title={isDisabled ? 'No other branch to compare against' : tooltip}
                 className={`
                   inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors
                   ${isActive ? 'bg-primary text-white' : 'bg-surface-float text-text-secondary hover:bg-surface-overlay hover:text-text-primary'}

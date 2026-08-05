@@ -61,7 +61,8 @@ describe('describeIdenticalReason', () => {
       identical({ identicalReason: 'mode-change', modeChange: { from: '100644', to: '100755' } })
     )
     assert.ok(described?.title.includes('100644 → 100755'))
-    assert.ok(described?.detail.includes('nothing to deploy'))
+    // The mode bit IS in the tree and DOES merge — the copy must not claim otherwise.
+    assert.ok(described?.detail.includes('only the file permission changes'))
   })
 
   test('mode_change_without_modes_still_explains_itself', () => {

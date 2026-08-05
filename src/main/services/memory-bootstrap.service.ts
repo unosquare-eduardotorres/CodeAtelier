@@ -207,8 +207,18 @@ class MemoryBootstrapService {
       .findResumableRuns(workspaceId)
       .find((r) => memoryBootstrapRepository.countPending(r.id) > 0)
 
+    // `lastProgress` is never pruned, so a finished run's finished event would
+    // be replayed on every page visit — keeping the live progress panel on
+    // screen and hiding LastRunSummary until the app restarted. Only in-flight
+    // state (including `paused`, which is still actionable) belongs here; the
+    // run row behind `latestRun` is the record of what already happened.
+    const live = this.lastProgress.get(workspaceId) ?? null
+    const isTerminal =
+      live !== null &&
+      (live.jobStatus === 'done' || live.jobStatus === 'cancelled' || live.jobStatus === 'error')
+
     return {
-      progress: this.lastProgress.get(workspaceId) ?? null,
+      progress: isTerminal ? null : live,
       latestRun,
       resumableRunId: resumable?.id ?? null
     }

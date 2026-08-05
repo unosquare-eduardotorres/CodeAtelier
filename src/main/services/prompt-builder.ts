@@ -274,8 +274,9 @@ export class PromptBuilder {
   private readConfiguredInstructionGlobs(workspacePath: string): string[] {
     try {
       const workspace = workspaceRepository.findByPath(workspacePath)
-      const configured = (workspace?.settings as Record<string, unknown> | undefined)
-        ?.memoryInstructionSources
+      if (!workspace) return []
+      const settings = workspaceRepository.getSettings(workspace.id) as Record<string, unknown>
+      const configured = settings?.memoryInstructionSources
       return Array.isArray(configured) ? configured.map(String) : []
     } catch {
       return []

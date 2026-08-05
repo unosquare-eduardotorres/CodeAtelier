@@ -23,7 +23,7 @@ export function describeIdenticalReason(
       const modes = diff.modeChange ? ` (${diff.modeChange.from} → ${diff.modeChange.to})` : ''
       return {
         title: `Only the file mode changed${modes}`,
-        detail: 'Contents are identical — nothing to deploy from this file.'
+        detail: 'Contents are identical — only the file permission changes.'
       }
     }
     case 'rename-only':

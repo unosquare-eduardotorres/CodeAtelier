@@ -1040,6 +1040,17 @@ export interface MemoryFact {
   lastAccessedAt: string | null
   createdAt: string
   updatedAt: string
+  /**
+   * Bi-temporal validity (migration 136). `valid*` describe when the fact was
+   * true of the project; `observedAt`/`recordedAt` describe when we learned it.
+   * Null on rows written before the migration backfill ran.
+   */
+  validFrom: string | null
+  /** NULL means the fact is currently true. */
+  validTo: string | null
+  /** When the source stated it — a commit date, not the ingestion time. */
+  observedAt: string | null
+  recordedAt: string | null
   /** Count of non-auto_dedup confirmations (real evidence). Populated by UI-facing queries only. */
   evidenceCount?: number
 }
@@ -1095,6 +1106,30 @@ export interface MemoryFeedProgress {
   timestamp?: number
 }
 
+/**
+ * Typed relationship between two facts (migration 137).
+ *
+ * Direction is always "from acts on to": A supersedes B, A contradicts B,
+ * A derived_from B (A was synthesised out of B), A relates_to B.
+ */
+export const MEMORY_EDGE_TYPES = [
+  'derived_from',
+  'relates_to',
+  'contradicts',
+  'supersedes'
+] as const
+
+export type MemoryEdgeType = (typeof MEMORY_EDGE_TYPES)[number]
+
+export interface MemoryEdge {
+  id: string
+  fromId: string
+  toId: string
+  edgeType: MemoryEdgeType
+  confidence: number
+  createdAt: string
+}
+
 /** Capture settings stored per workspace (persisted in workspace settings_json). */
 export interface MemoryCaptureSettings {
   sessionCapture: boolean
@@ -1119,6 +1154,13 @@ export interface MemoryCaptureSettings {
    * layouts that put them somewhere else. Empty by default.
    */
   instructionSources: string[]
+  /**
+   * Let the idle consolidation pass ask an LLM to synthesise a parent fact from
+   * a cluster of similar ones. Opt-in and capped per run: it is the only part
+   * of consolidation that spends money, and synthesised facts land in a review
+   * queue rather than being promoted unreviewed.
+   */
+  reflectionEnabled: boolean
   /**
    * Documents extracted in parallel during Feed Brain. Each one is a Claude CLI
    * spawn, so raising this is the main throughput lever — and the main way to
@@ -1301,7 +1343,7 @@ export interface MemoryEmbeddingStatus {
 
 // ── Knowledge Graph View ──
 
-export type MemoryGraphEdgeKind = 'similarity' | 'superseded' | 'contradiction'
+export type MemoryGraphEdgeKind = 'similarity' | 'superseded' | 'contradiction' | 'derived'
 
 export interface MemoryGraphNode {
   id: string

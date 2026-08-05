@@ -165,6 +165,13 @@ const MESSAGE_TIMEOUT_MS = 5 * 60_000 // 5 minutes
  */
 const TOOL_RESULT_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
+/**
+ * How often to log a breadcrumb while a read is parked. Applies to every wait,
+ * including the deliberately untimed human-input wait — the point is that a
+ * stalled executor always leaves a trail in main.log.
+ */
+const WAIT_BREADCRUMB_MS = 60_000 // 1 minute
+
 /** Maximum character length for a /goal condition sent to the CLI. */
 const GOAL_MAX_CHARS = 4_000
 
@@ -197,9 +204,112 @@ export class CLIExecutor {
   /** Whether a /goal command was queued for the current turn — enables trailing-result drain */
   private goalQueuedForTurn = false
 
+  /**
+   * Rejects as soon as the current child process exits or errors.
+   *
+   * Every await on the NDJSON iterator races this. Without it, a turn parked
+   * on `iterator.next()` can outlive the process that was supposed to feed it:
+   * the `exit` handler nulls `cliProcess` but does not end stdout, so the
+   * `for await` inside parseNdjsonStream never completes. That is survivable
+   * on the timeout-guarded branches, but the ask_user branch has NO timeout by
+   * design (a human may take arbitrarily long), so a dead child there parks
+   * the read loop forever — silent, with the stream lock still held.
+   *
+   * Null while no process is running. Always has a no-op catch attached so a
+   * rejection nobody happens to be racing can't become an unhandled rejection.
+   */
+  private exitSignal: Promise<never> | null = null
+  /** Rejector for `exitSignal`, invoked from the process 'exit'/'error' handlers. */
+  private rejectExitSignal: ((err: Error) => void) | null = null
+
   /** Get the captured session ID */
   getSessionId(): string | undefined {
     return this.sessionId
+  }
+
+  /**
+   * Arm a fresh exit signal for a newly spawned process. Any previous signal is
+   * settled first so a stale one can never reject a future turn.
+   */
+  private armExitSignal(): void {
+    this.disarmExitSignal('superseded by new process')
+    this.exitSignal = new Promise<never>((_, reject) => {
+      this.rejectExitSignal = reject
+    })
+    // The signal is only consumed when a read is actually in flight. Attaching
+    // a sink here keeps an unraced rejection from surfacing as an unhandled one.
+    this.exitSignal.catch(() => {})
+  }
+
+  /** Settle and clear the current exit signal. */
+  private disarmExitSignal(reason: string): void {
+    this.rejectExitSignal?.(new Error(reason))
+    this.rejectExitSignal = null
+    this.exitSignal = null
+  }
+
+  /**
+   * Race a read against process death.
+   *
+   * `timeoutMs === null` means "no wall-clock limit" (human input) — but the
+   * exit signal still applies, because no human can answer a prompt whose
+   * process is gone.
+   */
+  private async raceRead(
+    read: Promise<IteratorResult<Record<string, unknown>>>,
+    timeoutMs: number | null,
+    timeoutMessage: string
+  ): Promise<IteratorResult<Record<string, unknown>>> {
+    const contenders: Array<Promise<IteratorResult<Record<string, unknown>>>> = [read]
+    if (this.exitSignal) contenders.push(this.exitSignal)
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    if (timeoutMs !== null) {
+      contenders.push(
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+        })
+      )
+    }
+
+    try {
+      return await Promise.race(contenders)
+    } finally {
+      clearTimeout(timeoutHandle)
+    }
+  }
+
+  /**
+   * Emit a periodic breadcrumb while a read is parked.
+   *
+   * The 35-minute production hang was diagnosable only as "main.log stops":
+   * a parked await produces no output at all, so an indefinite wait and a dead
+   * main process look identical after the fact. This makes waiting observable
+   * — every WAIT_BREADCRUMB_MS the log records what is being waited on and for
+   * how long, so the next occurrence is evidence rather than silence.
+   */
+  private async withWaitBreadcrumb<T>(
+    label: string,
+    tools: ToolTracker,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const startedAt = Date.now()
+    const timer = setInterval(() => {
+      const waitedSec = Math.round((Date.now() - startedAt) / 1000)
+      executorLog.warn(
+        `[CLI:await-breadcrumb] still waiting on ${label} after ${waitedSec}s ` +
+          `(pending=${tools.pendingToolCount} names=[${tools.pendingToolNames.join(', ')}] ` +
+          `alive=${this.isAlive()} pid=${this.cliProcess?.pid ?? 'none'})`
+      )
+    }, WAIT_BREADCRUMB_MS)
+    // Never hold the event loop open purely for diagnostics.
+    timer.unref?.()
+
+    try {
+      return await run()
+    } finally {
+      clearInterval(timer)
+    }
   }
 
   /**
@@ -289,39 +399,35 @@ export class CLIExecutor {
             // Tool call in flight — use generous timeout unless waiting for
             // human input (ask_user / elicitation), which has no timeout.
             if (tools.hasAskUserPending()) {
-              // Human input has no meaningful timeout — user decides when to respond
-              // Log only on 0→N transition (not per message)
+              // Human input has no wall-clock timeout — the user decides when to
+              // respond. The exit signal still applies (see raceRead): a prompt
+              // whose process has died can never be answered, and parking here
+              // forever is what wedges the conversation lock.
               if (lastLoggedPendingTools === 0) {
-                executorLog.debug(
-                  `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending) — timeout suspended`
+                executorLog.info(
+                  `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending: ${tools.pendingToolNames.join(', ')}) — wall-clock timeout suspended, exit signal armed`
                 )
               }
               lastLoggedPendingTools = tools.pendingToolCount
-              iterResult = await this.ndjsonIterator.next()
+              iterResult = await this.withWaitBreadcrumb('human-input', tools, () =>
+                this.raceRead(this.ndjsonIterator!.next(), null, '')
+              )
             } else {
               // MCP tool execution: generous timeout prevents indefinite hangs
               // Log only on 0→N transition (not per message)
               if (lastLoggedPendingTools === 0) {
-                executorLog.debug(
-                  `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
+                executorLog.info(
+                  `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending: ${tools.pendingToolNames.join(', ')}) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
                 )
               }
               lastLoggedPendingTools = tools.pendingToolCount
-              let toolTimeoutHandle: ReturnType<typeof setTimeout> | undefined
-              iterResult = await Promise.race([
-                this.ndjsonIterator.next(),
-                new Promise<never>((_, reject) => {
-                  toolTimeoutHandle = setTimeout(
-                    () =>
-                      reject(
-                        new Error(
-                          `CLI tool result timeout — no response from MCP tool for ${TOOL_RESULT_TIMEOUT_MS / 60_000} minutes`
-                        )
-                      ),
-                    TOOL_RESULT_TIMEOUT_MS
-                  )
-                })
-              ]).finally(() => clearTimeout(toolTimeoutHandle))
+              iterResult = await this.withWaitBreadcrumb('tool-result', tools, () =>
+                this.raceRead(
+                  this.ndjsonIterator!.next(),
+                  TOOL_RESULT_TIMEOUT_MS,
+                  `CLI tool result timeout — no response from MCP tool for ${TOOL_RESULT_TIMEOUT_MS / 60_000} minutes`
+                )
+              )
             }
           } else {
             // Log tool-complete transition (N→0) once
@@ -332,21 +438,11 @@ export class CLIExecutor {
               lastLoggedPendingTools = 0
             }
             // No tools pending — use normal timeout to detect CLI stalls
-            let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-            iterResult = await Promise.race([
+            iterResult = await this.raceRead(
               this.ndjsonIterator.next(),
-              new Promise<never>((_, reject) => {
-                timeoutHandle = setTimeout(
-                  () =>
-                    reject(
-                      new Error(
-                        `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
-                      )
-                    ),
-                  MESSAGE_TIMEOUT_MS
-                )
-              })
-            ]).finally(() => clearTimeout(timeoutHandle))
+              MESSAGE_TIMEOUT_MS,
+              `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
+            )
           }
           if (iterResult.done) {
             executorLog.info('[CLI:stream] Iterator exhausted (process ended)')
@@ -598,6 +694,9 @@ export class CLIExecutor {
     const proc = this.cliProcess
     const iter = this.ndjsonIterator
     this.cliProcess = null
+    // Unblock any in-flight read immediately — killProcess() awaits the
+    // generator's return() below, which queues behind a pending next().
+    this.disarmExitSignal('CLI process killed while awaiting output')
     this.ndjsonIterator = null
     this.cliReadyForInput = false
 
@@ -683,6 +782,9 @@ export class CLIExecutor {
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false
       })
+      // Arm before any handler can fire, so an immediate spawn failure still
+      // has a signal to reject.
+      this.armExitSignal()
     } catch (err) {
       this.cliProcess = null
       const code = (err as NodeJS.ErrnoException).code
@@ -732,7 +834,20 @@ export class CLIExecutor {
       this.lastExitCode = code
       // EXEC-03: Clean up temp system prompt file on natural exit/crash
       this.cleanupSystemPromptFile()
+      const exited = this.cliProcess
       this.cliProcess = null
+      // Break any in-flight read. 'exit' does not imply stdout has ended — an
+      // inherited fd can hold it open — so destroying it is what actually lets
+      // parseNdjsonStream's `for await` finish. The signal covers the case
+      // where even that doesn't land.
+      try {
+        exited?.stdout?.destroy()
+      } catch {
+        /* already torn down */
+      }
+      this.disarmExitSignal(
+        `CLI process exited (code=${code} signal=${signal}) while awaiting output`
+      )
     })
 
     this.cliProcess.on('error', (err) => {
@@ -740,6 +855,7 @@ export class CLIExecutor {
       // EXEC-03: Clean up temp system prompt file on spawn error
       this.cleanupSystemPromptFile()
       this.cliProcess = null
+      this.disarmExitSignal(`CLI process error while awaiting output: ${err.message}`)
     })
 
     // Write the initial user message to stdin
@@ -771,11 +887,26 @@ export class CLIExecutor {
     }
     const accepted = writeNdjsonMessage(this.cliProcess.stdin, message)
     if (!accepted) {
-      // stdin buffer is full — wait for it to drain before continuing
+      // stdin buffer is full — wait for it to drain before continuing.
+      const stdin = this.cliProcess.stdin
       await new Promise<void>((resolve) => {
-        this.cliProcess?.stdin?.once('drain', resolve)
+        let settled = false
+        // Both paths must tear down the other, or a write that drains normally
+        // leaves a 10s timer pinned and a 'drain' listener attached to a stream
+        // that outlives this call — leaking a listener per backpressured write.
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(safety)
+          stdin.off('drain', finish)
+          resolve()
+        }
         // Safety: resolve after 10s if drain never fires (process may have died)
-        setTimeout(resolve, 10_000)
+        const safety = setTimeout(() => {
+          executorLog.warn('[CLI:stdin] drain never fired within 10s — continuing')
+          finish()
+        }, 10_000)
+        stdin.once('drain', finish)
       })
     }
     this.cliReadyForInput = false

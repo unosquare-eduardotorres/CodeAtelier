@@ -32,6 +32,8 @@ import './code-graph-repos.test'
 import './migration-suite.test'
 import './memory-source-type-guard.test'
 import './memory-facts-fts.test'
+import './memory-bitemporal.test'
+import './memory-edges.test'
 
 // ─── Phase 16: Track 1 + Track 6: Migration replay + branch coverage ───
 import './migration-replay.test'

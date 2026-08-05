@@ -36,12 +36,21 @@ try {
   // with the real repository already cached guarantees a matching identity;
   // the original cache entry is restored so later files are unaffected.
   // Same pattern as memory-bootstrap-doc-state.test.ts.
+  //
+  // The worker has to be purged alongside it: the service imports `drainRun`
+  // from there, so a worker left in the cache from the mocked era keeps its own
+  // undefined repository binding and the drain throws on the first getRun.
   const svcPath = require.resolve('../memory-bootstrap.service')
+  const workerPath = require.resolve('../memory-bootstrap/worker')
   const previous = require.cache[svcPath]
+  const previousWorker = require.cache[workerPath]
   delete require.cache[svcPath]
+  delete require.cache[workerPath]
   svc = require(svcPath).memoryBootstrapService
   if (previous) require.cache[svcPath] = previous
   else delete require.cache[svcPath]
+  if (previousWorker) require.cache[workerPath] = previousWorker
+  else delete require.cache[workerPath]
 
   dbReady = true
 } catch (err) {
@@ -129,6 +138,42 @@ if (!dbReady) {
       const snap = svc.getSnapshot(wsId)
       assert.notEqual(snap.resumableRunId, runId)
     })
+
+    test('does not replay a finished run as live progress', () => {
+      const base = {
+        jobId: 'job-x',
+        runId: 'run-x',
+        workspaceId: wsId,
+        phaseIndex: 0,
+        phaseCount: 7,
+        phaseLabel: 'finalize',
+        factsCreated: 12,
+        message: 'Complete',
+        mode: 'full',
+        itemsTotal: 3,
+        itemsDone: 3,
+        itemsSkipped: 0,
+        itemsFailed: 0,
+        currentItem: null,
+        perPhase: {},
+        etaSeconds: null,
+        itemsPerMinute: null
+      }
+
+      svc.lastProgress.set(wsId, { ...base, jobStatus: 'running' })
+      assert.ok(svc.getSnapshot(wsId).progress, 'an in-flight run re-attaches')
+
+      for (const jobStatus of ['done', 'cancelled', 'error']) {
+        svc.lastProgress.set(wsId, { ...base, jobStatus })
+        assert.equal(
+          svc.getSnapshot(wsId).progress,
+          null,
+          `a ${jobStatus} run is history — replaying it would pin the live progress panel open forever`
+        )
+      }
+
+      svc.lastProgress.delete(wsId)
+    })
   })
 
   // ── Listing ────────────────────────────────────────────────────────────
@@ -181,6 +226,36 @@ if (!dbReady) {
         () => svc.resumeRun('no-such-run', '/tmp/nowhere'),
         /not found/i,
         'resuming a run that does not exist must fail loudly'
+      )
+    })
+  })
+
+  // ── Pause at the tail of the queue ─────────────────────────────────────
+
+  describe('MemoryBootstrapService pause racing the last item', () => {
+    test('a pause that lands on an already-drained queue still completes the run', async () => {
+      // Preflight and finalize reach for the code-graph index, the embedding
+      // provider and the projection writer. None of that is under test here,
+      // and all of it is slow, so this private instance runs with both phases
+      // stubbed out.
+      svc.phasePreflight = async () => ({ hasIndex: false, lastCommit: null, headSha: null })
+      svc.phaseFinalize = async () => {}
+
+      const runId = repo.createRun({ workspaceId: wsId, mode: 'full', scope: 'changed' })
+      repo.updateRun(runId, { status: 'paused' })
+
+      // No pending items: the drain loop sees the pause flag before it can
+      // claim anything, so it reports 'paused' with nothing left to resume.
+      const settled = svc.resumeRun(runId, '/tmp/nowhere')
+      assert.equal(svc.pause(wsId), true, 'the run is active as soon as resumeRun is called')
+      await settled
+
+      assert.equal(repo.countPending(runId), 0)
+      const finished = repo.getRun(runId)
+      assert.equal(
+        finished.status,
+        'completed',
+        `parking this as paused would skip finalize and never be offered as resumable — the run would be stranded (error=${finished.error})`
       )
     })
   })

@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 135
+export const CURRENT_SCHEMA_VERSION = 137
 
 export interface Migration {
   version: number
@@ -3784,6 +3784,121 @@ export const migrations: Migration[] = [
         db.prepare('SELECT count(*) AS n FROM memory_facts_fts').get() as { n: number }
       ).n
       dbLogger.info(`[migration-135] ✓ Created memory_facts_fts + triggers (${indexed} fact(s) indexed)`)
+    }
+  },
+
+  // ── Migration 136: Bi-temporal validity on memory facts ──
+  {
+    version: 136,
+    name: 'memory-facts-bitemporal',
+    up: (db) => {
+      // Four timestamps, separating when something was *true* from when we
+      // happened to *learn* it:
+      //   valid_from  — when the fact became true of the project
+      //   valid_to    — when it stopped being true (NULL = still true)
+      //   observed_at — when the source stated it (a commit date, a file mtime)
+      //   recorded_at — when this row was written
+      //
+      // Two concrete wins. A commit-sourced fact can carry the commit's date
+      // rather than today's, which matters across a long history. And
+      // `computeRecency` read `updated_at`, so a dedup merge made a decade-old
+      // convention look brand new — it now reads `observed_at`, which a merge
+      // does not touch.
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN valid_from TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN valid_to TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN observed_at TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN recorded_at TEXT`)
+
+      // Backfill from what we have. An active fact's window is still open; a
+      // superseded or archived one closed when it was last touched.
+      db.exec(`
+        UPDATE memory_facts SET
+          recorded_at = created_at,
+          observed_at = created_at,
+          valid_from  = created_at,
+          valid_to    = CASE
+                          WHEN status IN ('superseded', 'archived') THEN updated_at
+                          ELSE NULL
+                        END
+      `)
+
+      // The hot retrieval predicate.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_valid
+          ON memory_facts(workspace_id, status, valid_to)
+      `)
+
+      const open = (
+        db
+          .prepare('SELECT count(*) AS n FROM memory_facts WHERE valid_to IS NULL')
+          .get() as { n: number }
+      ).n
+      dbLogger.info(`[migration-136] ✓ Added bi-temporal columns (${open} fact(s) currently valid)`)
+    }
+  },
+
+  // ── Migration 137: Typed relationships between facts ──
+  {
+    version: 137,
+    name: 'memory-edges',
+    up: (db) => {
+      // Relationships between facts were spread across three ad-hoc places:
+      // `superseded_by`, `merged_into`, and `memory_contradictions` — the last
+      // of which had also been pressed into service as a cluster-review queue
+      // by prefixing its `resolution` text. One typed edge table replaces all
+      // of it and gives synthesis somewhere to record parent/child links.
+      //
+      // Edge direction is always "from acts on to":
+      //   A supersedes   B  — A replaced B
+      //   A contradicts  B  — A conflicts with B
+      //   A derived_from B  — A was synthesised from B
+      //   A relates_to   B  — undirected association
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_edges (
+          id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          from_id    TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+          to_id      TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+          edge_type  TEXT NOT NULL CHECK (edge_type IN
+                       ('derived_from','relates_to','contradicts','supersedes')),
+          confidence REAL NOT NULL DEFAULT 1.0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(from_id, to_id, edge_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_id, edge_type);
+        CREATE INDEX IF NOT EXISTS idx_memory_edges_to   ON memory_edges(to_id, edge_type);
+      `)
+
+      // Backfill. INSERT OR IGNORE covers the UNIQUE constraint, and the
+      // subqueries drop rows pointing at facts that no longer exist — the FK
+      // would reject those and abort the whole migration.
+      db.exec(`
+        INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type)
+        SELECT f.superseded_by, f.id, 'supersedes'
+          FROM memory_facts f
+         WHERE f.superseded_by IS NOT NULL
+           AND EXISTS (SELECT 1 FROM memory_facts n WHERE n.id = f.superseded_by);
+      `)
+
+      db.exec(`
+        INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type)
+        SELECT f.merged_into, f.id, 'supersedes'
+          FROM memory_facts f
+         WHERE f.merged_into IS NOT NULL
+           AND EXISTS (SELECT 1 FROM memory_facts n WHERE n.id = f.merged_into);
+      `)
+
+      db.exec(`
+        INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type)
+        SELECT c.new_fact_id, c.old_fact_id, 'contradicts'
+          FROM memory_contradictions c
+         WHERE EXISTS (SELECT 1 FROM memory_facts a WHERE a.id = c.new_fact_id)
+           AND EXISTS (SELECT 1 FROM memory_facts b WHERE b.id = c.old_fact_id);
+      `)
+
+      const edges = (
+        db.prepare('SELECT count(*) AS n FROM memory_edges').get() as { n: number }
+      ).n
+      dbLogger.info(`[migration-137] ✓ Created memory_edges (${edges} edge(s) backfilled)`)
     }
   }
 ]

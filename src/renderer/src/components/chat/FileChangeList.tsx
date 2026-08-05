@@ -98,10 +98,12 @@ export default function FileChangeList({
       comparisonMode === 'uncommitted'
         ? 'No uncommitted changes'
         : `No differences between ${currentBranch || 'current branch'} and ${targetBranch || 'target'}`
+    // An empty branch-vs-target diff only proves your branch adds nothing on top of
+    // the branch point — the target may still have moved ahead of you.
     const emptyDetail =
       comparisonMode === 'uncommitted'
         ? 'All file changes have been committed.'
-        : 'Both branches are in sync.'
+        : 'Your branch adds nothing on top of the branch point.'
 
     return (
       <div className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col items-center justify-center px-4 py-12 text-center">
@@ -193,10 +195,19 @@ export default function FileChangeList({
               {/* File icon */}
               <Icon size={14} className={`shrink-0 ${config.iconClass}`} />
 
-              {/* File name + path */}
+              {/* File name + path — renames name both sides, or the move is invisible */}
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-text-primary truncate">{fileName}</p>
-                {dirPath && <p className="text-[10px] text-text-muted truncate">{dirPath}</p>}
+                {file.oldPath ? (
+                  <p
+                    className="text-[10px] text-text-muted truncate"
+                    title={`${file.oldPath} → ${file.filePath}`}
+                  >
+                    {file.oldPath} → {file.filePath}
+                  </p>
+                ) : (
+                  dirPath && <p className="text-[10px] text-text-muted truncate">{dirPath}</p>
+                )}
               </div>
 
               {/* Change type badge */}

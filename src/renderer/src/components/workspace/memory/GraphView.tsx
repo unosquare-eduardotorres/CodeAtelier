@@ -100,7 +100,8 @@ const GRAPH_CSS_VARS = [
 const EDGE_STYLES: Record<MemoryGraphEdgeKind, { colorVar: string; alpha: number }> = {
   similarity: { colorVar: EDGE_COLOR_VAR.similarity, alpha: 0.25 },
   superseded: { colorVar: EDGE_COLOR_VAR.superseded, alpha: 0.45 },
-  contradiction: { colorVar: EDGE_COLOR_VAR.contradiction, alpha: 0.6 }
+  contradiction: { colorVar: EDGE_COLOR_VAR.contradiction, alpha: 0.6 },
+  derived: { colorVar: EDGE_COLOR_VAR.derived, alpha: 0.5 }
 }
 
 // ── Physics freeze constant (d3-force default) ──
@@ -298,7 +299,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
     new Set(['decision', 'convention', 'gotcha', 'preference', 'reference'])
   )
   const [filterEdges, setFilterEdges] = useState<Set<MemoryGraphEdgeKind>>(
-    new Set(['similarity', 'superseded', 'contradiction'])
+    new Set(['similarity', 'superseded', 'contradiction', 'derived'])
   )
   const [filterTiers, setFilterTiers] = useState<Set<number>>(new Set([0, 1, 2, 3]))
   const [hideSuperseded, setHideSuperseded] = useState(true)
@@ -890,6 +891,8 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
           .distance((d) => {
             if (d.kind === 'superseded') return 40
             if (d.kind === 'contradiction') return 60
+            // Synthesised parents sit close to the facts they came from.
+            if (d.kind === 'derived') return 30
             return 80 + (1 - d.weight) * 50
           })
           .strength(0.3)
@@ -973,6 +976,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
     if (link.kind === 'similarity') return 0.5 + (link.weight ?? 0) * 1.5
     if (link.kind === 'contradiction') return 2
     if (link.kind === 'superseded') return 1.2
+    if (link.kind === 'derived') return 1.8
     return 1.5
   }, [])
 

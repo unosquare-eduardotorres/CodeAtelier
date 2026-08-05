@@ -138,12 +138,28 @@ function teardownDoc(name: string, path: string): void {
   rmSync(path, { force: true })
 }
 
-/** Drain a synthetic docs-phase queue item through the real executor. */
-function callExtract(
+/** Number of chunks the fixture produces — the offsets below are relative to it. */
+function fixtureChunkCount(name: string): number {
+  const { chunkDocument, detectStrategy } = require('../document-chunker')
+  return chunkDocument(DOC_BODY, detectStrategy(name), name).length
+}
+
+const DOC_HASH = createHash('sha256').update(DOC_BODY).digest('hex')
+
+/**
+ * Drain a synthetic docs-phase queue item through the real executor.
+ *
+ * `itemPatch` overrides the queue row, which is how the resume path is
+ * exercised: a real resume hands the executor an item that already carries a
+ * chunk offset and the hash it was measured against.
+ */
+async function callExtract(
   path: string,
-  signal: AbortSignal
-): Promise<{ facts: number; status: string }> {
-  return executeItem({
+  signal: AbortSignal,
+  itemPatch: Record<string, unknown> = {}
+): Promise<{ facts: number; status: string; hashChanges: string[] }> {
+  const hashChanges: string[] = []
+  const outcome = await executeItem({
     workspaceId: 'ws-test',
     workspacePath: TMP_ROOT,
     scope: 'changed',
@@ -161,13 +177,16 @@ function callExtract(
       status: 'running',
       factsCreated: 0,
       error: null,
-      updatedAt: ''
+      updatedAt: '',
+      ...itemPatch
     },
     lastCommit: null,
     isPaused: () => false,
     onChunk: () => {},
+    onHashChanged: (hash: string) => hashChanges.push(hash),
     onMessage: () => {}
   })
+  return { ...outcome, hashChanges }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -244,6 +263,79 @@ describe('bootstrap executor — doc-state hash gating', () => {
     }
   })
 
+  test('records the content hash on first execution', async () => {
+    if (!loaded) return
+    const name = 'first-run.md'
+    const { path } = setupDoc(name, { onChunk: async () => 1 })
+    try {
+      const outcome = await callExtract(path, new AbortController().signal)
+      assert.deepEqual(
+        outcome.hashChanges,
+        [DOC_HASH],
+        'without this the item hash stays null forever and mid-file resume can never engage'
+      )
+    } finally {
+      teardownDoc(name, path)
+    }
+  })
+
+  test('resumes mid-file from the recorded chunk offset', async () => {
+    if (!loaded) return
+    const name = 'resume-match.md'
+    const { path, state } = setupDoc(name, { onChunk: async () => 1 })
+    try {
+      const total = fixtureChunkCount(name)
+      assert.ok(total > 1, 'fixture must chunk for this test to mean anything')
+      const alreadyDone = total - 1
+
+      const outcome = await callExtract(path, new AbortController().signal, {
+        chunkDone: alreadyDone,
+        contentHash: DOC_HASH,
+        factsCreated: 7
+      })
+
+      assert.equal(
+        state.chunkCalls,
+        total - alreadyDone,
+        'chunks already extracted must not be paid for a second time'
+      )
+      assert.deepEqual(outcome.hashChanges, [], 'an unchanged file does not rewrite its hash')
+      assert.equal(outcome.facts, 7 + (total - alreadyDone), 'partial facts carry forward')
+      assert.equal(outcome.status, 'done')
+    } finally {
+      teardownDoc(name, path)
+    }
+  })
+
+  test('restarts from chunk 0 when the offset was recorded against different content', async () => {
+    if (!loaded) return
+    const name = 'resume-stale.md'
+    const { path, state } = setupDoc(name, { onChunk: async () => 1 })
+    try {
+      const total = fixtureChunkCount(name)
+
+      const outcome = await callExtract(path, new AbortController().signal, {
+        chunkDone: total - 1,
+        contentHash: 'hash-of-some-older-version-of-this-file',
+        factsCreated: 7
+      })
+
+      assert.equal(
+        state.chunkCalls,
+        total,
+        'a stale offset points into different text — every chunk has to re-run'
+      )
+      assert.deepEqual(
+        outcome.hashChanges,
+        [DOC_HASH],
+        'the queue is told to store the new hash so the stale offset is dropped'
+      )
+      assert.equal(outcome.facts, total, 'facts from the stale attempt are not carried forward')
+    } finally {
+      teardownDoc(name, path)
+    }
+  })
+
   test('short-circuits as unchanged when the stored hash matches', async () => {
     if (!loaded) return
     const name = 'unchanged.md'
@@ -304,11 +396,10 @@ describe('Deep Scan circuit breaker — progress signal', () => {
 
 // ── Repository surface ──────────────────────────────────────────────────────
 
-describe('memoryFactRepository — doc-state escape hatch', () => {
-  test('exposes clearDocStates and getLastMutationAt', () => {
+describe('memoryFactRepository — doc-state surface', () => {
+  test('exposes getLastMutationAt', () => {
     if (!loaded) return
     const proto = Object.getPrototypeOf(memoryFactRepository)
-    assert.equal(typeof proto.clearDocStates, 'function')
     assert.equal(typeof proto.getLastMutationAt, 'function')
   })
 })

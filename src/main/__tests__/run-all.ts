@@ -190,6 +190,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/workspace-deploy-parsing.test',
   // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
   '../services/__tests__/chat-stream-lifecycle.test',
+  '../services/__tests__/stream-wedge-recovery.test',
   // ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
   '../services/__tests__/telemetry-recorder.test',
   '../ipc/__tests__/listener-cleanup.test',
@@ -225,6 +226,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-build-adapter.test',
   '../services/__tests__/blueprint-verify-adapter.test',
   '../services/__tests__/repo-service-pure.test',
+  '../services/__tests__/repo-service-git.test',
   '../services/__tests__/file-diff-state.test',
   '../services/__tests__/opencode-config-writer-logic.test',
   '../services/__tests__/opencode-config-schema.test',
@@ -354,6 +356,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/scope-matcher.test',
   '../services/__tests__/memory-scope-activation.test',
   '../services/__tests__/memory-projection.test',
+  '../services/__tests__/memory-retrieval-fusion.test',
+  '../services/__tests__/memory-reflection.test',
   '../services/__tests__/memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   '../services/__tests__/local-plan-state-fk-guard.test',
@@ -668,6 +672,8 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/migration-suite.test',
   '../db/repositories/__tests__/memory-source-type-guard.test',
   '../db/repositories/__tests__/memory-facts-fts.test',
+  '../db/repositories/__tests__/memory-bitemporal.test',
+  '../db/repositories/__tests__/memory-edges.test',
   // ─── Phase 16: Track 1 + Track 6 ───
   '../db/repositories/__tests__/migration-replay.test',
   '../db/repositories/__tests__/repo-branch-coverage.test',

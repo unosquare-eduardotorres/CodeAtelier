@@ -7,9 +7,13 @@
  * what makes a run started in one workspace visible while you work in another.
  * Seeds from `memoryBootstrapSnapshot` per known workspace on mount so a run
  * that was already in flight (or left paused by a crash) shows up immediately.
+ *
+ * The seed is written into the store rather than held locally: a second copy of
+ * the same state means dismissing a failed run clears one map and not the
+ * other, and the stale entry reappears the moment they are merged.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useMemoryStore, useWorkspaceStore } from '@renderer/store'
 import type { BootstrapProgress } from '../../../../../shared/types'
 
@@ -53,7 +57,7 @@ export function useBootstrapStatusBar(): BootstrapStatusBarInfo {
   const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   const workspaces = useWorkspaceStore((s) => s.workspaces)
   const byWorkspace = useMemoryStore((s) => s.bootstrapByWorkspace)
-  const [seeded, setSeeded] = useState<Record<string, BootstrapProgress>>({})
+  const seedBootstrapProgress = useMemoryStore((s) => s.seedBootstrapProgress)
 
   // Seed: pull a snapshot per known workspace so runs that started before this
   // component mounted (or before the app restarted) are still represented.
@@ -66,7 +70,7 @@ export function useBootstrapStatusBar(): BootstrapStatusBarInfo {
         .memoryBootstrapSnapshot({ workspaceId: ws.id })
         .then((snap) => {
           if (cancelled || !snap?.progress) return
-          setSeeded((prev) => ({ ...prev, [ws.id]: snap.progress as BootstrapProgress }))
+          seedBootstrapProgress(snap.progress as BootstrapProgress)
         })
         .catch(() => {
           /* ignore seed failure */
@@ -76,16 +80,14 @@ export function useBootstrapStatusBar(): BootstrapStatusBarInfo {
     return () => {
       cancelled = true
     }
-  }, [workspaces])
+  }, [workspaces, seedBootstrapProgress])
 
   const activeId = activeWorkspace?.id ?? null
 
   return useMemo(() => {
     const names = new Map(workspaces.map((w) => [w.id, w.name]))
-    // Live events win over the seed.
-    const merged: Record<string, BootstrapProgress> = { ...seeded, ...byWorkspace }
 
-    const entries: BootstrapStatusEntry[] = Object.values(merged)
+    const entries: BootstrapStatusEntry[] = Object.values(byWorkspace)
       .filter((p) => VISIBLE.includes(p.jobStatus))
       .map((p) => toEntry(p, names.get(p.workspaceId) ?? 'Unknown'))
 
@@ -93,5 +95,5 @@ export function useBootstrapStatusBar(): BootstrapStatusBarInfo {
     const backgroundEntries = entries.filter((e) => e.workspaceId !== activeId)
 
     return { active, backgroundCount: backgroundEntries.length, backgroundEntries }
-  }, [byWorkspace, seeded, workspaces, activeId])
+  }, [byWorkspace, workspaces, activeId])
 }

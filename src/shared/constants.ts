@@ -45,6 +45,8 @@ export const IPC_CHANNELS = {
   CHAT_STATE_CHANGE: 'chat:stateChange',
   /** Query current streaming state — used by renderer on conversation switch to restore streaming indicator */
   CHAT_GET_STREAMING_STATE: 'chat:getStreamingState',
+  /** Manual escape hatch — force-release a conversation wedged in a busy state */
+  CHAT_FORCE_RELEASE: 'chat:forceRelease',
   /** Set a /goal condition for the next send on a conversation */
   CHAT_SET_GOAL: 'chat:setGoal',
 
@@ -205,6 +207,12 @@ export const IPC_CHANNELS = {
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
   MEMORY_PROJECT_EXPORT: 'memory:project:export',
+
+  // Reflection review queue (synthesised parent facts awaiting approval)
+  MEMORY_REFLECTION_LIST: 'memory:reflection:list',
+  MEMORY_REFLECTION_APPROVE: 'memory:reflection:approve',
+  MEMORY_REFLECTION_REJECT: 'memory:reflection:reject',
+  MEMORY_REFLECTION_RUN: 'memory:reflection:run',
   MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
   MEMORY_SAVE_PLAN_EXECUTION: 'memory:savePlanExecution',
 

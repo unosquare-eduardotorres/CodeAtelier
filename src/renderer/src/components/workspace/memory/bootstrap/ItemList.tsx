@@ -67,6 +67,11 @@ export default function ItemList({
   filter: BootstrapItemStatus | 'all'
   onFilterChange: (filter: BootstrapItemStatus | 'all') => void
 }): React.JSX.Element {
+  // Counts are derived from the loaded page, so they are only truthful when
+  // that page covers the whole run. On a larger run they would silently
+  // under-report, which is worse than showing nothing — `total` stays correct
+  // either way.
+  const countsAreComplete = items.length >= total
   const counts = useMemo(() => {
     const acc: Record<string, number> = {}
     for (const item of items) acc[item.status] = (acc[item.status] ?? 0) + 1
@@ -87,7 +92,7 @@ export default function ItemList({
             }`}
           >
             {f.label}
-            {f.id !== 'all' && counts[f.id] ? (
+            {f.id !== 'all' && countsAreComplete && counts[f.id] ? (
               <span className="ml-1 font-mono opacity-70">{counts[f.id]}</span>
             ) : null}
           </button>

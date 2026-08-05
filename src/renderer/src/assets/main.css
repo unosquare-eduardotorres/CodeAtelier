@@ -148,6 +148,7 @@
   --graph-text:            #dbe4f4;        /* light label ink for dark canvas  */
   --graph-edge-superseded:    #b89050;     /* muted amber                     */
   --graph-edge-contradiction: #b85048;     /* muted brick red                 */
+  --graph-edge-derived:       #6a8fb8;     /* muted blue — synthesis links    */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

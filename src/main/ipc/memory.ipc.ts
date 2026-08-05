@@ -29,6 +29,7 @@ import { memoryIngestionService } from '../services/memory-ingestion.service'
 import { memoryBootstrapService } from '../services/memory-bootstrap.service'
 import { memoryConsolidationService } from '../services/memory-consolidation.service'
 import { memoryProjectionService } from '../services/memory-projection.service'
+import { memoryReflectionService } from '../services/memory-reflection.service'
 import { notificationService } from '../services/notification.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
@@ -76,6 +77,48 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     (event, args: { id: string }) => {
       validateSender(event)
       return memoryFactRepository.findById(args.id)
+    }
+  )
+
+  // ── Reflection review queue ──
+  // Synthesised parent facts are written archived, so nothing reaches a prompt
+  // until it is approved here.
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_REFLECTION_LIST,
+    (event, args: { workspaceId: string }) => {
+      validateSender(event)
+      if (!args.workspaceId) throw new Error('workspaceId is required')
+      return memoryReflectionService.listPending(args.workspaceId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_REFLECTION_APPROVE,
+    (event, args: { id: string }) => {
+      validateSender(event)
+      if (!args.id) throw new Error('Fact id is required')
+      return memoryReflectionService.approve(args.id)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_REFLECTION_REJECT,
+    (event, args: { id: string }) => {
+      validateSender(event)
+      if (!args.id) throw new Error('Fact id is required')
+      memoryReflectionService.reject(args.id)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_REFLECTION_RUN,
+    async (event, args: { workspaceId: string; workspacePath: string }) => {
+      validateSender(event)
+      if (!args.workspaceId || !args.workspacePath) {
+        throw new Error('workspaceId and workspacePath are required')
+      }
+      return memoryReflectionService.runReflection(args.workspaceId, args.workspacePath)
     }
   )
 
@@ -251,6 +294,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         captureRationales: (settings as any).memoryCaptureRationales === true,
         watcherGlobs: (settings as any).memoryWatcherGlobs ?? ['docs/**/*.md', 'README.md', 'CLAUDE.md'],
         instructionSources: (settings as any).memoryInstructionSources ?? [],
+        // Opt-in: reflection is the only consolidation step that spends money.
+        reflectionEnabled: (settings as any).memoryReflectionEnabled === true,
         bootstrapConcurrency: Number((settings as any).memoryBootstrapConcurrency) || 3
       }
       return memSettings
@@ -275,6 +320,9 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         ...(args.settings.watcherGlobs !== undefined && { memoryWatcherGlobs: args.settings.watcherGlobs }),
         ...(args.settings.instructionSources !== undefined && {
           memoryInstructionSources: args.settings.instructionSources
+        }),
+        ...(args.settings.reflectionEnabled !== undefined && {
+          memoryReflectionEnabled: args.settings.reflectionEnabled
         }),
         ...(args.settings.bootstrapConcurrency !== undefined && {
           memoryBootstrapConcurrency: Math.min(6, Math.max(1, Math.floor(args.settings.bootstrapConcurrency)))

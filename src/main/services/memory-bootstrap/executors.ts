@@ -7,6 +7,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { statSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { join, relative } from 'node:path'
 import log from 'electron-log'
@@ -112,13 +113,19 @@ async function executeFile(ctx: ExecContext, tag: string): Promise<ExecResult> {
   // their frontmatter already declares which paths they govern, which is a far
   // better scope than the file's own path.
   const instructionFormat = classifyInstructionPath(relPath)
+
+  // A document states what was true when it was last written, which on a
+  // 15-year-old repository is very often not today. Recency scoring reads this.
+  const observedAt = fileObservedAt(absPath)
+
   const extractOpts = instructionFormat
     ? {
         sourceType: 'claude-md' as const,
         tags: ['bootstrap', 'instructions', instructionFormat],
-        scopePaths: instructionScopePaths(workspacePath, absPath, readResult.content)
+        scopePaths: instructionScopePaths(workspacePath, absPath, readResult.content),
+        observedAt
       }
-    : { sourceType: 'bootstrap' as const, tags: ['bootstrap', tag] }
+    : { sourceType: 'bootstrap' as const, tags: ['bootstrap', tag], observedAt }
 
   // Resume mid-file only when the content is byte-identical to what produced
   // the recorded chunk offset. If the file changed under us, the old offset
@@ -275,9 +282,37 @@ async function executeCommits(ctx: ExecContext): Promise<ExecResult> {
     'recent-commits',
     `## Recent git commit messages and bodies:\n\n${commitLog.substring(0, 30000)}`,
     undefined,
-    { sourceType: 'commit', tags: ['bootstrap', 'history'] }
+    {
+      sourceType: 'commit',
+      tags: ['bootstrap', 'history'],
+      // Date the batch by its newest commit rather than by the scan time.
+      observedAt: latestCommitDate(ctx.workspacePath)
+    }
   )
   return { facts, status: 'done' }
+}
+
+/** Last-modified time of a file as an ISO string, or null if unavailable. */
+function fileObservedAt(absPath: string): string | null {
+  try {
+    return statSync(absPath).mtime.toISOString()
+  } catch {
+    return null
+  }
+}
+
+/** Author date of HEAD, or null when this is not a git working tree. */
+function latestCommitDate(workspacePath: string): string | null {
+  try {
+    const out = execSync('git log -1 --format=%aI', {
+      cwd: workspacePath,
+      encoding: 'utf-8',
+      timeout: 5000
+    }).trim()
+    return out || null
+  } catch {
+    return null
+  }
 }
 
 // ── Structure ───────────────────────────────────────────────────────────────

@@ -696,6 +696,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // MULTI-CHAT-03: Pass conversationId so only THIS chat is stopped,
       // not all streams across the workspace.
       await window.api.stopGeneration(activeConversation?.id)
+
+      // WEDGE-ESCALATION: Stop only unwinds a stream that is actually running.
+      // When the busy state outlived its stream, stop is a no-op and main keeps
+      // rejecting sends with "already being processed" — leaving the user with
+      // no way out short of restarting. If main still reports this chat busy
+      // after a stop, escalate to the explicit force-release.
+      if (activeConversation?.id) {
+        const state = await window.api.getStreamingState().catch(() => null)
+        const stillBusy = state?.streams?.some((s) => s.conversationId === activeConversation.id)
+        if (stillBusy) {
+          rendererLog.warn(
+            `[STOP-ESCALATE] main still reports ${activeConversation.id.slice(0, 12)} busy after stop — force-releasing`
+          )
+          await window.api.forceReleaseConversation(activeConversation.id)
+        }
+      }
     } catch (error) {
       rendererLog.error('Failed to stop generation:', error)
     }

@@ -73,6 +73,11 @@ export interface WriteFactParams {
   sourceType: MemorySourceType
   sourceRef?: string | null
   workspacePath?: string | null
+  /**
+   * When the source stated this, if not "now" — a commit date, a file mtime.
+   * Without it a convention mined from a 2011 commit scores as brand new.
+   */
+  observedAt?: string | null
 }
 
 // ── Capture cap tracking ────────────────────────────────────────────────────
@@ -227,7 +232,8 @@ class MemoryEngineService {
       sourceType: params.sourceType,
       sourceRef: params.sourceRef ?? null,
       embedding,
-      embeddingPending
+      embeddingPending,
+      observedAt: params.observedAt ?? null
     })
 
     // Mark volatile facts
