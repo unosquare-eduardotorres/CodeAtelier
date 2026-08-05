@@ -386,6 +386,17 @@ export class CLIExecutor {
           if (msg.type === 'result') {
             this.cliReadyForInput = true
             this.goalQueuedForTurn = false
+            // A turn that produced its result owes no further tool results.
+            // Anything still pending was never consumed (e.g. a tool_result
+            // that arrived without a tool_use_id) — carrying it forward pins
+            // pendingToolCount above zero and wedges the next turn on the
+            // tool-result timeout branch with a stale map.
+            if (tools.pendingToolCount > 0) {
+              executorLog.warn(
+                `[CLI:pending-leak] n=${tools.pendingToolCount} names=[${tools.pendingToolNames.join(', ')}] — clearing at end of turn`
+              )
+              tools.clear()
+            }
             // Stop heartbeat immediately — the stream is pausing between turns
             // and no more activity is expected until the next send().  Without
             // this, the timer keeps firing stall warnings during the idle gap.
