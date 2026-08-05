@@ -17,11 +17,11 @@ import {
   ChevronRight,
   ListTodo,
   FileText,
-  ClipboardCheck,
+  History,
+  Brain,
   CheckCircle2,
   XCircle,
   Loader2,
-  Circle,
   GripVertical,
   X,
   Target
@@ -35,7 +35,6 @@ import {
   type PhaseStatus,
   type TaskProgress
 } from '@renderer/store/plan-execution.store'
-import { useTodoStore, type TodoItem } from '@renderer/store/todo.store'
 import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { PHASE_STATUS_ICON, statusDotColor } from './plan-status-icons'
@@ -43,13 +42,11 @@ import { remarkStripStrayBackticks } from './remark-plugins'
 import { PLAN_BLOCK_RE, BUILD_SUMMARY_RE } from './plan-detection'
 import type { SectionKey } from './task-plan/TaskPlanSections'
 import { BuildActionBar, usePlanMemos, buildSectionMap } from './task-plan'
-import type { StructuredPlan } from '../../../../shared/types'
+import type { StructuredPlan, MemoryFact } from '../../../../shared/types'
 import { derivePlanTasks, derivePhaseFiles, renderTaskManifest } from '../../../../shared/plan-tasks'
 import { modifierKey } from '@renderer/utils/platform'
 
 // ── Constants ──────────────────────────────────────────────────────────────
-
-const EMPTY_TODOS: TodoItem[] = []
 
 const SECTION_SEQUENCE: SectionKey[] = [
   'title',
@@ -765,7 +762,7 @@ function CompletedPlanBanner({
 
 // ── Main Panel ─────────────────────────────────────────────────────────────
 
-type PanelTab = 'tasks' | 'plan' | 'todos'
+type PanelTab = 'tasks' | 'plan' | 'history' | 'memories'
 
 interface ChatExecutionPanelProps {
   conversationId: string
