@@ -29,6 +29,8 @@ import {
   // Mode & plan constants
   MODE_CONTEXT_SECTIONS,
   MODE_CONTEXT_SECTIONS_LEAN,
+  MODE_CONTEXT_SECTIONS_COMPACT,
+  MODE_CONTEXT_SECTIONS_LEAN_COMPACT,
   PLAN_REMINDER_FULL,
   PLAN_REMINDER_LEAN,
   TOOL_PRIORITY_DIRECTIVE
@@ -196,13 +198,43 @@ export function buildConditionalPrefix(opts: {
     : ''
 }
 
+/** Regex to detect diagram-related keywords in user messages for conditional re-injection. */
+const DIAGRAM_KEYWORD_RE =
+  /\b(diagram|mermaid|flowchart|stateDiagram|erDiagram|sequenceDiagram|classDef|graph TD|graph LR)\b/i
+
 /**
  * Pattern 8: Build the `<mode-context>` block injected per-message.
  * Shared by ProjectSpecialistRoleAdapter.
+ *
+ * Turn-aware optimization: on turns 2+, plan-mode strips the ~453-token
+ * Mermaid diagram reference block (already in history from turn 1).
+ * If the user message contains diagram-related keywords, the full block
+ * is re-injected to ensure quality diagram output.
  */
-export function buildModeContextPrefix(mode: ConversationMode, model?: string): string {
+export function buildModeContextPrefix(
+  mode: ConversationMode,
+  model?: string,
+  turnCount?: number,
+  userMessage?: string
+): string {
   const verbosity = resolvePromptVerbosity(model ?? '')
-  const sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+
+  // Turn 1 or unknown turn: always inject full mode context
+  const isFollowUp = (turnCount ?? 1) > 1
+
+  // On turns 2+ in plan mode, check if user is requesting diagrams
+  const diagramRequested = isFollowUp && userMessage ? DIAGRAM_KEYWORD_RE.test(userMessage) : false
+
+  // Use compact sections on follow-up turns unless diagrams are requested
+  const useCompact = isFollowUp && mode === 'plan' && !diagramRequested
+
+  let sections: Record<ConversationMode, string>
+  if (useCompact) {
+    sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN_COMPACT : MODE_CONTEXT_SECTIONS_COMPACT
+  } else {
+    sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+  }
+
   const block = sections[mode] ?? sections.plan
   return `<mode-context>\n${block.trim()}\n</mode-context>`
 }

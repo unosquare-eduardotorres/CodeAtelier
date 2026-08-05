@@ -203,7 +203,7 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
     }
 
     // ── Effective message assembly with pending state ─────────────
-    let effectiveMessage = `${buildModeContextPrefix(ctx.mode, resolvedModel)}\n\n${ctx.message}`
+    let effectiveMessage = `${buildModeContextPrefix(ctx.mode, resolvedModel, ctx.turnCount, ctx.message)}\n\n${ctx.message}`
 
     // Strategy A: Prepend pending context injection.
     // COMPACT-LOST-01: Read but don't delete — deferred to onSendSuccess().
