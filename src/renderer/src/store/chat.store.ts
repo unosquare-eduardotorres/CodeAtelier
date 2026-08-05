@@ -793,15 +793,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
 
     // SEND-SAFETY-TIMEOUT: Auto-reset sendingConversationIds if it stays set for >30s
-    // (covers IPC hangs or missed resets from unexpected errors)
+    // (covers IPC hangs or missed resets from unexpected errors).
+    //
+    // SEND-SAFETY-RECONCILE: clearing blind desyncs the renderer from main —
+    // main's own gate (streamingLocks + state machine) releases no earlier than
+    // its 5-min inactivity timer, and keepalive ticks keep resetting that while
+    // a stream is nominally alive. Re-enabling the composer at 30s therefore
+    // just produces "A message is already being processed" rejections. Only
+    // release once main confirms it is idle; otherwise leave the flag set —
+    // MessageInput keeps the Stop button visible while `isSending` is true,
+    // which is the escape hatch (CHAT_STOP force-releases main's lock).
     const convId = activeConversation.id
     const isSendingTimeout = setTimeout(() => {
-      if (get().sendingConversationIds.has(convId)) {
-        rendererLog.warn(`[SEND-SAFETY] sendingConversationIds stuck for 30s — force-removing ${convId.slice(0, 12)}`)
-        const updated = new Set(get().sendingConversationIds)
-        updated.delete(convId)
-        set({ sendingConversationIds: updated })
-      }
+      void (async () => {
+        if (!get().sendingConversationIds.has(convId)) return
+        const reconciled = await reconcileStopState(
+          () => window.api.getStreamingState(),
+          () => get().sendingConversationIds,
+          convId,
+          (error) => rendererLog.warn('[SEND-SAFETY] reconcile failed:', error)
+        )
+        if (reconciled) {
+          rendererLog.warn(`[SEND-SAFETY] stuck for 30s and main is idle — releasing ${convId.slice(0, 12)}`)
+          set(reconciled)
+        } else {
+          rendererLog.warn(`[SEND-SAFETY] stuck for 30s but main still streaming — keeping ${convId.slice(0, 12)} disabled (Stop available)`)
+        }
+      })()
     }, 30_000)
 
     // GAP-C-FIX: Capture switchGeneration so we can detect if selectConversation
