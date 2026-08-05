@@ -511,40 +511,56 @@ export class CodeGraphEdgeRepository extends BaseRepository<EdgeRow, CodeGraphEd
     )
 
     // parent maps: node → the node it was reached from on that side
+    // depth maps: node → hops from that side's origin, needed to compare meetings
     const fromParents = new Map<string, string | null>([[fromFile, null]])
     const toParents = new Map<string, string | null>([[toFile, null]])
+    const fromDepth = new Map<string, number>([[fromFile, 0]])
+    const toDepth = new Map<string, number>([[toFile, 0]])
     let fromFrontier = [fromFile]
     let toFrontier = [toFile]
     let meeting: string | null = null
 
+    // Collect every meeting candidate found while expanding this level, then pick
+    // the one with the smallest combined depth. Returning on first contact can
+    // yield a path one hop longer than the true shortest, because the remaining
+    // nodes of the same level may meet the other side closer to its origin.
     const expand = (
       frontier: string[],
       parents: Map<string, string | null>,
+      depths: Map<string, number>,
       otherParents: Map<string, string | null>,
       stmt: typeof forwardStmt
-    ): string[] => {
+    ): { next: string[]; candidates: string[] } => {
       const next: string[] = []
+      const candidates: string[] = []
       for (const node of frontier) {
+        const nodeDepth = depths.get(node) ?? 0
         const rows = stmt.all(workspaceId, node) as { next: string }[]
         for (const row of rows) {
           if (parents.has(row.next)) continue
           parents.set(row.next, node)
-          if (otherParents.has(row.next)) {
-            meeting = row.next
-            return next
-          }
+          depths.set(row.next, nodeDepth + 1)
+          if (otherParents.has(row.next)) candidates.push(row.next)
           next.push(row.next)
         }
       }
-      return next
+      return { next, candidates }
     }
 
     for (let depth = 0; depth < maxDepth && meeting === null; depth++) {
       // Always expand the smaller frontier — keeps the search balanced.
-      if (fromFrontier.length <= toFrontier.length) {
-        fromFrontier = expand(fromFrontier, fromParents, toParents, forwardStmt)
+      const expandForward = fromFrontier.length <= toFrontier.length
+      const { next, candidates } = expandForward
+        ? expand(fromFrontier, fromParents, fromDepth, toParents, forwardStmt)
+        : expand(toFrontier, toParents, toDepth, fromParents, backwardStmt)
+      if (expandForward) {
+        fromFrontier = next
       } else {
-        toFrontier = expand(toFrontier, toParents, fromParents, backwardStmt)
+        toFrontier = next
+      }
+      if (candidates.length > 0) {
+        const combined = (n: string): number => (fromDepth.get(n) ?? 0) + (toDepth.get(n) ?? 0)
+        meeting = candidates.reduce((best, n) => (combined(n) < combined(best) ? n : best))
       }
       if (fromFrontier.length === 0 && toFrontier.length === 0) break
     }
