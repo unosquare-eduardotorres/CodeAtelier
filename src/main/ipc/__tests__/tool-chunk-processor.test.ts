@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
   processToolChunk,
+  extractEditDiffs,
   isExpectedPlanModeBlock,
   isExpectedToolUnavailable,
   isAgentToolMistake,
@@ -138,6 +139,153 @@ describe('processToolChunk — tool_use', () => {
     const result = processToolChunk(chunk, BASE_OPTIONS)
     assert.ok(result)
     assert.ok(result.toolActivity.input!.length <= 120)
+  })
+})
+
+// ── Edit diffs ──
+
+describe('extractEditDiffs', () => {
+  test('multiedit_edits_array_produces_one_diff_per_edit', () => {
+    const result = extractEditDiffs({
+      file_path: 'src/a.ts',
+      edits: [
+        { old_string: 'foo', new_string: 'bar' },
+        { old_string: 'baz', new_string: 'qux' }
+      ]
+    })
+    assert.ok(result)
+    assert.equal(result.editDiffs.length, 2)
+    assert.deepEqual(result.editDiffs[0], { oldString: 'foo', newString: 'bar' })
+    assert.equal(result.editDiffsOmitted, 0)
+  })
+
+  test('top_level_edit_shape_produces_one_diff', () => {
+    const result = extractEditDiffs({
+      file_path: 'src/a.ts',
+      old_string: 'before',
+      new_string: 'after'
+    })
+    assert.ok(result)
+    assert.equal(result.editDiffs.length, 1)
+    assert.equal(result.editDiffs[0].oldString, 'before')
+    assert.equal(result.editDiffs[0].newString, 'after')
+  })
+
+  test('camelCase_shape_is_tolerated', () => {
+    const result = extractEditDiffs({ oldString: 'a', newString: 'b' })
+    assert.ok(result)
+    assert.equal(result.editDiffs[0].oldString, 'a')
+  })
+
+  test('input_without_edit_strings_returns_undefined', () => {
+    assert.equal(extractEditDiffs({ file_path: 'src/a.ts', offset: 1 }), undefined)
+  })
+
+  test('oversized_strings_are_truncated', () => {
+    const result = extractEditDiffs({
+      old_string: 'x'.repeat(5_000),
+      new_string: 'y'.repeat(5_000)
+    })
+    assert.ok(result)
+    assert.equal(result.editDiffs[0].truncated, true)
+    assert.equal(result.editDiffs[0].oldString.length, 2_000)
+    assert.equal(result.editDiffs[0].newString.length, 2_000)
+  })
+
+  test('fifteen_edits_keeps_ten_and_reports_five_omitted', () => {
+    const edits = Array.from({ length: 15 }, (_, i) => ({
+      old_string: `old-${i}`,
+      new_string: `new-${i}`
+    }))
+    const result = extractEditDiffs({ edits })
+    assert.ok(result)
+    assert.equal(result.editDiffs.length, 10)
+    assert.equal(result.editDiffsOmitted, 5)
+  })
+
+  test('total_char_budget_stops_accumulation', () => {
+    // 10 edits x 2 x 2000 chars = 40 000 chars, well over the 16 KB budget
+    const edits = Array.from({ length: 10 }, () => ({
+      old_string: 'x'.repeat(5_000),
+      new_string: 'y'.repeat(5_000)
+    }))
+    const result = extractEditDiffs({ edits })
+    assert.ok(result)
+    assert.ok(result.editDiffs.length < 10)
+    assert.ok(result.editDiffsOmitted > 0)
+  })
+})
+
+describe('processToolChunk — editDiffs', () => {
+  test('edit_tool_use_carries_edit_diffs', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_use',
+      toolName: 'Edit',
+      toolId: 'edit-1',
+      toolInputRaw: JSON.stringify({
+        file_path: 'src/a.ts',
+        old_string: 'const a = 1',
+        new_string: 'const a = 2'
+      })
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.operationType, 'edit')
+    assert.equal(result.toolActivity.editDiffs?.length, 1)
+    assert.equal(result.toolActivity.editDiffs?.[0].newString, 'const a = 2')
+  })
+
+  test('multiedit_tool_result_carries_edit_diffs', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'MultiEdit',
+      toolId: 'edit-2',
+      content: 'Done',
+      toolInputRaw: JSON.stringify({
+        file_path: 'src/a.ts',
+        edits: [{ old_string: 'a', new_string: 'b' }]
+      })
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.editDiffs?.length, 1)
+  })
+
+  test('read_tool_has_no_edit_diffs', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_use',
+      toolName: 'Read',
+      toolId: 'read-2',
+      toolInputRaw: JSON.stringify({ file_path: 'src/a.ts' })
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.editDiffs, undefined)
+  })
+
+  test('bash_tool_has_no_edit_diffs', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_use',
+      toolName: 'Bash',
+      toolId: 'bash-2',
+      toolInputRaw: JSON.stringify({ command: 'ls -la' })
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.editDiffs, undefined)
+  })
+
+  test('edit_without_raw_input_degrades_gracefully', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_use',
+      toolName: 'Edit',
+      toolId: 'edit-3',
+      toolInput: 'src/a.ts (2 lines)'
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.operationType, 'edit')
+    assert.equal(result.toolActivity.editDiffs, undefined)
   })
 })
 
@@ -411,14 +559,15 @@ describe('processToolChunk — tool_progress', () => {
     assert.equal(result.toolActivity.id, 'prog-1')
   })
 
-  test('generates toolId when not provided', () => {
+  // Progress frames are update-only: a synthesised id here could never be
+  // closed by the tool_result, leaving a phantom 'running' row forever.
+  // See tool-chunk-progress.test.ts.
+  test('returns null when no toolId is provided (never mints an id)', () => {
     const chunk: StreamChunk = {
       type: 'tool_progress',
       toolName: 'Bash'
     }
-    const result = processToolChunk(chunk, BASE_OPTIONS)
-    assert.ok(result)
-    assert.ok(result.toolActivity.id.startsWith('tool-'))
+    assert.equal(processToolChunk(chunk, BASE_OPTIONS), null)
   })
 })
 

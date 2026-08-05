@@ -16,6 +16,7 @@ import {
 import type { ToolActivity, ToolOperationType } from '../../../../shared/types'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import { shortenInput, getToolDisplayName } from './tool-activity-utils'
+import InlineEditDiff from './InlineEditDiff'
 
 // ── Copy button helper ──
 
@@ -156,6 +157,9 @@ function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.J
   const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
   return (
     <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
+      {activity.editDiffs && activity.editDiffs.length > 0 && (
+        <InlineEditDiff edits={activity.editDiffs} omitted={activity.editDiffsOmitted} />
+      )}
       {activity.input && (activity.operationType === 'shell' || activity.input.length > 30) && (
         <div className="px-3 py-2 border-b border-border-subtle/50">
           <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
@@ -187,6 +191,9 @@ function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.J
 // ── ToolRow component ──
 
 function hasExpandableContent(activity: ToolActivity): boolean {
+  // Edit rows would otherwise be unexpandable — their result is just "Done" —
+  // which would make the inline diff unreachable.
+  if (activity.editDiffs?.length) return true
   if (activity.resultDetail) return true
   if (activity.result && activity.result.length > 40) return true
   if (activity.input && activity.input.length > 60) return true

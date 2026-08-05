@@ -314,6 +314,7 @@ describe('CodeGraphEdgeRepository', () => {
     skip('persists resolution + def_fanout provenance')
     skip('findCallersOf filters by edge type')
     skip('findShortestPath walks a multi-hop chain')
+    skip('findShortestPath prefers the shorter of two routes')
     skip('findShortestPath returns null when unreachable')
     skip('findFilePairs aggregates duplicate edges')
     return
@@ -486,6 +487,23 @@ describe('CodeGraphEdgeRepository', () => {
     assert.equal(result!.hops.length, 3)
     assert.equal(result!.hops[0].edgeType, 'calls')
     assert.equal(result!.hops[0].resolution, 'extracted')
+  })
+
+  test('findShortestPath prefers the shorter of two routes', () => {
+    const { wsId } = setupTestDb()
+    // The long route is inserted first, so a search that stops at first contact
+    // instead of comparing meeting points would happily return the 3-hop path.
+    edgeRepo.upsertEdges(wsId, [
+      edge(wsId, 'a.ts', 'long1.ts'),
+      edge(wsId, 'long1.ts', 'long2.ts'),
+      edge(wsId, 'long2.ts', 'z.ts'),
+      edge(wsId, 'a.ts', 'short.ts'),
+      edge(wsId, 'short.ts', 'z.ts')
+    ])
+    const result = edgeRepo.findShortestPath(wsId, 'a.ts', 'z.ts')
+    assert.ok(result, 'expected a path')
+    assert.equal(result!.hops.length, 2, 'the 2-hop route must win')
+    assert.deepEqual(result!.path, ['a.ts', 'short.ts', 'z.ts'])
   })
 
   test('findShortestPath returns null when unreachable', () => {

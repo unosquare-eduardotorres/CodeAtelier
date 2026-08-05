@@ -47,7 +47,7 @@ const FULL_PHASE_INFO: Record<string, PhaseInfo> = {
 }
 
 const FULL_PHASES: BootstrapPhaseLabel[] = ['preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize']
-const DEEP_SCAN_PHASES: BootstrapPhaseLabel[] = ['preflight', 'docs', 'stack', 'agent-exploration', 'finalize']
+const DEEP_SCAN_PHASES: BootstrapPhaseLabel[] = ['preflight', 'docs', 'stack', 'architecture', 'history', 'agent-exploration', 'finalize']
 
 function PhaseStep({
   phase,
@@ -93,14 +93,15 @@ export default function BootstrapKnowledge(): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const { bootstrap, startBootstrap, cancelBootstrap, dismissBootstrap } = useMemoryStore()
   const [selectedMode, setSelectedMode] = useState<BootstrapMode>('full')
+  const [forceRescan, setForceRescan] = useState(false)
 
   const workspaceId = activeWorkspace?.id
   const workspacePath = activeWorkspace?.repoPath
 
   const handleStart = useCallback(async () => {
     if (!workspaceId || !workspacePath) return
-    await startBootstrap(workspaceId, workspacePath, selectedMode)
-  }, [workspaceId, workspacePath, selectedMode, startBootstrap])
+    await startBootstrap(workspaceId, workspacePath, selectedMode, forceRescan)
+  }, [workspaceId, workspacePath, selectedMode, forceRescan, startBootstrap])
 
   const handleCancel = useCallback(() => {
     cancelBootstrap()
@@ -270,6 +271,23 @@ export default function BootstrapKnowledge(): React.JSX.Element {
               )
             })}
           </div>
+
+          {/* Force full re-scan */}
+          <label className="flex items-start gap-2 text-xs text-text-secondary cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={forceRescan}
+              onChange={(e) => setForceRescan(e.target.checked)}
+              className="mt-0.5 accent-teal"
+            />
+            <span>
+              Force full re-scan
+              <span className="block text-text-muted">
+                Clears remembered file hashes so every document is read again. Use this if a
+                previous scan was cancelled or hit errors and files are now being skipped.
+              </span>
+            </span>
+          </label>
 
           {/* Start button */}
           <button

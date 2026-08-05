@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
-import type { DiffComparisonMode } from '../../../shared/types'
+import type { DiffComparisonMode, FileDiffResult } from '../../../shared/types'
 
 export interface FileChangeDetail {
   filePath: string
@@ -16,7 +16,7 @@ interface CodeChangesState {
   isLoadingFiles: boolean
 
   // Diff
-  currentDiff: { oldContent: string; newContent: string; language: string } | null
+  currentDiff: FileDiffResult | null
   isLoadingDiff: boolean
 
   // Comparison mode
@@ -122,7 +122,7 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
     set({ isLoadingDiff: true })
     try {
       const { comparisonMode, targetBranch } = get()
-      let diff: { oldContent: string; newContent: string; language: string }
+      let diff: FileDiffResult
 
       if (comparisonMode === 'uncommitted') {
         diff = await window.api.getFileDiff({ conversationId, filePath })

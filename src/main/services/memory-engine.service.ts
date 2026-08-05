@@ -35,6 +35,8 @@ const log = dbLogger
 
 // ── Similarity thresholds ───────────────────────────────────────────────────
 const DUPLICATE_THRESHOLD = 0.90
+/** Relaxed threshold used during bootstrap so related-but-distinct facts survive. */
+const BOOTSTRAP_DUPLICATE_THRESHOLD = 0.93
 const AMBIGUOUS_THRESHOLD = 0.82 // raised from 0.70 — reduces false-positive LLM classifier calls
 const AUTO_MERGE_THRESHOLD = 0.95
 const TOP_K_MATCHES = 5
@@ -97,6 +99,26 @@ class MemoryEngineService {
   private captureCounts: CaptureCounts = {
     session: new Map(),
     commit: new Map()
+  }
+
+  /** True while a bootstrap / Deep Scan job is running. */
+  private bootstrapActive = false
+
+  /**
+   * Toggled by MemoryBootstrapService around a bootstrap job. While active,
+   * agent-recorded ('tool') facts get the same relaxed dedup threshold as
+   * 'bootstrap' facts — a large legacy corpus produces many genuinely distinct
+   * facts that still sit above 0.90 cosine.
+   */
+  setBootstrapActive(active: boolean): void {
+    this.bootstrapActive = active
+  }
+
+  /** Dedup threshold for a source type, relaxed during bootstrap jobs. */
+  private resolveDupThreshold(sourceType: MemorySourceType): number {
+    if (sourceType === 'bootstrap') return BOOTSTRAP_DUPLICATE_THRESHOLD
+    if (sourceType === 'tool' && this.bootstrapActive) return BOOTSTRAP_DUPLICATE_THRESHOLD
+    return DUPLICATE_THRESHOLD
   }
 
   // ── Write pipeline ──────────────────────────────────────────────────────
@@ -236,9 +258,7 @@ class MemoryEngineService {
 
     // During bootstrap, raise the dedup threshold slightly to avoid
     // over-merging related facts from the same knowledge domain
-    const effectiveDupThreshold = params.sourceType === 'bootstrap'
-      ? 0.93
-      : DUPLICATE_THRESHOLD
+    const effectiveDupThreshold = this.resolveDupThreshold(params.sourceType)
 
     // Volatile facts: UPDATE-in-place only when similarity is high AND same category.
     // At 0.70 two different volatile facts (e.g. schemaVersion vs electronVersion) can
@@ -438,9 +458,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         // Fast-path: mirror the pipeline's branch order to skip the LLM classifier
         // when fresh similarity is high enough for a deterministic outcome.
         const isVolatile = this.detectVolatility(item.factText)
-        const effectiveDupThreshold = item.sourceType === 'bootstrap'
-          ? 0.93
-          : DUPLICATE_THRESHOLD
+        const effectiveDupThreshold = this.resolveDupThreshold(item.sourceType)
         if (
           isVolatile &&
           bestMatch.similarity >= effectiveDupThreshold &&

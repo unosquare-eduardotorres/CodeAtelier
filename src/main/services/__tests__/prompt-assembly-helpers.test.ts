@@ -382,6 +382,45 @@ describe('buildModeContextPrefix', () => {
   })
 })
 
+describe('buildConditionalPrefix — memory protocol re-emission', () => {
+  // Message must hit the memory-protocol heuristic ("remember", "prefer", …).
+  const MEMORY_MSG = 'Please remember that I prefer tabs over spaces'
+
+  test('memory protocol is present on turn 1', () => {
+    const out = buildConditionalPrefix({
+      message: MEMORY_MSG,
+      hasImages: false,
+      mode: 'build',
+      turnCount: 1
+    })
+    assert.ok(out.includes('memory_record'), 'turn 1 carries the memory protocol')
+  })
+
+  test('memory protocol is dropped on turn 2+ without compaction', () => {
+    const out = buildConditionalPrefix({
+      message: MEMORY_MSG,
+      hasImages: false,
+      mode: 'build',
+      turnCount: 5
+    })
+    assert.ok(!out.includes('memory_record'), 'already in history — not repeated')
+  })
+
+  test('memory protocol is re-emitted on a compaction turn', () => {
+    const out = buildConditionalPrefix({
+      message: MEMORY_MSG,
+      hasImages: false,
+      mode: 'build',
+      turnCount: 5,
+      postCompaction: true
+    })
+    assert.ok(
+      out.includes('memory_record'),
+      'compaction discards the turn-1 copy, so it must be re-sent'
+    )
+  })
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

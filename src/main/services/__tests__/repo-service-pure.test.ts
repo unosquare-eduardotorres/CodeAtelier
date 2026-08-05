@@ -1,13 +1,14 @@
 /**
  * Unit tests for repo.service.ts pure functions.
  *
- * Tests assertWithinRepo (security-critical path traversal prevention)
- * and detectLanguage (file extension → language mapping).
+ * Tests assertWithinRepo (security-critical path traversal prevention),
+ * detectLanguage (file extension → language mapping), buildRefDiffArgs
+ * (comparison-base argument construction) and isMissingPathError.
  */
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
-import { assertWithinRepo } from '../repo.service'
+import { assertWithinRepo, buildRefDiffArgs, isMissingPathError } from '../repo.service'
 
 describe('assertWithinRepo', () => {
   const REPO = '/tmp/test-repo'
@@ -70,6 +71,62 @@ describe('detectLanguage_via_module', () => {
   test('assertWithinRepo_returns_correct_path_for_py_file', () => {
     const result = assertWithinRepo('/tmp/repo', 'script.py')
     assert.ok(result.endsWith('script.py'))
+  })
+})
+
+describe('buildRefDiffArgs', () => {
+  const BASE = 'a1b2c3d4e5f6'
+
+  test('working_tree_target_omits_to_ref', () => {
+    const args = buildRefDiffArgs(BASE, 'WORKING_TREE')
+    assert.deepEqual(args, ['diff', '--name-status', BASE])
+  })
+
+  test('ref_target_appends_to_ref', () => {
+    const args = buildRefDiffArgs(BASE, 'HEAD')
+    assert.deepEqual(args, ['diff', '--name-status', BASE, 'HEAD'])
+  })
+
+  test('never_emits_three_dot_form', () => {
+    // The three-dot form re-resolves the merge base inside git, which would
+    // desync the file list from the per-file content (blank diff panes).
+    for (const toRef of ['WORKING_TREE', 'HEAD', 'origin/master']) {
+      for (const arg of buildRefDiffArgs(BASE, toRef)) {
+        assert.ok(!arg.includes('...'), `arg "${arg}" contains three-dot form`)
+      }
+    }
+  })
+
+  test('never_emits_two_dot_range_form', () => {
+    for (const arg of buildRefDiffArgs(BASE, 'origin/master')) {
+      assert.ok(!arg.includes('..'), `arg "${arg}" contains a range form`)
+    }
+  })
+
+  test('base_is_always_the_third_arg', () => {
+    assert.equal(buildRefDiffArgs(BASE, 'WORKING_TREE')[2], BASE)
+    assert.equal(buildRefDiffArgs(BASE, 'HEAD')[2], BASE)
+  })
+})
+
+describe('isMissingPathError', () => {
+  test('git_path_does_not_exist_is_expected', () => {
+    assert.equal(isMissingPathError("fatal: path 'src/new.ts' does not exist in 'HEAD'"), true)
+  })
+
+  test('git_exists_on_disk_but_not_in_ref_is_expected', () => {
+    assert.equal(
+      isMissingPathError("fatal: path 'src/a.ts' exists on disk, but not in 'abc123'"),
+      true
+    )
+  })
+
+  test('unknown_revision_is_a_real_failure', () => {
+    assert.equal(isMissingPathError('fatal: bad revision origin/master'), false)
+  })
+
+  test('generic_error_is_a_real_failure', () => {
+    assert.equal(isMissingPathError('fatal: not a git repository'), false)
   })
 })
 

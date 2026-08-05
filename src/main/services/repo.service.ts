@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { extname, resolve, relative } from 'node:path'
 import simpleGit from 'simple-git'
-import type { RepoInfo } from '../../shared/types'
+import type { RepoInfo, FileDiffResult } from '../../shared/types'
 import { COMMIT_ATTRIBUTION } from '../../shared/constants'
 import log from 'electron-log'
 
@@ -72,6 +72,21 @@ function detectLanguage(filePath: string): string {
   return EXT_TO_LANGUAGE[ext] ?? 'text'
 }
 
+/**
+ * `git show <ref>:<path>` failing because the path isn't present in that ref is
+ * EXPECTED (new or deleted file) — everything else is a real failure worth surfacing.
+ */
+export function isMissingPathError(msg: string): boolean {
+  return /does not exist in|exists on disk, but not in/i.test(msg)
+}
+
+/** First line of an error message — git errors are multi-line and noisy. */
+function firstLine(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  const line = msg.split('\n').find((l) => l.trim().length > 0)
+  return line?.trim() ?? 'Unknown git error'
+}
+
 /** Detect binary content by checking for null bytes in the first 8KB */
 function isBinaryContent(s: string): boolean {
   if (s.length === 0) return false
@@ -86,10 +101,15 @@ interface FileDetailEntry {
   staged: boolean
 }
 
-interface FileDiffResult {
-  oldContent: string
-  newContent: string
-  language: string
+/**
+ * Build `git diff --name-status` args for an already-resolved base ref.
+ * Never emits the three-dot form — the base is resolved up-front so the file
+ * *list* and the file *content* always share one comparison base.
+ */
+export function buildRefDiffArgs(base: string, toRef: string): string[] {
+  return toRef === 'WORKING_TREE'
+    ? ['diff', '--name-status', base] // base → working tree
+    : ['diff', '--name-status', base, toRef] // base → toRef
 }
 
 interface PushStatusResult {
@@ -272,14 +292,22 @@ export class RepoService {
 
     let oldContent = ''
     let newContent = ''
+    let warning: string | undefined
 
     // Get old content from HEAD using normalized relative path
     try {
       oldContent = await git.show([`HEAD:${normalizedPath}`])
     } catch (e) {
-      // File is new (untracked) — no HEAD version. Log for debugging path issues.
-      logger.debug(`git show HEAD:${normalizedPath} failed (file may be new):`, e)
+      // A missing path is EXPECTED (file is new/untracked). Anything else is a
+      // real failure — surface it instead of silently showing an empty side.
       oldContent = ''
+      const msg = firstLine(e)
+      if (isMissingPathError(msg)) {
+        logger.debug(`git show HEAD:${normalizedPath} — file is new`)
+      } else {
+        warning = msg
+        logger.warn(`git show HEAD:${normalizedPath} failed:`, msg)
+      }
     }
 
     // Get new content from working tree
@@ -295,11 +323,13 @@ export class RepoService {
       return {
         oldContent: '(Binary file — cannot display diff)',
         newContent: '(Binary file — cannot display diff)',
-        language: 'text'
+        language: 'text',
+        isBinary: true,
+        warning
       }
     }
 
-    return { oldContent, newContent, language }
+    return { oldContent, newContent, language, warning }
   }
 
   /**
@@ -428,6 +458,24 @@ export class RepoService {
   }
 
   /**
+   * merge-base(fromRef, toRef) — the point where the branch diverged from the
+   * target. Returns null when it can't be computed (shallow clone, worktree,
+   * unrelated histories); callers fall back to fromRef and warn.
+   */
+  private async resolveMergeBase(
+    git: ReturnType<typeof simpleGit>,
+    fromRef: string,
+    toRef: string
+  ): Promise<string | null> {
+    try {
+      const target = toRef === 'WORKING_TREE' ? 'HEAD' : toRef
+      return (await git.raw(['merge-base', fromRef, target])).trim() || null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Get files that differ between two refs using `git diff --name-status`.
    * When toRef is 'WORKING_TREE', diffs fromRef against the working directory.
    */
@@ -441,17 +489,12 @@ export class RepoService {
     try {
       await this.ensureOwnRepo(repoPath)
       const git = simpleGit(repoPath)
-      // Use three-dot merge-base diff for ref-to-ref, two-dot for working tree
-      const diffArgs = ['diff', '--name-status']
-      if (toRef === 'WORKING_TREE') {
-        // Compare fromRef against working directory (includes uncommitted changes)
-        diffArgs.push(fromRef)
-      } else {
-        // Three-dot diff: changes since common ancestor
-        diffArgs.push(`${fromRef}...${toRef}`)
-      }
+      // Resolve the branch point once and use it for BOTH the file list and the
+      // per-file content (see getRefFileDiff) — mismatched bases render files as
+      // "changed" whose two sides are identical, producing a blank diff pane.
+      const base = (await this.resolveMergeBase(git, fromRef, toRef)) ?? fromRef
 
-      const raw = await git.raw(diffArgs)
+      const raw = await git.raw(buildRefDiffArgs(base, toRef))
       if (!raw.trim()) return entries
 
       for (const line of raw.trim().split('\n')) {
@@ -485,7 +528,7 @@ export class RepoService {
       if (msg.includes('unknown revision') || msg.includes('bad revision')) {
         throw new Error(`REF_NOT_FOUND: ${fromRef} or ${toRef} does not exist`)
       }
-      logger.warn(`getRefDiffFiles(${fromRef}...${toRef}) failed:`, e)
+      logger.warn(`getRefDiffFiles(${fromRef} -> ${toRef}) failed:`, e)
     }
 
     return entries
@@ -511,13 +554,31 @@ export class RepoService {
 
     let oldContent = ''
     let newContent = ''
+    const warnings: string[] = []
 
-    // Get old content from fromRef
+    // Resolve the same base getRefDiffFiles used for the file list — diffing
+    // against fromRef's *tip* here while the list used the branch point makes
+    // unrelated target-branch commits look like removals, and can make both
+    // sides identical (blank pane).
+    const mergeBase = await this.resolveMergeBase(git, fromRef, toRef)
+    if (!mergeBase) {
+      warnings.push(
+        `Could not determine branch point — comparing against the tip of ${fromRef} instead.`
+      )
+    }
+    const base = mergeBase ?? fromRef
+
+    // Get old content from the comparison base
     try {
-      oldContent = await git.show([`${fromRef}:${normalizedPath}`])
-    } catch {
-      // File didn't exist in fromRef (new file)
+      oldContent = await git.show([`${base}:${normalizedPath}`])
+    } catch (e) {
       oldContent = ''
+      const msg = firstLine(e)
+      // A missing path is EXPECTED (file is new in this branch)
+      if (!isMissingPathError(msg)) {
+        warnings.push(msg)
+        logger.warn(`git show ${base}:${normalizedPath} failed:`, msg)
+      }
     }
 
     // Get new content from toRef or working tree
@@ -531,22 +592,33 @@ export class RepoService {
     } else {
       try {
         newContent = await git.show([`${toRef}:${normalizedPath}`])
-      } catch {
-        // File didn't exist in toRef (deleted file)
+      } catch (e) {
         newContent = ''
+        const msg = firstLine(e)
+        // A missing path is EXPECTED (file deleted in toRef)
+        if (!isMissingPathError(msg)) {
+          warnings.push(msg)
+          logger.warn(`git show ${toRef}:${normalizedPath} failed:`, msg)
+        }
       }
     }
+
+    const warning = warnings.length > 0 ? warnings.join(' — ') : undefined
+    const baseSha = mergeBase ? mergeBase.slice(0, 7) : undefined
 
     // Detect binary files — return placeholder instead of garbled content
     if (isBinaryContent(oldContent) || isBinaryContent(newContent)) {
       return {
         oldContent: '(Binary file — cannot display diff)',
         newContent: '(Binary file — cannot display diff)',
-        language: 'text'
+        language: 'text',
+        isBinary: true,
+        warning,
+        baseSha
       }
     }
 
-    return { oldContent, newContent, language }
+    return { oldContent, newContent, language, warning, baseSha }
   }
 }
 

@@ -4,6 +4,7 @@ import type {
   Workspace,
   Conversation,
   ConversationMode,
+  FileDiffResult,
   Message,
   AgentStatus,
   Specialist,
@@ -630,7 +631,12 @@ const api = {
 
   // ── Memory Bootstrap ──
   memoryBootstrapStart: (
-    args: { workspaceId: string; workspacePath: string; mode?: import('../shared/types').BootstrapMode }
+    args: {
+      workspaceId: string
+      workspacePath: string
+      mode?: import('../shared/types').BootstrapMode
+      force?: boolean
+    }
   ): Promise<{ jobId: string; factsCreated: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_START, args),
 
@@ -1096,10 +1102,7 @@ const api = {
     Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
   > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
 
-  getFileDiff: (args: {
-    conversationId: string
-    filePath: string
-  }): Promise<{ oldContent: string; newContent: string; language: string }> =>
+  getFileDiff: (args: { conversationId: string; filePath: string }): Promise<FileDiffResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
 
   getRefFileDetails: (args: {
@@ -1115,7 +1118,7 @@ const api = {
     filePath: string
     fromRef: string
     toRef: string
-  }): Promise<{ oldContent: string; newContent: string; language: string }> =>
+  }): Promise<FileDiffResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, args),
 
   fetchOrigin: (args: { conversationId: string }): Promise<{ fetched: boolean; error?: string }> =>

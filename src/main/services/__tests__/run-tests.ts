@@ -24,6 +24,7 @@ const TEST_FILES: string[] = [
   './description-cache.test',
   './code-graph-logic.test',
   './code-graph-typed-edges.test',
+  './code-graph-typed-tags-smoke.test',
   './rationale-miner.test',
   './is-excluded-path.test',
   './vector-search.test',
@@ -314,6 +315,8 @@ const TEST_FILES: string[] = [
   './document-reader.test',
   './memory-ingestion.test',
   './memory-bootstrap.test',
+  './memory-bootstrap-doc-state.test',
+  './memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   './local-plan-state-fk-guard.test',
   // ─── Phase 19 deep coverage ───
@@ -518,7 +521,12 @@ const TEST_FILES: string[] = [
   './opencode-config-writer-p27.test',
   './memory-feed-p27.test',
   './grill-persistence-deep-p27.test',
-  './specialist-builder-deep-p27.test'
+  './specialist-builder-deep-p27.test',
+  // ─── Stale-turn incident: heartbeat tool ids, pending-tool leak, DB timestamps ───
+  '../executor-utils/__tests__/tool-progress-heartbeat.test',
+  '../executor-utils/__tests__/tool-tracker-leak.test',
+  '../../ipc/__tests__/tool-chunk-progress.test',
+  '../../../shared/__tests__/db-time.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

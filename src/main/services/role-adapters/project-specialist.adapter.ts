@@ -241,7 +241,8 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
       hasImages: ctx.hasImages,
       mode: ctx.mode,
       turnCount: ctx.turnCount,
-      model: resolvedModel
+      model: resolvedModel,
+      postCompaction: !!pendingCompact
     })
     if (conditionalPrefix) {
       effectiveMessage = `${conditionalPrefix}\n\n---\n\n${effectiveMessage}`

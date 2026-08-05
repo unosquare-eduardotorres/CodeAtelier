@@ -60,6 +60,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/description-cache.test',
   '../services/__tests__/code-graph-logic.test',
   '../services/__tests__/code-graph-typed-edges.test',
+  '../services/__tests__/code-graph-typed-tags-smoke.test',
   '../services/__tests__/rationale-miner.test',
   '../services/__tests__/vector-search.test',
   '../services/__tests__/code-graph-db.test',
@@ -343,6 +344,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/document-reader.test',
   '../services/__tests__/memory-ingestion.test',
   '../services/__tests__/memory-bootstrap.test',
+  '../services/__tests__/memory-bootstrap-doc-state.test',
+  '../services/__tests__/memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   '../services/__tests__/local-plan-state-fk-guard.test',
   // ─── Phase 19 deep coverage ───
@@ -619,7 +622,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/tool-result-timeout.test',
   '../services/__tests__/usage-tracker-helpers.test',
   '../services/__tests__/version-parser.test',
-  '../services/__tests__/workspace-mcp-config-builder.test'
+  '../services/__tests__/workspace-mcp-config-builder.test',
+  // ─── Stale-turn incident: heartbeat tool ids, pending-tool leak, DB timestamps ───
+  '../services/executor-utils/__tests__/tool-progress-heartbeat.test',
+  '../services/executor-utils/__tests__/tool-tracker-leak.test',
+  '../ipc/__tests__/tool-chunk-progress.test',
+  '../../shared/__tests__/db-time.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

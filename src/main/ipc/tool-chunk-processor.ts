@@ -8,7 +8,12 @@
 
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
-import type { ConversationMode, ToolActivity, ToolOperationType } from '../../shared/types'
+import type {
+  ConversationMode,
+  ToolActivity,
+  ToolEditDiff,
+  ToolOperationType
+} from '../../shared/types'
 import { MCP_TOOLS } from '../../shared/constants'
 import { extractResultSummary } from './tool-result-summarizer'
 import { reportToolError } from './tool-error-reporter'
@@ -122,13 +127,78 @@ export function isExpectedPlanModeBlock(
 
 const COMPOSABLE_TOOLS = new Set(['Read', 'Grep', 'Glob'])
 
+// ── Edit diff extraction ──
+
+/** Storage budget — editDiffs live in the messages JSON column, so they must stay small. */
+const MAX_EDIT_STRING_CHARS = 2_000
+const MAX_EDITS = 10
+const MAX_EDIT_DIFFS_TOTAL_CHARS = 16_000
+
+function clip(s: string): { value: string; truncated: boolean } {
+  return s.length > MAX_EDIT_STRING_CHARS
+    ? { value: s.slice(0, MAX_EDIT_STRING_CHARS), truncated: true }
+    : { value: s, truncated: false }
+}
+
+/** Read an `{ old_string, new_string }` pair from either snake_case or camelCase. */
+function readEditPair(raw: unknown): { oldString: string; newString: string } | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const oldString = (o.old_string ?? o.oldString) as unknown
+  const newString = (o.new_string ?? o.newString) as unknown
+  if (typeof oldString !== 'string' || typeof newString !== 'string') return null
+  if (oldString === '' && newString === '') return null
+  return { oldString, newString }
+}
+
+/**
+ * Pull before/after segments out of an already-parsed Edit/MultiEdit tool input.
+ * Tolerates both shapes: `{ edits: [{ old_string, new_string }] }` (MultiEdit)
+ * and a top-level `{ old_string, new_string }` (Edit). Returns undefined when
+ * the input carries no usable pair — the feature degrades silently rather than
+ * throwing on an unfamiliar backend shape.
+ */
+export function extractEditDiffs(
+  input: Record<string, unknown>
+): { editDiffs: ToolEditDiff[]; editDiffsOmitted: number } | undefined {
+  const candidates: unknown[] = Array.isArray(input.edits) ? input.edits : [input]
+
+  const pairs = candidates
+    .map(readEditPair)
+    .filter((p): p is { oldString: string; newString: string } => p !== null)
+  if (pairs.length === 0) return undefined
+
+  const editDiffs: ToolEditDiff[] = []
+  let totalChars = 0
+
+  for (const pair of pairs) {
+    if (editDiffs.length >= MAX_EDITS) break
+    const oldClip = clip(pair.oldString)
+    const newClip = clip(pair.newString)
+    const size = oldClip.value.length + newClip.value.length
+    if (totalChars + size > MAX_EDIT_DIFFS_TOTAL_CHARS && editDiffs.length > 0) break
+    totalChars += size
+    const diff: ToolEditDiff = { oldString: oldClip.value, newString: newClip.value }
+    if (oldClip.truncated || newClip.truncated) diff.truncated = true
+    editDiffs.push(diff)
+  }
+
+  return { editDiffs, editDiffsOmitted: pairs.length - editDiffs.length }
+}
+
 // ── Structured metadata extraction ──
 
 function extractStructuredMeta(
   toolName: string | undefined,
   toolInput: string | undefined,
   toolInputRaw?: string
-): { filePath?: string; lineRange?: string; operationType: ToolOperationType } {
+): {
+  filePath?: string
+  lineRange?: string
+  operationType: ToolOperationType
+  editDiffs?: ToolEditDiff[]
+  editDiffsOmitted?: number
+} {
   const name = (toolName ?? '').toLowerCase()
 
   // Determine operation type from tool name
@@ -170,7 +240,17 @@ function extractStructuredMeta(
   const limit = input.limit as number | undefined
   const lineRange = offset ? `${offset}${limit ? `-${offset + limit - 1}` : '+'}` : undefined
 
-  return { filePath: filePath || undefined, lineRange, operationType }
+  // Before/after segments — Edit/MultiEdit only. The tool *input* already
+  // carries the exact changed text, so there's nothing to parse from output.
+  const edits = operationType === 'edit' ? extractEditDiffs(input) : undefined
+
+  return {
+    filePath: filePath || undefined,
+    lineRange,
+    operationType,
+    editDiffs: edits?.editDiffs,
+    editDiffsOmitted: edits && edits.editDiffsOmitted > 0 ? edits.editDiffsOmitted : undefined
+  }
 }
 
 // ── Core processor ──
@@ -202,7 +282,9 @@ export function processToolChunk(
         startedAt: Date.now(),
         filePath: meta.filePath,
         lineRange: meta.lineRange,
-        operationType: meta.operationType
+        operationType: meta.operationType,
+        editDiffs: meta.editDiffs,
+        editDiffsOmitted: meta.editDiffsOmitted
       }
     }
   }
@@ -276,6 +358,12 @@ export function processToolChunk(
       filePath: meta.filePath,
       lineRange: meta.lineRange,
       operationType: meta.operationType
+    }
+    // Only set when present — consumers merge tool_use → tool_result by id, so an
+    // explicit `undefined` here would clobber diffs captured at tool_use time.
+    if (meta.editDiffs) {
+      toolActivity.editDiffs = meta.editDiffs
+      toolActivity.editDiffsOmitted = meta.editDiffsOmitted
     }
     if (toolInputSummary) toolActivity.input = toolInputSummary
     // Override result summary for permission denials with a clear label

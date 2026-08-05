@@ -211,6 +211,49 @@ describe('code-changes.ipc — REPO_GET_REF_FILE_DIFF', () => {
     })
     assert.equal(r.ok, false, 'Should reject missing filePath')
   })
+
+  test('passes through warning and baseSha untouched', async () => {
+    repoServiceMock.getRefFileDiff.mockReturnValue(
+      Promise.resolve({
+        oldContent: 'a',
+        newContent: 'b',
+        language: 'typescript',
+        warning: 'Could not determine branch point',
+        baseSha: 'a1b2c3d'
+      })
+    )
+    const r = await tryInvokeHandler('repo:getRefFileDiff', {
+      conversationId: 'conv-1',
+      filePath: 'src/app.ts',
+      fromRef: 'origin/main',
+      toRef: 'HEAD'
+    })
+    if (r.ok) {
+      const diff = r.result as { warning?: string; baseSha?: string }
+      assert.equal(diff.warning, 'Could not determine branch point')
+      assert.equal(diff.baseSha, 'a1b2c3d')
+    }
+  })
+
+  test('passes through isBinary untouched', async () => {
+    repoServiceMock.getRefFileDiff.mockReturnValue(
+      Promise.resolve({
+        oldContent: '(Binary file — cannot display diff)',
+        newContent: '(Binary file — cannot display diff)',
+        language: 'text',
+        isBinary: true
+      })
+    )
+    const r = await tryInvokeHandler('repo:getRefFileDiff', {
+      conversationId: 'conv-1',
+      filePath: 'assets/logo.png',
+      fromRef: 'origin/main',
+      toRef: 'HEAD'
+    })
+    if (r.ok) {
+      assert.equal((r.result as { isBinary?: boolean }).isBinary, true)
+    }
+  })
 })
 
 describe('code-changes.ipc — REPO_FETCH_ORIGIN', () => {

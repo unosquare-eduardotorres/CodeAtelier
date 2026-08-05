@@ -60,10 +60,12 @@ describe('BootstrapProgress type', () => {
       'preflight',
       'docs',
       'stack',
+      'architecture',
+      'history',
       'agent-exploration',
       'finalize'
     ]
-    assert.equal(phases.length, 5, 'Deep-scan mode has 5 phases')
+    assert.equal(phases.length, 7, 'Deep-scan mode has 7 phases')
   })
 })
 
@@ -95,13 +97,16 @@ describe('phase ordering', () => {
       'preflight',
       'docs',
       'stack',
+      'architecture',
+      'history',
       'agent-exploration',
       'finalize'
     ]
 
-    // Verify agent-exploration replaces architecture+history+structure
-    assert.ok(!deepScanPhases.includes('architecture'))
-    assert.ok(!deepScanPhases.includes('history'))
+    // Deep scan adds agent-exploration on top of architecture+history,
+    // and is the only mode that omits the structure phase.
+    assert.ok(deepScanPhases.includes('architecture'))
+    assert.ok(deepScanPhases.includes('history'))
     assert.ok(!deepScanPhases.includes('structure'))
     assert.ok(deepScanPhases.includes('agent-exploration'))
   })
@@ -385,16 +390,18 @@ describe('mode selection', () => {
     assert.equal(fullPhases[fullPhases.length - 1], 'finalize')
   })
 
-  test('deep-scan mode uses 5 phases with agent-exploration', () => {
+  test('deep-scan mode uses 7 phases with agent-exploration', () => {
     const deepScanPhases: BootstrapPhaseLabel[] = [
       'preflight',
       'docs',
       'stack',
+      'architecture',
+      'history',
       'agent-exploration',
       'finalize'
     ]
-    assert.equal(deepScanPhases.length, 5)
-    assert.equal(deepScanPhases[3], 'agent-exploration')
+    assert.equal(deepScanPhases.length, 7)
+    assert.equal(deepScanPhases[5], 'agent-exploration')
   })
 
   test('incremental mode is a variant of full mode', () => {

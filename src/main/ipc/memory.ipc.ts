@@ -520,6 +520,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         workspaceId: string
         workspacePath: string
         mode?: import('../../shared/types').BootstrapMode
+        force?: boolean
       }
     ) => {
       validateSender(event)
@@ -527,7 +528,8 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         args.workspaceId,
         args.workspacePath,
         args.mode ?? 'full',
-        (progress) => safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, progress)
+        (progress) => safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, progress),
+        args.force === true
       )
     }
   )

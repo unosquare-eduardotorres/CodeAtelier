@@ -2,6 +2,7 @@ import type {
   Workspace,
   Conversation,
   ConversationMode,
+  FileDiffResult,
   Message,
   AgentStatus,
   BackgroundProcessInfo,
@@ -401,7 +402,7 @@ interface Api {
   onMemoryIngestProgress: (callback: (data: IngestionProgress) => void) => () => void
 
   // Memory Bootstrap
-  memoryBootstrapStart: (args: { workspaceId: string; workspacePath: string; mode?: BootstrapMode }) => Promise<{ jobId: string; factsCreated: number }>
+  memoryBootstrapStart: (args: { workspaceId: string; workspacePath: string; mode?: BootstrapMode; force?: boolean }) => Promise<{ jobId: string; factsCreated: number }>
   memoryBootstrapCancel: (args: { jobId: string }) => Promise<boolean>
   onMemoryBootstrapProgress: (callback: (data: BootstrapProgress) => void) => () => void
 
@@ -606,10 +607,7 @@ interface Api {
   }) => Promise<
     Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
   >
-  getFileDiff: (args: {
-    conversationId: string
-    filePath: string
-  }) => Promise<{ oldContent: string; newContent: string; language: string }>
+  getFileDiff: (args: { conversationId: string; filePath: string }) => Promise<FileDiffResult>
   getRefFileDetails: (args: {
     conversationId: string
     fromRef: string
@@ -622,7 +620,7 @@ interface Api {
     filePath: string
     fromRef: string
     toRef: string
-  }) => Promise<{ oldContent: string; newContent: string; language: string }>
+  }) => Promise<FileDiffResult>
   fetchOrigin: (args: {
     conversationId: string
   }) => Promise<{ fetched: boolean; error?: string }>

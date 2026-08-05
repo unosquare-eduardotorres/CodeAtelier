@@ -625,6 +625,36 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return rows.map(mapDocStateRow)
   }
 
+  /**
+   * Drop all doc-state hashes for a workspace so the next bootstrap re-reads
+   * every file. Escape hatch for workspaces poisoned by a partial scan.
+   * Returns the number of rows removed.
+   */
+  clearDocStates(workspaceId: string): number {
+    const info = this.db()
+      .prepare('DELETE FROM memory_doc_state WHERE workspace_id = ?')
+      .run(workspaceId)
+    return info.changes
+  }
+
+  /**
+   * Epoch ms of the most recent fact mutation in a workspace, or 0 when the
+   * workspace has no facts. Used as a liveness signal: a dedupe-merge bumps
+   * `updated_at` without changing the active fact count.
+   */
+  getLastMutationAt(workspaceId: string): number {
+    // `updated_at` is always written as datetime('now') (UTC), so strftime
+    // gives a stable epoch regardless of the host timezone.
+    const row = this.db()
+      .prepare(
+        `SELECT CAST(strftime('%s', MAX(updated_at)) AS INTEGER) AS last_mutation
+           FROM memory_facts
+          WHERE workspace_id = ? OR workspace_id IS NULL`
+      )
+      .get(workspaceId) as { last_mutation: number | null } | undefined
+    return row?.last_mutation ? row.last_mutation * 1000 : 0
+  }
+
   // ── Confirmation event log ──────────────────────────────────────────────
 
   /** Record a confirmation event with source type and weight. */

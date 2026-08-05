@@ -103,7 +103,12 @@ interface MemoryState {
   // Bootstrap state
   bootstrap: BootstrapProgress | null
   bootstrapCleanup: (() => void) | null
-  startBootstrap: (workspaceId: string, workspacePath: string, mode?: BootstrapMode) => Promise<void>
+  startBootstrap: (
+    workspaceId: string,
+    workspacePath: string,
+    mode?: BootstrapMode,
+    force?: boolean
+  ) => Promise<void>
   cancelBootstrap: () => void
   dismissBootstrap: () => void
   onBootstrapProgress: (progress: BootstrapProgress) => void
@@ -441,7 +446,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   // ── Project Knowledge Bootstrap ──
 
-  startBootstrap: async (workspaceId, workspacePath, mode = 'full') => {
+  startBootstrap: async (workspaceId, workspacePath, mode = 'full', force = false) => {
     // Subscribe to progress events
     const cleanup = window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
       useMemoryStore.getState().onBootstrapProgress(progress)
@@ -449,7 +454,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     set({ bootstrapCleanup: cleanup, bootstrapWorkspaceId: workspaceId })
 
     try {
-      await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode })
+      await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode, force })
     } catch (error) {
       rendererLog.error('Bootstrap failed:', error)
     }

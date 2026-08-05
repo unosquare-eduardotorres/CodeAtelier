@@ -309,6 +309,14 @@ export type ToolOperationType =
   | 'codegraph'
   | 'other'
 
+/** A single before/after segment from an Edit / MultiEdit tool call. */
+export interface ToolEditDiff {
+  oldString: string
+  newString: string
+  /** True when either string was clipped to the per-string storage cap. */
+  truncated?: boolean
+}
+
 export interface ToolActivity {
   id: string
   toolName: string
@@ -327,6 +335,10 @@ export interface ToolActivity {
   lineRange?: string
   /** Operation classification */
   operationType?: ToolOperationType
+  /** Per-edit before/after segments — Edit/MultiEdit only. */
+  editDiffs?: ToolEditDiff[]
+  /** Edits dropped to stay within the storage budget. */
+  editDiffsOmitted?: number
 }
 
 // ── Specialist & Skill Models ──
@@ -1265,6 +1277,18 @@ export interface RepoInfo {
 }
 
 export type DiffComparisonMode = 'uncommitted' | 'branch-vs-target' | 'all-vs-target'
+
+export interface FileDiffResult {
+  oldContent: string
+  newContent: string
+  language: string
+  /** True when either side was detected as binary. */
+  isBinary?: boolean
+  /** Non-fatal problem to surface in the UI (e.g. `git show` failed). */
+  warning?: string
+  /** Short SHA of the resolved comparison base, for labelling. */
+  baseSha?: string
+}
 
 // ── AI Subscriptions ──
 export interface SubscriptionCheckResult {

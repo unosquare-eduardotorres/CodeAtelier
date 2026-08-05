@@ -1,12 +1,20 @@
 /**
  * Unit tests for rationale mining (Phase 3).
  *
- * Only the pure extractor is covered here — the writer path is a thin wrapper
- * around memoryEngineService.writeFact, which has its own tests.
+ * The pure extractor is covered directly; the writer path is covered only at
+ * its gate — mining is opt-in, and a gate that silently opens would flood the
+ * Brain with every comment in the repo on the next index.
  */
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync } from './test-harness'
-import { extractRationales, MAX_RATIONALES_PER_FILE } from '../rationale-miner.service'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test, describe, summaryAsync, runExclusive } from './test-harness'
+import {
+  extractRationales,
+  MAX_RATIONALES_PER_FILE,
+  rationaleMinerService
+} from '../rationale-miner.service'
 
 describe('extractRationales — markers', () => {
   test('captures WHY / NOTE / HACK / GOTCHA comments', () => {
@@ -118,6 +126,55 @@ describe('extractRationales — content shape', () => {
     ).join('\n')
     assert.equal(extractRationales(source, 'src/a.ts').length, MAX_RATIONALES_PER_FILE)
   })
+})
+
+// ── mineFiles gate ──────────────────────────────────────────────────────────
+
+describe('mineFiles — opt-in gate', () => {
+  test('writes nothing until memoryCaptureRationales is enabled', async () =>
+    // Patches process-wide singletons — must not overlap with other async tests.
+    runExclusive(async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'rationale-gate-'))
+      writeFileSync(
+        join(dir, 'a.ts'),
+        '// WHY: the socket must be closed before retrying\nawait retry(send)\n'
+      )
+
+      const repos = await import('../../db/repositories')
+      const memory = await import('../memory-engine.service')
+      const workspaceRepo = repos.workspaceRepository as unknown as Record<string, unknown>
+      const engine = memory.memoryEngineService as unknown as Record<string, unknown>
+      const originalGetSettings = workspaceRepo.getSettings
+      const originalWriteFact = engine.writeFact
+
+      const writes: Record<string, unknown>[] = []
+      engine.writeFact = async (input: Record<string, unknown>): Promise<{ id: string }> => {
+        writes.push(input)
+        return { id: `fact-${writes.length}` }
+      }
+
+      try {
+        workspaceRepo.getSettings = (): Record<string, unknown> => ({})
+        const off = await rationaleMinerService.mineFiles('ws-1', dir, ['a.ts'])
+        assert.deepEqual(off, { scanned: 0, written: 0 }, 'disabled must not even read files')
+        assert.equal(writes.length, 0, 'no facts may be written while the gate is closed')
+
+        workspaceRepo.getSettings = (): Record<string, unknown> => ({
+          memoryCaptureRationales: true
+        })
+        const on = await rationaleMinerService.mineFiles('ws-1', dir, ['a.ts'])
+        assert.equal(on.scanned, 1)
+        assert.equal(on.written, 1)
+        assert.equal(writes.length, 1)
+        assert.equal(writes[0].sourceType, 'tool')
+        assert.deepEqual(writes[0].scopePaths, ['a.ts'])
+        assert.equal(writes[0].workspaceId, 'ws-1')
+      } finally {
+        workspaceRepo.getSettings = originalGetSettings
+        engine.writeFact = originalWriteFact
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }))
 })
 
 // Only print totals and exit when this file is run directly — under run-tests.ts

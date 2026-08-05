@@ -45,6 +45,32 @@ const EDGE_TYPE_ENUM = z.enum(['calls', 'imports', 'extends', 'implements', 'ref
  */
 const STRUCTURAL_SYMBOL_KINDS = ['interface', 'type']
 
+/**
+ * Provenance defaults, stated once per response instead of on every row.
+ * The overwhelming majority of edges are `references` / `extracted`, so
+ * repeating those values per row costs tokens without carrying signal — a
+ * blank cell means "the default", a filled one means "pay attention".
+ */
+const DEFAULT_EDGE_TYPE = 'references'
+const DEFAULT_RESOLUTION = 'extracted'
+const PROVENANCE_DEFAULTS = { edgeType: DEFAULT_EDGE_TYPE, resolution: DEFAULT_RESOLUTION }
+
+/**
+ * Emit edgeType/resolution only when they deviate from the stated defaults.
+ * A missing resolution is reported as 'inferred', never silently defaulted to
+ * 'extracted' — omitting it would overstate how much the edge can be trusted.
+ */
+function deviatingProvenance(
+  edgeType: string | undefined,
+  resolution: string | undefined
+): { edgeType?: string; resolution?: string } {
+  const resolved = resolution ?? 'inferred'
+  return {
+    ...(edgeType === undefined || edgeType === DEFAULT_EDGE_TYPE ? {} : { edgeType }),
+    ...(resolved === DEFAULT_RESOLUTION ? {} : { resolution: resolved })
+  }
+}
+
 // ── Environment ──
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
@@ -126,8 +152,12 @@ function registerToolSchemas(): void {
       includeSubsystems: z
         .boolean()
         .optional()
-        .default(true)
-        .describe('Include detected subsystems and god nodes (~30 lines)')
+        .default(false)
+        .describe(
+          'Include detected subsystems (clusters of files that belong together) and ' +
+            'god nodes. Off by default — costs ~30 lines; turn on when orienting in ' +
+            'an unfamiliar repo rather than for routine lookups.'
+        )
     },
     withErrorBoundary('graph_map', async (args) => {
       const { codeGraphService } = await ensureReady()
@@ -326,18 +356,22 @@ function registerToolSchemas(): void {
       const mapped = callers.map((e) => ({
         sourceFile: e.sourceFile,
         sourceSymbol: e.sourceSymbol,
-        edgeType: e.edgeType,
-        resolution: e.resolution
+        ...deviatingProvenance(e.edgeType, e.resolution)
       }))
       if (args.format === 'markdown') {
-        const lines = [`### Callers of \`${args.symbolName}\` (${mapped.length})\n`]
+        const lines = [
+          `### Callers of \`${args.symbolName}\` (${mapped.length}) — blank = defaults: ` +
+            `edgeType=${DEFAULT_EDGE_TYPE}, resolution=${DEFAULT_RESOLUTION}\n`
+        ]
         if (mapped.length === 0) {
           lines.push('No callers found.')
         } else {
           lines.push('| Source File | Source Symbol | Edge Type | Resolution |')
           lines.push('|-------------|---------------|-----------|------------|')
           for (const c of mapped) {
-            lines.push(`| ${c.sourceFile} | ${c.sourceSymbol} | ${c.edgeType} | ${c.resolution} |`)
+            lines.push(
+              `| ${c.sourceFile} | ${c.sourceSymbol} | ${c.edgeType ?? ''} | ${c.resolution ?? ''} |`
+            )
           }
         }
         return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
@@ -347,7 +381,12 @@ function registerToolSchemas(): void {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ symbol: args.symbolName, callers: mapped, count: mapped.length }),
+              JSON.stringify({
+                symbol: args.symbolName,
+                defaults: PROVENANCE_DEFAULTS,
+                callers: mapped,
+                count: mapped.length
+              }),
               10_000
             )
           }
@@ -380,18 +419,22 @@ function registerToolSchemas(): void {
       const mapped = callees.map((e) => ({
         targetFile: e.targetFile,
         targetSymbol: e.targetSymbol,
-        edgeType: e.edgeType,
-        resolution: e.resolution
+        ...deviatingProvenance(e.edgeType, e.resolution)
       }))
       if (args.format === 'markdown') {
-        const lines = [`### Callees of \`${args.symbolName}\` (${mapped.length})\n`]
+        const lines = [
+          `### Callees of \`${args.symbolName}\` (${mapped.length}) — blank = defaults: ` +
+            `edgeType=${DEFAULT_EDGE_TYPE}, resolution=${DEFAULT_RESOLUTION}\n`
+        ]
         if (mapped.length === 0) {
           lines.push('No callees found.')
         } else {
           lines.push('| Target File | Target Symbol | Edge Type | Resolution |')
           lines.push('|-------------|---------------|-----------|------------|')
           for (const c of mapped) {
-            lines.push(`| ${c.targetFile} | ${c.targetSymbol} | ${c.edgeType} | ${c.resolution} |`)
+            lines.push(
+              `| ${c.targetFile} | ${c.targetSymbol} | ${c.edgeType ?? ''} | ${c.resolution ?? ''} |`
+            )
           }
         }
         return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
@@ -401,7 +444,12 @@ function registerToolSchemas(): void {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ symbol: args.symbolName, callees: mapped, count: mapped.length }),
+              JSON.stringify({
+                symbol: args.symbolName,
+                defaults: PROVENANCE_DEFAULTS,
+                callees: mapped,
+                count: mapped.length
+              }),
               10_000
             )
           }

@@ -48,6 +48,10 @@ const MAX_HOTSPOT_FACTS = 15
 const MAX_COCHANGE_RESULTS = 15
 const MAX_COMMIT_SUBJECTS = 50
 
+/** Discovery caps for scattered documentation in deep legacy trees */
+const MAX_SCATTERED_DOCS = 500
+const MAX_SCATTERED_DOC_DEPTH = 4
+
 /** Doc patterns for Phase 1 */
 const DOC_PATTERNS = [
   'README.md', 'README.txt', 'README.rst', 'README',
@@ -90,12 +94,24 @@ const FULL_PHASES: BootstrapPhaseLabel[] = [
 ]
 
 const DEEP_SCAN_PHASES: BootstrapPhaseLabel[] = [
-  'preflight', 'docs', 'stack', 'agent-exploration', 'finalize'
+  'preflight', 'docs', 'stack', 'architecture', 'history', 'agent-exploration', 'finalize'
 ]
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type BootstrapProgressCallback = (progress: BootstrapProgress) => void
+
+/**
+ * Outcome of a single-file extraction.
+ * - `extracted`  — processed cleanly, doc-state hash written
+ * - `unchanged`  — hash matched a prior clean run, nothing to do
+ * - `skipped`    — unreadable / image / no chunks
+ * - `failed`     — aborted or a chunk threw; doc-state deliberately NOT written
+ */
+interface ExtractFileOutcome {
+  facts: number
+  status: 'extracted' | 'unchanged' | 'skipped' | 'failed'
+}
 
 interface BootstrapJob {
   controller: AbortController
@@ -120,10 +136,20 @@ class MemoryBootstrapService {
     workspaceId: string,
     workspacePath: string,
     mode: BootstrapMode = 'full',
-    onProgress?: BootstrapProgressCallback
+    onProgress?: BootstrapProgressCallback,
+    force = false
   ): Promise<{ jobId: string; factsCreated: number }> {
     if (this.activeJob) {
       throw new Error('A bootstrap job is already running')
+    }
+
+    if (force) {
+      try {
+        const cleared = memoryFactRepository.clearDocStates(workspaceId)
+        bsLog.info(`[startBootstrap] Force re-scan — cleared ${cleared} doc-state hashes`)
+      } catch (err) {
+        bsLog.warn('[startBootstrap] Failed to clear doc states:', err)
+      }
     }
 
     const jobId = `bootstrap-${++this.jobCounter}-${Date.now()}`
@@ -151,6 +177,10 @@ class MemoryBootstrapService {
       })
     }
 
+    // Relax the dedup threshold for agent-recorded ('tool') facts for the
+    // duration of this job — see MemoryEngineService.setBootstrapActive.
+    memoryEngineService.setBootstrapActive(true)
+
     try {
       const signal = controller.signal
 
@@ -176,21 +206,47 @@ class MemoryBootstrapService {
       if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
 
       if (mode === 'deep-scan') {
-        // ── Phase 3-DS: Agent Exploration ──
-        emit(3, 'agent-exploration', 'Spawning exploration agent…')
+        // ── Phase 3-DS: Architecture ──
+        // Runs before agent-exploration so the agent sees these facts in its
+        // "already recorded" list and spends its budget on genuinely new ground.
+        emit(3, 'architecture', 'Analyzing architectural backbone…')
+        const dsArchFacts = await this.phaseArchitecture(
+          workspaceId,
+          workspacePath,
+          preflight,
+          signal,
+          (msg) => emit(3, 'architecture', msg)
+        )
+        totalFacts += dsArchFacts
+        if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+        // ── Phase 4-DS: History ──
+        emit(4, 'history', 'Mining git history…')
+        const dsHistFacts = await this.phaseHistory(
+          workspaceId,
+          workspacePath,
+          preflight,
+          signal,
+          (msg) => emit(4, 'history', msg)
+        )
+        totalFacts += dsHistFacts
+        if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
+
+        // ── Phase 5-DS: Agent Exploration ──
+        emit(5, 'agent-exploration', 'Spawning exploration agent…')
         const agentFacts = await this.phaseDeepScan(
           workspaceId,
           workspacePath,
           preflight,
           signal,
-          (msg) => emit(3, 'agent-exploration', msg)
+          (msg) => emit(5, 'agent-exploration', msg)
         )
         totalFacts += agentFacts
         if (signal.aborted) return this.finishCancelled(jobId, totalFacts, emit, phases)
 
-        // ── Phase 4-DS: Finalize ──
-        emit(4, 'finalize', 'Finalizing…')
-        await this.phaseFinalize(workspaceId, workspacePath, (msg) => emit(4, 'finalize', msg))
+        // ── Phase 6-DS: Finalize ──
+        emit(6, 'finalize', 'Finalizing…')
+        await this.phaseFinalize(workspaceId, workspacePath, (msg) => emit(6, 'finalize', msg))
       } else {
         // ── Phase 3: Architecture ──
         emit(3, 'architecture', 'Analyzing architectural backbone…')
@@ -246,6 +302,7 @@ class MemoryBootstrapService {
       emit(finalIdx, phases[finalIdx], `Error: ${msg}`, 'error')
       return { jobId, factsCreated: totalFacts }
     } finally {
+      memoryEngineService.setBootstrapActive(false)
       this.activeJob = null
     }
   }
@@ -287,7 +344,8 @@ class MemoryBootstrapService {
     // Check code-graph index
     const hasIndex = codeGraphService.hasPersistedIndex(workspaceId)
 
-    if (!hasIndex && mode !== 'deep-scan') {
+    // Deep Scan now runs the architecture phase too, so it needs the index as well.
+    if (!hasIndex) {
       bsLog.info('[preflight] No code-graph index — attempting to build one')
       try {
         await codeGraphService.indexWorkspace(workspaceId, workspacePath)
@@ -346,25 +404,39 @@ class MemoryBootstrapService {
 
     onMsg(`Found ${docFiles.length} documentation files`)
     let totalFacts = 0
+    let scanned = 0
+    let failed = 0
+    let skipped = 0
 
     for (const filePath of docFiles) {
       if (signal.aborted) break
 
       const relPath = relative(workspacePath, filePath)
-      onMsg(`Extracting from ${relPath}…`)
+      scanned++
 
       try {
-        const facts = await this.extractFromFile(
+        const outcome = await this.extractFromFile(
           workspaceId, workspacePath, filePath, signal,
           { sourceType: 'bootstrap', tags: ['bootstrap', 'docs'] }
         )
-        totalFacts += facts
+        totalFacts += outcome.facts
+        if (outcome.status === 'failed') failed++
+        if (outcome.status === 'unchanged') skipped++
       } catch (err) {
+        failed++
         bsLog.warn(`[phaseDocs] Error on ${relPath}:`, err)
       }
+
+      onMsg(
+        `[${scanned}/${docFiles.length}] ${relPath} — ` +
+        `${totalFacts} facts, ${skipped} unchanged, ${failed} failed`
+      )
     }
 
-    onMsg(`Documentation phase complete — ${totalFacts} facts`)
+    onMsg(
+      `Documentation phase complete — ${totalFacts} facts from ${scanned} files ` +
+      `(${skipped} unchanged, ${failed} failed)`
+    )
     return totalFacts
   }
 
@@ -440,6 +512,7 @@ class MemoryBootstrapService {
 
     onMsg(`Analyzing ${topFiles.length} central files by PageRank…`)
     let totalFacts = 0
+    let failed = 0
 
     for (let i = 0; i < topFiles.length; i++) {
       if (signal.aborted) break
@@ -449,17 +522,19 @@ class MemoryBootstrapService {
       onMsg(`[${i + 1}/${topFiles.length}] ${relFile}`)
 
       try {
-        const facts = await this.extractFromFile(
+        const outcome = await this.extractFromFile(
           workspaceId, workspacePath, absFile, signal,
           { sourceType: 'bootstrap', tags: ['bootstrap', 'architecture'] }
         )
-        totalFacts += facts
+        totalFacts += outcome.facts
+        if (outcome.status === 'failed') failed++
       } catch (err) {
+        failed++
         bsLog.warn(`[phaseArchitecture] Error on ${relFile}:`, err)
       }
     }
 
-    onMsg(`Architecture phase complete — ${totalFacts} facts`)
+    onMsg(`Architecture phase complete — ${totalFacts} facts (${failed} files failed)`)
     return totalFacts
   }
 
@@ -755,21 +830,31 @@ class MemoryBootstrapService {
 
     let stalledChecks = 0
     let lastFactCount = factsBefore
+    // A dedupe-merge confirms an existing fact instead of inserting a new one,
+    // so the active count stays flat while real work is happening. Track the
+    // most recent fact mutation as a second liveness signal.
+    let lastMutationAt = memoryFactRepository.getLastMutationAt(workspaceId)
     const STALL_CHECK_INTERVAL_MS = 30_000   // check every 30s
-    const MAX_STALLED_CHECKS = 3             // abort after 90s of no progress
+    const MAX_STALLED_CHECKS = 6             // abort after 3 min of no progress
+    const stallWindowSec = (MAX_STALLED_CHECKS * STALL_CHECK_INTERVAL_MS) / 1000
 
     const stallTimer = setInterval(() => {
       if (controller.signal.aborted) return
       const currentFacts = memoryFactRepository.countByWorkspace(workspaceId).active
-      if (currentFacts <= lastFactCount) {
-        stalledChecks++
-        if (stalledChecks >= MAX_STALLED_CHECKS) {
-          onMsg(`Circuit breaker: no new facts for ${MAX_STALLED_CHECKS * STALL_CHECK_INTERVAL_MS / 1000}s — aborting agent`)
-          controller.abort()
-        }
-      } else {
+      const currentMutationAt = memoryFactRepository.getLastMutationAt(workspaceId)
+      const madeProgress = currentFacts > lastFactCount || currentMutationAt > lastMutationAt
+
+      if (madeProgress) {
         stalledChecks = 0  // reset on progress
         lastFactCount = currentFacts
+        lastMutationAt = currentMutationAt
+        return
+      }
+
+      stalledChecks++
+      if (stalledChecks >= MAX_STALLED_CHECKS) {
+        onMsg(`Circuit breaker: no memory activity for ${stallWindowSec}s — aborting agent`)
+        controller.abort()
       }
     }, STALL_CHECK_INTERVAL_MS)
 
@@ -785,7 +870,7 @@ class MemoryBootstrapService {
         return 0
       }
       if (controller.signal.aborted && !signal.aborted) {
-        bsLog.warn('[phaseDeepScan] Circuit breaker triggered — no new facts for 90s')
+        bsLog.warn(`[phaseDeepScan] Circuit breaker triggered — no memory activity for ${stallWindowSec}s`)
         onMsg('Agent exploration stopped — stall detected')
       } else {
         bsLog.warn('[phaseDeepScan] Agent exploration failed:', err)
@@ -879,12 +964,12 @@ class MemoryBootstrapService {
     } catch { /* skip */ }
 
     // Scattered docs: find .md files outside standard doc dirs
-    this.discoverScatteredDocs(workspacePath, found, 200)
+    this.discoverScatteredDocs(workspacePath, found, MAX_SCATTERED_DOCS)
 
     return [...new Set(found)] // deduplicate
   }
 
-  private walkForMd(dirPath: string, files: string[], depth: number, maxFiles: number = 200): void {
+  private walkForMd(dirPath: string, files: string[], depth: number, maxFiles: number = MAX_SCATTERED_DOCS): void {
     if (depth > 5 || files.length >= maxFiles) return
     if (!existsSync(dirPath)) return
 
@@ -896,7 +981,7 @@ class MemoryBootstrapService {
         try {
           const stat = statSync(fullPath)
           if (stat.isDirectory()) {
-            this.walkForMd(fullPath, files, depth + 1)
+            this.walkForMd(fullPath, files, depth + 1, maxFiles)
           } else if (stat.isFile() && /\.(md|txt|rst|adoc)$/i.test(entry)) {
             files.push(fullPath)
           }
@@ -938,7 +1023,7 @@ class MemoryBootstrapService {
     const seen = new Set(files) // O(1) lookups instead of O(n) includes()
 
     const walk = (dir: string, depth: number): void => {
-      if (depth > 2 || files.length >= maxFiles) return
+      if (depth > MAX_SCATTERED_DOC_DEPTH || files.length >= maxFiles) return
       try {
         const entries = readdirSync(dir)
         for (const entry of entries) {
@@ -1042,6 +1127,10 @@ class MemoryBootstrapService {
 
   /**
    * Extract facts from a single file with hash-gating and chunking.
+   *
+   * The doc-state hash is only written when the file was processed cleanly.
+   * Writing it after a partial run would permanently lock the file out of
+   * every future scan (the hash matches, so the next run returns early).
    */
   private async extractFromFile(
     workspaceId: string,
@@ -1049,29 +1138,34 @@ class MemoryBootstrapService {
     filePath: string,
     signal: AbortSignal,
     opts: { sourceType: 'document' | 'commit' | 'bootstrap'; tags: string[] }
-  ): Promise<number> {
+  ): Promise<ExtractFileOutcome> {
     // Read the file
     const readResult = await readDocument(filePath)
-    if (!readResult.ok || readResult.isImage) return 0
+    if (!readResult.ok || readResult.isImage) return { facts: 0, status: 'skipped' }
 
     // Hash-gate: skip unchanged files
     const contentHash = createHash('sha256').update(readResult.content).digest('hex')
     const existingState = memoryFactRepository.getDocState(workspaceId, filePath)
     if (existingState && existingState.contentHash === contentHash) {
-      return 0 // unchanged
+      return { facts: 0, status: 'unchanged' }
     }
 
     // Chunk and extract
     const strategy = detectStrategy(filePath)
     const relPath = relative(workspacePath, filePath)
     const chunks = chunkDocument(readResult.content, strategy, relPath)
-    if (chunks.length === 0) return 0
+    if (chunks.length === 0) return { facts: 0, status: 'skipped' }
 
     let factsFromFile = 0
+    let chunkErrors = 0
+    let aborted = false
     const cappedChunks = chunks.slice(0, MAX_CHUNKS_PER_FILE)
 
     for (const chunk of cappedChunks) {
-      if (signal.aborted) break
+      if (signal.aborted) {
+        aborted = true
+        break
+      }
 
       try {
         const contentWithContext = chunk.breadcrumb
@@ -1088,13 +1182,22 @@ class MemoryBootstrapService {
         )
         factsFromFile += created
       } catch (err) {
+        chunkErrors++
         bsLog.warn(`[extractFromFile] Chunk extraction failed for ${relPath}:`, err)
       }
     }
 
-    // Update doc state hash
-    memoryFactRepository.upsertDocState(workspaceId, filePath, contentHash)
-    return factsFromFile
+    // Only gate future runs when this run actually completed cleanly.
+    if (!aborted && chunkErrors === 0) {
+      memoryFactRepository.upsertDocState(workspaceId, filePath, contentHash)
+      return { facts: factsFromFile, status: 'extracted' }
+    }
+
+    bsLog.warn(
+      `[extractFromFile] Skipping doc-state update for ${relPath} — ` +
+      `aborted=${aborted} chunkErrors=${chunkErrors}/${cappedChunks.length}`
+    )
+    return { facts: factsFromFile, status: 'failed' }
   }
 
   /**

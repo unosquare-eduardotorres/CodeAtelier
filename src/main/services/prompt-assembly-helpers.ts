@@ -137,8 +137,13 @@ export function buildConditionalPrefix(opts: {
   mode: ConversationMode
   turnCount: number
   model?: string
+  /**
+   * True when history is being compacted on this turn. Compaction discards the
+   * turn-1 message that carried the memory protocol, so it must be re-emitted.
+   */
+  postCompaction?: boolean
 }): string {
-  const { message, hasImages, mode, turnCount } = opts
+  const { message, hasImages, mode, turnCount, postCompaction } = opts
   const verbosity = resolvePromptVerbosity(opts.model ?? '')
   const conditionalSections = promptBuilder.getGeneralistConditionalSections(
     message,
@@ -153,7 +158,9 @@ export function buildConditionalPrefix(opts: {
   }
 
   // Skip memory-protocol prompt on turns 2+ — already in history from turn 1.
-  if (conditionalSections.includeMemoryProtocolPrompt && turnCount <= 1) {
+  // Exception: on a compaction turn the turn-1 copy is being discarded, so
+  // re-emit it or the model loses the protocol for the rest of the session.
+  if (conditionalSections.includeMemoryProtocolPrompt && (turnCount <= 1 || postCompaction)) {
     sections.push(MEMORY_PROTOCOL_PROMPT) // unified: full === lean
   }
 

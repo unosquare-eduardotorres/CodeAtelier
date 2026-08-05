@@ -60,6 +60,38 @@ if (!env) {
       assert.equal(replaced.length, 1)
       assert.equal(replaced[0].name, 'New')
     })
+
+    test('hasUntypedIndex() detects a pre-v130 index and clears once kinds land', () => {
+      // Own workspace: the mtime cache bypass keys off this answer, so it must
+      // not be perturbed by tags other tests left behind.
+      const { seedWorkspace } = require('./db-test-helper')
+      const ws = seedWorkspace(env.db, 'ws-untyped-index')
+
+      assert.equal(tagRepo.hasUntypedIndex(ws), false, 'an empty workspace is not an untyped index')
+
+      tagRepo.upsertTags(
+        ws,
+        [{ relFname: 'src/a.ts', fname: '/a.ts', line: 1, name: 'A', kind: 'def' as const }],
+        new Map([['src/a.ts', 1000]])
+      )
+      assert.equal(tagRepo.hasUntypedIndex(ws), true, 'defs with no symbol_kind owe a re-parse')
+
+      tagRepo.upsertTags(
+        ws,
+        [
+          {
+            relFname: 'src/a.ts',
+            fname: '/a.ts',
+            line: 1,
+            name: 'A',
+            kind: 'def' as const,
+            symbolKind: 'class'
+          }
+        ],
+        new Map([['src/a.ts', 2000]])
+      )
+      assert.equal(tagRepo.hasUntypedIndex(ws), false, 'a typed index must not re-parse forever')
+    })
   })
 
   // ─── CodeGraphEdgeRepository ────────────────────────────────────────────

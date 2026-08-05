@@ -27,13 +27,13 @@ const MODE_CONFIG: Array<{
     mode: 'branch-vs-target',
     label: 'Branch → Target',
     icon: GitCompareArrows,
-    tooltip: 'Committed changes on your branch vs the target branch'
+    tooltip: 'Committed changes on your branch since the branch point (what a PR would show)'
   },
   {
     mode: 'all-vs-target',
     label: 'All → Target',
     icon: GitMerge,
-    tooltip: 'All changes (committed + uncommitted) vs the target branch'
+    tooltip: 'All changes (committed + uncommitted) since the branch point (what a PR would show)'
   }
 ]
 
@@ -112,11 +112,11 @@ export default function CodeChangesPanel({
   let rightLabel: string
   switch (comparisonMode) {
     case 'branch-vs-target':
-      leftLabel = `origin/${targetBranch}`
+      leftLabel = `origin/${targetBranch} (branch point)`
       rightLabel = `HEAD (${displayBranch})`
       break
     case 'all-vs-target':
-      leftLabel = `origin/${targetBranch}`
+      leftLabel = `origin/${targetBranch} (branch point)`
       rightLabel = `Working Tree (${displayBranch})`
       break
     default:

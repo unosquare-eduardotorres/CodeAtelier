@@ -43,6 +43,9 @@ const TIER_BUDGETS = {
 
 type ContextTier = keyof typeof TIER_BUDGETS
 
+/** Facts at or above this tier bypass per-session injection dedupe. */
+const RE_INJECTABLE_TIER = 2
+
 class MemoryRetrievalService {
   // ── Per-turn injection ──────────────────────────────────────────────────
 
@@ -65,9 +68,13 @@ class MemoryRetrievalService {
       const results = await this.retrieve(workspaceId, promptText, 10)
       if (results.length === 0) return ''
 
-      // Filter out already-injected facts (session dedupe)
+      // Filter out already-injected facts (session dedupe).
+      // Knowledge/Wisdom facts (tier >= 2) are exempt: injectedIds grows
+      // monotonically for the whole session, so once history compacts away
+      // the original injection the fact would be lost for good. These are
+      // precisely the facts worth repeating.
       const fresh = injectedIds
-        ? results.filter((r) => !injectedIds.has(r.fact.id))
+        ? results.filter((r) => r.fact.tier >= RE_INJECTABLE_TIER || !injectedIds.has(r.fact.id))
         : results
 
       if (fresh.length === 0) return ''
