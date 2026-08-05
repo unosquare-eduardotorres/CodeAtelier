@@ -1,18 +1,14 @@
 /**
- * Phase 27 — specialist-builder.service.ts deep method body coverage.
+ * Phase 27 — specialist-builder.service.ts surface + guard-clause coverage.
  *
- * SpecialistBuilderService has 379 uncovered lines. Tests exercise the
- * prompt building and specialist creation logic.
+ * SpecialistBuilderService reads through raw `getDatabase().prepare(...)` SQL,
+ * not through repositories, so the mock db (whose `.get()` yields null) drives
+ * every "not found" guard deterministically. Those guards are the only branches
+ * reachable without a real sqlite file, so they are what this file asserts.
  */
 import assert from 'node:assert/strict'
-import { describe, test, beforeEach } from './test-harness'
-import {
-  setupFullMock,
-  getMockRepo,
-  createSpy,
-  mockService,
-  resetAllMocks
-} from './setup-full-mock'
+import { describe, test } from './test-harness'
+import { setupFullMock, createSpy, mockService } from './setup-full-mock'
 
 setupFullMock()
 
@@ -25,10 +21,6 @@ mockService('one-shot-claude', {
   }))
 })
 
-const specialistRepo = getMockRepo('specialist')
-const skillRepo = getMockRepo('skill')
-const wsRepo = getMockRepo('workspace')
-
 const mod = require('../specialist-builder.service')
 const { SpecialistBuilderService, specialistBuilderService } = mod
 
@@ -38,48 +30,44 @@ describe('SpecialistBuilderService — class structure (P27)', () => {
   })
 
   test('singleton is exported', () => {
-    assert.ok(specialistBuilderService !== null)
+    assert.ok(specialistBuilderService instanceof SpecialistBuilderService)
   })
 
-  test('has build method', () => {
-    assert.ok(
-      typeof specialistBuilderService.build === 'function' ||
-        typeof specialistBuilderService.createSpecialist === 'function' ||
-        typeof specialistBuilderService.generateSpecialist === 'function'
-    )
+  test('exposes the three public build entrypoints', () => {
+    // Named explicitly rather than via a `build || createSpecialist || ...`
+    // fallback chain: that fallback shape let the assertion pass against an
+    // API which never existed on this class.
+    assert.equal(typeof specialistBuilderService.buildProjectSpecialist, 'function')
+    assert.equal(typeof specialistBuilderService.rebuildPrompt, 'function')
+    assert.equal(typeof specialistBuilderService.rebuildSkills, 'function')
+  })
+
+  test('does not expose the legacy build/createSpecialist/generateSpecialist names', () => {
+    assert.equal(specialistBuilderService.build, undefined)
+    assert.equal(specialistBuilderService.createSpecialist, undefined)
+    assert.equal(specialistBuilderService.generateSpecialist, undefined)
   })
 })
 
-describe('SpecialistBuilderService — build operations (P27)', () => {
-  beforeEach(() => {
-    resetAllMocks()
-    specialistRepo.insert.mockReturnValue({ id: 'spec-1' })
-    specialistRepo.findById.mockReturnValue({
-      id: 'spec-1',
-      name: 'Test',
-      prompt: 'You are an expert'
-    })
-    skillRepo.insert.mockReturnValue({ id: 'skill-1' })
-    wsRepo.findById.mockReturnValue({ id: 'ws-1', repoPath: '/test' })
-    wsRepo.getSettings.mockReturnValue({})
+describe('SpecialistBuilderService — not-found guards (P27)', () => {
+  test('buildProjectSpecialist rejects when the workspace row is missing', async () => {
+    await assert.rejects(
+      () => specialistBuilderService.buildProjectSpecialist('ws-missing'),
+      /Workspace ws-missing not found/
+    )
   })
 
-  test('build/create accepts workspace and generates specialist', async () => {
-    const buildFn =
-      specialistBuilderService.build ||
-      specialistBuilderService.createSpecialist ||
-      specialistBuilderService.generateSpecialist
-    if (!buildFn) return
+  test('rebuildPrompt rejects when the specialist row is missing', async () => {
+    await assert.rejects(
+      () => specialistBuilderService.rebuildPrompt('spec-missing'),
+      /Specialist spec-missing not found/
+    )
+  })
 
-    try {
-      await buildFn.call(specialistBuilderService, {
-        workspaceId: 'ws-1',
-        claudeMd: '# Test Project\nA TypeScript project',
-        stackInfo: { techs: ['TypeScript', 'React'] }
-      })
-      assert.ok(true, 'Build path exercised')
-    } catch {
-      // Expected in test env — exercises prompt assembly and parsing
-    }
+  test('rebuildSkills rejects when the specialist row is missing', async () => {
+    await assert.rejects(
+      () => specialistBuilderService.rebuildSkills('spec-missing'),
+      /Specialist spec-missing not found/
+    )
   })
 })

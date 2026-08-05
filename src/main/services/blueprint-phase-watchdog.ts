@@ -27,6 +27,22 @@ const bpLog = log.scope('blueprint-watchdog')
 /** Default stall threshold: 5 minutes of no chunk activity. */
 export const STALL_TIMEOUT_MS = 5 * 60_000
 
+/**
+ * The only two clock primitives this watchdog needs. Injectable so tests can
+ * advance time deterministically instead of sleeping: with real timers a
+ * "did NOT fire" assertion has to out-wait the threshold, which turns into a
+ * wall-clock race against event-loop contention on a loaded runner.
+ */
+export interface WatchdogTimers {
+  setTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout>
+  clearTimeout(handle: ReturnType<typeof setTimeout>): void
+}
+
+const REAL_TIMERS: WatchdogTimers = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) => clearTimeout(handle)
+}
+
 export class PhaseActivityWatchdog {
   private timer: ReturnType<typeof setTimeout> | null = null
   private rejectFn: ((err: Error) => void) | null = null
@@ -35,7 +51,8 @@ export class PhaseActivityWatchdog {
 
   constructor(
     private readonly stallTimeoutMs: number,
-    private readonly phaseName: string
+    private readonly phaseName: string,
+    private readonly timers: WatchdogTimers = REAL_TIMERS
   ) {}
 
   /** Whether the watchdog has detected a stall. */
@@ -68,7 +85,7 @@ export class PhaseActivityWatchdog {
     if (this._paused) return
     this._paused = true
     if (this.timer) {
-      clearTimeout(this.timer)
+      this.timers.clearTimeout(this.timer)
       this.timer = null
     }
     bpLog.info(`[stall-watchdog] ${this.phaseName} paused — awaiting user input`)
@@ -102,15 +119,15 @@ export class PhaseActivityWatchdog {
    */
   dispose(): void {
     if (this.timer) {
-      clearTimeout(this.timer)
+      this.timers.clearTimeout(this.timer)
       this.timer = null
     }
     this.rejectFn = null
   }
 
   private resetTimer(): void {
-    if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => {
+    if (this.timer) this.timers.clearTimeout(this.timer)
+    this.timer = this.timers.setTimeout(() => {
       this._stalled = true
       const minuteStr = Math.round(this.stallTimeoutMs / 60_000)
       const msg = `${this.phaseName} phase stalled — no activity for ${minuteStr}m`

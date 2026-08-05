@@ -18,6 +18,7 @@ import {
   deduplicateClarifyQuestions
 } from '../../../shared/blueprint-clarify-parsers'
 import type { GrillQuestion } from '../../../shared/types'
+import { ManualClock } from './manual-clock'
 import { CLARIFY_CORRECTION_MESSAGE } from '../blueprint-spec.service'
 import { PhaseActivityWatchdog } from '../blueprint-phase-watchdog'
 
@@ -202,7 +203,8 @@ describe('grillQuestionsToClarifyBlock', () => {
 
 describe('PhaseActivityWatchdog pause/resume', () => {
   test('pause() stops the timer from firing', async () => {
-    const watchdog = new PhaseActivityWatchdog(100, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(100, 'TEST', clock)
     let rejected = false
 
     // Access promise to start timer
@@ -215,9 +217,11 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     watchdog.pause()
 
     assert.equal(watchdog.paused, true)
+    assert.equal(clock.pendingCount, 0, 'pause() should have cleared the timer')
 
-    // Wait longer than the timeout — should NOT fire
-    await new Promise((r) => setTimeout(r, 200))
+    // Advance well past the threshold — should NOT fire
+    clock.advance(1000)
+    await Promise.resolve()
     assert.equal(rejected, false, 'Paused watchdog should not reject')
     assert.equal(watchdog.stalled, false)
 
@@ -227,7 +231,8 @@ describe('PhaseActivityWatchdog pause/resume', () => {
   })
 
   test('resume() restarts the timer', async () => {
-    const watchdog = new PhaseActivityWatchdog(80, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(80, 'TEST', clock)
     let rejected = false
 
     const p = watchdog.promise.catch(() => {
@@ -241,17 +246,22 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     watchdog.resume()
     assert.equal(watchdog.paused, false)
 
-    // Wait for timeout
-    await new Promise((r) => setTimeout(r, 150))
+    // Not yet due at 79ms — proves resume() restarted a full interval
+    clock.advance(79)
+    await Promise.resolve()
+    assert.equal(rejected, false, 'Should not reject before the threshold')
+
+    clock.advance(1)
+    await p
     assert.equal(rejected, true, 'Resumed watchdog should reject after timeout')
     assert.equal(watchdog.stalled, true)
 
     watchdog.dispose()
-    await p.catch(() => {})
   })
 
   test('touch() is no-op while paused', async () => {
-    const watchdog = new PhaseActivityWatchdog(80, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(80, 'TEST', clock)
     let rejected = false
 
     const p = watchdog.promise.catch(() => {
@@ -260,8 +270,10 @@ describe('PhaseActivityWatchdog pause/resume', () => {
 
     watchdog.pause()
     watchdog.touch() // should be no-op
+    assert.equal(clock.pendingCount, 0, 'touch() while paused must not arm a timer')
 
-    await new Promise((r) => setTimeout(r, 150))
+    clock.advance(1000)
+    await Promise.resolve()
     assert.equal(rejected, false, 'Touch while paused should not restart timer')
 
     watchdog.dispose()
@@ -269,7 +281,8 @@ describe('PhaseActivityWatchdog pause/resume', () => {
   })
 
   test('pause() is idempotent', () => {
-    const watchdog = new PhaseActivityWatchdog(1000, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(1000, 'TEST', clock)
     watchdog.promise.catch(() => {})
 
     watchdog.pause()
@@ -280,12 +293,14 @@ describe('PhaseActivityWatchdog pause/resume', () => {
   })
 
   test('resume() without prior pause is no-op', () => {
-    const watchdog = new PhaseActivityWatchdog(1000, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(1000, 'TEST', clock)
     watchdog.promise.catch(() => {})
 
     watchdog.resume() // should not throw
     assert.equal(watchdog.paused, false)
 
     watchdog.dispose()
+    assert.equal(clock.pendingCount, 0, 'dispose() should leave no timer behind')
   })
 })
