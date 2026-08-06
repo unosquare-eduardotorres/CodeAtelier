@@ -37,10 +37,13 @@ describe('PromptBuilder.extractEssentialSections', () => {
     assert.ok(!result.includes('Architecture Notes'))
   })
 
-  test('keeps guidelines section', () => {
+  // 'guidelines' was dropped from essentialHeaders in 80d7a73, one day after
+  // this case was written -- prompt-builder.ts:653-660 now keeps only identity,
+  // mode, conventions, key commands, what not to do, error handling.
+  test('strips guidelines section', () => {
     const prompt = '## Guidelines\n1. Be concise.\n\n## Agents\nSubagent config...'
     const result = extract(prompt)
-    assert.ok(result.includes('## Guidelines'))
+    assert.ok(!result.includes('## Guidelines'))
     assert.ok(!result.includes('Agents'))
   })
 

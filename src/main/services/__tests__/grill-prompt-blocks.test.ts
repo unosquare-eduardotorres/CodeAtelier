@@ -129,8 +129,11 @@ describe('isGrillLean', () => {
     assert.equal(isGrillLean('claude-haiku-4-5'), false)
   })
 
-  test('claude-sonnet-4-6 → false', () => {
-    assert.equal(isGrillLean('claude-sonnet-4-6'), false)
+  // Sonnet 4.6+ is deliberately in the lean set -- resolvePromptVerbosity in
+  // shared/constants.ts:948 returns 'lean' for it (~800-1200 tokens/turn saved).
+  // This case predates that and asserted the pre-4-6 behaviour.
+  test('claude-sonnet-4-6 → true (lean model)', () => {
+    assert.equal(isGrillLean('claude-sonnet-4-6'), true)
   })
 
   test('claude-opus-4-8 → true (lean model)', () => {

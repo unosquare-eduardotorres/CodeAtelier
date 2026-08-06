@@ -58,6 +58,47 @@ const DENY_LIST = [
 ]
 const DENY_SET = new Set(DENY_LIST.map((d) => path.normalize(d.file)))
 
+// -- Known backlog: registered in run-all.ts, absent from both unit runners --
+// These predate the drift check below. They are NOT benign: each runs only
+// under `npm run test:cov`, never under `npm run test:all`. Spot-checking the
+// repository entries showed they do not currently pass in the repository
+// runner either -- audit-plan.repository.test aborts the run with a CHECK
+// constraint failure on mode -- which is the likely reason they were never
+// wired in.
+//
+// Listed explicitly rather than skipped by pattern, so the gate still fails on
+// any NEW drift. Shrink this list; do not add to it.
+const KNOWN_UNIT_RUNNER_GAP = new Set(
+  [
+    'src/main/db/repositories/__tests__/agent-session.repository.test.ts',
+    'src/main/db/repositories/__tests__/app-preference.repository.test.ts',
+    'src/main/db/repositories/__tests__/audit-plan.repository.test.ts',
+    'src/main/db/repositories/__tests__/base-repository.test.ts',
+    'src/main/db/repositories/__tests__/checkpoint.repository.test.ts',
+    'src/main/db/repositories/__tests__/chunk-embedding.repository.test.ts',
+    'src/main/db/repositories/__tests__/code-chunk.repository.test.ts',
+    'src/main/db/repositories/__tests__/code-graph-edge.repository.test.ts',
+    'src/main/db/repositories/__tests__/code-graph-rank.repository.test.ts',
+    'src/main/db/repositories/__tests__/code-graph-tag.repository.test.ts',
+    'src/main/db/repositories/__tests__/conversation-specialist.repository.test.ts',
+    'src/main/db/repositories/__tests__/core-agent-alias.repository.test.ts',
+    'src/main/db/repositories/__tests__/core-agent-prompt.repository.test.ts',
+    'src/main/db/repositories/__tests__/mpa-artifact.repository.test.ts',
+    'src/main/db/repositories/__tests__/turn-usage.repository.test.ts',
+    'src/main/db/repositories/__tests__/user-profile.repository.test.ts',
+    'src/main/ipc/__tests__/audit-ipc-handlers.test.ts',
+    'src/main/ipc/__tests__/blueprint-ipc-handlers.test.ts',
+    'src/main/ipc/__tests__/config-ipc-validation.test.ts',
+    'src/main/ipc/__tests__/conversation-crud-handlers.test.ts',
+    'src/main/ipc/__tests__/crud-ipc-validation.test.ts',
+    'src/main/ipc/__tests__/grill-ipc-handlers.test.ts',
+    'src/main/ipc/__tests__/ipc-code-changes-p27.test.ts',
+    'src/main/ipc/__tests__/ipc-utilities.test.ts',
+    'src/main/ipc/__tests__/mpa-ipc-handlers.test.ts',
+    'src/main/ipc/__tests__/workspace-ipc-handlers.test.ts'
+  ].map((f) => path.normalize(f))
+)
+
 // ── Walk disk for every __tests__/*.test.ts file ────────────────────────────
 function walk(dir, out) {
   for (const entry of readdirSync(dir)) {
@@ -92,17 +133,24 @@ const runAllDir = path.dirname(RUN_ALL_PATH)
 const importMatches = [...runAllSrc.matchAll(/'(\.\.?\/[^']+\.test)'/g)].map((m) => m[1])
 
 const registered = new Set()
+/** repo-relative path -> absolute path, so staleness can stat the real file. */
+const registeredAbs = new Map()
 for (const spec of importMatches) {
   const abs = path.normalize(path.join(runAllDir, spec + '.ts'))
-  registered.add(path.normalize(path.relative(ROOT, abs)))
+  const rel = path.normalize(path.relative(ROOT, abs))
+  registered.add(rel)
+  registeredAbs.set(rel, abs)
 }
 
 // ── Compute orphans (on disk, not registered, not denied) ──────────────────
 const orphans = onDisk.filter((f) => !registered.has(f) && !DENY_SET.has(f))
 
 // ── Compute stale entries (registered, but no longer on disk) ──────────────
-const onDiskSet = new Set(onDisk)
-const stale = [...registered].filter((f) => !onDiskSet.has(f)).sort()
+// Stat the resolved path rather than testing membership of `onDisk`. onDisk
+// only covers SCAN_DIRS (src/main, src/shared), so a set-membership test
+// reported every registered renderer test as stale even though it exists --
+// which kept this script permanently red and unusable as a CI gate.
+const stale = [...registered].filter((f) => !existsSync(registeredAbs.get(f))).sort()
 
 // ── Report ───────────────────────────────────────────────────────────────
 console.log(
@@ -130,6 +178,59 @@ if (stale.length > 0) {
     `\n[check-test-orphans] FAILED — ${stale.length} run-all.ts entr${stale.length === 1 ? 'y points' : 'ies point'} at file(s) that no longer exist on disk (likely a stale rename):\n`
   )
   for (const f of stale) console.error(`  - ${f}`)
+}
+
+// ── run-tests.ts vs run-all.ts drift ────────────────────────────────
+// Two runners execute the same tests: run-tests.ts backs `npm run test:unit`,
+// run-all.ts backs `npm run test:cov`. Registration is manual in both, so they
+// drift silently -- 51 files once sat in run-all.ts but not run-tests.ts and so
+// never ran in the unit suite at all, while still counting toward coverage.
+//
+// Only files under SCAN_DIRS are compared: run-all.ts additionally carries
+// renderer and repository suites that run-tests.ts is not responsible for.
+// `npm run test:all` is test:unit + test:repo, so the comparison target is the
+// union of both runners -- the repository suite has its own entrypoint and is
+// deliberately absent from run-tests.ts.
+const UNIT_RUNNERS = [
+  'src/main/services/__tests__/run-tests.ts',
+  'src/main/db/repositories/__tests__/run-tests.ts'
+].map((p) => path.join(ROOT, p))
+
+if (UNIT_RUNNERS.every((p) => existsSync(p))) {
+  const unitRegistered = new Set()
+  for (const runnerPath of UNIT_RUNNERS) {
+    const src = readFileSync(runnerPath, 'utf8')
+    const dir = path.dirname(runnerPath)
+    for (const m of src.matchAll(/'(\.\.?\/[^']+\.test)'/g)) {
+      const abs = path.normalize(path.join(dir, m[1] + '.ts'))
+      unitRegistered.add(path.normalize(path.relative(ROOT, abs)))
+    }
+  }
+
+  const inScope = (f) => SCAN_DIRS.some((d) => f.startsWith(path.normalize(d) + path.sep))
+  const covOnly = [...registered].filter(
+    (f) =>
+      inScope(f) && !unitRegistered.has(f) && !DENY_SET.has(f) && !KNOWN_UNIT_RUNNER_GAP.has(f)
+  )
+  const unitOnly = [...unitRegistered].filter((f) => !registered.has(f)).sort()
+
+  if (covOnly.length > 0) {
+    failed = true
+    console.error(
+      `\n[check-test-orphans] FAILED — ${covOnly.length} file(s) are in run-all.ts but in neither unit runner, so \`npm run test:all\` skips them:\n`
+    )
+    for (const f of covOnly.sort()) console.error(`  - ${f}`)
+    console.error('\nAdd each to TEST_FILES in src/main/services/__tests__/run-tests.ts.')
+  }
+
+  if (unitOnly.length > 0) {
+    failed = true
+    console.error(
+      `\n[check-test-orphans] FAILED — ${unitOnly.length} file(s) are in a unit runner but NOT run-all.ts, so they contribute no coverage:\n`
+    )
+    for (const f of unitOnly) console.error(`  - ${f}`)
+    console.error('\nAdd each to SERVICE_TEST_FILES in src/main/__tests__/run-all.ts.')
+  }
 }
 
 if (failed) {

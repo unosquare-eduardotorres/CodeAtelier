@@ -57,7 +57,21 @@ const ESSENTIAL_CG: string[] = [
 ]
 
 const ALL_CG = MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-const CONTROL_TOOLS = MCP_TOOLS.CONTROL_ACTIONS._ALL_NAMES
+
+// The CG tools the Claude (non-local) path actually allows. Not _ALL_NAMES:
+// see the wiring_check note on the 'known gap' test below.
+const CLAUDE_PATH_CG = ALL_CG.filter((t) => t !== MCP_TOOLS.CODE_GRAPH.WIRING_CHECK.name)
+
+// The model-callable control tools, i.e. what belongs in an allowedTools list.
+// Deliberately NOT CONTROL_ACTIONS._ALL_NAMES: that also contains
+// permission_prompt, which the model never calls directly -- it is handed to
+// the CLI via --permission-prompt-tool and is absent from the allowlist that
+// workspace-mcp-config.ts builds (see lines 343-345 / 496-498 there).
+const CONTROL_TOOLS = [
+  MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
+  MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
+  MCP_TOOLS.CONTROL_ACTIONS.EMIT_PHASE_PROGRESS.name
+]
 
 // ── Dispatch tests ───────────────────────────────────────────────────────
 
@@ -341,9 +355,21 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
 
   test('plan mode → CG tools included when repomapEnabled + workspaceId', () => {
     const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
-    for (const tool of ALL_CG) {
+    for (const tool of CLAUDE_PATH_CG) {
       assert.ok(result.allowedTools!.includes(tool), `Missing: ${tool}`)
     }
+  })
+
+  // Pins a known gap rather than asserting it is correct. The local path grants
+  // MCP_TOOLS.CODE_GRAPH._ALL_NAMES, but the Claude path enumerates its 14 CG
+  // tools by hand (workspace-mcp-config.ts:449-462) and omits wiring_check --
+  // even though the code-graph server registers it (code-graph-server.ts:756).
+  // wiring_check landed 2026-06-21; the hand-written list has been edited since
+  // and still lacks it, which reads as drift rather than intent. Flagged for a
+  // product decision; this test documents today's behaviour either way.
+  test('plan mode → wiring_check is NOT in the Claude allowlist (known gap)', () => {
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
+    assert.ok(!result.allowedTools!.includes(MCP_TOOLS.CODE_GRAPH.WIRING_CHECK.name))
   })
 
   test('plan mode → semantic-search tools when enabled', () => {

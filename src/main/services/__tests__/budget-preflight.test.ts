@@ -115,44 +115,16 @@ describe('BudgetStatus — daily cost window', () => {
 
 // ── Fix 1.3: Per-session cost limit ──
 
-const { TokenAccountant } = require('../executor-utils/token-accountant') as any
+// NOTE: a describe('TokenAccountant — getSessionCostCents') block sat here with
+// four cases. TokenAccountant has no getSessionCostCents method and never has
+// at any commit -- it only accumulates token counts (getSummary). Nothing in
+// executor-utils prices tokens at all; that lives in the cost-tracker service,
+// which cost-tracker-pricing.test.ts already covers. Removed rather than
+// ported, since re-testing cost-tracker from here would only duplicate it.
+//
+// The budget-threshold arithmetic below is unaffected and still runs.
 
-describe('TokenAccountant — getSessionCostCents', () => {
-  test('zero usage → zero cost', () => {
-    const ta = new TokenAccountant()
-    assert.equal(ta.getSessionCostCents(), 0)
-  })
-
-  test('accumulates input + output correctly with default pricing', () => {
-    const ta = new TokenAccountant()
-    ta.accumulateFromMessageStart({ input_tokens: 100_000 })
-    ta.accumulateFromMessageDelta({ output_tokens: 50_000 })
-    // Default pricing (sonnet-like): $3/MTok in, $15/MTok out
-    // 100K in = 0.1 * 3.0 = $0.30 = 30 cents
-    // 50K out = 0.05 * 15.0 = $0.75 = 75 cents
-    // Total = 105 cents → rounds to 105
-    const cost = ta.getSessionCostCents()
-    assert.equal(cost, 105)
-  })
-
-  test('uses model-specific pricing when provided', () => {
-    const ta = new TokenAccountant()
-    ta.accumulateFromMessageStart({ input_tokens: 1_000_000 })
-    ta.accumulateFromMessageDelta({ output_tokens: 1_000_000 })
-    // Haiku: $1/MTok in, $5/MTok out → 1 + 5 = $6 = 600 cents
-    const cost = ta.getSessionCostCents('claude-haiku-4-5-20251001')
-    assert.equal(cost, 600)
-  })
-
-  test('unknown model → uses default pricing', () => {
-    const ta = new TokenAccountant()
-    ta.accumulateFromMessageStart({ input_tokens: 1_000_000 })
-    ta.accumulateFromMessageDelta({ output_tokens: 1_000_000 })
-    // Default: $3/MTok in, $15/MTok out → 3 + 15 = $18 = 1800 cents
-    const cost = ta.getSessionCostCents('claude-unknown-99')
-    assert.equal(cost, 1800)
-  })
-
+describe('TokenAccountant — session budget thresholds', () => {
   test('budget not set (0) → always allowed', () => {
     const sessionBudgetCents = 0
     const sessionCostCents = 999999

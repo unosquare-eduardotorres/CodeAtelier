@@ -158,51 +158,14 @@ describe('OpenCodeExecutor.isSessionComplete', () => {
   })
 })
 
-// ── buildPromptParts ──
-
-describe('OpenCodeExecutor.buildPromptParts', () => {
-  test('includes system prompt as first part when no plugin hook', () => {
-    // Clear env to ensure no plugin hook
-    const original = process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-    delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-
-    const parts = (executor as any).buildPromptParts('hello world', 'You are an AI assistant.')
-    assert.equal(parts.length, 2)
-    assert.ok(parts[0].text.includes('[System Instructions]'))
-    assert.ok(parts[0].text.includes('You are an AI assistant.'))
-    assert.equal(parts[1].text, 'hello world')
-
-    // Restore
-    if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
-  })
-
-  test('skips system prompt when plugin hook env is set', () => {
-    const original = process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-    process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = '/tmp/some-prompt.txt'
-
-    const parts = (executor as any).buildPromptParts('hello', 'system prompt here')
-    assert.equal(parts.length, 1)
-    assert.equal(parts[0].text, 'hello')
-
-    // Restore
-    if (original) {
-      process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
-    } else {
-      delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-    }
-  })
-
-  test('empty system prompt → only user prompt part', () => {
-    const original = process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-    delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
-
-    const parts = (executor as any).buildPromptParts('user message', '')
-    assert.equal(parts.length, 1)
-    assert.equal(parts[0].text, 'user message')
-
-    if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
-  })
-})
+// NOTE: there was a describe('OpenCodeExecutor.buildPromptParts') block here.
+// No such method exists — prompt assembly is buildPromptBody(), which is
+// covered below. The block asserted a superseded design where the system
+// prompt was prepended as a '[System Instructions]' text part; the executor
+// now passes it via the SDK's dedicated `system` field (opencode-executor.ts
+// :1498) so it gets provider routing and prefix caching. Removed rather than
+// ported: buildPromptBody's own cases already assert the current behaviour,
+// including the plugin-hook suppression path.
 
 // ── buildPromptBody ──
 
@@ -229,7 +192,7 @@ describe('OpenCodeExecutor.buildPromptBody', () => {
     assert.ok(body.format)
     assert.equal(body.format.type, 'json_schema')
     assert.deepEqual(body.format.schema, schema)
-    assert.equal(body.format.retries, 2)
+    assert.equal(body.format.retryCount, 2)
 
     if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
   })
@@ -301,18 +264,21 @@ describe('OpenCodeExecutor.buildPromptBody — schema injection', () => {
     const body = (executor as any).buildPromptBody('test', '', provider, schema)
     assert.equal(body.format.type, 'json_schema')
     assert.deepEqual(body.format.schema, schema)
-    assert.equal(body.format.retries, 2)
+    assert.equal(body.format.retryCount, 2)
 
     if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
   })
 
-  test('retries config is always 2 for JSON schema output', () => {
+  // Field is `retryCount` — OutputFormatJsonSchema in @opencode-ai/sdk
+  // (dist/v2/gen/types.gen.d.ts:122-126). These cases asserted `retries`,
+  // which is always undefined, so they could only ever have failed.
+  test('retry config is always 2 for JSON schema output', () => {
     const original = process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
     delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
 
     const schema = { type: 'string' }
     const body = (executor as any).buildPromptBody('test', '', provider, schema)
-    assert.equal(body.format.retries, 2)
+    assert.equal(body.format.retryCount, 2)
 
     if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
   })

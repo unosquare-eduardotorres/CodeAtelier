@@ -629,6 +629,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
+  '../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
   '../services/__tests__/repo-service-utils.test',
@@ -637,10 +638,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/skill-tier-parser.test',
   '../services/__tests__/specialist-builder-handlers.test',
   '../services/__tests__/specialist-builder-logic.test',
-  '../services/__tests__/subscription-version.test',
   '../services/__tests__/tool-result-timeout.test',
   '../services/__tests__/usage-tracker-helpers.test',
-  '../services/__tests__/version-parser.test',
   '../services/__tests__/workspace-mcp-config-builder.test',
   // ─── Stale-turn incident: heartbeat tool ids, pending-tool leak, DB timestamps ───
   '../services/executor-utils/__tests__/tool-progress-heartbeat.test',

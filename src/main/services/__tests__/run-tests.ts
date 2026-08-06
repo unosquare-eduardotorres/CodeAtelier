@@ -539,7 +539,6 @@ const TEST_FILES: string[] = [
   './github-service-p27.test',
   './event-logger-deep-p27.test',
   './opencode-config-writer-p27.test',
-  './memory-feed-p27.test',
   './grill-persistence-deep-p27.test',
   './specialist-builder-deep-p27.test',
   // ─── Stale-turn incident: heartbeat tool ids, pending-tool leak, DB timestamps ───
@@ -594,7 +593,18 @@ const TEST_FILES: string[] = [
   './claude-md-generator-formatters.test',
   './language-detector.test',
   './local-plan-state-maprow.test',
-  './tool-result-timeout.test'
+  './tool-result-timeout.test',
+  // Last of the drift batch — each needed a fix before it could be registered
+  // (stale expectations, or assertions against methods that never existed).
+  './budget-preflight.test',
+  './event-logger-sequence.test',
+  './grill-prompt-blocks.test',
+  './opencode-agent-writer-builders.test',
+  './opencode-config-writer-builders.test',
+  './opencode-executor-logic.test',
+  './prompt-builder-extractors.test',
+  './prompt-builder-local.test',
+  './workspace-mcp-config-builder.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout
